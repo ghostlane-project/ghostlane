@@ -107,7 +107,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # than climbing. Not olcRTC's appetite either: the same phone on Hysteria2, with
 # olcRTC never started, sat at 34.8 MB peaking 39.2 MB. One runtime carries all
 # three engines, so one limit covers them.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913142637-670e6c82fd42}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913163042-b1e319e1d2bc}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -144,7 +144,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913142637-670e6c82fd42}"
 #
 # 12 → 13: olcRTC moved and its API changed shape (mobile.Runtime instead of
 # package functions); every bridge in the app was rewritten for it.
-CORES_BUILD="${CORES_BUILD:-17}"
+CORES_BUILD="${CORES_BUILD:-18}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
