@@ -92,7 +92,10 @@ private struct ComposeHostView: UIViewControllerRepresentable {
 final class ComposeSceneHost: UIViewController {
     private let compose: UIViewController
     private var placeholder: UIView?
-    private var observers: [NSObjectProtocol] = []
+    // Written once in viewDidLoad on the main actor and read by deinit, which
+    // is nonisolated and may not touch main-actor state of a non-Sendable
+    // type; the tokens are only ever handed back to NotificationCenter.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     init(compose: UIViewController) {
         self.compose = compose
