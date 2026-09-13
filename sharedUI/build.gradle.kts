@@ -240,6 +240,10 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
         "gomobile",
         "bind",
         "-target=ios",
+        // As in scripts/build-cores-ios.sh and the Android bind: no
+        // videochannel, no livekit, for the phone's memory.
+        "-tags",
+        "olcrtc_lean",
         "-ldflags",
         "-s -w -checklinkname=0",
         "-o",

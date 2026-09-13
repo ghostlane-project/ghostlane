@@ -21,7 +21,12 @@
 #
 # The build tags are load-bearing. Without with_gvisor there is no userspace
 # stack for the tun, without with_quic no Hysteria2, without with_utls no
-# Reality fingerprinting.
+# Reality fingerprinting. olcrtc_lean leaves two things out of the olcRTC
+# engine that no phone uses, the videochannel transport (a QR codec) and the
+# livekit provider (protobuf and CEL initialisers): measured on the phone
+# profile, 40.3 → 29.8 MB idle and 47.0 → 36.2 MB at a speed test's upload
+# peak, in an extension the system kills at about 45. The app never offers
+# either, and refuses a videochannel link on import.
 set -euo pipefail
 
 # The pinned trio this was verified against, so a laptop run and a CI run
@@ -145,7 +150,7 @@ fi
 # this — so a conflict caught here is caught twenty minutes earlier, and with a
 # plain Go error instead of gomobile's output.
 echo "== pre-flight: do all three cores still compile together? =="
-go build -tags "with_gvisor,with_quic,with_utls,with_clash_api" ./...
+go build -tags "with_gvisor,with_quic,with_utls,with_clash_api,olcrtc_lean" ./...
 
 echo "== gomobile ${GOMOBILE_VERSION} (sagernet fork) =="
 # Into this build's own bin, never the shared ~/go/bin.
@@ -188,7 +193,7 @@ echo "== bind, all three packages in one framework =="
 # builds, runs and can be photographed.
 gomobile bind -v \
   -target=ios,iossimulator,macos \
-  -tags "with_gvisor,with_quic,with_utls,with_clash_api" \
+  -tags "with_gvisor,with_quic,with_utls,with_clash_api,olcrtc_lean" \
   -ldflags "-s -w" \
   -o "$OUT/Cores.xcframework" \
   github.com/sagernet/sing-box/experimental/libbox \
