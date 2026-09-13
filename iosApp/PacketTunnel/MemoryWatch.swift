@@ -107,6 +107,8 @@ enum MemoryWatch {
                 try? files.moveItem(at: file, to: keepAs)
             }
             currentFile = file
+            samplesSinceSummary = 0
+            summarizeGoroutines(container: container)
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: interval)
             source.setEventHandler { sample(into: file) }
@@ -154,7 +156,40 @@ enum MemoryWatch {
     /// exactly that, and say whether the ceiling set by `MobileSetMemoryLimit`
     /// is binding — a collection count racing upward is a limit doing work, and
     /// a limit doing too much work is throughput spent on staying alive.
+    /// Once a minute, what the goroutine count is made of.
+    ///
+    /// olcbox#26: an eight-hour session reached 700+ goroutines and 7.6 MB of
+    /// stacks, against ~100-150 for a live tunnel, and the trace could only
+    /// count them. The engine now groups them by where they are blocked, and
+    /// that line goes to its own file, appended across runs (a "start" line
+    /// per run) and kept for hours, since the leak is slow and the answer is
+    /// the composition just before the process dies, not the count.
+    private static let summaryEvery = 240 // samples, i.e. one minute at 4 Hz
+    private static let summaryWindow = 240 // lines, i.e. four hours
+    nonisolated(unsafe) private static var samplesSinceSummary = 0
+    nonisolated(unsafe) private static var summaryFile: URL?
+
+    private static func summarizeGoroutines(container: URL) {
+        let file = container.appendingPathComponent("goroutines.txt")
+        summaryFile = file
+        appendSummary("start", to: file)
+    }
+
+    private static func appendSummary(_ text: String, to file: URL) {
+        let line = String(format: "%7.2fs  %@", Date().timeIntervalSince(started), text)
+        var lines = (try? String(contentsOf: file, encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? []
+        lines.append(line)
+        if lines.count > summaryWindow { lines.removeFirst(lines.count - summaryWindow) }
+        try? Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file, options: .atomic)
+    }
+
     private static func sample(into file: URL) {
+        samplesSinceSummary += 1
+        if samplesSinceSummary >= summaryEvery, let summaryFile {
+            samplesSinceSummary = 0
+            appendSummary(MobileGoroutineSummary(), to: summaryFile)
+        }
         let footprint = footprintBytes()
         // Bytes the process may still allocate before the system kills it. This
         // is the number that matters: the cap is not a documented constant and

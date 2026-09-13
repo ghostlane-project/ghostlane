@@ -776,6 +776,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             ("memory-crash.txt", "--- extension memory: THE RUN THAT DIED, killed without stopTunnel (kept until the next death) ---", 20),
             ("memory-prev.txt", "--- extension memory (the previous run; its last line says whether it stopped cleanly) ---", 20),
             ("memory.txt", "--- extension memory (current run, or the last one if the tunnel is down) ---", 20),
+            ("goroutines.txt", "--- extension goroutines, one line a minute: what the count is made of (olcbox#26) ---", 12),
         ] {
             guard let text = try? String(
                 contentsOf: container.appendingPathComponent(name), encoding: .utf8

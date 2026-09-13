@@ -32,6 +32,7 @@ public struct Logger: Sendable {
 }
 // Cores, the Go bind.
 public func MobileMemoryStats() -> String { "" }
+public func MobileGoroutineSummary() -> String { "" }
 public func MobileFreeOSMemory() {}
 public func os_proc_available_memory() -> Int { 0 }
 // Mach task info.
