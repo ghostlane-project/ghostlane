@@ -676,6 +676,22 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         return body.isEmpty ? nil : title + "\n" + body.joined(separator: "\n")
     }
 
+    /// The diagnostics of the run that was killed, titled with when it was
+    /// last written so an old death is not mistaken for today's.
+    private static func deadRunTrace(container: URL, name: String) -> String? {
+        let url = container.appendingPathComponent(name)
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        var when = "date unknown"
+        if let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date {
+            let formatter = ISO8601DateFormatter()
+            when = "last written " + formatter.string(from: modified)
+        }
+        return "--- tunnel diagnostics: THE RUN THAT DIED, killed without stopTunnel (\(when); kept until the next death) ---\n"
+            + text + "--- end of the run that died ---"
+    }
+
     func engineLog() -> String {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: Self.appGroupId
@@ -684,7 +700,16 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         // other two write to stderr, which lands in engine.log.
         // The previous run's trace first: its last line is why the tunnel
         // stopped, and that run is the one worth reading.
-        var both = [
+        // The run that died first, ahead of the previous and the current one.
+        // The extension keeps a run that ended without stopTunnel under the
+        // `-crash` name, through every clean restart after it, because the
+        // reconnect and a couple of transport switches were enough to rotate
+        // the interesting trace out of `-prev` before anyone exported it.
+        var both: [String] = []
+        if let died = Self.deadRunTrace(container: container, name: "network-diagnostics-crash.log") {
+            both.append(died)
+        }
+        both += [
             "network-diagnostics-prev.log", "network-diagnostics.log", "olcrtc.log", "engine.log",
         ].compactMap { name -> String? in
             try? String(
@@ -717,8 +742,9 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         // enough to show a curve, not a point.
         for (name, title, tail) in [
             ("app-memory.txt", "--- app memory: transitions, foreground ticks, delayed background samples ---", 80),
-            ("memory-prev.txt", "--- extension memory (the run that ended) ---", 20),
-            ("memory.txt", "--- extension memory (current run) ---", 20),
+            ("memory-crash.txt", "--- extension memory: THE RUN THAT DIED, killed without stopTunnel (kept until the next death) ---", 20),
+            ("memory-prev.txt", "--- extension memory (the previous run; its last line says whether it stopped cleanly) ---", 20),
+            ("memory.txt", "--- extension memory (current run, or the last one if the tunnel is down) ---", 20),
         ] {
             guard let text = try? String(
                 contentsOf: container.appendingPathComponent(name), encoding: .utf8

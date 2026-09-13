@@ -64,6 +64,7 @@ enum MemoryWatch {
     nonisolated(unsafe) private static var peak: UInt64 = 0
     nonisolated(unsafe) private static var started = Date()
     nonisolated(unsafe) private static var note = "start"
+    nonisolated(unsafe) private static var currentFile: URL?
 
     private static let log = Logger(subsystem: "org.proofkit.app", category: "memory")
 
@@ -88,12 +89,24 @@ enum MemoryWatch {
             // The app's own death message read the file in time; an exported
             // log, which is what a tester actually sends, arrived afterwards
             // and carried five seconds of a healthy new process instead.
+            //
+            // One previous run was not enough either. On 2026-09-13 the olcRTC
+            // run died under a speed test, the app reconnected, the user then
+            // switched transport twice, and by the time the log was exported
+            // "the run that ended" was a healthy Hysteria2 session; the trace
+            // of the death had been rotated out three restarts earlier. So a
+            // run that ended without `stop()` — killed, never told — is kept
+            // under its own name and survives every clean restart after it,
+            // until the next death replaces it.
             let previous = container.appendingPathComponent("memory-prev.txt")
+            let crashed = container.appendingPathComponent("memory-crash.txt")
             let files = FileManager.default
             if files.fileExists(atPath: file.path) {
-                try? files.removeItem(at: previous)
-                try? files.moveItem(at: file, to: previous)
+                let keepAs = endedCleanly(file) ? previous : crashed
+                try? files.removeItem(at: keepAs)
+                try? files.moveItem(at: file, to: keepAs)
             }
+            currentFile = file
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: interval)
             source.setEventHandler { sample(into: file) }
@@ -103,12 +116,32 @@ enum MemoryWatch {
         }
     }
 
+    /// The last line a run that stopped on purpose writes. Its absence from a
+    /// trace is the whole finding: the process was killed without being told.
+    static let stoppedMarker = "stopped cleanly"
+
     static func stop() {
         guard enabled else { return }
         queue.async {
             timer?.cancel()
             timer = nil
+            // Written last, so a restart can tell this run from one that was
+            // killed. The file this belongs to is the one `sample` writes.
+            guard let file = currentFile else { return }
+            samples.append(String(
+                format: "%7.2fs  %@", Date().timeIntervalSince(started), stoppedMarker
+            ))
+            if samples.count > window { samples.removeFirst(samples.count - window) }
+            let text = samples.joined(separator: "\n") + "\n"
+            try? Data(text.utf8).write(to: file, options: .atomic)
         }
+    }
+
+    /// Whether the trace at `file` ends with the marker `stop()` writes.
+    static func endedCleanly(_ file: URL) -> Bool {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return false }
+        let last = text.split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return last?.contains(stoppedMarker) ?? false
     }
 
     /// One sample: what the system charges the process, and what the Go runtime
