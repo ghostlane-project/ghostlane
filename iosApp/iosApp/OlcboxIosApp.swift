@@ -57,13 +57,97 @@ private struct ComposeHostView: UIViewControllerRepresentable {
     let appSession: IosAppSession
 
     func makeUIViewController(context: Context) -> UIViewController {
-        let controller = appSession.createViewController()
-        platformBridge.presenter = controller
-        return controller
+        let host = ComposeSceneHost(compose: appSession.createViewController())
+        platformBridge.presenter = host
+        return host
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
         platformBridge.presenter = uiViewController
+    }
+}
+
+/// Hosts the Compose view controller and takes its view out of the window
+/// while the app is in the background.
+///
+/// olcbox#24, measured on 1.0.420 with the delayed samples: in the background
+/// the app drops from about 260 MB to about 200 MB within three seconds and
+/// then stays there. The extension that carries the tunnel is killed by the
+/// system at 45 MB during a speed test with 5 MB of its own allowance unused,
+/// after a burst of `memory pressure critical` — and while it dies this app is
+/// the largest thing on the phone that we control, holding those 200 MB of
+/// Skia surfaces, drawables and Metal driver memory behind a screen nobody is
+/// looking at.
+///
+/// Compose Multiplatform 1.12 frees all of it in exactly one situation: when
+/// the Compose view leaves the window, its hosting controller disposes the
+/// scene — Metal context, Skia caches, drawables — and re-creates it when the
+/// view comes back, restoring `rememberSaveable` state through `savedState`.
+/// Plain `remember {}` state does not survive: the app returns on its home
+/// screen with any sheet closed, which is also where it starts. The view models
+/// live outside the composition and keep everything that matters.
+///
+/// A snapshot of the last frame stands in for the view meanwhile, so the app
+/// switcher and the first moment after returning show what was there.
+final class ComposeSceneHost: UIViewController {
+    private let compose: UIViewController
+    private var placeholder: UIView?
+    private var observers: [NSObjectProtocol] = []
+
+    init(compose: UIViewController) {
+        self.compose = compose
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        attachCompose()
+        let centre = NotificationCenter.default
+        observers = [
+            centre.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+            ) { [weak self] _ in MainActor.assumeIsolated { self?.detachCompose() } },
+            centre.addObserver(
+                forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil
+            ) { [weak self] _ in MainActor.assumeIsolated { self?.attachCompose() } },
+        ]
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    private func attachCompose() {
+        guard compose.parent == nil else { return }
+        addChild(compose)
+        compose.view.frame = view.bounds
+        compose.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // Under the snapshot, which stays on top until the scene has drawn.
+        view.insertSubview(compose.view, at: 0)
+        compose.didMove(toParent: self)
+        guard let placeholder else { return }
+        self.placeholder = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            placeholder.removeFromSuperview()
+        }
+    }
+
+    private func detachCompose() {
+        guard compose.parent != nil else { return }
+        if let snapshot = compose.view.snapshotView(afterScreenUpdates: false) {
+            snapshot.frame = view.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            placeholder?.removeFromSuperview()
+            view.addSubview(snapshot)
+            placeholder = snapshot
+        }
+        compose.willMove(toParent: nil)
+        compose.view.removeFromSuperview()
+        compose.removeFromParent()
     }
 }
 
