@@ -225,21 +225,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // that one runtime, and WebRTC is not the cheap one.
             LibboxSetMemoryLimit(true)
 
-            // After libbox, never before: LibboxSetMemoryLimit sets the very
-            // ceiling being replaced here, so a call ahead of it is simply
-            // overwritten. Its 45 MB is above where this process actually dies
-            // — three traces from a phone show the kill at 46.0, 47.5 and
-            // 47.5 MB of footprint, since the footprint counts what the Go heap
-            // does not. A ceiling above the kill is not a ceiling.
-            //
-            // Measured on the upload that breaks it: peak 38.0 MB unlimited,
-            // 26.0 MB at 32 MiB, throughput unchanged. 28 MiB because Vless
-            // runs higher than olcRTC and 32 would still sit above it.
-            MobileSetMemoryLimit(Self.goMemoryLimit)
-            NetworkDiagnostics.record(
-                "go memory limit \(Self.goMemoryLimit / 1_048_576) MB (libbox default replaced)"
-            )
-
             // Setup initializes libbox's UID/GID. Redirecting before it attempts
             // chown with zero-valued IDs and fails with EPERM on iOS. In this
             // libbox version RedirectStderr configures Go crash output; regular
@@ -265,6 +250,32 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 mark("olcrtc")
                 try OlcrtcEngine.start(olcrtc, resolvers: resolvers)
             }
+
+            // After every engine has started, never before. Two of them set a
+            // ceiling of their own on the one runtime they share, and the last
+            // call wins:
+            //
+            //   * LibboxSetMemoryLimit above sets 45 MB. That is above where
+            //     this process actually dies — three traces from a phone show
+            //     the kill at 46.0, 47.5 and 47.5 MB of footprint, since the
+            //     footprint counts what the Go heap does not. A ceiling above
+            //     the kill is not a ceiling.
+            //   * libXray's `runXrayFromJson` calls its `memory.InitForceFree`,
+            //     which sets 30 MiB and GC percent 10, and starts a goroutine
+            //     that returns memory to the OS once a second. 30 MiB sits
+            //     below what the runtime genuinely holds under a speed test
+            //     (44.6 MB of `sys` minus `rel` in the 1.0.423 trace), so
+            //     every xhttp session ran on the treadmill 1.0.416 was meant
+            //     to end: `heap 26.9/30.0`, fifty collections a second, and
+            //     the kill at 46.8 MB anyway. Nothing stops that goroutine;
+            //     the limit it set is what this call replaces.
+            //
+            // The trace prints the limit in force on every line, so a build
+            // that gets this order wrong says so in its first sample.
+            MobileSetMemoryLimit(Self.goMemoryLimit)
+            NetworkDiagnostics.record(
+                "go memory limit \(MobileMemoryLimit() / 1_048_576) MB in force (libbox and libXray defaults replaced)"
+            )
             mark("service")
 
             // The platform object is what libbox calls back into; openTun is where
