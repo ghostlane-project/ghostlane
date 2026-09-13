@@ -107,7 +107,15 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # than climbing. Not olcRTC's appetite either: the same phone on Hysteria2, with
 # olcRTC never started, sat at 34.8 MB peaking 39.2 MB. One runtime carries all
 # three engines, so one limit covers them.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913163042-b1e319e1d2bc}"
+#
+# b1e319e1d2bc -> 43a3492f63a8: the server's next session no longer vouches for
+# the one it closed (liveness counts payload on our own streams, three excused
+# probes instead of eighteen; olcbox#25), a half-open connection that has gone
+# silent is closed after a minute instead of kept for the session, and the
+# goroutines are named once a minute (olcbox#26); handshake frames are one
+# Write each; NACK responder 256; and the olcrtc_lean tag this build now
+# passes, which leaves videochannel and livekit out of the bind.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913184055-43a3492f63a8}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -144,7 +152,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913163042-b1e319e1d2bc}"
 #
 # 12 → 13: olcRTC moved and its API changed shape (mobile.Runtime instead of
 # package functions); every bridge in the app was rewritten for it.
-CORES_BUILD="${CORES_BUILD:-18}"
+CORES_BUILD="${CORES_BUILD:-19}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
