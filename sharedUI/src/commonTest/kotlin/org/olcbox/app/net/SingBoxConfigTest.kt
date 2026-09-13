@@ -241,6 +241,23 @@ class SingBoxConfigTest {
         TransportSpec.Xhttp("/dl", "sni.x", "packet-up"), "T"
     )
 
+    @Test fun xhttpBoundsWhatXrayBuffersPerUploadingConnection() {
+        // The iOS tunnel extension has ~50 MB for everything. Xray's default
+        // packet-up chunk of 1,000,000 bytes means ~2 MB buffered per uploading
+        // connection, and a speed test's upload phase opens ten to twenty at
+        // once: the trace of 1.0.423 shows that as +15 MB in 0.75 s, straight
+        // into the kill. The chunk must stay small enough that twenty
+        // connections fit in a few megabytes.
+        val json = Json.parseToJsonElement(XrayConfig.buildXhttp(xhttp())).jsonObject
+        val xhttp = json["outbounds"]!!.jsonArray[0].jsonObject["streamSettings"]!!
+            .jsonObject["xhttpSettings"]!!.jsonObject
+        val chunk = xhttp["scMaxEachPostBytes"]!!.jsonPrimitive.content.toInt()
+        assertEquals(XrayConfig.XHTTP_MAX_EACH_POST_BYTES, chunk)
+        assertTrue(chunk in 65_536..262_144, "chunk $chunk: 20 connections must fit in ~8 MB, one stream must still upload fast")
+        // Xray parses this field as an Int32Range: a bare number is one value.
+        assertTrue(xhttp["scMaxEachPostBytes"]!!.jsonPrimitive.isString.not())
+    }
+
     @Test fun buildOutputIsValidJson() {
         // toString() of the built object must parse back cleanly.
         val parsed = Json.parseToJsonElement(SingBoxConfig.build(vless()))
