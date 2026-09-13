@@ -71,7 +71,6 @@
 
         <activity
             android:name="org.olcbox.app.ui.activities.QrScannerActivity"
-            android:screenOrientation="portrait"
             android:exported="false" />
 
         <provider

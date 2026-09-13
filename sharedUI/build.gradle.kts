@@ -342,6 +342,9 @@ kotlin {
             implementation(libs.androidx.camera.core)
             implementation(libs.androidx.camera.lifecycle)
             implementation(libs.androidx.camera.view)
+            // See androidx-appcompat / androidx-fragment in libs.versions.toml.
+            implementation(libs.androidx.appcompat)
+            implementation(libs.androidx.fragment)
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kstore.file)

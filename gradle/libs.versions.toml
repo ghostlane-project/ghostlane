@@ -8,6 +8,11 @@ agp = "9.4.0"
 androidx-activityCompose = "1.13.0"
 androidx-core = "1.19.0"
 androidx-camera = "1.6.1"
+# Pinned directly: camera-view 1.6.1 declares appcompat 1.1.0, which drags
+# fragment 1.1.0 (2019) into the app and gets flagged by Play as outdated and
+# as the source of deprecated edge-to-edge window calls.
+androidx-appcompat = "1.8.0"
+androidx-fragment = "1.9.0"
 kermit = "2.2.0"
 kotlinx-coroutines = "1.11.0"
 ktor = "3.5.2"
@@ -38,6 +43,8 @@ androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.r
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "androidx-camera" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+androidx-fragment = { module = "androidx.fragment:fragment", version.ref = "androidx-fragment" }
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
