@@ -476,8 +476,12 @@ jobs:
 
           chmod +x "$dest/sing-box" "$dest/xray"
           echo "== bundled cores =="; ls -la "$dest"
-          "$dest/sing-box" version | head -1
-          "$dest/xray" version | head -1
+          # sed, not head: both cores print several lines in separate writes,
+          # and head closing the pipe after the first one hands the core a
+          # SIGPIPE - exit 141 under pipefail, at random, which failed the
+          # 1.0.421 Linux build. sed -n 1p reads everything and prints one.
+          "$dest/sing-box" version | sed -n 1p
+          "$dest/xray" version | sed -n 1p
 
       - name: Sign the bundled cores
         working-directory: olcbox
@@ -657,8 +661,12 @@ jobs:
           install -m 0755 "$(find xr-x -type f -name xray | head -1)" "$dest/xray"
 
           echo "== bundled cores =="; ls -la "$dest"
-          "$dest/sing-box" version | head -1
-          "$dest/xray" version | head -1
+          # sed, not head: both cores print several lines in separate writes,
+          # and head closing the pipe after the first one hands the core a
+          # SIGPIPE - exit 141 under pipefail, at random, which failed the
+          # 1.0.421 Linux build. sed -n 1p reads everything and prints one.
+          "$dest/sing-box" version | sed -n 1p
+          "$dest/xray" version | sed -n 1p
 
       - name: Build Linux AppImage
         working-directory: olcbox
