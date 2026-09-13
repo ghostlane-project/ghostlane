@@ -625,10 +625,13 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         // killed is followed by a restart, so by the time anyone exports a log
         // the live trace describes a healthy new process and the dead one is
         // only in memory-prev.txt.
-        for (name, title) in [
-            ("app-memory.txt", "--- app memory, by transition ---"),
-            ("memory-prev.txt", "--- extension memory (the run that ended) ---"),
-            ("memory.txt", "--- extension memory (current run) ---"),
+        // The app's own trace is longer: a foreground tick every few seconds
+        // (written when the figure moves), so its tail has to reach back far
+        // enough to show a curve, not a point.
+        for (name, title, tail) in [
+            ("app-memory.txt", "--- app memory: transitions, foreground ticks, delayed background samples ---", 80),
+            ("memory-prev.txt", "--- extension memory (the run that ended) ---", 20),
+            ("memory.txt", "--- extension memory (current run) ---", 20),
         ] {
             guard let text = try? String(
                 contentsOf: container.appendingPathComponent(name), encoding: .utf8
@@ -637,7 +640,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-                .suffix(20)
+                .suffix(tail)
             if !tail.isEmpty {
                 both.append(title + "\n" + tail.joined(separator: "\n"))
             }
@@ -666,7 +669,9 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 /// every process, so the app can simply read them — and because the interface is
 /// created when the tunnel comes up, "since the interface appeared" is exactly
 /// "this session".
-/// Records what the *app* holds, on the transitions that matter.
+/// Records what the *app* holds: at the transitions that matter, on a slow
+/// clock while it is in the foreground, and a few seconds after it has gone
+/// to the background.
 ///
 /// The extension is not what runs out of memory. 1.0.416 died 0.1 s after the
 /// device reported critical memory pressure, at 34.7 MB of footprint with
@@ -675,64 +680,218 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 /// packet tunnel provider is an early choice when that happens.
 ///
 /// So the question moved to what else on the phone is holding memory, and the
-/// largest thing we control is this process. Instruments measured 136 MB here,
-/// of which 119 MB is anonymous VM and 44 MB is IOSurface — graphics, four
-/// times the whole extension.
+/// largest thing we control is this process. Instruments measured 136 MB here
+/// at rest, of which 119 MB is anonymous VM and 44 MB is IOSurface — graphics,
+/// four times the whole extension — and the release build holds 205 MB in the
+/// foreground after real use (olcbox#24).
 ///
-/// What Instruments cannot say is whether any of that survives being
-/// backgrounded, which is the only state that matters: during a speed test this
-/// app is behind Ookla. A suspended app gets no runtime, so it cannot sample
-/// itself; two samples bracketing the gap answer it instead. If the figure on
-/// the way back in is still near the one on the way out, the memory survived
-/// suspension and freeing it is worth doing.
+/// Two questions decide what to do about it, and both are answered by sampling
+/// rather than by reasoning; the two changes made by reasoning on 2026-09-13
+/// were both regressions.
+///
+/// 1. Does any of it go away once the app is really in the background? A
+///    sample taken *at* the transition cannot say: the system is rendering the
+///    app-switcher snapshot at that moment, which is why the figure there is
+///    270 MB. So the transition sample is followed by two delayed ones, made
+///    possible by a short background task; after that the app is suspended
+///    and cannot sample itself.
+/// 2. Does it grow without bound while the app is used? A tick every few
+///    seconds in the foreground, written only when the figure moves, turns an
+///    ordinary exported log into that curve.
+///
+/// Every line also carries the memory pressure level as this process receives
+/// it, so the same log says whether the pressure the extension dies under is
+/// present while this app holds its 200 MB. The memory warning is still only
+/// recorded, not acted on: there is nothing to free by reasoning (the heap is
+/// 17 MB of the 136), and Compose Multiplatform 1.12 keeps its Skia
+/// `DirectContext` private, drains its drawables only when the Metal view
+/// leaves the window, and handles no memory warning of its own.
 enum AppMemoryWatch {
 
     private static let appGroup = "group.org.proofkit.app"
     private static let queue = DispatchQueue(label: "org.proofkit.app-memory")
-    nonisolated(unsafe) private static var observers: [NSObjectProtocol] = []
+    private static let launched = Date()
 
-    /// Keeps the file to a few kilobytes. Each line is one transition, so this
-    /// is dozens of foreground/background cycles.
-    private static let window = 40
+    /// Every mutable field below is touched only on `queue`, which is what
+    /// makes `nonisolated(unsafe)` true rather than merely quiet.
+    nonisolated(unsafe) private static var observers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private static var timer: DispatchSourceTimer?
+    nonisolated(unsafe) private static var pressure: DispatchSourceMemoryPressure?
+    nonisolated(unsafe) private static var pressureLevel = "normal"
+    nonisolated(unsafe) private static var inBackground = false
+    nonisolated(unsafe) private static var lastWritten: (at: Date, bytes: UInt64)?
+
+    /// Foreground cadence, and how far a tick has to move from the last line
+    /// written to earn a line of its own. A heartbeat goes out once a minute
+    /// regardless, so a flat curve is visibly flat rather than absent.
+    private static let tickInterval: TimeInterval = 5
+    private static let tickDelta: UInt64 = 3 * 1_048_576
+    private static let tickHeartbeat: TimeInterval = 60
+
+    /// Seconds after `didEnterBackground` to sample again. The app-switcher
+    /// snapshot is long done by the first; the second says whether the figure
+    /// is still falling. Both fit comfortably inside what a background task
+    /// buys, which is about thirty seconds.
+    private static let backgroundDelays: [TimeInterval] = [3, 8]
+
+    /// Keeps the file to a few tens of kilobytes: at the foreground cadence
+    /// that is well over half an hour of a busy session, far more of a quiet
+    /// one.
+    private static let window = 400
 
     static func start() {
         queue.async {
             guard observers.isEmpty else { return }
             let centre = NotificationCenter.default
-            let watch: [(NSNotification.Name, String)] = [
-                (UIApplication.didEnterBackgroundNotification, "background"),
-                (UIApplication.willEnterForegroundNotification, "foreground"),
-                (UIApplication.didReceiveMemoryWarningNotification, "memory-warning"),
+            observers = [
+                centre.addObserver(
+                    forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+                ) { _ in enteredBackground() },
+                centre.addObserver(
+                    forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil
+                ) { _ in enteredForeground() },
+                centre.addObserver(
+                    forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil
+                ) { _ in record("memory-warning") },
             ]
-            observers = watch.map { name, label in
-                centre.addObserver(forName: name, object: nil, queue: nil) { _ in
-                    record(label)
-                }
-            }
+            armPressureSource()
             record("launch")
+            startTicking()
         }
     }
 
-    private static func record(_ event: String) {
-        let line = String(
-            format: "%@  app footprint %6.1f MB  %@",
-            ISO8601DateFormatter().string(from: Date()),
-            Double(footprintBytes()) / 1_048_576,
-            event
-        )
+    // MARK: Transitions
+
+    private static func enteredBackground() {
         queue.async {
-            guard let container = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: appGroup
-            ) else { return }
-            let file = container.appendingPathComponent("app-memory.txt")
-            var lines = (try? String(contentsOf: file, encoding: .utf8))?
-                .split(separator: "\n")
-                .map(String.init) ?? []
-            lines.append(line)
-            if lines.count > window { lines.removeFirst(lines.count - window) }
-            try? Data((lines.joined(separator: "\n") + "\n").utf8)
-                .write(to: file, options: .atomic)
+            inBackground = true
+            stopTicking()
+            record("background")
         }
+        // The delayed samples need a process that is still running. A
+        // background task holds it for that long; the last sample ends it,
+        // and so does the system if it runs out of patience first.
+        Task { @MainActor in
+            let hold = BackgroundHold()
+            guard hold.begin("app-memory") else { return }
+            for delay in backgroundDelays {
+                queue.asyncAfter(deadline: .now() + delay) {
+                    guard inBackground else { return }
+                    record("background+\(Int(delay))s")
+                }
+            }
+            let last = backgroundDelays.max() ?? 0
+            queue.asyncAfter(deadline: .now() + last + 0.5) {
+                Task { @MainActor in hold.end() }
+            }
+        }
+    }
+
+    private static func enteredForeground() {
+        queue.async {
+            inBackground = false
+            record("foreground")
+            startTicking()
+        }
+    }
+
+    /// A background task that its own expiration handler can end.
+    @MainActor
+    private final class BackgroundHold {
+        private var id = UIBackgroundTaskIdentifier.invalid
+
+        func begin(_ name: String) -> Bool {
+            id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+                MainActor.assumeIsolated { self?.end() }
+            }
+            return id != .invalid
+        }
+
+        func end() {
+            guard id != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(id)
+            id = .invalid
+        }
+    }
+
+    // MARK: Foreground ticks
+
+    private static func startTicking() {
+        guard timer == nil else { return }
+        let source = DispatchSource.makeTimerSource(queue: queue)
+        source.schedule(deadline: .now() + tickInterval, repeating: tickInterval, leeway: .seconds(1))
+        source.setEventHandler { tick() }
+        timer = source
+        source.resume()
+    }
+
+    private static func stopTicking() {
+        timer?.cancel()
+        timer = nil
+    }
+
+    private static func tick() {
+        guard !inBackground else { return }
+        let bytes = footprintBytes()
+        if let last = lastWritten {
+            let moved = bytes > last.bytes ? bytes - last.bytes : last.bytes - bytes
+            if moved < tickDelta, Date().timeIntervalSince(last.at) < tickHeartbeat { return }
+        }
+        write(bytes: bytes, event: "tick")
+    }
+
+    // MARK: Pressure
+
+    private static func armPressureSource() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: queue
+        )
+        source.setEventHandler {
+            // Read through the static rather than capturing the source: the
+            // handler is owned by the source, and capturing it here is a
+            // cycle that outlives cancellation.
+            let event = pressure?.data ?? []
+            pressureLevel = event.contains(.critical) ? "critical"
+                : event.contains(.warning) ? "warning" : "normal"
+            record("pressure-\(pressureLevel)")
+        }
+        pressure = source
+        source.resume()
+    }
+
+    // MARK: Lines
+
+    /// One line for an event, sampled on `queue` so the level and the last
+    /// written figure are read where they are written.
+    private static func record(_ event: String) {
+        queue.async { write(bytes: footprintBytes(), event: event) }
+    }
+
+    private static func write(bytes: UInt64, event: String) {
+        lastWritten = (Date(), bytes)
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let figures = String(
+            format: "%7.1fs  app footprint %6.1f MB",
+            Date().timeIntervalSince(launched), Double(bytes) / 1_048_576
+        )
+        let label = event.padding(toLength: 16, withPad: " ", startingAt: 0)
+        append("\(stamp)  \(figures)  \(label)  pressure=\(pressureLevel)")
+    }
+
+    /// Appends one line to the file the log export reads, keeping the last
+    /// `window` lines.
+    private static func append(_ line: String) {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroup
+        ) else { return }
+        let file = container.appendingPathComponent("app-memory.txt")
+        var lines = (try? String(contentsOf: file, encoding: .utf8))?
+            .split(separator: "\n")
+            .map(String.init) ?? []
+        lines.append(line)
+        if lines.count > window { lines.removeFirst(lines.count - window) }
+        try? Data((lines.joined(separator: "\n") + "\n").utf8)
+            .write(to: file, options: .atomic)
     }
 
     /// `phys_footprint`, the same figure the system enforces limits against and
