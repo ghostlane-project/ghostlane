@@ -57,7 +57,11 @@ private struct ComposeHostView: UIViewControllerRepresentable {
     let appSession: IosAppSession
 
     func makeUIViewController(context: Context) -> UIViewController {
-        let host = ComposeSceneHost(compose: appSession.createViewController())
+        let session = appSession
+        let host = ComposeSceneHost(
+            makeCompose: { session.createViewController() },
+            collectGarbage: { session.collectGarbage() }
+        )
         platformBridge.presenter = host
         return host
     }
@@ -67,8 +71,8 @@ private struct ComposeHostView: UIViewControllerRepresentable {
     }
 }
 
-/// Hosts the Compose view controller and takes its view out of the window
-/// while the app is in the background.
+/// Hosts the Compose view controller and lets go of it while the app is in
+/// the background.
 ///
 /// olcbox#24, measured on 1.0.420 with the delayed samples: in the background
 /// the app drops from about 260 MB to about 200 MB within three seconds and
@@ -79,26 +83,46 @@ private struct ComposeHostView: UIViewControllerRepresentable {
 /// Skia surfaces, drawables and Metal driver memory behind a screen nobody is
 /// looking at.
 ///
-/// Compose Multiplatform 1.12 frees all of it in exactly one situation: when
-/// the Compose view leaves the window, its hosting controller disposes the
-/// scene — Metal context, Skia caches, drawables — and re-creates it when the
-/// view comes back, restoring `rememberSaveable` state through `savedState`.
-/// Plain `remember {}` state does not survive: the app returns on its home
-/// screen with any sheet closed, which is also where it starts. The view models
-/// live outside the composition and keep everything that matters.
+/// 1.0.423 took the Compose view out of the window and kept the controller,
+/// counting on Compose Multiplatform 1.12 to dispose the scene — it does, when
+/// its view leaves the window — and on that disposal to free the graphics. The
+/// next log said it did not: the delayed samples read 180–215 MB, the same as
+/// before, while the *foreground* sample after a long background stretch twice
+/// read 122–128 MB. So the memory does go, only not when the scene is
+/// disposed: the Kotlin objects that own the Metal layer, the Skia context and
+/// the drawables are unreachable from then on but stay allocated until
+/// Kotlin/Native's collector runs, and a backgrounded app that allocates
+/// nothing gives it no reason to. The foreground allocations of the new scene
+/// were what finally triggered it, which is why the drop showed up there.
+///
+/// So now the controller itself is dropped in the background and built afresh
+/// on return, and the Kotlin/Native collector is asked to run twice after the
+/// drop: once after CMP's half-second drawable drain, once more just before
+/// the +3 s sample, so the export answers whether this was the reason.
+/// Plain `remember {}` state does not survive, as before: the app returns on
+/// its home screen with any sheet closed, which is also where it starts. The
+/// view models live outside the composition and keep everything that matters.
 ///
 /// A snapshot of the last frame stands in for the view meanwhile, so the app
 /// switcher and the first moment after returning show what was there.
 final class ComposeSceneHost: UIViewController {
-    private let compose: UIViewController
+    private let makeCompose: () -> UIViewController
+    private let collectGarbage: () -> Void
+    private var compose: UIViewController?
     private var placeholder: UIView?
     // Written once in viewDidLoad on the main actor and read by deinit, which
     // is nonisolated and may not touch main-actor state of a non-Sendable
     // type; the tokens are only ever handed back to NotificationCenter.
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
-    init(compose: UIViewController) {
-        self.compose = compose
+    /// Seconds after the drop at which the collector is asked to run. The
+    /// first is past CMP's 500 ms drawable drain; the second lands before the
+    /// app's +3 s memory sample so that sample reflects the collection.
+    private static let collectAfter: [TimeInterval] = [0.7, 2.5]
+
+    init(makeCompose: @escaping () -> UIViewController, collectGarbage: @escaping () -> Void) {
+        self.makeCompose = makeCompose
+        self.collectGarbage = collectGarbage
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -125,7 +149,9 @@ final class ComposeSceneHost: UIViewController {
     }
 
     private func attachCompose() {
-        guard compose.parent == nil else { return }
+        guard compose == nil else { return }
+        let compose = makeCompose()
+        self.compose = compose
         addChild(compose)
         compose.view.frame = view.bounds
         compose.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -140,7 +166,7 @@ final class ComposeSceneHost: UIViewController {
     }
 
     private func detachCompose() {
-        guard compose.parent != nil else { return }
+        guard let compose else { return }
         if let snapshot = compose.view.snapshotView(afterScreenUpdates: false) {
             snapshot.frame = view.bounds
             snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -151,6 +177,11 @@ final class ComposeSceneHost: UIViewController {
         compose.willMove(toParent: nil)
         compose.view.removeFromSuperview()
         compose.removeFromParent()
+        self.compose = nil
+        let collect = collectGarbage
+        for delay in Self.collectAfter {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { collect() }
+        }
     }
 }
 

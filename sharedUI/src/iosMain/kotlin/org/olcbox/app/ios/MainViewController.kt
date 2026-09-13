@@ -29,6 +29,8 @@ import org.olcbox.app.net.transportKind
 import org.olcbox.app.update.AppUpdateSettings
 import org.olcbox.app.vpn.IosVpnManager
 import platform.UIKit.UIViewController
+import kotlin.native.runtime.GC
+import kotlin.native.runtime.NativeRuntimeApi
 
 class IosAppFactory {
     fun createSession(
@@ -78,6 +80,24 @@ class IosAppSession internal constructor(
             },
             onError = { message -> platformBridge.showMessage(message) }
         )
+    }
+
+    /**
+     * Runs the Kotlin/Native collector now, on the caller's thread.
+     *
+     * The iOS host drops the Compose view controller when the app goes to the
+     * background (olcbox#24). Everything the scene owned — the Metal layer,
+     * the Skia context, the drawables — is unreachable from that moment, but
+     * unreachable is not freed: it stays allocated until the collector runs,
+     * and a backgrounded app that allocates nothing gives it no reason to run.
+     * The 1.0.423 samples showed exactly that, 180–215 MB still held three and
+     * eight seconds into the background, gone only once the foreground began
+     * allocating again. This is the host asking for the collection it would
+     * otherwise wait for.
+     */
+    @OptIn(NativeRuntimeApi::class)
+    fun collectGarbage() {
+        GC.collect()
     }
 
     fun close() {

@@ -49,7 +49,7 @@ public final class NSCoder {}
 SHIM
 {
   printf 'import Foundation\nimport Dispatch\n\n'
-  sed -n '/^\/\/\/ Hosts the Compose view controller and takes its view out of the window/,/^@MainActor$/p' "$root/iosApp/iosApp/OlcboxIosApp.swift" | sed '$d'
+  sed -n '/^\/\/\/ Hosts the Compose view controller and lets go of it while the app is in/,/^@MainActor$/p' "$root/iosApp/iosApp/OlcboxIosApp.swift" | sed '$d'
 } > "$work/ComposeSceneHost.swift"
 grep -q '^final class ComposeSceneHost' "$work/ComposeSceneHost.swift" || { echo "ComposeSceneHost not found between its markers"; exit 1; }
 for mode in 5 6; do
