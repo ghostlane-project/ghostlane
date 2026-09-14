@@ -34,11 +34,35 @@ enum XrayEngine {
         let error: String?
     }
 
+    /// The HTTP/2 receive windows of the xhttp client, in bytes, per stream
+    /// and per connection.
+    ///
+    /// x/net's defaults are 4 MB per stream and 1 GB per connection, and a
+    /// speed test's download phase fills them: every connection is a stream,
+    /// the server sends as far ahead as the window allows, and the tun path
+    /// on a phone drains slower than the link. That is the 1.0.424 death -
+    /// heap 14 to 29 MB in five seconds, footprint 30 to 49.8, killed. On
+    /// the harness with the phone's collector settings, sixteen stalled
+    /// downloads took an unbounded client to 104 MB and one with these
+    /// windows to 46 (live heap 10 MB instead of 68). The cost is per-stream
+    /// rate, window over round trip: 512 KB at 60 ms is ~70 Mbit/s for one
+    /// stream, and a speed test spreads over eight or more. The per-connection
+    /// window bounds the streams xmux puts on one h2 connection together.
+    ///
+    /// Read by the Cores build's patched Xray (scripts/patches/
+    /// xray-core-h2-window.patch) through Go's own environment: a C setenv
+    /// from here is invisible to Go, which copies the environment once, so
+    /// the value goes through CoresSetenv, i.e. os.Setenv, before Xray starts.
+    static let h2StreamWindow = 524_288
+    static let h2ConnWindow = 1_048_576
+
     /// Starts Xray with a complete config. Throws with libXray's own message,
     /// which names the offending field when a config is wrong.
     static func start(configJSON: String) throws {
+        try CoresSetenv("XRAY_XHTTP_H2_STREAM_WINDOW", String(h2StreamWindow))
+        try CoresSetenv("XRAY_XHTTP_H2_CONN_WINDOW", String(h2ConnWindow))
         try invoke(method: "runXrayFromJson", payload: ["configJSON": configJSON])
-        log.info("xray started, config \(configJSON.count, privacy: .public) bytes")
+        log.info("xray started, config \(configJSON.count, privacy: .public) bytes, h2 windows \(h2StreamWindow, privacy: .public)/\(h2ConnWindow, privacy: .public)")
     }
 
     static func stop() {
