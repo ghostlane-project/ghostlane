@@ -338,9 +338,12 @@ class IosVpnManager(
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
         val request = packetTunnelRequest(location) ?: return
+        // What the extension actually runs: xhttp is Xray behind
+        // hev-socks5-tunnel since 1.0.425 (docs/ios-one-go-runtime.md); olcRTC
+        // still sits behind sing-box; the rest is sing-box alone.
         val engine = when {
             request.olcrtc != null -> "olcrtc+sing-box"
-            request.xrayConfig != null -> "xray+sing-box"
+            request.xrayConfig != null -> "xray+hev"
             else -> "sing-box"
         }
         addLog("Starting packet tunnel, transport=${location.kind}, engine=$engine")
