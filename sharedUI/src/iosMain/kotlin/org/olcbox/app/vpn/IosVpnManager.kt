@@ -41,6 +41,7 @@ import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.net.XrayConfig
+import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.ios.IosOlcRtcBridge
 import org.olcbox.app.ios.IosOlcRtcCheckRequest
 import org.olcbox.app.ios.IosOlcRtcStartRequest
@@ -433,7 +434,18 @@ class IosVpnManager(
         // hysteria2 are native sing-box outbounds with no second core involved.
         val vless = spec as? OutboundSpec.Vless
         val xrayConfig = if (vless != null && vless.transport is TransportSpec.Xhttp) {
-            XrayConfig.buildXhttp(vless)
+            // Since 1.0.425 the extension puts hev-socks5-tunnel, not sing-box,
+            // in front of Xray on this path (docs/ios-one-go-runtime.md), so
+            // Xray is the only router there: it answers the tun's DNS and
+            // carries the Bypass Russia lists inline. The sing-box config
+            // below is still written for the extension's other arrangement
+            // and is unused on this one.
+            XrayConfig.buildXhttp(
+                vless,
+                routing = routing,
+                geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                answersDns = true,
+            )
         } else {
             null
         }
