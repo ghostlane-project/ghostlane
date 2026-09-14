@@ -117,8 +117,10 @@ final class ComposeSceneHost: UIViewController {
 
     /// Seconds after the drop at which the collector is asked to run. The
     /// first is past CMP's 500 ms drawable drain; the second lands before the
-    /// app's +3 s memory sample so that sample reflects the collection.
-    private static let collectAfter: [TimeInterval] = [0.7, 2.5]
+    /// app's +3 s memory sample so that sample reflects the collection; the
+    /// third, before the +8 s one, catches what the Metal driver released
+    /// late. All inside the background task the memory watch holds.
+    private static let collectAfter: [TimeInterval] = [0.7, 2.5, 5.0]
 
     init(makeCompose: @escaping () -> UIViewController, collectGarbage: @escaping () -> Void) {
         self.makeCompose = makeCompose
@@ -165,6 +167,37 @@ final class ComposeSceneHost: UIViewController {
         }
     }
 
+    /// Removes the overlay Compose Multiplatform leaves behind for its
+    /// dialogs and sheets.
+    ///
+    /// CMP 1.12 does not draw dialogs, popups and bottom sheets inside the
+    /// Compose view: `ComposeLayersViewController` embeds a `ComposeLayersView`
+    /// with its own Metal view into the view directly under the window, so
+    /// that it covers everything. `disposeComposeScene` drops the holder that
+    /// owns that controller but never removes the view, and dropping our
+    /// child controller cannot reach it either. So going to the background
+    /// with a sheet open left a Metal-backed full-screen view in the window,
+    /// and the 1.0.426 samples say exactly that: 70-95 MB floors after
+    /// backgrounding from the home screen, 146-147 MB after backgrounding
+    /// from the transport picker - and nothing frees it later, so the floor
+    /// climbs a cycle at a time. Found by class name, since the view is not
+    /// ours; what was removed is written to the app's memory log, so the next
+    /// export says whether the name still matches.
+    private func removeStrayLayers() {
+        guard let window = view.window else { return }
+        var top: UIView = view
+        while let parent = top.superview, parent !== window { top = parent }
+        for stray in top.subviews where !view.isDescendant(of: stray) {
+            let name = NSStringFromClass(type(of: stray))
+            guard name.contains("ComposeLayersView") else {
+                AppMemoryWatch.note("kept a stranger under the window: \(name)")
+                continue
+            }
+            stray.removeFromSuperview()
+            AppMemoryWatch.note("removed the layers overlay: \(name)")
+        }
+    }
+
     private func detachCompose() {
         guard let compose else { return }
         if let snapshot = compose.view.snapshotView(afterScreenUpdates: false) {
@@ -178,6 +211,7 @@ final class ComposeSceneHost: UIViewController {
         compose.view.removeFromSuperview()
         compose.removeFromParent()
         self.compose = nil
+        removeStrayLayers()
         let collect = collectGarbage
         for delay in Self.collectAfter {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { collect() }
@@ -903,6 +937,12 @@ enum AppMemoryWatch {
             record("launch")
             startTicking()
         }
+    }
+
+    /// A line in the app's memory log from elsewhere in the app, with the
+    /// footprint of the moment. For the host's account of what it removed.
+    static func note(_ event: String) {
+        queue.async { record(event) }
     }
 
     // MARK: Transitions

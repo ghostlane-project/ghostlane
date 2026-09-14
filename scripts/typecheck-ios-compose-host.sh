@@ -19,18 +19,24 @@ public struct UIViewAutoresizing: OptionSet, Sendable {
   public static let flexibleHeight = UIViewAutoresizing(rawValue: 16)
 }
 public final class UIColor: @unchecked Sendable { public static let black = UIColor() }
-@MainActor open class UIView {
-  public init() {}
+@MainActor open class UIWindow: UIView {}
+@MainActor open class UIView: NSObject {
+  public override init() {}
   public var frame = CGRect()
   public var bounds: CGRect { CGRect() }
   public var autoresizingMask: UIViewAutoresizing = []
   public var backgroundColor: UIColor?
+  public var window: UIWindow? { nil }
+  public var superview: UIView? { nil }
+  public var subviews: [UIView] { [] }
+  public func isDescendant(of view: UIView) -> Bool { false }
   public func addSubview(_ v: UIView) {}
   public func insertSubview(_ v: UIView, at: Int) {}
   public func removeFromSuperview() {}
   public func snapshotView(afterScreenUpdates: Bool) -> UIView? { UIView() }
 }
 public final class NSCoder {}
+enum AppMemoryWatch { static func note(_ event: String) {} }
 @MainActor open class UIViewController {
   public init(nibName: String?, bundle: Bundle?) {}
   public required init?(coder: NSCoder) { nil }
