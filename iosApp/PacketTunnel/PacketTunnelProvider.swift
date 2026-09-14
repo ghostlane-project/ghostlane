@@ -164,7 +164,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Which engine owns the tun decides which resolvers the system is told
         // about: sing-box answers 172.19.0.2 itself; hev forwards to resolvers
         // on the internet. See LibboxPlatform.Tun.
-        let hevOwnsTun = xrayConfig?.isEmpty == false || olcrtc != nil
+        let hevOwnsTun = Self.hevOwnsTun(xrayConfig: xrayConfig, olcrtc: olcrtc)
         let dns = hevOwnsTun ? LibboxPlatform.Tun.dnsThroughSocks : LibboxPlatform.Tun.dns
         // Applied before the engine starts: libbox asks for the descriptor
         // synchronously and complains if answering takes long.
@@ -350,14 +350,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Whether hev-socks5-tunnel, rather than sing-box, owns the tun for
+    /// this start: xhttp only, for now.
+    ///
+    /// olcRTC could take the same arrangement — its SOCKS server speaks UDP
+    /// ASSOCIATE — but with hev the system's DNS queries travel as plain UDP
+    /// through the engine, and on olcRTC that is the relay's datagram lane,
+    /// which loses packets under load; sing-box's DNS hijack (172.19.0.2,
+    /// answered over the stream) was introduced for exactly that. olcRTC
+    /// therefore stays behind sing-box, with the lean engine that no longer
+    /// carries videochannel and livekit (10 MB less at rest), until the xhttp
+    /// path has proved the arrangement on a device and the split DNS for it
+    /// exists. One predicate decides both the tun's resolvers and the engine
+    /// arrangement, so the two cannot disagree.
+    private static func hevOwnsTun(xrayConfig: String?, olcrtc: OlcrtcEngine.Parameters?) -> Bool {
+        olcrtc == nil && xrayConfig?.isEmpty == false
+    }
+
     /// The SOCKS server hev forwards to on the paths it owns, or nil on the
     /// paths sing-box owns. Xray's port is read from the config the app wrote
-    /// (the inbound it built), olcRTC's from its parameters, with credentials.
+    /// (the inbound it built); olcRTC's parameters carry credentials for the
+    /// day it moves too.
     private static func hevSocks(xrayConfig: String?, olcrtc: OlcrtcEngine.Parameters?) -> HevTunnel.Socks? {
-        if let olcrtc {
-            return HevTunnel.Socks(port: olcrtc.socksPort, username: olcrtc.socksUser, password: olcrtc.socksPass)
-        }
-        guard let xrayConfig else { return nil }
+        guard hevOwnsTun(xrayConfig: xrayConfig, olcrtc: olcrtc), let xrayConfig else { return nil }
         return HevTunnel.Socks(port: xraySocksPort(in: xrayConfig), username: nil, password: nil)
     }
 
