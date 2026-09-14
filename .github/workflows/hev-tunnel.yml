@@ -1,0 +1,105 @@
+name: hev-socks5-tunnel
+
+# The tun2socks the NetworkExtension puts in front of Xray and olcRTC on iOS,
+# as one XCFramework of static libraries. Changes only when scripts/hev-pins.sh
+# does, and macOS runners bill at 10x, so this never runs on push: build once
+# per pin, publish, and let every other build download the result.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Attach the result to the hev-socks5-tunnel release tag
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hev-tunnel
+  cancel-in-progress: false
+
+env:
+  # A copy of scripts/hev-pins.sh, checked against it below: a job-level
+  # cache key cannot be computed from a sourced shell file.
+  HEV_COMMIT: 941c758101385d145c66210ac88991daaf27d4b6
+  HEV_BUILD: "1"
+
+jobs:
+  build:
+    name: HevSocks5Tunnel.xcframework
+    runs-on: macos-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Pins match scripts/hev-pins.sh
+        run: |
+          set -euo pipefail
+          expected="$(env -u HEV_COMMIT -u HEV_BUILD bash -c '. scripts/hev-pins.sh; echo "$HEV_COMMIT $HEV_BUILD"')"
+          actual="${HEV_COMMIT} ${HEV_BUILD}"
+          [ "$expected" = "$actual" ] || {
+            echo "workflow env and scripts/hev-pins.sh disagree:"
+            echo "  hev-pins.sh : $expected"
+            echo "  workflow env: $actual"
+            exit 1
+          }
+
+      - name: Cache built framework
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist/frameworks
+          key: hev-socks5-tunnel-${{ env.HEV_COMMIT }}-b${{ env.HEV_BUILD }}-${{ hashFiles('scripts/build-hev-ios.sh', 'scripts/hev-pins.sh') }}
+
+      - name: Checkout hev-socks5-tunnel at the pin
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git clone --recursive https://github.com/heiher/hev-socks5-tunnel.git hev
+          cd hev
+          git checkout --recurse-submodules "${HEV_COMMIT}"
+          git submodule update --init --recursive
+          echo "hev-socks5-tunnel $(git rev-parse HEAD)"
+          git submodule status
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-hev-ios.sh "$PWD/hev" "$PWD/dist/frameworks"
+
+      - name: Report what was produced
+        run: |
+          echo "### HevSocks5Tunnel.xcframework" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          du -sh dist/frameworks/* >> "$GITHUB_STEP_SUMMARY" || echo "nothing built" >> "$GITHUB_STEP_SUMMARY"
+          ls -1 dist/frameworks/HevSocks5Tunnel.xcframework >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package
+        run: |
+          cd dist/frameworks
+          zip -qry ../HevSocks5Tunnel-ios.zip HevSocks5Tunnel.xcframework
+          ls -la ../
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hev-socks5-tunnel
+          path: dist/*.zip
+          if-no-files-found: error
+
+      # A release asset outlives the 90-day artifact retention, so the
+      # extension build can fetch a known framework months later without a
+      # macOS runner. The tag is sourced, never re-derived: two spellings of it
+      # is the bug cores-pins.sh was written to end.
+      - name: Publish to the hev-socks5-tunnel tag
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck source=scripts/hev-pins.sh
+          . scripts/hev-pins.sh
+          tag="${HEV_TAG}"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --prerelease --notes "hev-socks5-tunnel ${HEV_COMMIT} as one XCFramework of static libraries (iOS, iOS simulator, macOS), for the NetworkExtension in front of Xray and olcRTC."
+          gh release upload "$tag" dist/*.zip --clobber
