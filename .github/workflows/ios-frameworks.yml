@@ -82,7 +82,7 @@ jobs:
           # revision for shape changes — a macOS slice arriving under unchanged
           # versions — and a key made only of versions would restore the framework
           # from before it.
-          key: ios-cores-sb${{ env.SINGBOX_VERSION }}-lx${{ env.LIBXRAY_VERSION }}-rtc${{ env.OLCRTC_VERSION }}-${{ hashFiles('scripts/build-cores-ios.sh', 'scripts/cores-pins.sh') }}
+          key: ios-cores-sb${{ env.SINGBOX_VERSION }}-lx${{ env.LIBXRAY_VERSION }}-rtc${{ env.OLCRTC_VERSION }}-${{ hashFiles('scripts/build-cores-ios.sh', 'scripts/cores-pins.sh', 'scripts/patches/xray-core-h2-window.patch') }}
 
       - name: Build Cores
         if: steps.cache.outputs.cache-hit != 'true'

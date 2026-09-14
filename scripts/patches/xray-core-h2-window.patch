@@ -1,0 +1,98 @@
+Bound the HTTP/2 receive windows of the xhttp client.
+
+Base: github.com/XTLS/Xray-core 50231eaff98c (v26.7.11), the commit libXray
+v1.260711.0 pins as v1.260327.1-0.20260711155151-50231eaff98c. Applied by
+scripts/build-cores-ios.sh on a clone of that commit before the bind.
+
+x/net/http2 gives every stream a 4 MB receive window and every connection
+1 GB, and exposes neither on http2.Transport; it reads them only from a
+net/http.Transport's HTTP2 config. On an iOS packet tunnel provider, killed
+at about 50 MB, that per-stream window is the buffer that fills when the tun
+path drains slower than the link: the 1.0.424 trace lost 15 MB of live heap
+to it in five seconds of a speed test's download. Two env flags, read the
+way Xray reads its other knobs (platform.EnvFlag), bound them:
+
+  xray.xhttp.h2.stream.window  /  XRAY_XHTTP_H2_STREAM_WINDOW   bytes per stream
+  xray.xhttp.h2.conn.window    /  XRAY_XHTTP_H2_CONN_WINDOW     bytes per connection
+
+Unset or non-positive keeps x/net's defaults, so nothing changes for anyone
+who does not set them.
+
+diff --git a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+index 817d9355..69d392d5 100644
+--- a/transport/internet/splithttp/dialer.go
++++ b/transport/internet/splithttp/dialer.go
+@@ -23,6 +23,7 @@ import (
+ 	"github.com/xtls/xray-core/common/errors"
+ 	"github.com/xtls/xray-core/common/net"
+ 	"github.com/xtls/xray-core/common/net/cnc"
++	"github.com/xtls/xray-core/common/platform"
+ 	"github.com/xtls/xray-core/common/signal/done"
+ 	"github.com/xtls/xray-core/transport/internet"
+ 	"github.com/xtls/xray-core/transport/internet/browser_dialer"
+@@ -281,13 +282,13 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
+ 		if keepAlivePeriod < 0 {
+ 			keepAlivePeriod = 0
+ 		}
+-		transport = &http2.Transport{
+-			DialTLSContext: func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
+-				return dialContext(ctxInner)
+-			},
+-			IdleConnTimeout: net.ConnIdleTimeout,
+-			ReadIdleTimeout: keepAlivePeriod,
++		h2Transport := newH2Transport()
++		h2Transport.DialTLSContext = func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
++			return dialContext(ctxInner)
+ 		}
++		h2Transport.IdleConnTimeout = net.ConnIdleTimeout
++		h2Transport.ReadIdleTimeout = keepAlivePeriod
++		transport = h2Transport
+ 	} else {
+ 		httpDialContext := func(ctxInner context.Context, network string, addr string) (net.Conn, error) {
+ 			return dialContext(ctxInner)
+@@ -316,6 +317,45 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
+ 	return client
+ }
+ 
++// h2StreamWindowFlag and h2ConnWindowFlag bound what the HTTP/2 client lets
++// the server send ahead of the reader: the per-stream and per-connection
++// receive windows, in bytes. x/net's defaults are 4 MB per stream and 1 GB
++// per connection. On a host that is killed at about 50 MB — an iOS packet
++// tunnel provider — that is the buffer which fills the moment the tun path
++// drains slower than the link, one window per download stream. Unset or
++// non-positive keeps the defaults.
++var (
++	h2StreamWindowFlag = platform.NewEnvFlag("xray.xhttp.h2.stream.window")
++	h2ConnWindowFlag   = platform.NewEnvFlag("xray.xhttp.h2.conn.window")
++)
++
++// newH2Transport returns the HTTP/2 transport for xhttp, honouring the
++// receive-window flags. x/net reads those windows only from a net/http
++// Transport's HTTP2 config, so a throwaway one carries them into
++// http2.ConfigureTransports; the no-dial connection pool that call installs
++// is dropped again so the transport dials on its own, as it always has.
++func newH2Transport() *http2.Transport {
++	streamWindow := h2StreamWindowFlag.GetValueAsInt(0)
++	connWindow := h2ConnWindowFlag.GetValueAsInt(0)
++	if streamWindow <= 0 && connWindow <= 0 {
++		return &http2.Transport{}
++	}
++	t1 := &http.Transport{HTTP2: &http.HTTP2Config{}}
++	if streamWindow > 0 {
++		t1.HTTP2.MaxReceiveBufferPerStream = streamWindow
++	}
++	if connWindow > 0 {
++		t1.HTTP2.MaxReceiveBufferPerConnection = connWindow
++	}
++	t2, err := http2.ConfigureTransports(t1)
++	if err != nil {
++		errors.LogWarningInner(context.Background(), err, "xhttp: h2 receive window not applied")
++		return &http2.Transport{}
++	}
++	t2.ConnPool = nil
++	return t2
++}
++
+ func init() {
+ 	common.Must(internet.RegisterTransportDialer(protocolName, Dial))
+ }

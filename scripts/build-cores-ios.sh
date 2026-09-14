@@ -53,6 +53,8 @@ OLCRTC_FORK="${OLCRTC_FORK:-github.com/romanpodpriatov/olcrtc}"
 # version or the generated bindings compile against the wrong API.
 GOMOBILE_VERSION="${GOMOBILE_VERSION:-v0.1.13}"
 OUT="${1:?usage: build-cores-ios.sh <output-dir>}"
+# Where the patches live; the build itself runs from a temporary directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$OUT"
 # Absolute from here on. The build runs from the temporary directory created
@@ -94,15 +96,30 @@ EOF
 # Imported blank: nothing here calls them, but they must be in the build list
 # for gomobile to resolve the package paths passed to bind.
 cat > cores.go <<'EOF'
-// Package cores exists only to pull every engine into one module so they can
-// be bound into a single framework. See build-cores-ios.sh for why.
+// Package cores pulls every engine into one module so they can be bound into
+// a single framework (see build-cores-ios.sh for why), and carries the one
+// call the host needs that none of the engines offers.
 package cores
 
 import (
+	"os"
+
 	_ "github.com/sagernet/sing-box/experimental/libbox"
 	_ "github.com/xtls/libxray"
 	_ "github.com/openlibrecommunity/olcrtc/mobile"
 )
+
+// Setenv sets a variable in the Go runtime's environment, for the knobs the
+// engines read through env flags — Xray's xhttp HTTP/2 receive windows
+// (XRAY_XHTTP_H2_STREAM_WINDOW, XRAY_XHTTP_H2_CONN_WINDOW; see
+// scripts/patches/xray-core-h2-window.patch). Go copies the process
+// environment on its first read and never looks at it again, so a setenv
+// from Swift after that copy is invisible to Go; this goes through os.Setenv,
+// which updates the copy Go actually reads. libXray v1.260711 has no env
+// field of its own (its apiVersion 2 is refused). Bound as CoresSetenv.
+func Setenv(key, value string) error {
+	return os.Setenv(key, value)
+}
 EOF
 
 export GOFLAGS=-mod=mod
@@ -116,6 +133,29 @@ go mod edit \
 
 go get "github.com/sagernet/sing-box@v${SINGBOX_VERSION}"
 go get "github.com/xtls/libxray@${LIBXRAY_VERSION}"
+
+# Xray-core is bound from a patched copy of the exact module libXray pins,
+# carrying scripts/patches/xray-core-h2-window.patch: two env flags that
+# bound the HTTP/2 receive windows of the xhttp client (x/net's defaults are
+# 4 MB per stream and 1 GB per connection, and http2.Transport exposes
+# neither). On the phone that per-stream window is the buffer that took the
+# tunnel extension from 30 to 50 MB in five seconds of a speed test's
+# download (1.0.424). The copy comes from the module cache rather than a
+# clone: it is the content go.sum verified, and a pseudo-version's 12-hex
+# commit cannot be fetched from GitHub by itself. The extension sets the
+# flags before starting Xray; a binary without the patch ignores them, so a
+# build that silently lost the replace would be the same old death — which is
+# why the replace is checked below and the workflow's cache key hashes the
+# patch.
+xray_pin="$(go list -m -f '{{.Version}}' github.com/xtls/xray-core)"
+xray_mod_dir="$(go list -m -f '{{.Dir}}' github.com/xtls/xray-core)"
+echo "== xray-core ${xray_pin}: patching a copy of ${xray_mod_dir} =="
+xray_src="${work}/xray-core"
+cp -R "${xray_mod_dir}" "${xray_src}"
+chmod -R u+w "${xray_src}"
+patch -p1 -d "${xray_src}" --forward --silent < "${SCRIPT_DIR}/patches/xray-core-h2-window.patch"
+grep -q "func newH2Transport" "${xray_src}/transport/internet/splithttp/dialer.go"
+go mod edit -replace "github.com/xtls/xray-core=${xray_src}"
 # gobind looks for the bind package through the module being built, so it has
 # to be a dependency rather than merely installed.
 go get "github.com/sagernet/gomobile/bind@${GOMOBILE_VERSION}"
@@ -142,6 +182,12 @@ resolved="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version
 if [ "${resolved}" != "${OLCRTC_VERSION}" ]; then
   echo "olcrtc resolved to ${resolved}, but the pin says ${OLCRTC_VERSION}."
   echo "Refusing to build: the result would be indistinguishable from the right one."
+  exit 1
+fi
+xray_dir="$(go list -m -f '{{if .Replace}}{{.Replace.Path}}{{end}}' github.com/xtls/xray-core)"
+if [ "${xray_dir}" != "${xray_src}" ]; then
+  echo "xray-core resolved to '${xray_dir}', not the patched clone at ${xray_src}."
+  echo "Refusing to build: the xhttp h2 windows would be unbounded again."
   exit 1
 fi
 
@@ -198,7 +244,8 @@ gomobile bind -v \
   -o "$OUT/Cores.xcframework" \
   github.com/sagernet/sing-box/experimental/libbox \
   github.com/xtls/libxray \
-  "${OLCRTC_MODULE}/mobile"
+  "${OLCRTC_MODULE}/mobile" \
+  github.com/romanpodpriatov/olcbox-cores
 
 echo "== slices produced =="
 ls -1 "$OUT/Cores.xcframework"
