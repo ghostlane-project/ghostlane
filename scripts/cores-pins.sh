@@ -115,7 +115,12 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # goroutines are named once a minute (olcbox#26); handshake frames are one
 # Write each; NACK responder 256; and the olcrtc_lean tag this build now
 # passes, which leaves videochannel and livekit out of the bind.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913184055-43a3492f63a8}"
+#
+# 43a3492f63a8 -> 9336ee9e1def: a port-53 datagram is answered over a smux
+# stream (TCP DNS to the resolver the tun advertises) instead of the relay's
+# datagram lane, which is what lets hev-socks5-tunnel front olcRTC on iOS;
+# and 512-segment KCP windows on the phone profile.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914055859-9336ee9e1def}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -157,7 +162,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913184055-43a3492f63a8}"
 # xray-core-h2-window.patch bounds the xhttp client's HTTP/2 receive windows,
 # and the wrapper package exports CoresSetenv, which is how the extension
 # hands the values to Go (a C setenv is invisible to it). Bind list changed.
-CORES_BUILD="${CORES_BUILD:-20}"
+CORES_BUILD="${CORES_BUILD:-21}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
