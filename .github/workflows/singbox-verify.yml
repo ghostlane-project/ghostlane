@@ -271,6 +271,15 @@ jobs:
         working-directory: olcbox
         run: ${{ github.workspace }}/xray-bin/xray run -c sharedUI/build/xray-configs/vless-xhttp.json -test
 
+      # The iOS shapes behind a tun2socks: Xray answering DNS itself, and
+      # Bypass Russia with the bundled lists inline (12,000 rules the unit
+      # tests only count; this is what parses them).
+      - name: xray test vless-xhttp answering dns, and Bypass Russia
+        working-directory: olcbox
+        run: |
+          ${{ github.workspace }}/xray-bin/xray run -c sharedUI/build/xray-configs/vless-xhttp-answers-dns.json -test
+          ${{ github.workspace }}/xray-bin/xray run -c sharedUI/build/xray-configs/vless-xhttp-bypass-russia.json -test
+
       # End-to-end tunnel proof for the olcrtc-socks chain: a backing SOCKS server
       # stands in for the olcrtc engine; our generated config chains
       # <inbound> → <backing> → direct, and curling through the inbound proves the
