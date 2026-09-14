@@ -204,8 +204,25 @@ enum MemoryWatch {
         try? Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file, options: .atomic)
     }
 
+    /// Footprint above which idle heap is handed back to the system at once,
+    /// and how often at most. The 1.0.427 traces show the runtime holding
+    /// 7-10 MB of collected-but-unreleased heap while the footprint sat at
+    /// 37-44 MB and the device reported critical pressure; jetsam judges the
+    /// footprint, so that reserve is worth returning before the system asks.
+    /// FreeOSMemory is a stop-the-world collection - a few milliseconds on a
+    /// heap this size - hence the rate limit.
+    private static let releaseAbove: UInt64 = 36 * 1_048_576
+    private static let releaseEvery: TimeInterval = 5
+    nonisolated(unsafe) private static var lastRelease = Date.distantPast
+
     private static func sample(into file: URL) {
         samplesSinceSummary += 1
+        let now = Date()
+        if footprintBytes() > releaseAbove, now.timeIntervalSince(lastRelease) > releaseEvery {
+            lastRelease = now
+            MobileFreeOSMemory()
+            note = "released"
+        }
         if samplesSinceSummary >= summaryEvery, let summaryFile {
             samplesSinceSummary = 0
             appendSummary(MobileGoroutineSummary(), to: summaryFile)
