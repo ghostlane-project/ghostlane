@@ -59,10 +59,21 @@ enum XrayEngine {
     /// Starts Xray with a complete config. Throws with libXray's own message,
     /// which names the offending field when a config is wrong.
     static func start(configJSON: String) throws {
-        try CoresSetenv("XRAY_XHTTP_H2_STREAM_WINDOW", String(h2StreamWindow))
-        try CoresSetenv("XRAY_XHTTP_H2_CONN_WINDOW", String(h2ConnWindow))
+        try setGoEnvironment("XRAY_XHTTP_H2_STREAM_WINDOW", String(h2StreamWindow))
+        try setGoEnvironment("XRAY_XHTTP_H2_CONN_WINDOW", String(h2ConnWindow))
         try invoke(method: "runXrayFromJson", payload: ["configJSON": configJSON])
         log.info("xray started, config \(configJSON.count, privacy: .public) bytes, h2 windows \(h2StreamWindow, privacy: .public)/\(h2ConnWindow, privacy: .public)")
+    }
+
+    /// A variable in the Go runtime's own environment, through the wrapper's
+    /// os.Setenv. gomobile binds a package function as a plain C function, not
+    /// an Objective-C method, so Swift leaves its NSError** as an argument
+    /// rather than turning it into `throws` — the same shape as LibboxSetup.
+    private static func setGoEnvironment(_ key: String, _ value: String) throws {
+        var error: NSError?
+        guard CoresSetenv(key, value, &error) else {
+            throw error ?? failure("CoresSetenv \(key): refused without a reason")
+        }
     }
 
     static func stop() {

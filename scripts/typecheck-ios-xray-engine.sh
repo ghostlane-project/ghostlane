@@ -27,7 +27,7 @@ public struct Logger: Sendable {
 }
 // The Cores bind.
 public func LibXrayInvoke(_ request: String) -> String { "" }
-public func CoresSetenv(_ key: String, _ value: String) throws {}
+public func CoresSetenv(_ key: String?, _ value: String?, _ error: NSErrorPointer) -> Bool { true }
 SHIM
 sed -e 's/^import Cores$//' -e 's/^import os$//' "$root/iosApp/PacketTunnel/XrayEngine.swift" > "$work/XrayEngine.swift"
 for mode in 5 6; do
