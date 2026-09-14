@@ -120,7 +120,12 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # stream (TCP DNS to the resolver the tun advertises) instead of the relay's
 # datagram lane, which is what lets hev-socks5-tunnel front olcRTC on iOS;
 # and 512-segment KCP windows on the phone profile.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914055859-9336ee9e1def}"
+#
+# 9336ee9e1def -> d59a979359dd: a 16 KB read buffer per SOCKS UDP association
+# on the phone profile instead of 64 KB, and one idle-flow sweeper for all
+# associations instead of one goroutine each - the resolver behind a
+# tun2socks opens an association per query, 117 of them under a speed test.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914071328-d59a979359dd}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -162,7 +167,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914055859-9336ee9e1def}"
 # xray-core-h2-window.patch bounds the xhttp client's HTTP/2 receive windows,
 # and the wrapper package exports CoresSetenv, which is how the extension
 # hands the values to Go (a C setenv is invisible to it). Bind list changed.
-CORES_BUILD="${CORES_BUILD:-21}"
+CORES_BUILD="${CORES_BUILD:-22}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
