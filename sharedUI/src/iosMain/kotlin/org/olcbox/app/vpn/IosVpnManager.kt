@@ -340,7 +340,7 @@ class IosVpnManager(
 
         val request = packetTunnelRequest(location) ?: return
         // What the extension actually runs: xhttp is Xray behind
-        // hev-socks5-tunnel since 1.0.425 (docs/ios-one-go-runtime.md); olcRTC
+        // hev-socks5-tunnel since 1.0.426 (docs/ios-one-go-runtime.md); olcRTC
         // still sits behind sing-box; the rest is sing-box alone.
         val engine = when {
             request.olcrtc != null -> "olcrtc+sing-box"
@@ -434,7 +434,7 @@ class IosVpnManager(
         // hysteria2 are native sing-box outbounds with no second core involved.
         val vless = spec as? OutboundSpec.Vless
         val xrayConfig = if (vless != null && vless.transport is TransportSpec.Xhttp) {
-            // Since 1.0.425 the extension puts hev-socks5-tunnel, not sing-box,
+            // Since 1.0.426 the extension puts hev-socks5-tunnel, not sing-box,
             // in front of Xray on this path (docs/ios-one-go-runtime.md), so
             // Xray is the only router there: it answers the tun's DNS and
             // carries the Bypass Russia lists inline. The sing-box config

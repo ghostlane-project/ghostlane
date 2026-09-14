@@ -11,7 +11,7 @@ import os
 ///     listens on a loopback SOCKS port; hev-socks5-tunnel owns the tun and
 ///     forwards every connection to that port. sing-box is not started at all.
 ///
-/// The second arrangement replaced sing-box-in-front-of-the-engine in 1.0.425:
+/// The second arrangement replaced sing-box-in-front-of-the-engine in 1.0.426:
 /// two Go network stacks in a process killed at about 50 MB was the shape of
 /// every speed-test death (docs/ios-one-go-runtime.md).
 class PacketTunnelProvider: NEPacketTunnelProvider {
