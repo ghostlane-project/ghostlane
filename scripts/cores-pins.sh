@@ -152,7 +152,12 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260913184055-43a3492f63a8}"
 #
 # 12 → 13: olcRTC moved and its API changed shape (mobile.Runtime instead of
 # package functions); every bridge in the app was rewritten for it.
-CORES_BUILD="${CORES_BUILD:-19}"
+#
+# 19 → 20: the same three pins, a different Xray: scripts/patches/
+# xray-core-h2-window.patch bounds the xhttp client's HTTP/2 receive windows,
+# and the wrapper package exports CoresSetenv, which is how the extension
+# hands the values to Go (a C setenv is invisible to it). Bind list changed.
+CORES_BUILD="${CORES_BUILD:-20}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
