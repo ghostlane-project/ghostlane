@@ -43,13 +43,19 @@ Russia in Xray's rules) are separate branches.
 
 ## Open decisions
 
-- **olcRTC DNS.** Plain DNS over the datagram lane on a lossy relay was the
-  reason the hijack existed. If it is too slow, the cheapest way back is to
-  keep sing-box for olcRTC only: `PacketTunnelProvider.hevSocks` returns
-  nil for the olcRTC case and everything else follows.
-- **Bypass Russia** on these two paths needs a router in front of the engine
-  or rules inside it (part 3). Until then the mode is effectively Global
-  there: hev forwards everything to the SOCKS port.
+- **olcRTC DNS - decided.** 1.0.426 and 1.0.427 kept olcRTC behind
+  sing-box because with hev the resolver's queries would ride the relay's
+  datagram lane, which loses packets under load. Engine aac553b8 answers a
+  port-53 datagram over a smux stream instead (TCP DNS, RFC 7766, to the
+  resolver the tun advertises; the server dials it like any CONNECT; 64 in
+  flight, 5 s each, the lane as fallback), so from 1.0.428 olcRTC sits
+  behind hev too and the extension runs one Go engine on every path except
+  sing-box's own transports. If a device shows resolver timeouts on olcRTC,
+  the way back is `PacketTunnelProvider.hevOwnsTun` excluding olcRTC.
+- **Bypass Russia** is done on xhttp inside Xray (part 3). On olcRTC there
+  is no router: the mode is effectively Global there, hev forwards
+  everything to the SOCKS port. Xray as a router in front of olcrtc would be
+  a second Go engine again (~5-10 MB); not planned until measured.
 - **max-session-count 768** is Tun2SocksKit's figure, not the README's
   1200; each live session holds a task stack.
 
