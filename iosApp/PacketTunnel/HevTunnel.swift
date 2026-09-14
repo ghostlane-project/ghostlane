@@ -79,6 +79,12 @@ enum HevTunnel {
             "  max-session-count: 768",
             "  connect-timeout: 5000",
             "  read-write-timeout: 60000",
+            // UDP sessions idle for half a minute are gone: the system's
+            // resolver opens a new one per query, and at hev's default of a
+            // minute a speed test's lookups alone kept 117 associations
+            // alive in the engine behind (olcbox 1.0.428). Apps that keep
+            // a UDP binding alive do so with keepalives well inside 30 s.
+            "  udp-read-write-timeout: 30000",
             "  log-file: stderr",
             "  log-level: warn",
         ]

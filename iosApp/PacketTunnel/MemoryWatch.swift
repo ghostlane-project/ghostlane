@@ -185,10 +185,17 @@ enum MemoryWatch {
         guard enabled else { return }
         queue.async {
             guard let summaryFile else { return }
+            // The pressure source fires in bursts - ten events inside a
+            // second in the 1.0.428 export - and each summary stops the
+            // world to walk every goroutine; one per burst is enough.
+            let now = Date()
+            guard now.timeIntervalSince(lastUnscheduledSummary) > 5 else { return }
+            lastUnscheduledSummary = now
             appendSummary("\(why): " + MobileGoroutineSummary(), to: summaryFile)
             samplesSinceSummary = 0
         }
     }
+    nonisolated(unsafe) private static var lastUnscheduledSummary = Date.distantPast
 
     /// Footprint at which one unscheduled summary is written per run. Deaths
     /// have come at 45-50 MB; 38 leaves time for the write.

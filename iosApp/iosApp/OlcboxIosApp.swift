@@ -120,7 +120,7 @@ final class ComposeSceneHost: UIViewController {
     /// app's +3 s memory sample so that sample reflects the collection; the
     /// third, before the +8 s one, catches what the Metal driver released
     /// late. All inside the background task the memory watch holds.
-    private static let collectAfter: [TimeInterval] = [0.7, 2.5, 5.0]
+    private static let collectAfter: [TimeInterval] = [0.7, 2.5, 5.0, 10.0, 20.0]
 
     init(makeCompose: @escaping () -> UIViewController, collectGarbage: @escaping () -> Void) {
         self.makeCompose = makeCompose
@@ -930,7 +930,7 @@ enum AppMemoryWatch {
     /// snapshot is long done by the first; the second says whether the figure
     /// is still falling. Both fit comfortably inside what a background task
     /// buys, which is about thirty seconds.
-    private static let backgroundDelays: [TimeInterval] = [3, 8]
+    private static let backgroundDelays: [TimeInterval] = [3, 8, 15, 25]
 
     /// Keeps the file to a few tens of kilobytes: at the foreground cadence
     /// that is well over half an hour of a busy session, far more of a quiet
