@@ -18,6 +18,15 @@ enum XrayEngine {
 
     /// libXray rejects anything it does not recognise here, so it is sent
     /// explicitly rather than left to default.
+    ///
+    /// Still 1, and that decides how geodata reaches the core. libXray
+    /// 1.260711 refuses apiVersion 2 and carries no `env` in its request, so
+    /// there is no way from here to set `xray.location.asset`, which is how
+    /// Xray would find a `geosite.dat`/`geoip.dat`; its other lookup is the
+    /// directory of the executable, which is this extension's bundle, laid
+    /// out by Xcode. So Bypass Russia's lists travel inside the config
+    /// instead, as inline rules (`XrayGeodata`, `XrayConfig.buildXhttp`), and
+    /// this bridge never has to know where a file is.
     private static let apiVersion = 1
 
     private struct Response: Decodable {
