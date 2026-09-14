@@ -46,6 +46,7 @@ enum MemoryPressure {
                 let level = event.contains(.critical) ? "critical" : "warning"
                 NetworkDiagnostics.record("memory pressure \(level); returning reserved memory")
                 MemoryWatch.mark("pressure-\(level)")
+                MemoryWatch.summarizeNow("pressure-\(level)")
                 // Stop-the-world, and worth it here: this is the moment the
                 // footprint decides whether the process survives.
                 MobileFreeOSMemory()

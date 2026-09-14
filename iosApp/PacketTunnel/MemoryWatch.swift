@@ -108,6 +108,7 @@ enum MemoryWatch {
             }
             currentFile = file
             samplesSinceSummary = 0
+            alarmed = false
             summarizeGoroutines(container: container)
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: interval)
@@ -175,6 +176,25 @@ enum MemoryWatch {
         appendSummary("start", to: file)
     }
 
+    /// A summary now, outside the minute cadence: the 1.0.424 xhttp death
+    /// took 27 s from start to kill and its first minute line never came.
+    /// Called on a memory-pressure event and when the footprint first
+    /// crosses the line below, so the export names the goroutines of the
+    /// run that is about to die, not of the healthy one that follows it.
+    static func summarizeNow(_ why: String) {
+        guard enabled else { return }
+        queue.async {
+            guard let summaryFile else { return }
+            appendSummary("\(why): " + MobileGoroutineSummary(), to: summaryFile)
+            samplesSinceSummary = 0
+        }
+    }
+
+    /// Footprint at which one unscheduled summary is written per run. Deaths
+    /// have come at 45-50 MB; 38 leaves time for the write.
+    private static let alarmFootprint: UInt64 = 38 * 1_048_576
+    nonisolated(unsafe) private static var alarmed = false
+
     private static func appendSummary(_ text: String, to file: URL) {
         let line = String(format: "%7.2fs  %@", Date().timeIntervalSince(started), text)
         var lines = (try? String(contentsOf: file, encoding: .utf8))?
@@ -191,6 +211,10 @@ enum MemoryWatch {
             appendSummary(MobileGoroutineSummary(), to: summaryFile)
         }
         let footprint = footprintBytes()
+        if !alarmed, footprint >= alarmFootprint, let summaryFile {
+            alarmed = true
+            appendSummary("footprint \(footprint / 1_048_576) MB: " + MobileGoroutineSummary(), to: summaryFile)
+        }
         // Bytes the process may still allocate before the system kills it. This
         // is the number that matters: the cap is not a documented constant and
         // differs by device and OS, so headroom is measured, not assumed.
