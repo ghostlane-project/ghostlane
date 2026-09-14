@@ -157,8 +157,13 @@ final class ComposeSceneHost: UIViewController {
         addChild(compose)
         compose.view.frame = view.bounds
         compose.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // A container that moves a child's view by hand owes the child its
+        // appearance callbacks; UIKit forwards them only for its own
+        // transitions. CMP's controller acts on them (sceneDidAppear).
+        compose.beginAppearanceTransition(true, animated: false)
         // Under the snapshot, which stays on top until the scene has drawn.
         view.insertSubview(compose.view, at: 0)
+        compose.endAppearanceTransition()
         compose.didMove(toParent: self)
         guard let placeholder else { return }
         self.placeholder = nil
@@ -189,8 +194,12 @@ final class ComposeSceneHost: UIViewController {
         while let parent = top.superview, parent !== window { top = parent }
         for stray in top.subviews where !view.isDescendant(of: stray) {
             let name = NSStringFromClass(type(of: stray))
-            guard name.contains("ComposeLayersView") else {
-                AppMemoryWatch.note("kept a stranger under the window: \(name)")
+            // Kotlin/Native mangles the class name (a framework or package
+            // prefix around ComposeLayersView), so the match is loose; the
+            // full name is logged either way.
+            let lowered = name.lowercased()
+            guard lowered.contains("layersview") || lowered.contains("compose") else {
+                AppMemoryWatch.note("kept a stranger under the window: \(name) subviews=\(stray.subviews.count)")
                 continue
             }
             stray.removeFromSuperview()
@@ -208,7 +217,17 @@ final class ComposeSceneHost: UIViewController {
             placeholder = snapshot
         }
         compose.willMove(toParent: nil)
+        // Without this pair the child never hears viewWillDisappear or
+        // viewDidDisappear: UIKit sends them for its own transitions, not
+        // for a view a container removes by hand. CMP's hosting controller
+        // stops the scene's rendering in the first and checks its window
+        // containment after the second, so a detach without them left the
+        // disposal to whatever the view's didMoveToWindow triggered - which
+        // is one reading of the 1.0.427 floors varying between 98 and 203 MB
+        // from one background to the next.
+        compose.beginAppearanceTransition(false, animated: false)
         compose.view.removeFromSuperview()
+        compose.endAppearanceTransition()
         compose.removeFromParent()
         self.compose = nil
         removeStrayLayers()
@@ -1059,7 +1078,10 @@ enum AppMemoryWatch {
             format: "%7.1fs  app footprint %6.1f MB",
             Date().timeIntervalSince(launched), Double(bytes) / 1_048_576
         )
-        let label = event.padding(toLength: 16, withPad: " ", startingAt: 0)
+        // Padded to a column for the short events; a longer one (the host's
+        // notes carry a class name) is written whole. `padding(toLength:)`
+        // truncates, which is how the first stranger's name was lost.
+        let label = event.count < 16 ? event.padding(toLength: 16, withPad: " ", startingAt: 0) : event
         append("\(stamp)  \(figures)  \(label)  pressure=\(pressureLevel)")
     }
 

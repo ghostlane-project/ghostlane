@@ -47,6 +47,8 @@ enum AppMemoryWatch { static func note(_ event: String) {} }
   public func removeFromParent() { parent = nil }
   public func didMove(toParent: UIViewController?) {}
   public func willMove(toParent: UIViewController?) {}
+  public func beginAppearanceTransition(_ isAppearing: Bool, animated: Bool) {}
+  public func endAppearanceTransition() {}
 }
 @MainActor public final class UIApplication {
   nonisolated public static let didEnterBackgroundNotification = Notification.Name("didEnterBackground")
