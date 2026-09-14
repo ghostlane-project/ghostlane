@@ -254,7 +254,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n# The extension links Cores — sing-box and Xray in one framework, because two\n# separate gomobile binds cannot be linked into one binary — so it fetches it\n# itself. It cannot inherit it from the app target: iosApp *depends on* this\n# target, so this one builds first and the app's gradle phase has not run yet.\n# The fetch returns immediately once the framework is there, so this costs\n# nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/fetch-cores-ios.sh \"$PWD/sharedUI/build/generated/cores/ios\"\n";
+			shellScript = "set -e\n# The extension links Cores — sing-box and Xray in one framework, because two\n# separate gomobile binds cannot be linked into one binary — so it fetches it\n# itself. It cannot inherit it from the app target: iosApp *depends on* this\n# target, so this one builds first and the app's gradle phase has not run yet.\n# The fetch returns immediately once the framework is there, so this costs\n# nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/fetch-cores-ios.sh \"$PWD/sharedUI/build/generated/cores/ios\"\n# And the tun2socks in front of Xray and olcRTC, a static library rather than\n# a framework: LIBRARY_SEARCH_PATHS and SWIFT_INCLUDE_PATHS point into it.\nbash scripts/fetch-hev-ios.sh \"$PWD/sharedUI/build/generated/hev/ios\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -473,11 +473,28 @@
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-framework",
 					Cores,
+					"-lhev-socks5-tunnel",
 					"-lresolv",
 				);
 				CURRENT_PROJECT_VERSION = 273;
@@ -553,11 +570,28 @@
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-framework",
 					Cores,
+					"-lhev-socks5-tunnel",
 					"-lresolv",
 				);
 				COPY_PHASE_STRIP = NO;
