@@ -1,6 +1,57 @@
 # iOS: one Go runtime per tunnel extension
 
-Status: proposed 2026-09-13, after the 1.0.423 speed-test deaths. Not started.
+Status: in progress. Proposed 2026-09-13 after the 1.0.423 speed-test deaths;
+part 1 (hev in front of Xray and olcRTC) landed 2026-09-14, unreleased and
+not yet run on a device. Parts 2 (Xray's h2 receive window) and 3 (Bypass
+Russia in Xray's rules) are separate branches.
+
+## What landed (part 1)
+
+- `scripts/hev-pins.sh`, `scripts/build-hev-ios.sh`,
+  `.github/workflows/hev-tunnel.yml`, `scripts/fetch-hev-ios.sh`: the
+  framework is built once per pin on a macOS runner and published as
+  `HevSocks5Tunnel-ios.zip` at tag `hev-socks5-tunnel-<12hex>-b<N>`; every
+  other build downloads it, like Cores.
+- Xcode: the PacketTunnel target links `-lhev-socks5-tunnel` from the
+  xcframework slice (LIBRARY_SEARCH_PATHS per SDK) and imports the module
+  from the slice's `Headers/HevSocks5Tunnel` (SWIFT_INCLUDE_PATHS per SDK);
+  the "Fetch Core Frameworks" phase fetches it.
+- `HevTunnel.swift` (start on a thread, quit, stats, the YAML),
+  `TunDescriptor.swift` (the descriptor lookup shared with libbox), and
+  the provider: on xhttp and olcRTC the engine starts on its SOCKS port,
+  then hev takes the tun; no sing-box service. Reality and Hysteria2 are
+  unchanged.
+- DNS on those paths: the tun advertises OpenDNS (208.67.222.222,
+  208.67.220.220), reached through the SOCKS engine as UDP. 172.19.0.2 was
+  an address only sing-box answered.
+
+## What the user has to do
+
+1. Run the `hev-socks5-tunnel` workflow once (publish = true) so the tag
+   exists; until then the extension's fetch phase fails with a message
+   naming the tag.
+2. Open the project in Xcode and check, for the PacketTunnel target:
+   `LIBRARY_SEARCH_PATHS[sdk=iphoneos*]` and `[sdk=iphonesimulator*]`,
+   `SWIFT_INCLUDE_PATHS[sdk=…]`, and `-lhev-socks5-tunnel` in
+   `OTHER_LDFLAGS`. The Linux typecheck cannot see the module map; the
+   first device build is what proves `import HevSocks5Tunnel` resolves.
+3. On the device, an xhttp session's diagnostics must read
+   `tun up: engine=xray+hev …`, names must resolve, and a speed test must
+   complete; the memory trace says what the extension holds without
+   gVisor. Then olcRTC the same way, with attention to DNS latency on the
+   relay (`SOCKS5 UDP associate` lines in olcrtc.log are the queries).
+
+## Open decisions
+
+- **olcRTC DNS.** Plain DNS over the datagram lane on a lossy relay was the
+  reason the hijack existed. If it is too slow, the cheapest way back is to
+  keep sing-box for olcRTC only: `PacketTunnelProvider.hevSocks` returns
+  nil for the olcRTC case and everything else follows.
+- **Bypass Russia** on these two paths needs a router in front of the engine
+  or rules inside it (part 3). Until then the mode is effectively Global
+  there: hev forwards everything to the SOCKS port.
+- **max-session-count 768** is Tun2SocksKit's figure, not the README's
+  1200; each live session holds a task stack.
 
 ## The finding
 
