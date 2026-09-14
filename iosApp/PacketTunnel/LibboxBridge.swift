@@ -29,6 +29,17 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         // those queries left through the tunnel past the hijack, and on a
         // lossy relay each one took twenty seconds. Inside the tun's own /30.
         static let dns = ["172.19.0.2"]
+        // For the tun hev-socks5-tunnel owns (xhttp and olcRTC): there is no
+        // sing-box to hijack 172.19.0.2, so a query to it would travel through
+        // the SOCKS engine to an address nothing answers. These are answered on
+        // the internet, reached the way every other packet is, as UDP through
+        // SOCKS5 UDP ASSOCIATE. OpenDNS rather than 1.1.1.1 or 8.8.8.8, which
+        // iOS knows as encrypted-DNS providers and quietly upgrades to DoT/DoH
+        // — the upgrade is what made each query take twenty seconds on a lossy
+        // relay before the hijack existed. A plain resolver through a lossy
+        // relay is still slower than the hijack was; olcRTC's datagram lane is
+        // the case to watch.
+        static let dnsThroughSocks = ["208.67.222.222", "208.67.220.220"]
     }
 
     private weak var provider: NEPacketTunnelProvider?
@@ -59,7 +70,7 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         // what produced "open interface take too much time". The settings are
         // applied before the engine starts now, so this only hands over the
         // descriptor.
-        guard let fd = Self.tunnelFileDescriptor(of: provider.packetFlow) else {
+        guard let fd = TunDescriptor.find(in: provider.packetFlow) else {
             throw NSError(domain: "org.proofkit.tunnel", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "no descriptor behind packetFlow"])
         }
@@ -67,53 +78,21 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         ret0_?.pointee = fd
     }
 
-    /// The settings libbox's tun inbound is configured to expect.
-    static func tunnelSettings() -> NEPacketTunnelNetworkSettings {
+    /// The settings the tun is brought up with. `dns` names the resolvers the
+    /// system is told to use: `Tun.dns` when sing-box owns the tun and answers
+    /// them itself, `Tun.dnsThroughSocks` when hev-socks5-tunnel does and every
+    /// query travels through the SOCKS engine to a resolver on the internet.
+    static func tunnelSettings(dns: [String] = Tun.dns) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: Tun.address)
         let ipv4 = NEIPv4Settings(addresses: [Tun.address], subnetMasks: [Tun.mask])
         ipv4.includedRoutes = [NEIPv4Route.default()]
         settings.ipv4Settings = ipv4
         settings.mtu = NSNumber(value: Tun.mtu)
 
-        let dns = NEDNSSettings(servers: Tun.dns)
-        dns.matchDomains = [""]
-        settings.dnsSettings = dns
+        let dnsSettings = NEDNSSettings(servers: dns)
+        dnsSettings.matchDomains = [""]
+        settings.dnsSettings = dnsSettings
         return settings
-    }
-
-    private static func tunnelFileDescriptor(of flow: NEPacketTunnelFlow) -> Int32? {
-        // The key path every libbox client uses. It stopped answering on iOS 26,
-        // so it is tried first and no longer trusted.
-        if let value = flow.value(forKeyPath: "socket.fileDescriptor") as? Int32 {
-            return value
-        }
-        if let number = flow.value(forKeyPath: "socket.fileDescriptor") as? NSNumber {
-            return number.int32Value
-        }
-        return findUtunDescriptor()
-    }
-
-    /// Finds the tunnel descriptor by asking each open socket what interface it
-    /// is, rather than by reaching into a private property.
-    ///
-    /// The extension owns exactly one utun — the one the system just created for
-    /// this tunnel — so the first match is the right one. Slower than a key path
-    /// and considerably harder for a system update to take away.
-    private static func findUtunDescriptor() -> Int32? {
-        let controlProtocol: Int32 = 2   // SYSPROTO_CONTROL
-        let interfaceNameOption: Int32 = 2   // UTUN_OPT_IFNAME
-
-        for fd in Int32(0) ..< Int32(1024) {
-            var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
-            var length = socklen_t(name.count)
-            let result = getsockopt(fd, controlProtocol, interfaceNameOption, &name, &length)
-            guard result == 0 else { continue }
-            let interface = String(cString: name)
-            if interface.hasPrefix("utun") {
-                return fd
-            }
-        }
-        return nil
     }
 
     // MARK: - things iOS answers plainly
