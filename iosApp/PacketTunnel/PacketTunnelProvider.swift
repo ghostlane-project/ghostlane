@@ -254,7 +254,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // waiting. Never both — a location is one transport.
             if let xrayConfig {
                 mark("xray")
-                try XrayEngine.start(configJSON: xrayConfig)
+                // Under Bypass Russia the Xray config carries the same direct
+                // resolver placeholder the sing-box one does; only this
+                // process can fill it in. A no-op for a config without it.
+                try XrayEngine.start(configJSON: DirectResolver.substitute(in: xrayConfig, resolvers: resolvers))
             }
             if let olcrtc {
                 mark("olcrtc")
