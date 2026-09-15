@@ -43,17 +43,69 @@ up for, and nothing to buy here.
 | VLESS + Reality | sing-box |
 | VLESS over TLS, incl. behind a CDN | sing-box |
 | Hysteria2, with Salamander obfuscation | sing-box |
-| XHTTP | Xray, behind sing-box's tun |
+| XHTTP | Xray — sing-box has no xhttp transport |
 
 One subscription usually carries several. The app groups them by provider,
 filters by protocol, and remembers the exit last used.
 
+One engine runs at a time. What hands it the packets is the platform's business,
+and the platforms differ — the matrix below says how.
+
+## Routing
+
+Two modes, under Settings → Routing, stored beside the server lists and the same
+on every platform:
+
+| Mode | What goes where |
+| --- | --- |
+| All traffic through the tunnel | Everything. The exit is the server's, for every connection. |
+| Bypass Russia | Russian sites, `.ru` domains and the local network go straight out; everything else rides the tunnel, name resolution included. |
+
+The three rule-sets Bypass Russia needs — `geosite-category-ru`,
+`geosite-tld-ru`, `geoip-ru` — ship inside the app and are pinned by hash, so the
+mode needs nothing from the network to start working. On the networks it is for,
+the lists are as likely to be unreachable as anything else.
+
+It applies in the iOS and Android tunnels, in desktop proxy mode and in the macOS
+tunnel. The Linux and Windows tunnels stay global — the cores run unprivileged
+there, and a socket meant to go direct would re-enter the policy-routed tun — and
+the app greys the choice out with that reason rather than quietly ignoring it. An
+olcRTC room on iOS is global too: hev-socks5-tunnel hands everything to the
+engine's SOCKS port and no router sits in that path.
+
+## Server lists
+
+You bring the list; the app turns it into servers. Paste a link, scan a QR code,
+or open a file. A provider's panel or bot can also hand over a one-tap link:
+
+```text
+proofkit://add?url=<payload>
+https://proofkit.org/add#<payload>
+```
+
+The web spelling is for the places that will not open a custom scheme: a phone
+with the app installed opens it in the app, a phone without it lands on a page
+with the downloads. There the payload rides the fragment on purpose — a fragment
+never leaves the browser, so the list, which is a credential, is in nobody's
+access log. For the same reason the app shows where a list came from and never
+reads the link itself back out.
+
 ## Status
 
-Shipping on every platform. iOS is on the App Store as
-[ProofKit VPN](https://apps.apple.com/us/app/proofkit-vpn/id6795355210).
-Android, macOS, Windows and Linux are built by the release workflow and
-published on the Releases page.
+Shipping on every platform.
+
+| Platform | Where it comes from |
+| --- | --- |
+| iOS | The App Store, as [ProofKit VPN](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) |
+| Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now |
+| macOS | Signed and notarised DMG, one per architecture |
+| Windows | EXE, MSI and a portable zip |
+| Linux | AppImage |
+
+Everything except the App Store build is produced by the release workflow on
+public GitHub Actions runners and published with SHA256 sums and a build
+provenance attestation. The APKs are the channel nobody can revoke; the Play
+bundle is the one Play updates, and it carries no self-updater for that reason.
 
 ## Credits
 
@@ -91,37 +143,55 @@ The author does not support or encourage such use.
 ## Features
 - One tap to connect, with the session's elapsed time and traffic on screen.
 - Server lists by link, QR code or file; grouped, foldable, and refreshed on
-  a schedule you choose.
+  a schedule you choose. A `proofkit://` or `proofkit.org/add` link imports one
+  without a paste.
 - What the provider says about your plan — quota, expiry, its own support and
   web links — read from the server list's own headers.
+- olcRTC rooms carry their occupancy on the board, and say out loud when one is
+  full or its key is no longer good rather than failing at connect.
 - Latency where it can honestly be measured: through the tunnel for the
-  connection you are on, ICMP for a server you are not connected to.
+  connection you are on; for a server you are not connected to, ICMP first and a
+  TCP connect to the port the link names where ICMP is filtered. An olcRTC room
+  is timed by standing a short-lived client up and timing a request through it.
 - Sorting by ping or name, filtering by protocol, duplicate subscriptions
-  refreshed rather than added twice.
+  refreshed rather than added twice, and a location or a whole list removed from
+  the board itself.
+- A failure that says what failed: a link asking for a transport its provider
+  cannot carry, a dead key, an empty room, a tunnel that came up but carried
+  nothing.
+- Routing modes: everything through the tunnel, or Russia and the local network
+  direct.
 - Diagnostics log with export, and a failed connection that says why. Server
   addresses are replaced by short tags before a line reaches the log, so the
   file is safe to send to anyone and still says which hop failed.
-- Android TUN/proxy modes, SOCKS5 credentials, split tunneling.
+- TUN and proxy modes wherever the platform has both, SOCKS5 listen address and
+  credentials, Android split tunneling.
 - Network migration, reconnect handling, and watchdog recovery.
 - No account, no analytics, nothing collected.
 
 ## Platform Matrix
 
-| Platform | Modes | Runtime |
-| --- | --- | --- |
-| Android | TUN, proxy | `VpnService`, `hev-socks5-tunnel`, local `olcrtc` SOCKS5 |
-| iOS | System VPN | `NEPacketTunnelProvider`; sing-box, Xray and olcRTC bound into one framework inside the extension |
-| macOS | TUN, proxy | root daemon via `SMAppService` + sing-box for TUN; local `olcrtc` SOCKS5 with OS PAC settings otherwise |
-| Windows | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, Wintun |
-| Linux | TUN | local `olcrtc` SOCKS5, `hev-socks5-tunnel`, policy routes |
+| Platform | Modes | What carries the packets | Engines |
+| --- | --- | --- | --- |
+| Android | TUN, proxy | `VpnService` + `hev-socks5-tunnel` | sing-box and Xray as packaged native binaries, olcRTC bound in-process |
+| iOS | System VPN | sing-box's own tun for Reality and Hysteria2; `hev-socks5-tunnel` in front of Xray and olcRTC | all three in one `Cores.xcframework` inside the extension |
+| macOS | TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
+| Windows | TUN, proxy | `tun2socks` + Wintun; OS proxy settings otherwise | as macOS |
+| Linux | TUN | `hev-socks5-tunnel` + policy routes | as macOS |
+
+iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB. sing-box
+owning the tun in front of a second Go engine buffers every connection twice and
+serves it with twice the goroutines; a speed test killed the extension outright.
+The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
 
 ## Requirements
 
 | Area | Requirement |
 | --- | --- |
-| JVM | JDK 17+ |
-| Android | Android Studio, Android SDK, Android NDK |
-| Desktop native assets | Go and local `olcrtc` fork |
+| JVM | JDK 21 — what CI builds with; the Android source and target level is 17 |
+| Android | Android Studio, SDK 37, NDK 28.2.13676358 |
+| Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
+| iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 
@@ -140,7 +210,7 @@ OLCRTC_REPO=/path/to/olcrtc ./gradlew :desktopApp:run
 Relative `OLCRTC_REPO` values are resolved from the `olcbox` project root:
 
 ```bash
-OLCRTC_REPO=../olcrtc-ansible-deploy/olcrtc ./gradlew :androidApp:assembleRelease
+OLCRTC_REPO=../olcrtc-ansible-deploy/olcrtc ./gradlew :androidApp:assembleGithubRelease
 ```
 
 ```powershell
@@ -153,7 +223,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Task | Command |
 | --- | --- |
 | Android debug APK | `./gradlew :androidApp:assembleDebug` |
-| Install Android debug APK | `./gradlew :androidApp:installDebug` |
+| Install Android debug APK | `./gradlew :androidApp:installGithubDebug` |
 | iOS simulator app | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` |
 | Run desktop app | `./gradlew :desktopApp:run` |
 | Run desktop app with hot reload | `./gradlew :desktopApp:hotRun --auto` |
@@ -161,40 +231,67 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Package current host OS | `./gradlew :desktopApp:packageReleaseDistributionForCurrentOS` |
 | Main checks | `./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug` |
 | JVM tests | `./gradlew :sharedUI:jvmTest` |
+| Run the emitted configs past sing-box itself | `scripts/check-singbox-configs.sh` |
+
+The main checks are what PR checks run, in that order; `check-singbox-configs.sh`
+follows them there, starting the shapes rather than only checking them.
 
 ## Build Outputs
 
 | Target | Command | Output |
 | --- | --- | --- |
-| Android debug | `./gradlew :androidApp:assembleDebug` | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` |
-| Android release | `./gradlew :androidApp:assembleRelease` | `androidApp/build/outputs/apk/release/androidApp-release.apk` |
+| Android debug | `./gradlew :androidApp:assembleDebug` | `androidApp/build/outputs/apk/github/debug/androidApp-github-debug.apk` |
+| Android release | `./gradlew :androidApp:assembleGithubRelease` | `androidApp/build/outputs/apk/github/release/androidApp-github-release.apk` |
+| Android App Bundle for Play | `./gradlew :androidApp:bundlePlayRelease` | `androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab` |
 | iOS simulator | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` | Xcode DerivedData app product |
 | macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/ProofKit-<version>.dmg` |
 | Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\ProofKit-<version>.exe` |
 | Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\ProofKit-<version>.msi` |
+| Windows portable zip | `.\gradlew.bat :desktopApp:packageReleasePortableZip` | `desktopApp\build\compose\binaries\main-release\portable\ProofKit-<version>-windows-amd64-portable.zip` |
 | Linux AppImage | `./gradlew :desktopApp:packageReleaseLinuxAppImage` | `desktopApp/build/compose/binaries/main-release/appimage/ProofKit-<version>-amd64.AppImage` |
 
 ## Native Assets
 
+Built into `desktopApp/build/generated/desktopNativeResources/` by
+`buildDesktopNativeAssets`, which verifies the set the host actually needs:
+
 | Asset | Path |
 | --- | --- |
-| macOS `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-darwin-arm64` |
-| Linux `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-amd64` |
-| Linux `olcrtc` ARM | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-linux-arm64` |
-| Windows `olcrtc` | `desktopApp/build/generated/desktopNativeResources/native/olcrtc-windows-amd64.exe` |
-| Linux `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-amd64` |
-| Linux `hev-socks5-tunnel` ARM | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-linux-arm64` |
-| Windows `hev-socks5-tunnel` | `desktopApp/build/generated/desktopNativeResources/native/hev-socks5-tunnel-windows-amd64.exe` |
-| Windows Wintun runtime | `desktopApp/build/generated/desktopNativeResources/native/wintun.dll` |
+| macOS `olcrtc` | `native/olcrtc-darwin-<arch>` |
+| macOS `olcrtc` library, for room checks | `native/libolcrtc-darwin-<arch>.dylib` |
+| macOS tunnel-daemon bridge | `native/libolcboxtunneld.dylib` |
+| Windows `olcrtc` | `native/olcrtc-windows-amd64.exe`, `native/olcrtc-windows-amd64.dll` |
+| Windows `tun2socks` | `native/tun2socks-windows-amd64.exe` |
+| Windows Wintun runtime | `native/wintun.dll` |
+| Linux `olcrtc` | `native/olcrtc-linux-<arch>`, `native/libolcrtc-linux-<arch>.so` |
+| Linux `hev-socks5-tunnel` | `native/hev-socks5-tunnel-linux-<arch>` |
+
+`<arch>` is `arm64` or `amd64`. The macOS bridge is why a missing asset is worth
+a failed build rather than a warning: absent, the settings row for the system-wide
+tunnel simply does not appear, and nothing anywhere says why.
 
 ## Notes
 
-- Android native ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64`.
+- Android native ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64`, picked with
+  `-Polcbox.android.abiFilters`. The release builds a universal APK and a
+  separate `armeabi-v7a` one.
+- The `github` flavor carries the in-app updater, which looks at this
+  repository's releases; the `play` flavor drops it along with the two
+  permissions Play refuses.
 - Android release builds require `keystore.properties` in the repository root.
-- macOS DMG output is not notarized unless signing/notarization is configured separately.
+- sing-box and Xray are **not** produced by `buildDesktopNativeAssets`. The
+  release workflow downloads the pinned versions — sing-box 1.13.14, Xray
+  25.3.6 — into `desktopApp/src/main/resources/native/` before packaging, so a
+  locally packaged build starts olcRTC locations and fails on the rest until
+  those two binaries are put there by hand.
+- The release workflow signs and notarises every macOS build, published or not:
+  `SMAppService` refuses to register the tunnel daemon from an un-notarised
+  bundle. A local `packageReleaseDmg` is neither unless `MACOS_SIGN_IDENTITY`
+  and the notary credentials are set.
 - Windows installers must be built on Windows with `jpackage` and WiX available.
 - Linux TUN interface: `olcbox0`.
-- Linux stop removes policy routes and reverts `systemd-resolved` settings when `resolvectl` is available.
+- Linux stop removes policy routes and reverts `systemd-resolved` settings when
+  `resolvectl` is available.
 
 `keystore.properties`:
 

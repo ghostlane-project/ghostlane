@@ -10,7 +10,14 @@ data class IosOlcRtcStartRequest(
     val socksUser: String,
     val socksPass: String,
     val vp8Fps: Int,
-    val vp8BatchSize: Int
+    val vp8BatchSize: Int,
+    /**
+     * The engine's direct rules under Bypass Russia ([OlcrtcDirectRules]),
+     * empty under Global. The engine dials a matching destination itself and
+     * resolves a matching name on the network's resolver; there is no router
+     * in front of it on this platform since hev took the tun (1.0.428).
+     */
+    val directRules: String = ""
 )
 
 data class IosOlcRtcCheckRequest(

@@ -52,10 +52,17 @@ Russia in Xray's rules) are separate branches.
   behind hev too and the extension runs one Go engine on every path except
   sing-box's own transports. If a device shows resolver timeouts on olcRTC,
   the way back is `PacketTunnelProvider.hevOwnsTun` excluding olcRTC.
-- **Bypass Russia** is done on xhttp inside Xray (part 3). On olcRTC there
-  is no router: the mode is effectively Global there, hev forwards
-  everything to the SOCKS port. Xray as a router in front of olcrtc would be
-  a second Go engine again (~5-10 MB); not planned until measured.
+- **Bypass Russia - decided (olcbox#28).** On xhttp it is done inside Xray
+  (part 3). On olcRTC there was no router, so the mode was Global there
+  from 1.0.428. Rather than put Xray in front of olcrtc (a second Go engine,
+  ~5-10 MB), the olcrtc client carries the rules itself since engine
+  b9dc3a19: the app hands it the same three lists as direct rules
+  (`OlcrtcDirectRules`, `MobileRuntime.setDirectRules`); a matching name or
+  address is dialed from the engine over the pinned interface, a name the
+  tun hides behind an address is read off the TLS hello or the HTTP Host,
+  a matching name's DNS query goes to the network's own resolver, matching
+  UDP is relayed by the engine, everything else rides the room. Design:
+  `docs/superpowers/specs/2026-09-15-olcrtc-client-routing-design.md`.
 - **max-session-count 768** is Tun2SocksKit's figure, not the README's
   1200; each live session holds a task stack.
 
