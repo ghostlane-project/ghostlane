@@ -1,5 +1,6 @@
 package org.olcbox.app.data.datasource
 
+import kotlin.coroutines.cancellation.CancellationException
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -63,7 +64,8 @@ internal expect fun createProxyHttpClient(
     subscriptionProxy: SubscriptionFetchProxy? = null,
     connectTimeoutMs: Long = 3_000,
     requestTimeoutMs: Long = 8_000,
-    socketTimeoutMs: Long = 8_000
+    socketTimeoutMs: Long = 8_000,
+    followRedirects: Boolean = true
 ): HttpClient
 
 internal expect suspend fun <T> withProxyAuthentication(
@@ -375,16 +377,20 @@ class LocationsRepositoryImpl(
     ): SubscriptionRefreshReport {
         return mutationMutex.withLock {
             val bundle = getBundleUnlocked()
+            val settings = bundle.settings.normalized()
+            if (!settings.autoUpdate) return@withLock SubscriptionRefreshReport.EMPTY
             val now = nowEpochMs()
             val dueUrls = bundle.locations
                 .mapNotNull { entry ->
                     val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                     val metadata = entry.metadata?.subscription
-                    val interval = metadata?.updateIntervalHours
-                        ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+                    val interval = minOf(
+                        metadata?.updateIntervalHours ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
+                        settings.updateIntervalHours
+                    )
                     val lastRefreshAt = metadata?.lastRefreshAtEpochMs ?: 0L
                     val intervalMs = interval.toLong() * 60L * 60L * 1_000L
-                    url.takeIf { lastRefreshAt <= 0L || now - lastRefreshAt >= intervalMs }
+                    url.takeIf { lastRefreshAt <= 0L || lastRefreshAt > now || now - lastRefreshAt >= intervalMs }
                 }
                 .toSet()
 
@@ -780,7 +786,7 @@ class LocationsRepositoryImpl(
                             }
                         }
                     }
-                }.getOrNull() ?: run {
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull() ?: run {
                     onFailure?.invoke(SubscriptionRefreshError.Unreachable, null)
                     return@withProxyAuthentication null
                 }
@@ -797,7 +803,7 @@ class LocationsRepositoryImpl(
 
                 val content = runCatching {
                     response.bodyAsText()
-                }.getOrNull()?.takeIf { it.isNotBlank() }
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull()?.takeIf { it.isNotBlank() }
                     ?: run {
                         onFailure?.invoke(SubscriptionRefreshError.Empty, null)
                         return@withProxyAuthentication null

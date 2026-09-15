@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.service
 
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -483,6 +484,7 @@ class OlcboxVpnService : VpnService() {
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                         return@withLock
                     }
+                    OlcboxVpnState.activeLocation = location.normalized()
                     routingMode = repository.getRoutingSettings().mode
 
                     if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
@@ -1860,6 +1862,23 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun setStatus(status: VpnStatus) {
+        if (status is VpnStatus.Connected) {
+            OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
+                AndroidSocksProxySettings.connectHost(socksListenHost), activeCorePort ?: socksListenPort,
+                if (activeCorePort == null) socksUsername else "",
+                if (activeCorePort == null) socksPassword else ""
+            )
+        } else {
+            OlcboxVpnState.channelProxy = null
+        }
+        // Retire pooled sockets on migration as well as stop: they must not
+        // carry a measurement from the previous network into the new session.
+        if (status is VpnStatus.Connected && OlcboxVpnState.channelProbe == null) {
+            OlcboxVpnState.channelProbe = org.olcbox.app.net.ChannelLatency.Session(OlcboxVpnState.channelProxy)
+        } else if (status !is VpnStatus.Connected) {
+            OlcboxVpnState.channelProbe?.close()
+            OlcboxVpnState.channelProbe = null
+        }
         OlcboxVpnState.setStatus(status)
     }
 

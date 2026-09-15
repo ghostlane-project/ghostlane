@@ -4,6 +4,10 @@ import org.olcbox.app.net.ImportLink
 import org.olcbox.app.net.isPartnerLink
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +110,27 @@ class HomeScreenViewModel(
     private val _autoRefreshNotice = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val autoRefreshNotice = _autoRefreshNotice.asSharedFlow()
 
+    private val _channelLatency = MutableStateFlow<org.olcbox.app.net.ChannelMeasurement?>(null)
+    val channelLatency = _channelLatency.asStateFlow()
+    private var measurementEpoch = 0L
+    private var measurementRequest = 0L
+
+    suspend fun measureActiveChannel(): Long? {
+        val epoch = measurementEpoch
+        val request = ++measurementRequest
+        val session = vpnManager.connectedSince.value
+        val config = _state.value.configData
+        val result = vpnManager.measureCurrentChannel()
+        // connectedSince survives a network migration. The separate epoch
+        // rejects its old sample even if the session clock did not change.
+        if (epoch == measurementEpoch && request == measurementRequest &&
+            vpnManager.status.value is VpnStatus.Connected &&
+            vpnManager.connectedSince.value == session && _state.value.configData == config) {
+            _channelLatency.value = org.olcbox.app.net.ChannelMeasurement(result)
+        }
+        return result
+    }
+
     private val _subscriptionSettings = MutableStateFlow(SubscriptionSettings())
     val subscriptionSettings = _subscriptionSettings.asStateFlow()
 
@@ -122,8 +147,10 @@ class HomeScreenViewModel(
 
     fun updateSubscriptionSettings(settings: SubscriptionSettings) {
         val normalized = settings.normalized()
-        _subscriptionSettings.value = normalized
-        viewModelScope.launch { locationsRepository.saveSubscriptionSettings(normalized) }
+        viewModelScope.launch {
+            locationsRepository.saveSubscriptionSettings(normalized)
+            _subscriptionSettings.value = normalized
+        }
     }
 
     private val _routingSettings = MutableStateFlow(RoutingSettings())
@@ -216,6 +243,10 @@ class HomeScreenViewModel(
                     if (selectionJob?.isActive == true && status is VpnStatus.Disconnected) {
                         next.copy(isVpnLoading = true)
                     } else next
+                }
+                if (status !is VpnStatus.Connected) {
+                    measurementEpoch++
+                    _channelLatency.value = null
                 }
             }
         }
@@ -544,9 +575,15 @@ class HomeScreenViewModel(
      */
     private fun startSubscriptionAutoRefresh() {
         viewModelScope.launch {
-            while (true) {
-                if (_subscriptionSettings.value.autoUpdate) refreshDueSubscriptionsIfNeeded()
-                delay(SUBSCRIPTION_AUTO_REFRESH_POLL_MS)
+            subscriptionSettingsLoaded.first { it }
+            subscriptionSettings.map { it.autoUpdate to it.updateIntervalHours }
+                .distinctUntilChanged().collectLatest { (autoUpdate, _) ->
+                if (autoUpdate) {
+                    while (true) {
+                        refreshDueSubscriptionsIfNeeded()
+                        delay(SUBSCRIPTION_AUTO_REFRESH_POLL_MS)
+                    }
+                }
             }
         }
     }

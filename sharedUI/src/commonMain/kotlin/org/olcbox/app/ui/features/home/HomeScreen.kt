@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.features.home
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.AlertDialog
@@ -94,6 +97,7 @@ fun HomeScreen(
 
     val state by viewModel.state.collectAsState()
     val connectedSince by viewModel.connectedSince.collectAsState()
+    val channelLatency by viewModel.channelLatency.collectAsState()
     val subscriptionSettings by viewModel.subscriptionSettings.collectAsState()
     val subscriptionSettingsLoaded by viewModel.subscriptionSettingsLoaded.collectAsState()
     val scope = rememberCoroutineScope()
@@ -314,6 +318,25 @@ fun HomeScreen(
         )
     }
 
+    // A small request over the existing tunnel, including Telemost. No room is
+    // joined merely to draw this value; leaving the screen cancels the sampler.
+    // Loading toggles retain the column and in-flight startup probes. Mark those
+    // results historical instead of presenting an old network as a live sample.
+    LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince) {
+        locationViewModel.markPingsStale()
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince, lifecycle) {
+        if (state.isVpnConnected && !state.isVpnLoading) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    viewModel.measureActiveChannel()
+                    delay(30_000)
+                }
+            }
+        }
+    }
+
     // Occupancy goes stale on its own, so it has to be re-asked.
     //
     // It was fetched once, when the location list loaded, and then never again — so a
@@ -395,7 +418,9 @@ fun HomeScreen(
                     requiresSetup = requiresSetup,
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                     protocolLine = selectedConfig?.protocolLabels()?.joinToString(" · ")
-                )
+                ) + if (state.isVpnConnected) {
+                    " · " + (channelLatency?.label() ?: "HTTP …")
+                } else ""
             },
             statusValue = {
                 statusValue(
@@ -429,6 +454,7 @@ fun HomeScreen(
             selectedLocationId = selectedId,
             isConnected = state.isVpnConnected,
             pingsState = pingsState,
+            pingsStale = locationViewModel.stalePingIds.any { id -> locations.any { it.storageId == id } },
             olcrtcSlots = locationViewModel.olcrtcSlots,
             occupancyHistory = locationViewModel.olcrtcHistory,
             revokedKeys = locationViewModel.olcrtcRevoked,

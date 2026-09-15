@@ -85,6 +85,7 @@ data class HomeBoard(
     val selectedLocationId: String?,
     val isConnected: Boolean,
     val pingsState: PingsState,
+    val pingsStale: Boolean = false,
     val olcrtcSlots: Map<String, OlcrtcSlots>,
     val occupancyHistory: Map<String, List<Float>>,
     /** Storage ids whose room key the coordinator no longer recognises. */
@@ -335,6 +336,7 @@ private fun HomeRoomBoard(board: HomeBoard, callbacks: HomeCallbacks) {
         selectedLocationId = board.selectedLocationId,
         isConnected = board.isConnected,
         pingsState = board.pingsState,
+        pingsStale = board.pingsStale,
         olcrtcSlots = board.olcrtcSlots,
         occupancyHistory = board.occupancyHistory,
         revokedKeys = board.revokedKeys,

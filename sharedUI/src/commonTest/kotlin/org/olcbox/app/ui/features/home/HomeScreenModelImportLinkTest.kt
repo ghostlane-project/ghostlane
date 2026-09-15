@@ -4,10 +4,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.awaitCancellation
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -44,7 +44,8 @@ class HomeScreenModelImportLinkTest {
 
     @BeforeTest fun main() = Dispatchers.setMain(UnconfinedTestDispatcher())
     @AfterTest fun restore() {
-        // Complete IO continuations before resetting the test Main dispatcher.
+        // IO continuations must finish before resetting the test Main dispatcher;
+        // otherwise a previous view model can crash the following test class.
         runBlocking { models.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
         Dispatchers.resetMain()
     }
@@ -88,6 +89,74 @@ class HomeScreenModelImportLinkTest {
         } finally { vm.viewModelScope.cancel() }
     }
 
+    @Test fun migrationKeepsStartupMeasurementAndMarksItsLateAnswerHistorical() = runTest {
+        repository.importText(realityLink)
+        val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            error("Address measurements must not query room occupancy")
+        })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(
+            repository, org.olcbox.app.net.OlcrtcStatusClient(client)
+        )
+        try {
+            val answer = CompletableDeferred<Long>()
+            val finished = CompletableDeferred<Unit>()
+            vm.refreshPings(performPing = { answer.await() }, canPing = { true },
+                onComplete = { _, _ -> finished.complete(Unit) })
+            vm.markPingsStale()
+            answer.complete(42)
+            finished.await()
+            val id = vm.locations.single().storageId
+            assertEquals(42, (vm.pingsState as org.olcbox.app.ui.features.locations.PingsState.Success).pings[id])
+            assertTrue(id in vm.stalePingIds)
+            val refreshed = CompletableDeferred<Unit>()
+            vm.refreshPings(performPing = { 17 }, canPing = { true },
+                onComplete = { _, _ -> refreshed.complete(Unit) })
+            refreshed.await()
+            assertTrue(vm.stalePingIds.isEmpty())
+            assertEquals(17, (vm.pingsState as org.olcbox.app.ui.features.locations.PingsState.Success).pings[id])
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
+    }
+
+    @Test fun migrationDiscardsAnInflightSampleEvenWhenTheConnectionClockIsUnchanged() = runTest {
+        val vpn = IdleVpnManager()
+        val vm = viewModel(vpn)
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            vpn.connectedSince.value = 123L
+            vpn.status.value = VpnStatus.Connected
+            val entered = CompletableDeferred<Unit>()
+            val answer = CompletableDeferred<Long?>()
+            vpn.measure = { entered.complete(Unit); answer.await() }
+            val request = async { vm.measureActiveChannel() }
+            entered.await()
+            assertNull(vm.channelLatency.value)
+            vpn.status.value = VpnStatus.Reconnecting
+            vpn.status.value = VpnStatus.Connected
+            answer.complete(42L)
+            request.await()
+            assertNull(vm.channelLatency.value)
+            vpn.measure = { 17L }
+            vm.measureActiveChannel()
+            assertEquals("HTTP 17ms", vm.channelLatency.value?.label())
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    @Test fun failureOnlyAppearsAfterTheFirstCompletedSample() = runTest {
+        val vpn = IdleVpnManager()
+        val vm = viewModel(vpn)
+        try {
+            vpn.status.value = VpnStatus.Connected
+            assertNull(vm.channelLatency.value)
+            vm.measureActiveChannel()
+            assertEquals("HTTP —", vm.channelLatency.value?.label())
+            vpn.status.value = VpnStatus.Disconnected
+            assertNull(vm.channelLatency.value)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
     @Test fun anImportLinkGoesThroughTheSameImportAsAPaste() = runTest {
         val outcome = CompletableDeferred<String>()
         viewModel().onImportLink(
@@ -124,8 +193,10 @@ private class IdleVpnManager : VpnManager {
     override val status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(false)
     override val connectedSince = MutableStateFlow<Long?>(null)
+    var measure: suspend () -> Long? = { null }
     var probe: suspend () -> Long? = { null }
     var starts = 0
+    override suspend fun measureCurrentChannel(): Long? = measure()
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
     override fun startVpn() { starts++ }

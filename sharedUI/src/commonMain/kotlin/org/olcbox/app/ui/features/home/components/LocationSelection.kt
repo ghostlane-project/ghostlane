@@ -250,6 +250,7 @@ fun RoomBoard(
     selectedLocationId: String?,
     isConnected: Boolean,
     pingsState: PingsState,
+    pingsStale: Boolean = false,
     /** olcRTC occupancy by storage id; a missing entry renders no seats at all. */
     olcrtcSlots: Map<String, OlcrtcSlots>,
     /** How full each room has been, by storage id. Empty until a second poll lands. */
@@ -294,6 +295,9 @@ fun RoomBoard(
     ) { mutableStateListOf<String>() }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (pingsStale) {
+            Text("Previous network measurements · tap Measure to refresh", style = MaterialTheme.typography.labelSmall)
+        }
         model.subscriptionGroups.forEach { group ->
             val isCollapsed = collapsible && group.key in collapsed
             val ids = group.locations.map { it.storageId }
