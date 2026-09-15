@@ -37,6 +37,7 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.TransportSpec
@@ -400,6 +401,14 @@ class IosVpnManager(
             // loopback between two of our own cores, so it is fixed, like Xray's.
             val settings = _socksProxySettings.value
                 .copy(port = SingBoxConfig.SINGBOX_SOCKS_PORT)
+            // hev-socks5-tunnel fronts olcRTC on this platform and routes
+            // nothing, so the routing choice reaches the engine as its own
+            // direct rules: the same three lists Xray gets on xhttp.
+            val directRules = if (routing is Routing.BypassRussia) {
+                OlcrtcDirectRules.text()
+            } else {
+                OlcrtcDirectRules.NONE
+            }
             return IosPacketTunnelStartRequest(
                 // The same credentials olcRTC is about to be started with. It
                 // demands them, and sing-box is the only thing that connects.
@@ -415,7 +424,7 @@ class IosVpnManager(
                     routing = routing
                 ),
                 xrayConfig = null,
-                olcrtc = location.startRequest(locationsRepository.getDeviceIdentity(), settings),
+                olcrtc = location.startRequest(locationsRepository.getDeviceIdentity(), settings, directRules),
                 ruleSets = ruleSets
             )
         }
@@ -739,7 +748,8 @@ class IosVpnManager(
 
     private fun LocationConfig.startRequest(
         deviceId: String,
-        settings: ApplicationSocksProxySettings
+        settings: ApplicationSocksProxySettings,
+        directRules: String = OlcrtcDirectRules.NONE
     ): IosOlcRtcStartRequest {
         val config = normalized()
         return IosOlcRtcStartRequest(
@@ -752,7 +762,8 @@ class IosVpnManager(
             socksUser = settings.username,
             socksPass = settings.password,
             vp8Fps = config.vp8Fps,
-            vp8BatchSize = config.vp8Batch
+            vp8BatchSize = config.vp8Batch,
+            directRules = directRules
         )
     }
 

@@ -48,6 +48,7 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         do {
             try runtime.setTransport(request.transportName)
             try runtime.setDNS("1.1.1.1:53")
+            try runtime.setDirectRules(request.directRules)
             try runtime.setVP8Options(Int(request.vp8Fps), batchSize: Int(request.vp8BatchSize))
             try runtime.setProvider(request.carrierName)
             try runtime.setRoom(request.roomId)

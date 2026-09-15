@@ -706,7 +706,8 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             "socksUser": request.socksUser,
             "socksPass": request.socksPass,
             "vp8Fps": Int(request.vp8Fps),
-            "vp8BatchSize": Int(request.vp8BatchSize)
+            "vp8BatchSize": Int(request.vp8BatchSize),
+            "directRules": request.directRules
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return nil }
         return String(data: data, encoding: .utf8)

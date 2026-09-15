@@ -35,6 +35,7 @@ public class MobileRuntime: NSObject {
   public func setProtector(_ p: MobileSocketProtectorProtocol?) {}
   public func setTransport(_ t: String?) throws {}
   public func setDNS(_ d: String?) throws {}
+  public func setDirectRules(_ t: String?) throws {}
   public func setVP8Options(_ f: Int, batchSize: Int) throws {}
   public func setSocksListenHost(_ h: String?) throws {}
   public func setProvider(_ p: String?) throws {}

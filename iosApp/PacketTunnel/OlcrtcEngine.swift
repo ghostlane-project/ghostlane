@@ -28,6 +28,9 @@ enum OlcrtcEngine {
         let socksPass: String
         let vp8Fps: Int
         let vp8BatchSize: Int
+        /// The engine's direct rules under Bypass Russia, empty under Global.
+        /// Optional so a file written by an app without the field still decodes.
+        let directRules: String?
     }
 
     private static let log = Logger(subsystem: "org.proofkit.app", category: "olcrtc")
@@ -112,6 +115,13 @@ enum OlcrtcEngine {
         // Some mobile networks answer only their own servers (olcbox#16).
         try runtime.setDNS((resolvers + ["1.1.1.1:53"]).joined(separator: ","))
         log.info("resolvers from the network: \(resolvers.count, privacy: .public)")
+        // Bypass Russia lives in the engine on this platform: hev fronts it
+        // and routes nothing. A matching name or address is dialed by the
+        // engine through the pin above, resolved on the resolvers above;
+        // everything else rides the room. Empty text is Global.
+        let directRules = parameters.directRules ?? ""
+        try runtime.setDirectRules(directRules)
+        log.info("direct rules: \(directRules.utf8.count, privacy: .public) bytes")
         try runtime.setVP8Options(parameters.vp8Fps, batchSize: parameters.vp8BatchSize)
         // Loopback only. The port is fixed rather than user-set now: nothing
         // outside this process is meant to reach it.
