@@ -77,6 +77,7 @@ class HomeScreenViewModel(
 
     private fun startLowest() {
         cancelAutomaticSelection()
+        _state.update { it.copy(isVpnLoading = true, failure = null) }
         selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 LowestConnection(vpnManager, locationsRepository) {
@@ -177,6 +178,11 @@ class HomeScreenViewModel(
     }
 
     init {
+        viewModelScope.launch {
+            subscriptionSettings.collect { settings ->
+                if (!settings.autoSelectLowest) cancelAutomaticSelection()
+            }
+        }
         loadCurrentConfig()
         viewModelScope.launch {
             _subscriptionSettings.value = locationsRepository.getSubscriptionSettings()

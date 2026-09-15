@@ -81,6 +81,7 @@ class HomeScreenModelImportLinkTest {
             withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
             vm.ToggleVpn()
             entered.await()
+            assertTrue(vm.state.value.isVpnLoading)
             vm.ToggleVpn()
             assertEquals(0, vpn.starts)
             assertEquals(false, vm.state.value.isVpnLoading)
