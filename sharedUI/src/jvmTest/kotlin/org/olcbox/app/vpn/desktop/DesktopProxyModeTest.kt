@@ -72,7 +72,7 @@ class DesktopProxyModeTest {
             val args = command.args(Path.of("/tmp/client.yaml"))
             val yaml = command.yaml()
 
-            assertEquals(listOf("/tmp/olcrtc", "/tmp/client.yaml"), args)
+            assertEquals(listOf(Path.of("/tmp/olcrtc").toString(), Path.of("/tmp/client.yaml").toString()), args)
             assertContains(yaml, "mode: cnc")
             assertContains(yaml, "provider: '${OlcRtcCommand.desktopProviderArg(provider)}'")
             assertContains(yaml, "transport: '$expectedTransport'")
@@ -302,7 +302,7 @@ class DesktopProxyModeTest {
             socksPort = 10812
         )
 
-        assertContains(command, "C:/Olcbox/bin/tun2socks-windows-amd64.exe")
+        assertContains(command, Path.of("C:/Olcbox/bin/tun2socks-windows-amd64.exe").toString())
         assertContains(command, "--device")
         assertContains(command, "Olcbox")
         assertContains(command, "--proxy")
