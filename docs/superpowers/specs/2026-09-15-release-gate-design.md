@@ -133,7 +133,7 @@ default and lean builds.
 with a SOCKS listener on a random port. `mobile` runs `mobile.Runtime` exactly as
 `OlcboxVpnService` and the iOS provider do: `SetProvider`, `SetTransport`,
 `SetRoom`, `SetKey`, `SetDNS`, `SetSocksListenHost`, `SetSocksPort`, `SetDeviceID`,
-`SetVP8Options(30, 32)`, `Start`, `WaitReady`, and `mobile.SetMemoryLimit(40 MiB)` with
+`SetVP8Options(60, 64)` (the app's defaults), `Start`, `WaitReady`, and `mobile.SetMemoryLimit(40 MiB)` with
 `GOGC=10` in the environment — the phone's numbers. The mobile flavour exists only
 under `olcrtc_lean`, so the suite binary is built twice; each cell records which
 flavour ran it.

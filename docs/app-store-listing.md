@@ -118,13 +118,19 @@ about you.
 REQUIREMENTS
 
 A server configuration from a VPN provider: a server-list URL, a QR code, or a
-pasted link. ProofKit does not sell one and does not include one. Any provider
+pasted link. The app does not sell one and does not include one. Any provider
 that speaks the protocols above will work.
 
 OPEN SOURCE
 
 github.com/romanpodpriatov/olcbox
 ```
+
+> **"The app does not sell one", not "ProofKit does not sell one".** ProofKit the
+> company does sell VPN bandwidth, per gigabyte, on the website the Marketing URL points
+> at, and a reviewer who has just read that page reads the old sentence as false. The
+> 2.1(b) business-model questionnaire of 2026-09-15 came from exactly that page — see
+> `docs/app-review-2.1b-business-model-reply.md`.
 
 > **Do not put a purchase pointer back into this text.** The sentence that used to
 > close REQUIREMENTS — "the app can open proofkit.org, where you can get a
