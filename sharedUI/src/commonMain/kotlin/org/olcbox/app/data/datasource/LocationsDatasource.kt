@@ -375,16 +375,20 @@ class LocationsRepositoryImpl(
     ): SubscriptionRefreshReport {
         return mutationMutex.withLock {
             val bundle = getBundleUnlocked()
+            val settings = bundle.settings.normalized()
+            if (!settings.autoUpdate) return@withLock SubscriptionRefreshReport.EMPTY
             val now = nowEpochMs()
             val dueUrls = bundle.locations
                 .mapNotNull { entry ->
                     val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                     val metadata = entry.metadata?.subscription
-                    val interval = metadata?.updateIntervalHours
-                        ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
+                    val interval = minOf(
+                        metadata?.updateIntervalHours ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
+                        settings.updateIntervalHours
+                    )
                     val lastRefreshAt = metadata?.lastRefreshAtEpochMs ?: 0L
                     val intervalMs = interval.toLong() * 60L * 60L * 1_000L
-                    url.takeIf { lastRefreshAt <= 0L || now - lastRefreshAt >= intervalMs }
+                    url.takeIf { lastRefreshAt <= 0L || lastRefreshAt > now || now - lastRefreshAt >= intervalMs }
                 }
                 .toSet()
 

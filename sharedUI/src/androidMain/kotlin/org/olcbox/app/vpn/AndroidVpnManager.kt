@@ -264,6 +264,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
+        if (status.value is VpnStatus.Connected && (OlcboxVpnState.activeGroup?.probePort(config) != null ||
+            config == OlcboxVpnState.activeLocation)) return true
         // olcRTC is deliberately not measurable.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
@@ -284,6 +286,12 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             ?.let { it.host to it.port }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
+        if (status.value is VpnStatus.Connected) {
+            OlcboxVpnState.activeGroup?.probePort(locationConfig)?.let { port ->
+                return org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+            }
+            if (locationConfig.normalized() == OlcboxVpnState.activeLocation) return measureCurrentChannel()
+        }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
             val (host, port) = serverEndpoint(config) ?: return null
@@ -293,6 +301,14 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid()
         )
+    }
+
+    override suspend fun measureCurrentChannel(): Long? {
+        if (status.value !is VpnStatus.Connected) return null
+        val session = connectedSince.value
+        val proxy = OlcboxVpnState.channelProxy ?: return null
+        val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
+        return measured.takeIf { status.value is VpnStatus.Connected && connectedSince.value == session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {

@@ -30,6 +30,7 @@ internal class MacOsTunController(
         routing: Routing = Routing.Global,
         /** The rule-set files [routing] names, file name → base64, for the daemon to write. */
         ruleFiles: Map<String, String> = emptyMap(),
+        additionalServerHosts: List<String> = emptyList(),
     ) {
         // Under a bypass the daemon's sing-box dials direct from inside the
         // process that owns the tun, so those sockets are bound to the physical
@@ -53,14 +54,10 @@ internal class MacOsTunController(
                 )
             }
         }
-        val addresses = serverHost?.let { resolve(it) }.orEmpty()
-        if (serverHost != null && addresses.isEmpty()) {
-            // Starting anyway would put the core's own packets into the tunnel the
-            // core is building. That does not degrade — it deadlocks, and it reads
-            // as a broken server rather than as a missing route.
-            addLog("cannot resolve $serverHost, so its traffic cannot be kept out of the tunnel")
-            error("cannot resolve $serverHost")
-        }
+        val hosts = (listOfNotNull(serverHost) + additionalServerHosts).distinct()
+        val addresses = hosts.flatMap { host ->
+            resolve(host).also { require(it.isNotEmpty()) { "cannot resolve $host" } }
+        }.distinct()
 
         val config = SingBoxConfig.buildDesktopTun(
             corePort = corePort,
@@ -68,7 +65,7 @@ internal class MacOsTunController(
             username = username,
             password = password,
             excludeAddresses = excludeCidrs(addresses),
-            directDnsDomains = listOfNotNull(serverHost?.takeIf { !it.isIpLiteral() }),
+            directDnsDomains = hosts.filterNot { it.isIpLiteral() },
             upstreamUdpIsLossy = upstreamUdpIsLossy,
             routing = routing,
             bindInterface = bindInterface,

@@ -94,6 +94,7 @@ fun HomeScreen(
 
     val state by viewModel.state.collectAsState()
     val connectedSince by viewModel.connectedSince.collectAsState()
+    val channelLatency by viewModel.channelLatency.collectAsState()
     val subscriptionSettings by viewModel.subscriptionSettings.collectAsState()
     val subscriptionSettingsLoaded by viewModel.subscriptionSettingsLoaded.collectAsState()
     val scope = rememberCoroutineScope()
@@ -314,6 +315,17 @@ fun HomeScreen(
         )
     }
 
+    // A small request over the existing tunnel, including Telemost. No room is
+    // joined merely to draw this value; leaving the screen cancels the sampler.
+    LaunchedEffect(state.isVpnConnected, connectedSince) {
+        if (state.isVpnConnected) {
+            while (true) {
+                viewModel.measureActiveChannel()
+                delay(30_000)
+            }
+        }
+    }
+
     // Occupancy goes stale on its own, so it has to be re-asked.
     //
     // It was fetched once, when the location list loaded, and then never again â€” so a
@@ -395,7 +407,9 @@ fun HomeScreen(
                     requiresSetup = requiresSetup,
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                     protocolLine = selectedConfig?.protocolLabels()?.joinToString(" Â· ")
-                )
+                ) + if (state.isVpnConnected) {
+                    " · " + (channelLatency?.let { "HTTP ${it}ms" } ?: "HTTP —")
+                } else ""
             },
             statusValue = {
                 statusValue(

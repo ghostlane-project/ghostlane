@@ -13,6 +13,19 @@ import kotlin.test.assertTrue
  * Xray (which, unlike sing-box, supports XHTTP).
  */
 class XrayConfigDumpTest {
+    @Test fun dumpVlessGroups() {
+        val configs = listOf("tcp", "xhttp").map { transport ->
+            org.olcbox.app.data.model.LocationConfig(kind = LocationKind.Vless,
+                rawLink = link.replace("type=xhttp", "type=$transport"))
+        }
+        for (mode in listOf(org.olcbox.app.data.model.ConnectionSelection.Lowest,
+            org.olcbox.app.data.model.ConnectionSelection.Balanced)) {
+            val group = VlessGroup(mode, configs)
+            dump("vless-group-${mode.name}", XrayGroupConfig.build(group))
+            dump("vless-group-ios-${mode.name}", XrayGroupConfig.build(group, answersDns = true))
+        }
+    }
+
     private val outDir = File("build/xray-configs")
 
     private fun dump(name: String, json: String) {

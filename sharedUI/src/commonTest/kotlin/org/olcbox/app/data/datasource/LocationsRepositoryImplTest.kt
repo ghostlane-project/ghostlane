@@ -25,6 +25,31 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocationsRepositoryImplTest {
+    @Test fun dueRefreshHonorsUserIntervalAddsServersAndPreservesSelection() = runTest {
+        var now = 1_000L
+        var body = "olcrtc://wbstream?vp8channel@first#${"c".repeat(64)}${'$'}First"
+        var requests = 0
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(source, HttpClient(MockEngine {
+            requests++
+            respond(body, headers = headersOf("profile-update-interval", "24"))
+        }), nowEpochMs = { now })
+        assertTrue(repo.importText("https://example.test/list"))
+        val selected = repo.getActiveLocationId()
+        repo.saveSubscriptionSettings(org.olcbox.app.data.model.SubscriptionSettings(updateIntervalHours = 1))
+        now += 3_600_000L
+        body += "\n" + "olcrtc://wbstream?vp8channel@second#${"d".repeat(64)}${'$'}Second"
+        assertEquals(1, repo.refreshDueSubscriptions().updatedCount)
+        assertEquals(2, repo.getAllLocations().size)
+        assertEquals(selected, repo.getActiveLocationId())
+        assertEquals(0, repo.refreshDueSubscriptions().updatedCount)
+        repo.saveSubscriptionSettings(org.olcbox.app.data.model.SubscriptionSettings(autoUpdate = false))
+        now += 86_400_000L
+        assertEquals(0, repo.refreshDueSubscriptions().updatedCount)
+        assertEquals(2, requests)
+    }
+
+
 
     @Test
     fun exportsAndImportsBundleV5WithActiveLocation() = runTest {

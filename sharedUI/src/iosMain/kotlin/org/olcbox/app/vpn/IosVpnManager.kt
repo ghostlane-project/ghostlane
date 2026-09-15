@@ -1,5 +1,9 @@
 package org.olcbox.app.vpn
 
+import org.olcbox.app.net.VlessGroup
+import org.olcbox.app.net.vlessGroup
+import org.olcbox.app.net.XrayGroupConfig
+
 import kotlin.coroutines.resume
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -189,6 +193,7 @@ class IosVpnManager(
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
+        if (_status.value is VpnStatus.Connected && activeGroup?.probePort(config) != null) return true
         // Connected, the active location is still measurable: that path times a request
         // through the tunnel that is already up and joins nothing.
         if (_status.value is VpnStatus.Connected) return config == activeConfig
@@ -215,6 +220,9 @@ class IosVpnManager(
             ?.takeIf { it.isNotBlank() }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
+        if (_status.value is VpnStatus.Connected) activeGroup?.probePort(locationConfig)?.let { port ->
+            return org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+        }
         val config = locationConfig.normalized()
         if (_status.value is VpnStatus.Connected) {
             // Never the olcRTC prober while connected: it would open a second
@@ -277,6 +285,14 @@ class IosVpnManager(
         } finally {
             runCatching { client.close() }
         }
+    }
+
+    override suspend fun measureCurrentChannel(): Long? {
+        if (status.value !is VpnStatus.Connected) return null
+        val session = connectedSince.value
+        val proxy = null
+        val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
+        return measured.takeIf { status.value is VpnStatus.Connected && connectedSince.value == session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -381,11 +397,24 @@ class IosVpnManager(
      * What the extension needs for this location, or null once the reason it
      * cannot be built has been reported.
      */
+    private var activeGroup: VlessGroup? = null
+
     private suspend fun packetTunnelRequest(
         location: LocationConfig
     ): IosPacketTunnelStartRequest? {
         val routing = routing()
         val ruleSets = ruleSetsFor(routing)
+        activeGroup = locationsRepository.vlessGroup(location)
+        activeGroup?.let { group ->
+            return IosPacketTunnelStartRequest(
+                config = SingBoxConfig.buildTunSocks(XrayConfig.XRAY_SOCKS_PORT, routing = routing),
+                xrayConfig = XrayGroupConfig.build(group, routing = routing,
+                    geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                    answersDns = true),
+                olcrtc = null,
+                ruleSets = ruleSets
+            )
+        }
 
         // olcRTC has no link to parse — a room and a key address it — so it is
         // read off the location rather than through LinkParser.

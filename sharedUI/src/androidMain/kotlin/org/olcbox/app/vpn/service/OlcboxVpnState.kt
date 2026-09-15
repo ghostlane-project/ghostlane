@@ -10,6 +10,10 @@ import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.log.LogScrubber
 
 object OlcboxVpnState {
+    var channelProxy: org.olcbox.app.data.repository.SubscriptionFetchProxy? = null
+    var activeGroup: org.olcbox.app.net.VlessGroup? = null
+    var activeLocation: org.olcbox.app.data.model.LocationConfig? = null
+
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs = _logs.asStateFlow()
 

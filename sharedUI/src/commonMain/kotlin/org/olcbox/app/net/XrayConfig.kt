@@ -81,8 +81,19 @@ object XrayConfig {
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
     ): String {
+        require(spec.transport is TransportSpec.Xhttp) { "XrayConfig.buildXhttp requires an xhttp transport" }
+        return buildVless(spec, socksPort, routing, directDns, geodata, answersDns)
+    }
+
+    fun buildVless(
+        spec: OutboundSpec.Vless,
+        socksPort: Int = XRAY_SOCKS_PORT,
+        routing: Routing = Routing.Global,
+        directDns: DirectDns = DirectDns.Placeholder,
+        geodata: XrayGeodata.Lists? = null,
+        answersDns: Boolean = false,
+    ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
-            ?: error("XrayConfig.buildXhttp requires an xhttp transport")
         val bypass = routing as? Routing.BypassRussia
         require(bypass == null || geodata != null) {
             "Bypass Russia on Xray carries its lists inline: pass XrayGeodata.lists()"
@@ -128,13 +139,14 @@ object XrayConfig {
                                 putJsonArray("users") {
                                     addJsonObject {
                                         put("id", spec.uuid); put("encryption", "none")
+                                        if (xhttp == null && spec.flow != null) put("flow", spec.flow)
                                     }
                                 }
                             }
                         }
                     }
                     putJsonObject("streamSettings") {
-                        put("network", "xhttp")
+                        put("network", if (xhttp != null) "xhttp" else "tcp")
                         // REALITY only where there is a key for it.
                         //
                         // A CDN entry is xhttp over ordinary TLS to a host with a
@@ -162,7 +174,7 @@ object XrayConfig {
                                 put("shortId", spec.shortId)
                             }
                         }
-                        putJsonObject("xhttpSettings") {
+                        if (xhttp != null) putJsonObject("xhttpSettings") {
                             put("path", xhttp.path)
                             put("host", xhttp.host)
                             put("mode", xhttp.mode)
