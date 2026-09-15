@@ -34,6 +34,7 @@ jobs:
       # The release the app pins (SingBoxConfig.SINGBOX_VERSION); every config
       # the builders emit is checked against this exact binary below.
       SINGBOX_VERSION: "1.13.14"
+      XRAY_VERSION: "25.3.6"
       # crypt1/admin secrets (baked into GeneratedAppInfo). Absent on fork PRs ⇒
       # features compile but stay disabled; jvmTest uses its own explicit key.
       OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
@@ -114,3 +115,19 @@ jobs:
       - name: sing-box check the emitted configs
         working-directory: olcbox
         run: scripts/check-singbox-configs.sh
+
+      - name: Validate generated Xray configurations
+        working-directory: olcbox
+        run: |
+          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -o "$RUNNER_TEMP/xray.zip"
+          unzip -qo "$RUNNER_TEMP/xray.zip" -d "$RUNNER_TEMP/xray-check"
+          XRAY_BIN="$RUNNER_TEMP/xray-check/xray" bash scripts/check-xray-configs.sh
+
+      - name: Upload generated core configurations and test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-checks
+          path: |
+            olcbox/sharedUI/build/xray-configs/
+            olcbox/sharedUI/build/reports/tests/jvmTest/

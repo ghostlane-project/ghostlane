@@ -63,4 +63,17 @@ class VlessGroupTest {
         val second = config["outbounds"]!!.jsonArray.map { it.jsonObject }.first { it["tag"]!!.jsonPrimitive.content == "member-1" }
         assertEquals("UseIPv4", second["streamSettings"]!!.jsonObject["sockopt"]!!.jsonObject["domainStrategy"]!!.jsonPrimitive.content)
     }
+    @Test fun groupPreservesExplicitBootstrapDnsAndBypassDomains() {
+        val group = VlessGroup(ConnectionSelection.Lowest,
+            listOf(vless("first.example.test"), vless("second.example.test")))
+        val config = Json.parseToJsonElement(XrayGroupConfig.build(group,
+            routing = Routing.BypassRussia("unused", DirectDns.Servers(listOf("9.9.9.9"))),
+            geodata = XrayGeodata.Lists(listOf("domain:example.ru"), emptyList()))).jsonObject
+        val direct = config["dns"]!!.jsonObject["servers"]!!.jsonArray.map { it.jsonObject }
+            .filter { it["tag"]?.jsonPrimitive?.content == "dns-direct" }.single()
+        assertEquals("9.9.9.9", direct["address"]!!.jsonPrimitive.content)
+        assertEquals(setOf("domain:example.ru", "full:first.example.test", "full:second.example.test"),
+            direct["domains"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet())
+    }
+
 }

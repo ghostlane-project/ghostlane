@@ -220,15 +220,21 @@ class IosVpnManager(
             ?.takeIf { it.isNotBlank() }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        if (_status.value is VpnStatus.Connected) activeGroup?.probePort(locationConfig)?.let { port ->
-            return org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+        if (_status.value is VpnStatus.Connected) {
+            val session = generation
+            val group = activeGroup
+            group?.probePort(locationConfig)?.let { port ->
+                val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+                return measured.takeIf { _status.value is VpnStatus.Connected &&
+                    generation == session && activeGroup === group }
+            }
         }
         val config = locationConfig.normalized()
         if (_status.value is VpnStatus.Connected) {
             // Never the olcRTC prober while connected: it would open a second
             // session to the same room from the same device, which costs the
             // operator and has confused this before.
-            return if (config == activeConfig) measureThroughTunnel() else null
+            return if (config == activeConfig) measureCurrentChannel() else null
         }
         if (config.kind == LocationKind.Olcrtc) {
             return runCheck(config) { request -> olcRtcBridge.ping(request) }
@@ -268,31 +274,14 @@ class IosVpnManager(
      * worth showing as such, and is exactly the state a user calls "connected
      * but nothing loads".
      */
-    private suspend fun measureThroughTunnel(): Long? = withContext(Dispatchers.Default) {
-        val client = createProxyHttpClient(
-            subscriptionProxy = null,
-            connectTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS,
-            requestTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS,
-            socketTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS
-        )
-        try {
-            val started = timeSource.markNow()
-            val status = client.get(HTTP_PING_URL).status.value
-            if (status !in 200..399) return@withContext null
-            started.elapsedNow().inWholeMilliseconds
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { client.close() }
-        }
-    }
+    override fun connectionGroupLabel(): String? =
+        activeGroup?.mode?.label()?.takeIf { status.value is VpnStatus.Connected }
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
-        val session = connectedSince.value
-        val proxy = null
-        val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
-        return measured.takeIf { status.value is VpnStatus.Connected && connectedSince.value == session }
+        val session = generation
+        val measured = org.olcbox.app.net.ChannelLatency.measure(null)
+        return measured.takeIf { status.value is VpnStatus.Connected && generation == session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {

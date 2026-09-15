@@ -56,7 +56,12 @@ internal class MacOsTunController(
         }
         val hosts = (listOfNotNull(serverHost) + additionalServerHosts).distinct()
         val addresses = hosts.flatMap { host ->
-            resolve(host).also { require(it.isNotEmpty()) { "cannot resolve $host" } }
+            resolve(host).also {
+                if (it.isEmpty()) {
+                    addLog("cannot resolve $host; its traffic cannot be excluded from the tunnel")
+                    error("cannot resolve $host")
+                }
+            }
         }.distinct()
 
         val config = SingBoxConfig.buildDesktopTun(

@@ -318,6 +318,7 @@ fun HomeScreen(
     // A small request over the existing tunnel, including Telemost. No room is
     // joined merely to draw this value; leaving the screen cancels the sampler.
     LaunchedEffect(state.isVpnConnected, connectedSince) {
+        locationViewModel.invalidatePings()
         if (state.isVpnConnected) {
             while (true) {
                 viewModel.measureActiveChannel()
@@ -398,7 +399,7 @@ fun HomeScreen(
                 isConnecting = state.isVpnLoading,
                 requiresSetup = requiresSetup,
                 hasSeats = selectedSlots != null,
-                transportLabel = selectedConfig?.transportKind()?.label()
+                transportLabel = viewModel.connectionGroupLabel() ?: selectedConfig?.transportKind()?.label()
             ),
             statusMeta = {
                 statusMeta(
@@ -408,7 +409,7 @@ fun HomeScreen(
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                     protocolLine = selectedConfig?.protocolLabels()?.joinToString(" Â· ")
                 ) + if (state.isVpnConnected) {
-                    " · " + (channelLatency?.let { "HTTP ${it}ms" } ?: "HTTP —")
+                    " Â· " + (channelLatency?.let { "HTTP ${it}ms" } ?: "HTTP â€”")
                 } else ""
             },
             statusValue = {

@@ -265,7 +265,7 @@ object XrayConfig {
      * `localhost`, Xray's name for the system resolver, only where the core
      * reaches that without looping through its own tun.
      */
-    private fun directDnsAddress(direct: DirectDns): String = when (direct) {
+    internal fun directDnsAddress(direct: DirectDns): String = when (direct) {
         DirectDns.System -> "localhost"
         is DirectDns.Servers -> direct.pick()
         DirectDns.Placeholder -> SingBoxConfig.DIRECT_DNS_PLACEHOLDER

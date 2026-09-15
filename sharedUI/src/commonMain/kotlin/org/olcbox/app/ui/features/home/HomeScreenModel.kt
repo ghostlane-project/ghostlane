@@ -55,7 +55,7 @@ class HomeScreenViewModel(
     /**
      * Passed straight through rather than copied into [HomeScreenState]: it is
      * the platform's answer, and on iOS it can name a moment from before this
-     * process existed — a tunnel outlives the app there. Mirroring it into our
+     * process existed â€” a tunnel outlives the app there. Mirroring it into our
      * own state would only give it a chance to disagree.
      */
     val connectedSince get() = vpnManager.connectedSince
@@ -73,6 +73,8 @@ class HomeScreenViewModel(
 
     private val _channelLatency = MutableStateFlow<Long?>(null)
     val channelLatency = _channelLatency.asStateFlow()
+
+    fun connectionGroupLabel(): String? = vpnManager.connectionGroupLabel()
 
     suspend fun measureActiveChannel(): Long? {
         val session = vpnManager.connectedSince.value
@@ -92,7 +94,7 @@ class HomeScreenViewModel(
      * Whether [subscriptionSettings] is what was stored or merely the defaults.
      *
      * The load is asynchronous, so the first value every screen sees is a fresh
-     * object. Acting on it — connecting on launch, refreshing on open — would be
+     * object. Acting on it â€” connecting on launch, refreshing on open â€” would be
      * acting on settings the user never chose, and doing so once is enough to
      * make the real ones look ignored.
      */
@@ -124,7 +126,7 @@ class HomeScreenViewModel(
 
     /**
      * Whether the VPN disclosure has been accepted. Starts false and is only
-     * raised by the stored value, so the worst a slow load can do is ask again —
+     * raised by the stored value, so the worst a slow load can do is ask again â€”
      * the opposite mistake would connect without ever having asked.
      */
     private val _vpnDisclosureAccepted = MutableStateFlow(false)
@@ -137,7 +139,7 @@ class HomeScreenViewModel(
 
     /**
      * Whether the first-run walkthrough has run. Null until the stored answer
-     * arrives — the opposite of the flag above, and for the same kind of reason:
+     * arrives â€” the opposite of the flag above, and for the same kind of reason:
      * defaulting to "not seen" would flash three screens of introduction at
      * somebody on their hundredth launch, every launch, for as long as the read
      * took.
@@ -383,10 +385,10 @@ class HomeScreenViewModel(
     }
 
     /**
-     * A `proofkit://add?url=…` or `https://proofkit.org/add#…` link, handed
+     * A `proofkit://add?url=â€¦` or `https://proofkit.org/add#â€¦` link, handed
      * to the app by the system: the same import a paste goes through, once
      * the payload is out of the envelope. Not an import link at all is an
-     * answer, not a crash — a bot or a panel may hand us a link we never
+     * answer, not a crash â€” a bot or a panel may hand us a link we never
      * taught it.
      */
     fun onImportLink(
@@ -421,7 +423,7 @@ class HomeScreenViewModel(
                 }
                 if (!imported) {
                     // A partner link that did not resolve is not a malformed config
-                    // — the user's next move is their provider's bot, not another paste.
+                    // â€” the user's next move is their provider's bot, not another paste.
                     onError(
                         if (isPartnerLink(rawText)) {
                             "Link not recognised. Open your provider's bot and copy the server list link again."
@@ -514,7 +516,7 @@ class HomeScreenViewModel(
     }
 
     private suspend fun refreshDueSubscriptionsIfNeeded() {
-        // Background pass: failures here are not surfaced — the user did not ask
+        // Background pass: failures here are not surfaced â€” the user did not ask
         // for it, and the next manual refresh will report the reason.
         val report = withContext(Dispatchers.IO) {
             locationsRepository.refreshDueSubscriptions(
@@ -570,7 +572,7 @@ data class HomeScreenState(
      * failing that what is stopping the user from starting at all.
      *
      * `startBlockedReason` is deliberately not shown while a location is merely
-     * missing — the status pill already says "no location" and the button reads
+     * missing â€” the status pill already says "no location" and the button reads
      * SETUP, so repeating it adds noise rather than information.
      */
     /**
@@ -598,7 +600,7 @@ data class HomeScreenState(
         VpnStatus.Reconnecting ->
             copy(isVpnConnected = true, isVpnLoading = true)
 
-        // A stop is the user acting on the message — or on nothing, but either
+        // A stop is the user acting on the message â€” or on nothing, but either
         // way past it. These two used to leave `failure` alone, which meant the
         // banner outlived everything short of a relaunch: read it, press stop,
         // and a red box about a room you had given up on stayed for the rest
@@ -610,8 +612,8 @@ data class HomeScreenState(
             copy(isVpnConnected = false, isVpnLoading = false, failure = null)
 
         // The reason used to stop here. The extension goes to real trouble to
-        // explain itself — it writes a stage breadcrumb the app reads back
-        // precisely because the system will only ever say "disconnected" — and
+        // explain itself â€” it writes a stage breadcrumb the app reads back
+        // precisely because the system will only ever say "disconnected" â€” and
         // this dropped the message on the floor, leaving a button that spins,
         // returns to START and says nothing. The commonest case of all is a
         // user who declined the VPN permission prompt.
@@ -621,7 +623,7 @@ data class HomeScreenState(
 }
 
 /**
- * How often the due check runs, not how often a subscription refreshes — that
+ * How often the due check runs, not how often a subscription refreshes â€” that
  * is [SubscriptionSettings.updateIntervalHours], and a shorter poll is what lets
  * a one-hour setting mean one hour.
  */

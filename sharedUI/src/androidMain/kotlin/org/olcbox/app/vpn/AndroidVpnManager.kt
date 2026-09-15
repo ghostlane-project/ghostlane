@@ -264,9 +264,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
-        if (status.value is VpnStatus.Connected && (OlcboxVpnState.activeGroup?.probePort(config) != null ||
-            config == OlcboxVpnState.activeLocation)) return true
-        // olcRTC is deliberately not measurable.
+        if (status.value is VpnStatus.Connected) return OlcboxVpnState.activeGroup?.probePort(config) != null || config == OlcboxVpnState.activeLocation
+        // Disconnected olcRTC rooms are deliberately not probed.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
         // way to time one is `mobile.Ping`, which JOINS the room as a real client,
@@ -287,10 +286,14 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
         if (status.value is VpnStatus.Connected) {
-            OlcboxVpnState.activeGroup?.probePort(locationConfig)?.let { port ->
-                return org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+            val session = connectedSince.value
+            val group = OlcboxVpnState.activeGroup
+            group?.probePort(locationConfig)?.let { port ->
+                val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
+                return measured.takeIf { status.value is VpnStatus.Connected &&
+                    connectedSince.value == session && OlcboxVpnState.activeGroup === group }
             }
-            if (locationConfig.normalized() == OlcboxVpnState.activeLocation) return measureCurrentChannel()
+            return if (locationConfig.normalized() == OlcboxVpnState.activeLocation) measureCurrentChannel() else null
         }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
@@ -302,6 +305,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             deviceId = deviceIdentityProvider.hwid()
         )
     }
+
+    override fun connectionGroupLabel(): String? =
+        OlcboxVpnState.activeGroup?.mode?.label()?.takeIf { status.value is VpnStatus.Connected }
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null

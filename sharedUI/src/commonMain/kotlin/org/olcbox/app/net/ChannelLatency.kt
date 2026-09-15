@@ -3,7 +3,6 @@ package org.olcbox.app.net
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.datasource.withProxyAuthentication
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import kotlin.coroutines.cancellation.CancellationException

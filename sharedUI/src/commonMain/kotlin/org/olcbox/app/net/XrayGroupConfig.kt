@@ -76,12 +76,19 @@ object XrayGroupConfig {
             val dns = base["dns"]!!.jsonObject.toMutableMap()
             val servers = dns["servers"]!!.jsonArray.toMutableList()
             if (names.isNotEmpty()) {
-                val direct = buildJsonObject {
-                    put("tag", "dns-direct"); put("address", SingBoxConfig.DIRECT_DNS_PLACEHOLDER)
-                    putJsonArray("domains") { names.forEach { add("full:$it") } }
-                    put("skipFallback", true)
+                val existing = servers.indexOfFirst {
+                    it.jsonObject["tag"]?.jsonPrimitive?.content == "dns-direct"
                 }
-                servers.add(0, direct)
+                val direct = (servers.getOrNull(existing)?.jsonObject ?: buildJsonObject {
+                    put("tag", "dns-direct")
+                    put("address", XrayConfig.directDnsAddress(
+                        (routing as? Routing.BypassRussia)?.directDns ?: DirectDns.Placeholder))
+                    put("port", 53); put("skipFallback", true)
+                }).toMutableMap()
+                val domains = direct["domains"]?.jsonArray.orEmpty() + names.map { JsonPrimitive("full:$it") }
+                direct["domains"] = JsonArray(domains.distinct())
+                if (existing >= 0) servers[existing] = JsonObject(direct)
+                else servers.add(0, JsonObject(direct))
                 if (auxiliaries.none { it.jsonObject["tag"]?.jsonPrimitive?.content == "direct" }) {
                     base["outbounds"] = JsonArray(base["outbounds"]!!.jsonArray + buildJsonObject {
                         put("tag", "direct"); put("protocol", "freedom")

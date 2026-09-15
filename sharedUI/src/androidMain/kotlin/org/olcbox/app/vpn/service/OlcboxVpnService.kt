@@ -486,7 +486,14 @@ class OlcboxVpnService : VpnService() {
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                         return@withLock
                     }
-                    OlcboxVpnState.activeGroup = repository.vlessGroup(location)
+                    OlcboxVpnState.activeGroup = try {
+                        repository.vlessGroup(location)
+                    } catch (e: IllegalArgumentException) {
+                        setStatus(VpnStatus.Error(e.message ?: "Invalid VLESS group"))
+                        updateNotification("Could not create VLESS group")
+                        stopTransportProcesses(closeTun = true, waitForSocksPort = false)
+                        return@withLock
+                    }
                     OlcboxVpnState.activeLocation = location.normalized()
                     routingMode = repository.getRoutingSettings().mode
 
