@@ -76,4 +76,20 @@ class VlessGroupTest {
             direct["domains"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet())
     }
 
+    @Test fun aliasesShareOneOutboundAndWarmupKeepsTheSelectedExit() {
+        val first = vless("127.0.0.1")
+        val selected = vless("127.0.0.2")
+        val alias = selected.copy(name = "same server", rawLink = selected.rawLink + "#different-label")
+        val bundle = LocationBundleV4(activeLocationId = "b", settings = SubscriptionSettings(
+            connectionSelection = ConnectionSelection.Lowest), locations = listOf(
+            entry("a", first), entry("alias", alias), entry("b", selected)))
+        val group = VlessGroup.from(bundle, selected)!!
+        assertEquals(2, group.members.size)
+        assertEquals(1, group.fallbackIndex)
+        assertEquals(group.probePort(selected), group.probePort(alias))
+        val config = Json.parseToJsonElement(XrayGroupConfig.build(group)).jsonObject
+        assertEquals("member-1", config["routing"]!!.jsonObject["balancers"]!!.jsonArray[0]
+            .jsonObject["fallbackTag"]!!.jsonPrimitive.content)
+    }
+
 }

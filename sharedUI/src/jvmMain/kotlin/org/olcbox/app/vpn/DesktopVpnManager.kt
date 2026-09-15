@@ -178,7 +178,7 @@ class DesktopVpnManager private constructor(
      */
     private var activeGroup: VlessGroup? = null
     private var connectedLocation: LocationConfig? = null
-    private var channelProxy: SubscriptionFetchProxy? = null
+    @Volatile private var channelProxy: SubscriptionFetchProxy? = null
 
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
@@ -205,12 +205,12 @@ class DesktopVpnManager private constructor(
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
         if (status.value is VpnStatus.Connected) {
-            val session = connectedSince.value
+            val session = channelProxy
             val group = activeGroup
             group?.probePort(locationConfig)?.let { port ->
                 val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
                 return measured.takeIf { status.value is VpnStatus.Connected &&
-                    connectedSince.value == session && activeGroup === group }
+                    channelProxy === session && activeGroup === group }
             }
             return if (locationConfig.normalized() == connectedLocation) measureCurrentChannel() else null
         }
@@ -230,10 +230,10 @@ class DesktopVpnManager private constructor(
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
-        val session = connectedSince.value
+        val session = channelProxy
         val proxy = channelProxy ?: return null
         val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
-        return measured.takeIf { status.value is VpnStatus.Connected && connectedSince.value == session }
+        return measured.takeIf { status.value is VpnStatus.Connected && channelProxy === session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -243,22 +243,9 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {
-        val currentStatus = status.value
-        if (currentStatus !is VpnStatus.Connected &&
-            currentStatus !is VpnStatus.Reconnecting
-        ) {
-            return null
-        }
+    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
+        channelProxy.takeIf { status.value is VpnStatus.Connected }
 
-        val socks = _socksProxySettings.value.normalized()
-        return SubscriptionFetchProxy(
-            host = socks.host,
-            port = socks.port,
-            username = socks.username,
-            password = socks.password
-        )
-    }
 
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
         val settings = DesktopSocksProxySettings(

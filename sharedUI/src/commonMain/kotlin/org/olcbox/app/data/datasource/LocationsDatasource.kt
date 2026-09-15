@@ -1,5 +1,6 @@
 package org.olcbox.app.data.datasource
 
+import kotlin.coroutines.cancellation.CancellationException
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -63,7 +64,8 @@ internal expect fun createProxyHttpClient(
     subscriptionProxy: SubscriptionFetchProxy? = null,
     connectTimeoutMs: Long = 3_000,
     requestTimeoutMs: Long = 8_000,
-    socketTimeoutMs: Long = 8_000
+    socketTimeoutMs: Long = 8_000,
+    followRedirects: Boolean = true
 ): HttpClient
 
 internal expect suspend fun <T> withProxyAuthentication(
@@ -784,7 +786,7 @@ class LocationsRepositoryImpl(
                             }
                         }
                     }
-                }.getOrNull() ?: run {
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull() ?: run {
                     onFailure?.invoke(SubscriptionRefreshError.Unreachable, null)
                     return@withProxyAuthentication null
                 }
@@ -801,7 +803,7 @@ class LocationsRepositoryImpl(
 
                 val content = runCatching {
                     response.bodyAsText()
-                }.getOrNull()?.takeIf { it.isNotBlank() }
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull()?.takeIf { it.isNotBlank() }
                     ?: run {
                         onFailure?.invoke(SubscriptionRefreshError.Empty, null)
                         return@withProxyAuthentication null

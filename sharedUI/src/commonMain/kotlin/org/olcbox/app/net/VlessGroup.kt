@@ -6,8 +6,12 @@ import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.repository.LocationsRepository
 
 /** A runtime group, never stored as another room or sent to a server. */
-data class VlessGroup(val mode: ConnectionSelection, val members: List<LocationConfig>) {
-    fun probePort(config: LocationConfig): Int? = members.indexOf(config.normalized())
+data class VlessGroup(
+    val mode: ConnectionSelection,
+    val members: List<LocationConfig>,
+    val fallbackIndex: Int = 0,
+) {
+    fun probePort(config: LocationConfig): Int? = members.indexOfFirst { it.connectionKey() == config.connectionKey() }
         .takeIf { it >= 0 }?.let { PROBE_PORT + it }
 
     companion object {
@@ -21,14 +25,17 @@ data class VlessGroup(val mode: ConnectionSelection, val members: List<LocationC
             val members = bundle.locations.filter { it.subscriptionUrl == source }
                 .map { it.location.normalized() }
                 .filter { it.kind == LocationKind.Vless && it.isComplete() }
-                .distinct()
+                .distinctBy { it.connectionKey() }
             require(members.size <= MAX_MEMBERS) {
                 "This VLESS group has more than $MAX_MEMBERS servers. Use Manual or a smaller server list."
             }
-            return members.takeIf { it.isNotEmpty() }?.let { VlessGroup(bundle.settings.connectionSelection, it) }
+            return members.takeIf { it.isNotEmpty() }?.let { VlessGroup(bundle.settings.connectionSelection, it, it.indexOfFirst { member -> member.connectionKey() == active.connectionKey() }) }
         }
     }
 }
 
 suspend fun LocationsRepository.vlessGroup(active: LocationConfig): VlessGroup? =
     VlessGroup.from(getBundle(), active)
+
+/** Names and URI fragments do not create another outbound to the same server. */
+private fun LocationConfig.connectionKey(): String? = rawLink?.trim()?.substringBefore('#')

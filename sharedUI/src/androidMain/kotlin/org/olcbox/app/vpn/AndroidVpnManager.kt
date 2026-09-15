@@ -286,12 +286,12 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
         if (status.value is VpnStatus.Connected) {
-            val session = connectedSince.value
+            val session = OlcboxVpnState.channelProxy
             val group = OlcboxVpnState.activeGroup
             group?.probePort(locationConfig)?.let { port ->
                 val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
                 return measured.takeIf { status.value is VpnStatus.Connected &&
-                    connectedSince.value == session && OlcboxVpnState.activeGroup === group }
+                    OlcboxVpnState.channelProxy === session && OlcboxVpnState.activeGroup === group }
             }
             return if (locationConfig.normalized() == OlcboxVpnState.activeLocation) measureCurrentChannel() else null
         }
@@ -311,10 +311,10 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
-        val session = connectedSince.value
+        val session = OlcboxVpnState.channelProxy
         val proxy = OlcboxVpnState.channelProxy ?: return null
         val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
-        return measured.takeIf { status.value is VpnStatus.Connected && connectedSince.value == session }
+        return measured.takeIf { status.value is VpnStatus.Connected && OlcboxVpnState.channelProxy === session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -324,22 +324,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         )
     }
 
-    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {
-        val currentStatus = status.value
-        if (currentStatus !is VpnStatus.Connected &&
-            currentStatus !is VpnStatus.Reconnecting
-        ) {
-            return null
-        }
+    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
+        OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
-        val proxy = _proxySettings.value
-        return SubscriptionFetchProxy(
-            host = AndroidSocksProxySettings.connectHost(proxy.host),
-            port = proxy.port,
-            username = proxy.username,
-            password = proxy.password
-        )
-    }
 
     private suspend fun ensureProxySettings() {
         appContext.vpnPrefDataStore.edit { preferences ->

@@ -25,6 +25,22 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocationsRepositoryImplTest {
+    @Test fun cancellingARefreshPreservesTheListAndPropagatesCancellation() = runTest {
+        var cancel = false
+        var now = 1_000L
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(source, HttpClient(MockEngine {
+            if (cancel) throw kotlinx.coroutines.CancellationException("settings changed")
+            respond("olcrtc://wbstream?vp8channel@first#${"c".repeat(64)}${'$'}First")
+        }), nowEpochMs = { now })
+        assertTrue(repo.importText("https://example.test/list"))
+        val before = repo.getBundle()
+        now += 86_400_000L
+        cancel = true
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { repo.refreshDueSubscriptions() }
+        assertEquals(before, repo.getBundle())
+    }
+
     @Test fun dueRefreshHonorsUserIntervalAddsServersAndPreservesSelection() = runTest {
         var now = 1_000L
         var body = "olcrtc://wbstream?vp8channel@first#${"c".repeat(64)}${'$'}First"

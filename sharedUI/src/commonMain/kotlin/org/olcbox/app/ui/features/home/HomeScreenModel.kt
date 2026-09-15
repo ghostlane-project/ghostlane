@@ -4,6 +4,8 @@ import org.olcbox.app.net.ImportLink
 import org.olcbox.app.net.isPartnerLink
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
@@ -103,8 +105,10 @@ class HomeScreenViewModel(
 
     fun updateSubscriptionSettings(settings: SubscriptionSettings) {
         val normalized = settings.normalized()
-        _subscriptionSettings.value = normalized
-        viewModelScope.launch { locationsRepository.saveSubscriptionSettings(normalized) }
+        viewModelScope.launch {
+            locationsRepository.saveSubscriptionSettings(normalized)
+            _subscriptionSettings.value = normalized
+        }
     }
 
     private val _routingSettings = MutableStateFlow(RoutingSettings())
@@ -504,8 +508,9 @@ class HomeScreenViewModel(
     private fun startSubscriptionAutoRefresh() {
         viewModelScope.launch {
             subscriptionSettingsLoaded.first { it }
-            subscriptionSettings.collectLatest { settings ->
-                if (settings.autoUpdate) {
+            subscriptionSettings.map { it.autoUpdate to it.updateIntervalHours }
+                .distinctUntilChanged().collectLatest { (autoUpdate, _) ->
+                if (autoUpdate) {
                     while (true) {
                         refreshDueSubscriptionsIfNeeded()
                         delay(SUBSCRIPTION_AUTO_REFRESH_POLL_MS)

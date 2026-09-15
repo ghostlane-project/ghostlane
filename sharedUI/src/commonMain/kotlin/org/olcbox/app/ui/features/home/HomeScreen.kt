@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.features.home
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.AlertDialog
@@ -317,12 +320,15 @@ fun HomeScreen(
 
     // A small request over the existing tunnel, including Telemost. No room is
     // joined merely to draw this value; leaving the screen cancels the sampler.
-    LaunchedEffect(state.isVpnConnected, connectedSince) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince, lifecycle) {
         locationViewModel.invalidatePings()
-        if (state.isVpnConnected) {
-            while (true) {
-                viewModel.measureActiveChannel()
-                delay(30_000)
+        if (state.isVpnConnected && !state.isVpnLoading) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    viewModel.measureActiveChannel()
+                    delay(30_000)
+                }
             }
         }
     }

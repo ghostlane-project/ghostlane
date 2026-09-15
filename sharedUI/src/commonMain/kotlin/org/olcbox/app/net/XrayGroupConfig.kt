@@ -12,7 +12,9 @@ object XrayGroupConfig {
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
     ): String {
+        require(group.mode != ConnectionSelection.Manual)
         require(group.members.isNotEmpty() && group.members.size <= VlessGroup.MAX_MEMBERS)
+        require(group.fallbackIndex in group.members.indices)
         require(socksPort !in VlessGroup.PROBE_PORT until VlessGroup.PROBE_PORT + group.members.size)
         val specs = group.members.map { LinkParser.parse(it.rawLink!!) as OutboundSpec.Vless }
         val base = Json.parseToJsonElement(XrayConfig.buildVless(
@@ -29,7 +31,7 @@ object XrayGroupConfig {
             }
             JsonObject(fields)
         }
-        // The first member is the fallback while observations warm up; no direct fallback.
+        // Keep the chosen member while observations warm up; no direct fallback.
         val blocked = buildJsonObject { put("tag", "unavailable"); put("protocol", "blackhole") }
         val auxiliaries = base["outbounds"]!!.jsonArray.drop(1)
         base["outbounds"] = JsonArray(listOf(blocked) + native + auxiliaries)
@@ -52,7 +54,7 @@ object XrayGroupConfig {
             put("rules", JsonArray(probeRules + originalRules + catchAll))
             putJsonArray("balancers") { addJsonObject {
                 put("tag", "group"); putJsonArray("selector") { add("member-") }
-                put("fallbackTag", "member-0")
+                put("fallbackTag", "member-${group.fallbackIndex}")
                 putJsonObject("strategy") {
                     put("type", if (group.mode == ConnectionSelection.Lowest) "leastPing" else "random")
                 }
