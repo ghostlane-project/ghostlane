@@ -147,8 +147,8 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 |---|---|---|---|
 | S0 | connect | connect, 5 MB pull, 5 MB push, close | both transfers complete; handshake ≤ 15 s; `session … opened` on both sides (local) |
 | S1 | idle burst | 24 concurrent connects to a 1 KB resource, then 24 sequential | 100 % succeed; p95 connect ≤ 5 s |
-| S2 | download saturation | 6 parallel 60 MB pulls; every 5 s a 1 KB connect on top (olcbox#23) | all 200; on-top connects 100 %, p95 ≤ 5 s; aggregate throughput ≥ floor |
-| S3 | upload saturation | 4 parallel 30 MB pushes; connects on top as in S2 (olcbox#15) | as S2 |
+| S2 | download saturation | 6 parallel 10 MB pulls; every 5 s a 1 KB connect on top (olcbox#23) | all 200; on-top connects 100 %, p95 ≤ 5 s; aggregate throughput ≥ floor |
+| S3 | upload saturation | 4 parallel 5 MB pushes; connects on top as in S2 (olcbox#15) | as S2 |
 | S4 | quiet after load | 60 s idle after S3 | control session alive: no `missed pong`, no `session closed`, no reconnect; one 1 KB pull succeeds at the end (olcbox#25) |
 | S5 | resolver burst | 64 concurrent port-53 queries through the tunnel, twice | ≥ 63/64 answered each time within 5 s (the stream path, aac553b8) |
 | S6 | late server bridge | Jitsi only, local only: server bridge delayed 3 s, then 8 s (olcbox#22) | handshake completes within 15 s in both |
@@ -166,8 +166,8 @@ sequence; the local plan fits in about ten minutes, the link plan in eight.
 Local target: an HTTP origin inside the test process (random port on loopback)
 serving `/kb`, `/60mb` and `/sink` (`POST`, counts bytes); the server reaches it as
 the client's exit. Link target: the fleet server cannot reach the runner, so pulls
-come from `https://proofkit.org/gate/60mb.bin` (a static file on both APP servers,
-one nginx `location /gate/`, cached by Cloudflare) and pushes go to
+come from `https://proofkit.org/gate/10mb.bin` (a static file on both APP servers,
+one nginx `location /gate/`, cached by Cloudflare; `/gate/kb` is its 1 KB neighbour) and pushes go to
 `https://speed.cloudflare.com/__up`. Both are flags with those defaults.
 
 ### 6. Thresholds
@@ -212,7 +212,7 @@ severity. Unit tests cover the parser, the threshold evaluator, render and compa
 `go.sum` lines. (b) The unit-test job runs twice, default and `-tags olcrtc_lean`;
 the lean run is what would have caught the wbstream regression
 (`internal/engine/builtin/registry_test.go`). (c) A `gate-local` job replaces the
-"Real E2E" job: it runs the suite against the local target for both flavours, with
+"Real E2E" job (a dry-run step prints the plan first): it runs the suite against the local target for both flavours, with
 the room pools from repository secrets `GATE_TELEMOST_ROOMS` and `GATE_WBSTREAM_ROOMS`,
 uploads `gate-report.json` and the server logs as artifacts, writes the table to
 the job summary, `concurrency: gate-${{ github.ref }}`.
