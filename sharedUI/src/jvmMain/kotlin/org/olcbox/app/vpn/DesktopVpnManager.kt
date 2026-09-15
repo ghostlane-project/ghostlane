@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn
 
+
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -172,10 +173,15 @@ class DesktopVpnManager private constructor(
      * a subscription of Reality and Hysteria2 met "Nothing here can be measured"
      * — true of the old code and of nothing else.
      */
+    @Volatile private var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
+    private var connectedLocation: LocationConfig? = null
+    @Volatile private var channelProxy: SubscriptionFetchProxy? = null
+
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
-        // olcRTC is deliberately not measurable.
+        if (status.value is VpnStatus.Connected && config == connectedLocation) return true
+        // Disconnected olcRTC rooms are deliberately not probed.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
         // way to time one is `mobile.Ping`, which JOINS the room as a real client,
@@ -195,6 +201,11 @@ class DesktopVpnManager private constructor(
             ?.let { it.host to it.port }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
+        // Other entries retain their address probes. Only the active entry
+        // measures HTTP through the existing tunnel; never join a spare room.
+        if (status.value is VpnStatus.Connected && locationConfig.normalized() == connectedLocation) {
+            return measureCurrentChannel()
+        }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
             val (host, port) = serverEndpoint(config) ?: return null
@@ -206,6 +217,13 @@ class DesktopVpnManager private constructor(
         )
     }
 
+    override suspend fun measureCurrentChannel(): Long? {
+        if (status.value !is VpnStatus.Connected) return null
+        val session = channelProbe ?: return null
+        val measured = session.measure()
+        return measured.takeIf { status.value is VpnStatus.Connected && channelProbe === session }
+    }
+
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
@@ -213,22 +231,9 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {
-        val currentStatus = status.value
-        if (currentStatus !is VpnStatus.Connected &&
-            currentStatus !is VpnStatus.Reconnecting
-        ) {
-            return null
-        }
+    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
+        channelProxy.takeIf { status.value is VpnStatus.Connected }
 
-        val socks = _socksProxySettings.value.normalized()
-        return SubscriptionFetchProxy(
-            host = socks.host,
-            port = socks.port,
-            username = socks.username,
-            password = socks.password
-        )
-    }
 
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
         val settings = DesktopSocksProxySettings(
@@ -334,6 +339,7 @@ class DesktopVpnManager private constructor(
             // Branch on location kind: olcrtc uses the existing engine path
             // (unchanged); vless/hy2/xhttp start a sing-box/Xray core on the core
             // SOCKS port. The tun/PAC then targets whichever port is active.
+            connectedLocation = location.normalized()
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             val effectiveSocksPort =
                 if (isOlcrtc) {
@@ -439,6 +445,10 @@ class DesktopVpnManager private constructor(
             // Through the front when there is one: it has no auth, and a green
             // light has to be about the chain the traffic actually takes.
             val directToOlcrtc = isOlcrtc && !verifiedThroughTun && frontPort == null
+            channelProxy = SubscriptionFetchProxy(socksSettings.host,
+                if (verifiedThroughTun) macTunVerifyPort!! else (frontPort ?: effectiveSocksPort),
+                if (directToOlcrtc) socksSettings.username else "",
+                if (directToOlcrtc) socksSettings.password else "")
             val exit = org.olcbox.app.net.TunnelVerifier.verify(
                 socksHost = socksSettings.host,
                 socksPort = if (verifiedThroughTun) macTunVerifyPort!! else (frontPort ?: effectiveSocksPort),
@@ -1202,6 +1212,12 @@ class DesktopVpnManager private constructor(
     }
 
     private fun setStatus(status: VpnStatus) {
+        if (status is VpnStatus.Connected && channelProbe == null) {
+            channelProbe = channelProxy?.let { org.olcbox.app.net.ChannelLatency.Session(it) }
+        } else if (status !is VpnStatus.Connected) {
+            channelProbe?.close()
+            channelProbe = null
+        }
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
         _connectedSince.value = when (status) {

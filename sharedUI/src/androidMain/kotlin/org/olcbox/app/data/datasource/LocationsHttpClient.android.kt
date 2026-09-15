@@ -14,10 +14,12 @@ internal actual fun createProxyHttpClient(
     subscriptionProxy: SubscriptionFetchProxy?,
     connectTimeoutMs: Long,
     requestTimeoutMs: Long,
-    socketTimeoutMs: Long
+    socketTimeoutMs: Long,
+    followRedirects: Boolean
 ): HttpClient {
     return HttpClient(OkHttp) {
         expectSuccess = false
+        this.followRedirects = followRedirects
 
         engine {
             if (subscriptionProxy != null) {

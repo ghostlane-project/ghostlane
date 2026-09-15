@@ -1,5 +1,7 @@
 package org.olcbox.app.vpn
 
+import kotlin.coroutines.cancellation.CancellationException
+
 import kotlin.coroutines.resume
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -22,8 +24,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import io.ktor.client.request.get
-import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeCallback
@@ -221,7 +221,7 @@ class IosVpnManager(
             // Never the olcRTC prober while connected: it would open a second
             // session to the same room from the same device, which costs the
             // operator and has confused this before.
-            return if (config == activeConfig) measureThroughTunnel() else null
+            return if (config == activeConfig) measureCurrentChannel() else null
         }
         if (config.kind == LocationKind.Olcrtc) {
             return runCheck(config) { request -> olcRtcBridge.ping(request) }
@@ -261,23 +261,14 @@ class IosVpnManager(
      * worth showing as such, and is exactly the state a user calls "connected
      * but nothing loads".
      */
-    private suspend fun measureThroughTunnel(): Long? = withContext(Dispatchers.Default) {
-        val client = createProxyHttpClient(
-            subscriptionProxy = null,
-            connectTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS,
-            requestTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS,
-            socketTimeoutMs = TUNNEL_PROBE_TIMEOUT_MS
-        )
-        try {
-            val started = timeSource.markNow()
-            val status = client.get(HTTP_PING_URL).status.value
-            if (status !in 200..399) return@withContext null
-            started.elapsedNow().inWholeMilliseconds
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { client.close() }
-        }
+    private var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
+
+    override suspend fun measureCurrentChannel(): Long? {
+        if (status.value !is VpnStatus.Connected) return null
+        val session = channelProbe ?: return null
+        val epoch = generation
+        val measured = session.measure()
+        return measured.takeIf { status.value is VpnStatus.Connected && generation == epoch && channelProbe === session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -339,7 +330,21 @@ class IosVpnManager(
     ) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
-        val request = packetTunnelRequest(location) ?: return
+        val request = try {
+            packetTunnelRequest(location)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            desiredConnected = false
+            setStatus(VpnStatus.Error(e.message ?: "Invalid connection configuration"))
+            addLog("Packet tunnel configuration rejected")
+            null
+        } catch (_: Exception) {
+            desiredConnected = false
+            setStatus(VpnStatus.Error("Could not prepare the packet tunnel configuration"))
+            addLog("Packet tunnel configuration could not be prepared")
+            null
+        } ?: return
         // What the extension actually runs: the two engines that speak their
         // transport behind a SOCKS port sit behind hev-socks5-tunnel (xhttp
         // since 1.0.426, olcRTC since 1.0.428; docs/ios-one-go-runtime.md);
@@ -382,12 +387,12 @@ class IosVpnManager(
      * What the extension needs for this location, or null once the reason it
      * cannot be built has been reported.
      */
+
     private suspend fun packetTunnelRequest(
         location: LocationConfig
     ): IosPacketTunnelStartRequest? {
         val routing = routing()
         val ruleSets = ruleSetsFor(routing)
-
         // olcRTC has no link to parse — a room and a key address it — so it is
         // read off the location rather than through LinkParser.
         if (location.kind == LocationKind.Olcrtc) {
@@ -722,6 +727,14 @@ class IosVpnManager(
     }
 
     private fun setStatus(status: VpnStatus) {
+        // The app's sockets traverse the packet tunnel on iOS. Rebuild the
+        // HTTP pool after a migration so an old connection cannot mask failure.
+        if (status is VpnStatus.Connected && channelProbe == null) {
+            channelProbe = org.olcbox.app.net.ChannelLatency.Session(null)
+        } else if (status !is VpnStatus.Connected) {
+            channelProbe?.close()
+            channelProbe = null
+        }
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
         _connectedSince.value = when (status) {
@@ -821,7 +834,6 @@ class IosVpnManager(
         // and every olcRTC row it touched was drawn Offline.
         const val CHECK_TIMEOUT_MS = 20_000L
         /** One request through a tunnel that is already up; nothing to negotiate. */
-        const val TUNNEL_PROBE_TIMEOUT_MS = 6_000L
         /** One echo and back. Anything slower than this is not a usable exit. */
         const val ICMP_TIMEOUT_MS = 3_000L
 

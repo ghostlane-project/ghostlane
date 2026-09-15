@@ -264,7 +264,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
-        // olcRTC is deliberately not measurable.
+        if (status.value is VpnStatus.Connected && config == OlcboxVpnState.activeLocation) return true
+        // Disconnected olcRTC rooms are deliberately not probed.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
         // way to time one is `mobile.Ping`, which JOINS the room as a real client,
@@ -284,6 +285,11 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             ?.let { it.host to it.port }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
+        // Other entries retain their address probes. Only the active entry
+        // measures HTTP through the existing tunnel; never join a spare room.
+        if (status.value is VpnStatus.Connected && locationConfig.normalized() == OlcboxVpnState.activeLocation) {
+            return measureCurrentChannel()
+        }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
             val (host, port) = serverEndpoint(config) ?: return null
@@ -295,6 +301,13 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         )
     }
 
+    override suspend fun measureCurrentChannel(): Long? {
+        if (status.value !is VpnStatus.Connected) return null
+        val session = OlcboxVpnState.channelProbe ?: return null
+        val measured = session.measure()
+        return measured.takeIf { status.value is VpnStatus.Connected && OlcboxVpnState.channelProbe === session }
+    }
+
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
@@ -302,22 +315,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         )
     }
 
-    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {
-        val currentStatus = status.value
-        if (currentStatus !is VpnStatus.Connected &&
-            currentStatus !is VpnStatus.Reconnecting
-        ) {
-            return null
-        }
+    override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
+        OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
-        val proxy = _proxySettings.value
-        return SubscriptionFetchProxy(
-            host = AndroidSocksProxySettings.connectHost(proxy.host),
-            port = proxy.port,
-            username = proxy.username,
-            password = proxy.password
-        )
-    }
 
     private suspend fun ensureProxySettings() {
         appContext.vpnPrefDataStore.edit { preferences ->
