@@ -26,11 +26,11 @@ val buildOlcrtcAndroidAar by tasks.registering(Exec::class) {
         environment("PATH", "$goBin:$path")
     }
 
-    // olcrtc_lean leaves the videochannel transport (a QR codec) and the
-    // livekit provider (protobuf and CEL initialisers) out of the bind. The
-    // app offers neither and refuses a videochannel link on import; on the
-    // phone profile they cost ~10 MB of resident memory and 21 MB of binary
-    // for nothing. Same tag as the iOS cores build.
+    // olcrtc_lean leaves the videochannel transport (a QR codec) out of the
+    // bind; the app refuses such a link on import. The engines stay in: the
+    // wbstream provider is served by the livekit engine, and a bind without
+    // it failed every WB Stream room with "engine not found" (olcbox#22).
+    // Same tag as the iOS cores build.
     commandLine(
         gomobileExecutable, "bind", "-target=android/arm,android/arm64,android/amd64",
         "-androidapi", "21", "-tags", "olcrtc_lean", "-ldflags", "-s -w -checklinkname=0",

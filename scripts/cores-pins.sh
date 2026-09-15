@@ -125,7 +125,16 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # on the phone profile instead of 64 KB, and one idle-flow sweeper for all
 # associations instead of one goroutine each - the resolver behind a
 # tun2socks opens an association per query, 117 of them under a speed test.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914071328-d59a979359dd}"
+#
+# d59a979359dd -> 850aa5f90a8d (olcbox#22, both halves): the client sends
+# its hello again every 4 s while the handshake timeout runs, because the
+# Jitsi videobridge drops a relayed message to an endpoint whose channel is
+# not open yet and a server that comes up after the phone lost the only
+# hello there was; and the livekit engine is back in the lean bind - the
+# wbstream provider is served by it, and without it every WB Stream room
+# failed with "engine not found". That is about 3 MB of heap at start and
+# 20 MB of binary the lean tag had been saving.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915015831-850aa5f90a8d}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -167,7 +176,10 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260914071328-d59a979359dd}"
 # xray-core-h2-window.patch bounds the xhttp client's HTTP/2 receive windows,
 # and the wrapper package exports CoresSetenv, which is how the extension
 # hands the values to Go (a C setenv is invisible to it). Bind list changed.
-CORES_BUILD="${CORES_BUILD:-22}"
+#
+# 22 → 23: the engine pin above (850aa5f90a8d); the lean bind links the
+# livekit engine again, so the framework grows by about 20 MB.
+CORES_BUILD="${CORES_BUILD:-23}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.

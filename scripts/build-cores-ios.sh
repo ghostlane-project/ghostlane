@@ -21,12 +21,12 @@
 #
 # The build tags are load-bearing. Without with_gvisor there is no userspace
 # stack for the tun, without with_quic no Hysteria2, without with_utls no
-# Reality fingerprinting. olcrtc_lean leaves two things out of the olcRTC
-# engine that no phone uses, the videochannel transport (a QR codec) and the
-# livekit provider (protobuf and CEL initialisers): measured on the phone
-# profile, 40.3 → 29.8 MB idle and 47.0 → 36.2 MB at a speed test's upload
-# peak, in an extension the system kills at about 45. The app never offers
-# either, and refuses a videochannel link on import.
+# Reality fingerprinting. olcrtc_lean leaves the videochannel transport (a QR
+# codec no phone uses; the app refuses such a link on import) out of the
+# olcRTC engine. It once left the livekit engine out as well, and that broke
+# every WB Stream room on the phone with "engine not found" (olcbox#22): the
+# wbstream provider is served by livekit. Keeping it costs about 3 MB of heap
+# at start and 20 MB of binary.
 set -euo pipefail
 
 # The pinned trio this was verified against, so a laptop run and a CI run

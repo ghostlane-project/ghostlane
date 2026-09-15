@@ -241,7 +241,8 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
         "bind",
         "-target=ios",
         // As in scripts/build-cores-ios.sh and the Android bind: no
-        // videochannel, no livekit, for the phone's memory.
+        // videochannel transport, for the phone's memory. Every engine
+        // stays in; WB Stream rooms need livekit (olcbox#22).
         "-tags",
         "olcrtc_lean",
         "-ldflags",
