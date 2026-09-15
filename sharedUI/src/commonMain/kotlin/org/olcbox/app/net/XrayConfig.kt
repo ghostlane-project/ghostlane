@@ -81,19 +81,8 @@ object XrayConfig {
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
     ): String {
-        require(spec.transport is TransportSpec.Xhttp) { "XrayConfig.buildXhttp requires an xhttp transport" }
-        return buildVless(spec, socksPort, routing, directDns, geodata, answersDns)
-    }
-
-    fun buildVless(
-        spec: OutboundSpec.Vless,
-        socksPort: Int = XRAY_SOCKS_PORT,
-        routing: Routing = Routing.Global,
-        directDns: DirectDns = DirectDns.Placeholder,
-        geodata: XrayGeodata.Lists? = null,
-        answersDns: Boolean = false,
-    ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
+            ?: error("XrayConfig.buildXhttp requires an xhttp transport")
         val bypass = routing as? Routing.BypassRussia
         require(bypass == null || geodata != null) {
             "Bypass Russia on Xray carries its lists inline: pass XrayGeodata.lists()"
@@ -139,14 +128,13 @@ object XrayConfig {
                                 putJsonArray("users") {
                                     addJsonObject {
                                         put("id", spec.uuid); put("encryption", "none")
-                                        if (xhttp == null && spec.flow != null) put("flow", spec.flow)
                                     }
                                 }
                             }
                         }
                     }
                     putJsonObject("streamSettings") {
-                        put("network", if (xhttp != null) "xhttp" else "tcp")
+                        put("network", "xhttp")
                         // REALITY only where there is a key for it.
                         //
                         // A CDN entry is xhttp over ordinary TLS to a host with a
@@ -174,7 +162,7 @@ object XrayConfig {
                                 put("shortId", spec.shortId)
                             }
                         }
-                        if (xhttp != null) putJsonObject("xhttpSettings") {
+                        putJsonObject("xhttpSettings") {
                             put("path", xhttp.path)
                             put("host", xhttp.host)
                             put("mode", xhttp.mode)
@@ -265,7 +253,7 @@ object XrayConfig {
      * `localhost`, Xray's name for the system resolver, only where the core
      * reaches that without looping through its own tun.
      */
-    internal fun directDnsAddress(direct: DirectDns): String = when (direct) {
+    private fun directDnsAddress(direct: DirectDns): String = when (direct) {
         DirectDns.System -> "localhost"
         is DirectDns.Servers -> direct.pick()
         DirectDns.Placeholder -> SingBoxConfig.DIRECT_DNS_PLACEHOLDER

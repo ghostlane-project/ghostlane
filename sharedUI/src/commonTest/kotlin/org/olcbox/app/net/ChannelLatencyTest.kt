@@ -15,6 +15,24 @@ import kotlin.test.*
 // real time too, so runTest does not advance five virtual seconds before the
 // engine gets a chance to answer.
 class ChannelLatencyTest {
+    @Test fun pendingAndFailedMeasurementsAreDistinct() {
+        val pending: ChannelMeasurement? = null
+        assertEquals("HTTP …", pending?.label() ?: "HTTP …")
+        assertEquals("HTTP —", ChannelMeasurement(null).label())
+        assertEquals("HTTP 42ms", ChannelMeasurement(42).label())
+    }
+
+    @Test fun sessionReusesItsClientAcrossSamples() = runTest { withContext(Dispatchers.Default) {
+        var requests = 0
+        val client = HttpClient(MockEngine { requests++; respond("", HttpStatusCode.NoContent) })
+        val session = ChannelLatency.Session(client)
+        try {
+            assertNotNull(session.measure())
+            assertNotNull(session.measure())
+            assertEquals(2, requests)
+        } finally { session.close() }
+    } }
+
     @Test fun aResponseTravelsThroughTheRequestedProbeUrl() = runTest { withContext(Dispatchers.Default) {
         val client = HttpClient(MockEngine { request ->
             assertEquals(ChannelLatency.URL, request.url.toString())

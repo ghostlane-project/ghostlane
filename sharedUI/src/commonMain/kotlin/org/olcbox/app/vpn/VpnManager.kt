@@ -53,7 +53,6 @@ interface VpnManager {
     fun stopVpn()
     suspend fun ping(locationConfig: LocationConfig): Long?
     suspend fun checkConnection(locationConfig: LocationConfig): Long?
-    fun connectionGroupLabel(): String? = null
 
     /** Measure the active channel without starting another engine or room. */
     suspend fun measureCurrentChannel(): Long? = null

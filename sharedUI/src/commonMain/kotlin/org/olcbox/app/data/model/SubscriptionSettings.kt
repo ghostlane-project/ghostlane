@@ -35,10 +35,6 @@ enum class SubscriptionSort {
  */
 @Serializable
 data class SubscriptionSettings(
-    /** Applies to VLESS members of the selected subscription, at connection time. */
-    @SerialName("connection_selection")
-    val connectionSelection: ConnectionSelection = ConnectionSelection.Manual,
-
     /** Refresh subscriptions on a timer while the app is running. */
     @SerialName("auto_update")
     val autoUpdate: Boolean = true,

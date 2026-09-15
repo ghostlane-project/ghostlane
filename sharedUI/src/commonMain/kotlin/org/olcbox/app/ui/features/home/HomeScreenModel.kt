@@ -73,18 +73,23 @@ class HomeScreenViewModel(
     private val _autoRefreshNotice = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val autoRefreshNotice = _autoRefreshNotice.asSharedFlow()
 
-    private val _channelLatency = MutableStateFlow<Long?>(null)
+    private val _channelLatency = MutableStateFlow<org.olcbox.app.net.ChannelMeasurement?>(null)
     val channelLatency = _channelLatency.asStateFlow()
-
-    fun connectionGroupLabel(): String? = vpnManager.connectionGroupLabel()
+    private var measurementEpoch = 0L
+    private var measurementRequest = 0L
 
     suspend fun measureActiveChannel(): Long? {
+        val epoch = measurementEpoch
+        val request = ++measurementRequest
         val session = vpnManager.connectedSince.value
         val config = _state.value.configData
         val result = vpnManager.measureCurrentChannel()
-        if (vpnManager.status.value is VpnStatus.Connected &&
+        // connectedSince survives a network migration. The separate epoch
+        // rejects its old sample even if the session clock did not change.
+        if (epoch == measurementEpoch && request == measurementRequest &&
+            vpnManager.status.value is VpnStatus.Connected &&
             vpnManager.connectedSince.value == session && _state.value.configData == config) {
-            _channelLatency.value = result
+            _channelLatency.value = org.olcbox.app.net.ChannelMeasurement(result)
         }
         return result
     }
@@ -190,7 +195,10 @@ class HomeScreenViewModel(
         viewModelScope.launch {
             vpnManager.status.collect { status ->
                 _state.update { it.applying(status) }
-                if (status !is VpnStatus.Connected) _channelLatency.value = null
+                if (status !is VpnStatus.Connected) {
+                    measurementEpoch++
+                    _channelLatency.value = null
+                }
             }
         }
     }

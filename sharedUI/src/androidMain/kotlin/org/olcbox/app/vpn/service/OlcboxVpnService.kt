@@ -1,7 +1,5 @@
 package org.olcbox.app.vpn.service
 
-import org.olcbox.app.net.vlessGroup
-import org.olcbox.app.net.XrayGroupConfig
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -486,14 +484,6 @@ class OlcboxVpnService : VpnService() {
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                         return@withLock
                     }
-                    OlcboxVpnState.activeGroup = try {
-                        repository.vlessGroup(location)
-                    } catch (e: IllegalArgumentException) {
-                        setStatus(VpnStatus.Error(e.message ?: "Invalid VLESS group"))
-                        updateNotification("Could not create VLESS group")
-                        stopTransportProcesses(closeTun = true, waitForSocksPort = false)
-                        return@withLock
-                    }
                     OlcboxVpnState.activeLocation = location.normalized()
                     routingMode = repository.getRoutingSettings().mode
 
@@ -808,19 +798,7 @@ class OlcboxVpnService : VpnService() {
             // answers proves nothing about who answers.
             val alive: () -> Boolean
             val fronted = routing is Routing.BypassRussia && connectionMode == AndroidConnectionMode.Tun
-            val group = OlcboxVpnState.activeGroup
-            if (group != null) {
-                if (fronted) {
-                    xrayCore.start(XrayGroupConfig.build(group, socksPort = XRAY_BEHIND_FRONT_PORT))
-                    singBoxCore.start(SingBoxConfig.buildSocksChain(XRAY_BEHIND_FRONT_PORT, socksPort = port, routing = routing))
-                    alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
-                } else {
-                    xrayCore.start(XrayGroupConfig.build(group, socksPort = port))
-                    alive = xrayCore::isRunning
-                }
-                label = "Xray/VLESS group"
-                diagnose = xrayCore::diagnostics
-            } else if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
+            if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
                 if (fronted) {
                     // Xray does not route; sing-box does, so it goes in front.
                     xrayCore.start(XrayConfig.buildXhttp(spec, socksPort = XRAY_BEHIND_FRONT_PORT))
@@ -1886,12 +1864,20 @@ class OlcboxVpnService : VpnService() {
     private fun setStatus(status: VpnStatus) {
         if (status is VpnStatus.Connected) {
             OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
-                "127.0.0.1", activeCorePort ?: socksListenPort,
+                AndroidSocksProxySettings.connectHost(socksListenHost), activeCorePort ?: socksListenPort,
                 if (activeCorePort == null) socksUsername else "",
                 if (activeCorePort == null) socksPassword else ""
             )
         } else {
             OlcboxVpnState.channelProxy = null
+        }
+        // Retire pooled sockets on migration as well as stop: they must not
+        // carry a measurement from the previous network into the new session.
+        if (status is VpnStatus.Connected && OlcboxVpnState.channelProbe == null) {
+            OlcboxVpnState.channelProbe = org.olcbox.app.net.ChannelLatency.Session(OlcboxVpnState.channelProxy)
+        } else if (status !is VpnStatus.Connected) {
+            OlcboxVpnState.channelProbe?.close()
+            OlcboxVpnState.channelProbe = null
         }
         OlcboxVpnState.setStatus(status)
     }

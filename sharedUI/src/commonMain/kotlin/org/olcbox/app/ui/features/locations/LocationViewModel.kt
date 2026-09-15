@@ -213,16 +213,6 @@ class LocationViewModel(
         }
     }
 
-    private var pingEpoch = 0L
-
-    /** Address probes and tunnel probes must not share cached results. */
-    fun invalidatePings() {
-        pingEpoch++
-        activePingJobs.values.toList().forEach { it.cancel() }
-        activePingJobs.clear()
-        pingsState = PingsState.Idle
-    }
-
     fun refreshPings(
         targetLocationIds: List<String>? = null,
         performPing: suspend (LocationConfig) -> Long?,
@@ -235,7 +225,6 @@ class LocationViewModel(
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (String) -> Unit = {}
     ) {
-        val requestEpoch = pingEpoch
         val previousPings = currentPingsSnapshot()
         val locationsSnapshot = locations.toList()
 
@@ -280,7 +269,6 @@ class LocationViewModel(
                         null
                     }
 
-                    if (requestEpoch != pingEpoch) return@launch
                     val updatedPings = currentPingsSnapshot().toMutableMap()
                     updatedPings[location.storageId] = ping
 
@@ -298,13 +286,10 @@ class LocationViewModel(
                         onComplete(onlineForThisRequest, totalForThisRequest)
                     }
                 } catch (e: CancellationException) {
-                    if (requestEpoch == pingEpoch) {
-                        activePingJobs.remove(location.storageId)
-                        emitPingState()
-                    }
+                    activePingJobs.remove(location.storageId)
+                    emitPingState()
                     throw e
                 } catch (e: Exception) {
-                    if (requestEpoch != pingEpoch) return@launch
                     activePingJobs.remove(location.storageId)
 
                     val message = e.message ?: "HTTP ping failed"

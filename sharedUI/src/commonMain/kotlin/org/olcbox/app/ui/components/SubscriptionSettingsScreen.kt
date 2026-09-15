@@ -30,7 +30,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.model.SubscriptionSort
-import org.olcbox.app.data.model.ConnectionSelection
 import org.olcbox.app.ui.components.kit.PkSectionLabel
 import org.olcbox.app.ui.icons.PkIcons
 
@@ -77,7 +76,7 @@ fun SubscriptionSettingsScreen(
             // Tapping cycles rather than opening a dialog: seven choices do not
             // earn a screen of their own, and the current one is on the row.
             SubscriptionValueRow(
-                title = "Maximum update interval (h)",
+                title = "Update interval (h)",
                 value = settings.updateIntervalHours.toString(),
                 enabled = settings.autoUpdate,
                 onClick = {
@@ -97,7 +96,7 @@ fun SubscriptionSettingsScreen(
         }
 
         SubscriptionSettingsNote(
-            "Refreshes due lists while the app is running and after settings load. Providers may request a shorter interval. New servers appear automatically; failed downloads keep the previous list."
+            "Sets how often server lists refresh themselves while the app is running."
         )
 
         Spacer(Modifier.height(18.dp))
@@ -124,22 +123,6 @@ fun SubscriptionSettingsScreen(
             "Refreshing, connecting and measuring latency happen every time the app starts."
         )
 
-        Spacer(Modifier.height(18.dp))
-        PkSectionLabel("VLESS connection selection")
-        Spacer(Modifier.height(10.dp))
-        ConnectionSelection.entries.forEach { option ->
-            SubscriptionChoiceRow(
-                title = option.label(),
-                selected = settings.connectionSelection == option,
-                onClick = { onChanged(settings.copy(connectionSelection = option)) }
-            )
-        }
-        SubscriptionSettingsNote(
-            "Lowest uses the healthy VLESS server with the shortest HTTPS response time. " +
-                "Balanced spreads new connections across healthy VLESS servers in the selected list; " +
-                "different connections may use different exit IPs. Existing connections stay on their exit. " +
-                "Telemost rooms stay manual. New list members join the group on the next VPN connect."
-        )
         Spacer(Modifier.height(18.dp))
         PkSectionLabel("Server list")
         Spacer(Modifier.height(10.dp))

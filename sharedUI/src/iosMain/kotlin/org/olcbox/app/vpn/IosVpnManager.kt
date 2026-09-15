@@ -1,9 +1,6 @@
 package org.olcbox.app.vpn
 
 import kotlin.coroutines.cancellation.CancellationException
-import org.olcbox.app.net.VlessGroup
-import org.olcbox.app.net.vlessGroup
-import org.olcbox.app.net.XrayGroupConfig
 
 import kotlin.coroutines.resume
 import kotlin.io.encoding.Base64
@@ -27,10 +24,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import io.ktor.client.request.get
-import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.model.LocationConfig
-import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeCallback
 import org.olcbox.app.ios.IosBridgeResult
@@ -196,7 +190,6 @@ class IosVpnManager(
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
-        if (_status.value is VpnStatus.Connected && activeGroup?.probePort(config) != null) return true
         // Connected, the active location is still measurable: that path times a request
         // through the tunnel that is already up and joins nothing.
         if (_status.value is VpnStatus.Connected) return config == activeConfig
@@ -223,15 +216,6 @@ class IosVpnManager(
             ?.takeIf { it.isNotBlank() }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        if (_status.value is VpnStatus.Connected) {
-            val session = generation
-            val group = activeGroup
-            group?.probePort(locationConfig)?.let { port ->
-                val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
-                return measured.takeIf { _status.value is VpnStatus.Connected &&
-                    generation == session && activeGroup === group }
-            }
-        }
         val config = locationConfig.normalized()
         if (_status.value is VpnStatus.Connected) {
             // Never the olcRTC prober while connected: it would open a second
@@ -277,14 +261,14 @@ class IosVpnManager(
      * worth showing as such, and is exactly the state a user calls "connected
      * but nothing loads".
      */
-    override fun connectionGroupLabel(): String? =
-        activeGroup?.mode?.label()?.takeIf { status.value is VpnStatus.Connected }
+    private var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
-        val session = generation
-        val measured = org.olcbox.app.net.ChannelLatency.measure(null)
-        return measured.takeIf { status.value is VpnStatus.Connected && generation == session }
+        val session = channelProbe ?: return null
+        val epoch = generation
+        val measured = session.measure()
+        return measured.takeIf { status.value is VpnStatus.Connected && generation == epoch && channelProbe === session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -352,13 +336,11 @@ class IosVpnManager(
             throw e
         } catch (e: IllegalArgumentException) {
             desiredConnected = false
-            activeGroup = null
-            setStatus(VpnStatus.Error(e.message ?: "Invalid connection group"))
+            setStatus(VpnStatus.Error(e.message ?: "Invalid connection configuration"))
             addLog("Packet tunnel configuration rejected")
             null
         } catch (_: Exception) {
             desiredConnected = false
-            activeGroup = null
             setStatus(VpnStatus.Error("Could not prepare the packet tunnel configuration"))
             addLog("Packet tunnel configuration could not be prepared")
             null
@@ -405,25 +387,12 @@ class IosVpnManager(
      * What the extension needs for this location, or null once the reason it
      * cannot be built has been reported.
      */
-    private var activeGroup: VlessGroup? = null
 
     private suspend fun packetTunnelRequest(
         location: LocationConfig
     ): IosPacketTunnelStartRequest? {
         val routing = routing()
         val ruleSets = ruleSetsFor(routing)
-        activeGroup = locationsRepository.vlessGroup(location)
-        activeGroup?.let { group ->
-            return IosPacketTunnelStartRequest(
-                config = SingBoxConfig.buildTunSocks(XrayConfig.XRAY_SOCKS_PORT, routing = routing),
-                xrayConfig = XrayGroupConfig.build(group, routing = routing,
-                    geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
-                    answersDns = true),
-                olcrtc = null,
-                ruleSets = ruleSets
-            )
-        }
-
         // olcRTC has no link to parse — a room and a key address it — so it is
         // read off the location rather than through LinkParser.
         if (location.kind == LocationKind.Olcrtc) {
@@ -758,6 +727,14 @@ class IosVpnManager(
     }
 
     private fun setStatus(status: VpnStatus) {
+        // The app's sockets traverse the packet tunnel on iOS. Rebuild the
+        // HTTP pool after a migration so an old connection cannot mask failure.
+        if (status is VpnStatus.Connected && channelProbe == null) {
+            channelProbe = org.olcbox.app.net.ChannelLatency.Session(null)
+        } else if (status !is VpnStatus.Connected) {
+            channelProbe?.close()
+            channelProbe = null
+        }
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
         _connectedSince.value = when (status) {
@@ -857,7 +834,6 @@ class IosVpnManager(
         // and every olcRTC row it touched was drawn Offline.
         const val CHECK_TIMEOUT_MS = 20_000L
         /** One request through a tunnel that is already up; nothing to negotiate. */
-        const val TUNNEL_PROBE_TIMEOUT_MS = 6_000L
         /** One echo and back. Anything slower than this is not a usable exit. */
         const val ICMP_TIMEOUT_MS = 3_000L
 

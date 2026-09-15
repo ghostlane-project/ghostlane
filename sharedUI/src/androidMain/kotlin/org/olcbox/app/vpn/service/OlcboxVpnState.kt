@@ -11,7 +11,7 @@ import org.olcbox.app.log.LogScrubber
 
 object OlcboxVpnState {
     @Volatile var channelProxy: org.olcbox.app.data.repository.SubscriptionFetchProxy? = null
-    @Volatile var activeGroup: org.olcbox.app.net.VlessGroup? = null
+    @Volatile var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
     @Volatile var activeLocation: org.olcbox.app.data.model.LocationConfig? = null
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())

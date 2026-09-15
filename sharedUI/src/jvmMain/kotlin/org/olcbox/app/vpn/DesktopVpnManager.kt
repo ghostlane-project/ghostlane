@@ -1,8 +1,5 @@
 package org.olcbox.app.vpn
 
-import org.olcbox.app.net.VlessGroup
-import org.olcbox.app.net.vlessGroup
-import org.olcbox.app.net.XrayGroupConfig
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -176,14 +173,14 @@ class DesktopVpnManager private constructor(
      * a subscription of Reality and Hysteria2 met "Nothing here can be measured"
      * — true of the old code and of nothing else.
      */
-    private var activeGroup: VlessGroup? = null
+    @Volatile private var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
     private var connectedLocation: LocationConfig? = null
     @Volatile private var channelProxy: SubscriptionFetchProxy? = null
 
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
         if (!config.isComplete()) return false
-        if (status.value is VpnStatus.Connected) return activeGroup?.probePort(config) != null || config == connectedLocation
+        if (status.value is VpnStatus.Connected && config == connectedLocation) return true
         // Disconnected olcRTC rooms are deliberately not probed.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
@@ -204,15 +201,10 @@ class DesktopVpnManager private constructor(
             ?.let { it.host to it.port }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
-        if (status.value is VpnStatus.Connected) {
-            val session = channelProxy
-            val group = activeGroup
-            group?.probePort(locationConfig)?.let { port ->
-                val measured = org.olcbox.app.net.ChannelLatency.measure(SubscriptionFetchProxy("127.0.0.1", port))
-                return measured.takeIf { status.value is VpnStatus.Connected &&
-                    channelProxy === session && activeGroup === group }
-            }
-            return if (locationConfig.normalized() == connectedLocation) measureCurrentChannel() else null
+        // Other entries retain their address probes. Only the active entry
+        // measures HTTP through the existing tunnel; never join a spare room.
+        if (status.value is VpnStatus.Connected && locationConfig.normalized() == connectedLocation) {
+            return measureCurrentChannel()
         }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
@@ -225,15 +217,11 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override fun connectionGroupLabel(): String? =
-        activeGroup?.mode?.label()?.takeIf { status.value is VpnStatus.Connected }
-
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
-        val session = channelProxy
-        val proxy = channelProxy ?: return null
-        val measured = org.olcbox.app.net.ChannelLatency.measure(proxy)
-        return measured.takeIf { status.value is VpnStatus.Connected && channelProxy === session }
+        val session = channelProbe ?: return null
+        val measured = session.measure()
+        return measured.takeIf { status.value is VpnStatus.Connected && channelProbe === session }
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
@@ -351,7 +339,6 @@ class DesktopVpnManager private constructor(
             // Branch on location kind: olcrtc uses the existing engine path
             // (unchanged); vless/hy2/xhttp start a sing-box/Xray core on the core
             // SOCKS port. The tun/PAC then targets whichever port is active.
-            activeGroup = locationsRepository.vlessGroup(location)
             connectedLocation = location.normalized()
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             val effectiveSocksPort =
@@ -572,7 +559,6 @@ class DesktopVpnManager private constructor(
             username = if (isOlcrtc) socksSettings.username else "",
             password = if (isOlcrtc) socksSettings.password else "",
             serverHost = serverEndpoint(location)?.first,
-            additionalServerHosts = activeGroup?.members.orEmpty().mapNotNull { serverEndpoint(it)?.first },
             // olcRTC relays UDP over a lossy video carrier, so DNS takes the
             // reliable path. The native transports carry UDP themselves.
             upstreamUdpIsLossy = isOlcrtc,
@@ -611,17 +597,7 @@ class DesktopVpnManager private constructor(
         // Which processes must be alive once the port answers. A port that
         // answers proves nothing about who answers.
         val alive: () -> Boolean
-        if (activeGroup != null) {
-            if (routing is Routing.BypassRussia) {
-                val xrayPort = allocateVerifyPort(port)
-                xrayCore.start(XrayGroupConfig.build(activeGroup!!, socksPort = xrayPort))
-                singBoxCore.start(org.olcbox.app.net.SingBoxConfig.buildSocksChain(xrayPort, socksPort = port, routing = routing))
-                alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
-            } else {
-                xrayCore.start(XrayGroupConfig.build(activeGroup!!, socksPort = port))
-                alive = xrayCore::isRunning
-            }
-        } else if (xhttp != null && routing is Routing.BypassRussia) {
+        if (xhttp != null && routing is Routing.BypassRussia) {
             // Xray does not route; sing-box does, so it goes in front.
             val xrayPort = allocateVerifyPort(port)
             xrayCore.start(org.olcbox.app.net.XrayConfig.buildXhttp(xhttp, socksPort = xrayPort))
@@ -1236,6 +1212,12 @@ class DesktopVpnManager private constructor(
     }
 
     private fun setStatus(status: VpnStatus) {
+        if (status is VpnStatus.Connected && channelProbe == null) {
+            channelProbe = channelProxy?.let { org.olcbox.app.net.ChannelLatency.Session(it) }
+        } else if (status !is VpnStatus.Connected) {
+            channelProbe?.close()
+            channelProbe = null
+        }
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
         _connectedSince.value = when (status) {
