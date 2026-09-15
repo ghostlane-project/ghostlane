@@ -11,8 +11,11 @@ data class VlessGroup(
     val members: List<LocationConfig>,
     val fallbackIndex: Int = 0,
 ) {
-    fun probePort(config: LocationConfig): Int? = members.indexOfFirst { it.connectionKey() == config.connectionKey() }
-        .takeIf { it >= 0 }?.let { PROBE_PORT + it }
+    fun probePort(config: LocationConfig): Int? {
+        if (config.kind != LocationKind.Vless) return null
+        return members.indexOfFirst { it.connectionKey() == config.connectionKey() }
+            .takeIf { it >= 0 }?.let { PROBE_PORT + it }
+    }
 
     companion object {
         const val PROBE_PORT = 31000

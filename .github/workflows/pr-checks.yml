@@ -27,7 +27,7 @@ permissions:
 concurrency:
   # A push carries no PR number, and without the ref every branch would share
   # one group and cancel the others' runs.
-  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:

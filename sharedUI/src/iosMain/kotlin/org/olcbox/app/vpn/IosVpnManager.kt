@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn
 
+import kotlin.coroutines.cancellation.CancellationException
 import org.olcbox.app.net.VlessGroup
 import org.olcbox.app.net.vlessGroup
 import org.olcbox.app.net.XrayGroupConfig
@@ -29,6 +30,7 @@ import kotlinx.coroutines.withContext
 import io.ktor.client.request.get
 import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeCallback
 import org.olcbox.app.ios.IosBridgeResult
@@ -343,7 +345,23 @@ class IosVpnManager(
     ) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
-        val request = packetTunnelRequest(location) ?: return
+        val request = try {
+            packetTunnelRequest(location)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            desiredConnected = false
+            activeGroup = null
+            setStatus(VpnStatus.Error(e.message ?: "Invalid connection group"))
+            addLog("Packet tunnel configuration rejected")
+            null
+        } catch (_: Exception) {
+            desiredConnected = false
+            activeGroup = null
+            setStatus(VpnStatus.Error("Could not prepare the packet tunnel configuration"))
+            addLog("Packet tunnel configuration could not be prepared")
+            null
+        } ?: return
         // What the extension actually runs: the two engines that speak their
         // transport behind a SOCKS port sit behind hev-socks5-tunnel (xhttp
         // since 1.0.426, olcRTC since 1.0.428; docs/ios-one-go-runtime.md);
