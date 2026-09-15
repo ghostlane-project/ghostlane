@@ -35,6 +35,10 @@ enum class SubscriptionSort {
  */
 @Serializable
 data class SubscriptionSettings(
+    /** Choose once before connecting; keep the native core for each transport. */
+    @SerialName("auto_select_lowest")
+    val autoSelectLowest: Boolean = false,
+
     /** Refresh subscriptions on a timer while the app is running. */
     @SerialName("auto_update")
     val autoUpdate: Boolean = true,

@@ -1,6 +1,14 @@
 package org.olcbox.app.ui.features.home
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,21 +34,27 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeScreenModelImportLinkTest {
     private val source = MemoryLocationsDataSource()
     private val repository = LocationsRepositoryImpl(source)
+    private val models = mutableListOf<HomeScreenViewModel>()
 
     @BeforeTest fun main() = Dispatchers.setMain(UnconfinedTestDispatcher())
-    @AfterTest fun restore() = Dispatchers.resetMain()
+    @AfterTest fun restore() {
+        // Complete IO continuations before resetting the test Main dispatcher.
+        runBlocking { models.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
+        Dispatchers.resetMain()
+    }
 
-    private fun viewModel() = HomeScreenViewModel(
-        vpnManager = IdleVpnManager(),
+    private fun viewModel(vpn: IdleVpnManager = IdleVpnManager()) = HomeScreenViewModel(
+        vpnManager = vpn,
         locationsRepository = repository,
         configImporter = NoConfigImporter,
         logExporter = NoLogExporter
-    )
+    ).also { models += it }
 
     // The import hops to Dispatchers.IO, a real thread; virtual time would
     // race ahead of it, so the wait is measured in real seconds.
@@ -49,6 +63,29 @@ class HomeScreenModelImportLinkTest {
 
     private val realityLink = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443" +
         "?security=reality&encryption=none&pbk=PUBKEY&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#DE"
+
+    @Test fun stopDuringLowestRankingCancelsThePendingStart() = runTest {
+        source.stored = LocationBundleV4(
+            activeLocationId = "one",
+            locations = listOf(org.olcbox.app.data.model.LocationEntry(
+                storageId = "one", subscriptionUrl = "https://example.com/sub",
+                kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink
+            )),
+            settings = org.olcbox.app.data.model.SubscriptionSettings(autoUpdate = false, autoSelectLowest = true)
+        )
+        val vpn = IdleVpnManager()
+        val entered = CompletableDeferred<Unit>()
+        vpn.probe = { entered.complete(Unit); awaitCancellation() }
+        val vm = viewModel(vpn)
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            vm.ToggleVpn()
+            entered.await()
+            vm.ToggleVpn()
+            assertEquals(0, vpn.starts)
+            assertEquals(false, vm.state.value.isVpnLoading)
+        } finally { vm.viewModelScope.cancel() }
+    }
 
     @Test fun anImportLinkGoesThroughTheSameImportAsAPaste() = runTest {
         val outcome = CompletableDeferred<String>()
@@ -83,14 +120,17 @@ private class MemoryLocationsDataSource(var stored: LocationBundleV4? = null) : 
 
 private class IdleVpnManager : VpnManager {
     override val logs: StateFlow<List<String>> = MutableStateFlow(emptyList())
-    override val status: StateFlow<VpnStatus> = MutableStateFlow(VpnStatus.Disconnected)
+    override val status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(false)
-    override val connectedSince: StateFlow<Long?> = MutableStateFlow(null)
+    override val connectedSince = MutableStateFlow<Long?>(null)
+    var probe: suspend () -> Long? = { null }
+    var starts = 0
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
-    override fun startVpn() {}
+    override fun startVpn() { starts++ }
     override fun stopVpn() {}
-    override suspend fun ping(locationConfig: LocationConfig): Long? = null
+    override fun canPing(locationConfig: LocationConfig) = true
+    override suspend fun ping(locationConfig: LocationConfig): Long? = probe()
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? = null
 }
 
