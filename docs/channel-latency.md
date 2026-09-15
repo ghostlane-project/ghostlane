@@ -14,8 +14,8 @@ tunnel. Session identity and the view model's migration epoch reject late result
 
 Other Android/desktop entries retain their existing address checks while the VPN
 is connected. These are not credential or end-to-end tunnel checks. Manual row
-measurements remain historical values until remeasured, as upstream; changing the
-loading state no longer clears the column or cancels measure-on-start. The live
+measurements survive network changes and are marked as previous-network results
+until remeasured. Loading no longer clears the column or cancels measure-on-start. The live
 channel display is separate and resets when the connection is interrupted.
 
 Automatic refresh waits for persisted settings and checks due subscriptions at
@@ -30,7 +30,7 @@ separate change. `ChannelMeasurement` only distinguishes pending from a complete
 failure; `ChannelLatency.Session` owns the reusable client. Neither adds storage
 or a runtime dependency.
 
-Local Windows validation: 428 JVM/common tests and Desktop Kotlin compilation
+Local Windows validation: JVM/common tests and Desktop Kotlin compilation
 passed after the review fixes. Coverage includes a late response after migration
 with an unchanged session clock, pending/failure display, HTTP client reuse,
 cancellation, deadlines and subscription refresh policy. Platform CI results are

@@ -320,9 +320,11 @@ fun HomeScreen(
 
     // A small request over the existing tunnel, including Telemost. No room is
     // joined merely to draw this value; leaving the screen cancels the sampler.
-    // Loading toggles during migration must not discard address measurements
-    // or cancel the parallel measure-on-start pass. Only tunnel results are
-    // session-bound; the active-channel sampler clears those in the view model.
+    // Loading toggles retain the column and in-flight startup probes. Mark those
+    // results historical instead of presenting an old network as a live sample.
+    LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince) {
+        locationViewModel.markPingsStale()
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince, lifecycle) {
         if (state.isVpnConnected && !state.isVpnLoading) {
@@ -452,6 +454,7 @@ fun HomeScreen(
             selectedLocationId = selectedId,
             isConnected = state.isVpnConnected,
             pingsState = pingsState,
+            pingsStale = locationViewModel.stalePingIds.any { id -> locations.any { it.storageId == id } },
             olcrtcSlots = locationViewModel.olcrtcSlots,
             occupancyHistory = locationViewModel.olcrtcHistory,
             revokedKeys = locationViewModel.olcrtcRevoked,

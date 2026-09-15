@@ -71,6 +71,16 @@ class LocationViewModel(
     var pingsState by mutableStateOf<PingsState>(PingsState.Idle)
         private set
 
+    var stalePingIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+    private var pingEpoch = 0L
+
+    /** Keep startup/manual measurements, but don't present an old path as live. */
+    fun markPingsStale() {
+        pingEpoch++
+        stalePingIds = stalePingIds + currentPingsSnapshot().keys + activePingJobs.keys
+    }
+
     /**
      * olcRTC occupancy per location storage id.
      *
@@ -225,6 +235,7 @@ class LocationViewModel(
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (String) -> Unit = {}
     ) {
+        val requestEpoch = pingEpoch
         val previousPings = currentPingsSnapshot()
         val locationsSnapshot = locations.toList()
 
@@ -271,6 +282,10 @@ class LocationViewModel(
 
                     val updatedPings = currentPingsSnapshot().toMutableMap()
                     updatedPings[location.storageId] = ping
+                    // Do not cancel measure-on-start during connection setup. Its
+                    // answer is still useful, just historical after a path change.
+                    stalePingIds = if (requestEpoch == pingEpoch) stalePingIds - location.storageId
+                        else stalePingIds + location.storageId
 
                     activePingJobs.remove(location.storageId)
 

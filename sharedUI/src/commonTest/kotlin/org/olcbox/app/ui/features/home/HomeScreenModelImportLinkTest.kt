@@ -4,6 +4,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,16 +39,22 @@ import kotlin.test.assertNull
 class HomeScreenModelImportLinkTest {
     private val source = MemoryLocationsDataSource()
     private val repository = LocationsRepositoryImpl(source)
+    private val models = mutableListOf<HomeScreenViewModel>()
 
     @BeforeTest fun main() = Dispatchers.setMain(UnconfinedTestDispatcher())
-    @AfterTest fun restore() = Dispatchers.resetMain()
+    @AfterTest fun restore() {
+        // IO continuations must finish before resetting the test Main dispatcher;
+        // otherwise a previous view model can crash the following test class.
+        runBlocking { models.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
+        Dispatchers.resetMain()
+    }
 
     private fun viewModel(vpn: IdleVpnManager = IdleVpnManager()) = HomeScreenViewModel(
         vpnManager = vpn,
         locationsRepository = repository,
         configImporter = NoConfigImporter,
         logExporter = NoLogExporter
-    )
+    ).also { models += it }
 
     // The import hops to Dispatchers.IO, a real thread; virtual time would
     // race ahead of it, so the wait is measured in real seconds.
@@ -54,6 +63,37 @@ class HomeScreenModelImportLinkTest {
 
     private val realityLink = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443" +
         "?security=reality&encryption=none&pbk=PUBKEY&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#DE"
+
+    @Test fun migrationKeepsStartupMeasurementAndMarksItsLateAnswerHistorical() = runTest {
+        repository.importText(realityLink)
+        val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            error("Address measurements must not query room occupancy")
+        })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(
+            repository, org.olcbox.app.net.OlcrtcStatusClient(client)
+        )
+        try {
+            val answer = CompletableDeferred<Long>()
+            val finished = CompletableDeferred<Unit>()
+            vm.refreshPings(performPing = { answer.await() }, canPing = { true },
+                onComplete = { _, _ -> finished.complete(Unit) })
+            vm.markPingsStale()
+            answer.complete(42)
+            finished.await()
+            val id = vm.locations.single().storageId
+            assertEquals(42, (vm.pingsState as org.olcbox.app.ui.features.locations.PingsState.Success).pings[id])
+            assertTrue(id in vm.stalePingIds)
+            val refreshed = CompletableDeferred<Unit>()
+            vm.refreshPings(performPing = { 17 }, canPing = { true },
+                onComplete = { _, _ -> refreshed.complete(Unit) })
+            refreshed.await()
+            assertTrue(vm.stalePingIds.isEmpty())
+            assertEquals(17, (vm.pingsState as org.olcbox.app.ui.features.locations.PingsState.Success).pings[id])
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
+    }
 
     @Test fun migrationDiscardsAnInflightSampleEvenWhenTheConnectionClockIsUnchanged() = runTest {
         val vpn = IdleVpnManager()
