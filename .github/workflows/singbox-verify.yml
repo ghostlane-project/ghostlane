@@ -101,6 +101,11 @@ jobs:
           cache-dependency-path: olcrtc/go.sum
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # The action's default is 'tools platform-tools'; the legacy tools
+          # package is no longer in Google's repository (2026-09-15) and sdkmanager
+          # fails the whole step over it. The next step installs what the build needs.
+          packages: platform-tools
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
       - name: Setup Gradle
@@ -182,6 +187,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # The action's default is 'tools platform-tools'; the legacy tools
+          # package is no longer in Google's repository (2026-09-15) and sdkmanager
+          # fails the whole step over it. The next step installs what the build needs.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
@@ -384,6 +394,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # The action's default is 'tools platform-tools'; the legacy tools
+          # package is no longer in Google's repository (2026-09-15) and sdkmanager
+          # fails the whole step over it. The next step installs what the build needs.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
