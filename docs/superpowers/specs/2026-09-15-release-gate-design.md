@@ -254,7 +254,24 @@ node that serves real users; the DE origin's capacity slots are consumed like an
 session, so the link step retries once after 60 s when the node reports no free
 slot, then fails.
 
-### 10. Failure semantics and artifacts
+### 10. Nothing secret leaves the run
+
+The subscription link, the room ids and the session key are secrets of the run and
+never reach git, the report, the release or the job log:
+
+- the link is handed to the suite through the environment (`OLCRTC_GATE_LINK`),
+  registered with `::add-mask::` before any step can print it, and the room pools
+  and partner token are repository secrets, never flags in a workflow file;
+- cells are named by provider, transport, flavour and scenario — never by room;
+  the report carries no URL, room id, key, token or subscriber id;
+- client logs from the link target are not uploaded; local-target server and
+  client logs are uploaded after a scrubber replaces room ids and keys of the run
+  with `<room>` and `<key>`, and the scrubber has a test that a log containing the
+  run's own values comes out clean;
+- the engine's own log lines that name a room (`jitsi: joining MUC …`) are left
+  as they are for users; the gate scrubs, it does not change what the engine logs.
+
+### 11. Failure semantics and artifacts
 
 - Zero skip: the plan is enumerated before anything runs; every planned cell ends
   `pass` or `fail`. A provider that will not authenticate or a room that will not
