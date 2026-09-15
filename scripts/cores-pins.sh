@@ -134,7 +134,16 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # wbstream provider is served by it, and without it every WB Stream room
 # failed with "engine not found". That is about 3 MB of heap at start and
 # 20 MB of binary the lean tag had been saving.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915015831-850aa5f90a8d}"
+#
+# 850aa5f90a8d -> b9dc3a192e34 (olcbox#28): the client carries Bypass Russia
+# itself. With hev in front there is no router on the olcRTC path, so the
+# engine takes the app's lists as direct rules: a matching name or address
+# is dialed from the engine over the pinned interface (a name the tun hides
+# behind an address is read off the TLS hello or the HTTP Host), a matching
+# name's DNS query goes to the network's own resolver, matching UDP is
+# relayed by the engine, and everything else rides the room. New API:
+# MobileRuntime.setDirectRules.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915135525-b9dc3a192e34}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -179,7 +188,10 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915015831-850aa5f90a8d}"
 #
 # 22 → 23: the engine pin above (850aa5f90a8d); the lean bind links the
 # livekit engine again, so the framework grows by about 20 MB.
-CORES_BUILD="${CORES_BUILD:-23}"
+#
+# 23 → 24: the engine pin above (b9dc3a192e34); its API grew setDirectRules,
+# which the extension now calls on every start.
+CORES_BUILD="${CORES_BUILD:-24}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.

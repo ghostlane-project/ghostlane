@@ -12,6 +12,11 @@ else — and every name lookup for it — rides the tunnel.
 
 WHAT CHANGED
 
+• Bypass Russia now works on olcRTC rooms too. Since 1.0.428 the choice did
+  nothing there — everything, Russian sites included, went through the
+  room. The rules now live in the olcRTC engine itself: Russian sites, .ru
+  names and your local network go straight out from the phone and are
+  resolved by your network's own resolver; everything else rides the room.
 • Bypass Russia routes by three lists bundled with the app: v2fly's
   category-ru, the Russian top-level domains, and the Russian IP ranges.
   Nothing is downloaded; the lists ship inside the app.
@@ -39,8 +44,11 @@ WHAT TO TEST
    address. whatismyip.com should show the exit's. (2ip.ru only works for
    this from inside Russia: from abroad it hands you to 2ip.io, which goes
    through the tunnel.)
-2. Same, on an olcRTC room: Russian sites should be noticeably quicker than
-   foreign ones — they no longer share the room's bandwidth.
+2. Same, on an olcRTC room: yandex.ru/internet must show your real address
+   and whatismyip.com the room's exit; Russian sites should be noticeably
+   quicker than foreign ones — they no longer share the room's bandwidth.
+   The exported diagnostics carry olcrtc.log with a "direct rules:" line
+   and one "direct to" line per Russian connection.
 3. Wi-Fi → cellular, or back, while connected with Bypass Russia on. Known
    limitation: Russian names may stop resolving until you reconnect (the
    resolver is the one captured at connect). Tell us if it happens and on
