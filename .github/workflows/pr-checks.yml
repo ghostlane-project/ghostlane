@@ -10,6 +10,12 @@ name: PR Checks
 #
 # main is excluded because a push there is a merge of something already checked.
 on:
+  workflow_dispatch:
+    inputs:
+      apple_compile:
+        description: Compile shared Kotlin for Apple targets without signing or building Go frameworks
+        type: boolean
+        default: true
   pull_request:
     branches:
       - main
@@ -26,6 +32,7 @@ concurrency:
 
 jobs:
   checks:
+    if: github.event_name != 'workflow_dispatch'
     name: Gradle checks
     runs-on: ubuntu-latest
 
@@ -131,3 +138,22 @@ jobs:
           path: |
             olcbox/sharedUI/build/xray-configs/
             olcbox/sharedUI/build/reports/tests/jvmTest/
+
+  apple-compile:
+    # Manual only: Apple compilation should not bill a macOS runner on each push.
+    if: github.event_name == 'workflow_dispatch' && inputs.apple_compile
+    name: Apple Kotlin compilation
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5.6.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Compile existing Apple targets
+        run: ./gradlew :sharedUI:compileKotlinIosArm64 :sharedUI:compileKotlinMacosArm64 --stacktrace
