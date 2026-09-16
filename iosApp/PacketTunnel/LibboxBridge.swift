@@ -219,14 +219,24 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
 
     /// The last answer, behind a lock: Go calls `protect` from whichever
     /// goroutine is dialing, and libbox from threads of its own.
+    ///
+    /// "No interface at all" is an answer too, and it is kept for the same
+    /// lifetime. It used to be probed afresh on every socket, and a phone
+    /// that has just lost its network is exactly where the engine opens a
+    /// hundred of them in two seconds: a hundred interface walks and a
+    /// hundred lines in the diagnostics for one fact (olcbox#37). Nothing
+    /// waits on the lifetime to notice the network coming back — the
+    /// provider drops the cache the moment the path changes.
     private final class PinCache: @unchecked Sendable {
         private let lock = NSLock()
         private var value: PhysicalInterface?
         private var stamp: TimeInterval = 0
+        private var answered = false
 
         func invalidate() {
             lock.lock()
             value = nil
+            answered = false
             lock.unlock()
         }
 
@@ -239,12 +249,13 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
             lock.lock()
             defer { lock.unlock() }
             let now = Date().timeIntervalSinceReferenceDate
-            if let value, now - stamp < lifetime {
+            if answered, now - stamp < lifetime {
                 return value
             }
             let fresh = refresh(value)
             value = fresh
             stamp = now
+            answered = true
             return fresh
         }
     }

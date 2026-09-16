@@ -143,7 +143,12 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # name's DNS query goes to the network's own resolver, matching UDP is
 # relayed by the engine, and everything else rides the room. New API:
 # MobileRuntime.setDirectRules.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915135525-b9dc3a192e34}"
+#
+# aaffe1e05c3b (2026-09-16): at most 64 SOCKS requests wait on a missing
+# session, the rest are refused at once, and a reconnect waits for a route
+# (one socket the pin accepts) before it opens a hundred — the network-loss
+# death of olcbox#37. No API change.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260916015604-aaffe1e05c3b}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -191,7 +196,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260915135525-b9dc3a192e34}"
 #
 # 23 → 24: the engine pin above (b9dc3a192e34); its API grew setDirectRules,
 # which the extension now calls on every start.
-CORES_BUILD="${CORES_BUILD:-24}"
+#
+# 24 → 25: the engine pin above (aaffe1e05c3b), olcbox#37; same API.
+CORES_BUILD="${CORES_BUILD:-25}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
