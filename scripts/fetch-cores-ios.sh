@@ -31,7 +31,7 @@ DEST="${1:?usage: fetch-cores-ios.sh <destination-dir>}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cores-pins.sh"
 TAG="${CORES_RELEASE_TAG:-${CORES_TAG}}"
 ASSET="Cores-ios.zip"
-URL="https://github.com/romanpodpriatov/olcbox/releases/download/${TAG}/${ASSET}"
+URL="https://github.com/romanpodpriatov/ghostlane/releases/download/${TAG}/${ASSET}"
 # Same default as build-cores-ios.sh writes to. Keyed by tag: two version pairs
 # never share an entry.
 CACHE="${CORES_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/olcbox/cores}/${TAG}"
