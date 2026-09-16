@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Render ProofKit launcher icons from the site favicon geometry (Pillow only).
+"""Render Ghostlane launcher icons (Pillow only).
 
-Mirrors frontend/favicon.svg (viewBox 32): dark rounded tile, lime apex node,
-two indigo base nodes, mesh triangle with a lime apex→right edge.
+The mark: a lane — two parallel edges on a 32° diagonal — with three dots
+running along it, the front one lime and the two behind it fading into the
+tile, a trail. Drawn in a 32-unit box centred at (16, 16) like the old favicon
+mesh was, so the density and safe-zone arithmetic below is unchanged.
 
 Outputs:
   androidApp/src/main/res/mipmap-*/ic_launcher.png          legacy launcher
@@ -42,28 +44,54 @@ ADAPTIVE_XML = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
+def _blend(colour: str, alpha: float) -> str:
+    """`colour` laid over the tile at `alpha`, as an opaque colour: the legacy
+    tile and the adaptive foreground both sit on BG, and ImageDraw replaces
+    pixels rather than compositing, so a real alpha would punch a hole."""
+    c = tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+    b = tuple(int(BG[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02X%02X%02X" % tuple(round(b[i] + (c[i] - b[i]) * alpha) for i in range(3))
+
+
+# The lane axis: 32° up and to the right, half-length LANE_HALF; the two edges
+# sit ±LANE_OFFSET from it. Dots along the axis at LANE_DOTS (position in units
+# of LANE_HALF, radius in favicon units, opacity).
+LANE_ANGLE_DEG = 32.0
+LANE_HALF = 11.0
+LANE_OFFSET = 4.2
+LANE_STROKE = 1.5
+LANE_DOTS = ((-0.78, 1.6, 0.30), (-0.22, 2.0, 0.62), (0.50, 2.6, 1.0))
+
+
 def _mesh(d: ImageDraw.ImageDraw, u: float, cx: float, cy: float, mono: bool) -> None:
-    """Draw the mesh glyph. `u` = one favicon viewBox unit; (cx, cy) = glyph centre."""
+    """Draw the lane glyph. `u` = one favicon viewBox unit; (cx, cy) = glyph centre."""
+    import math
+
+    ang = math.radians(LANE_ANGLE_DEG)
+    dx, dy = math.cos(ang), -math.sin(ang)
+    px, py = -dy, dx
+    width = max(1, round(LANE_STROKE * u))
     edge = "#FFFFFF" if mono else EDGE
-    lime = "#FFFFFF" if mono else LIME
-    indigo = "#FFFFFF" if mono else INDIGO
 
-    # favicon coordinates are relative to a 32-unit box centred at (16, 16)
-    def pt(x, y):
-        return (cx + (x - 16) * u, cy + (y - 16) * u)
+    for side in (-1, 1):
+        ox, oy = side * px * LANE_OFFSET * u, side * py * LANE_OFFSET * u
+        p0 = (cx - dx * LANE_HALF * u + ox, cy - dy * LANE_HALF * u + oy)
+        p1 = (cx + dx * LANE_HALF * u + ox, cy + dy * LANE_HALF * u + oy)
+        d.line([p0, p1], fill=edge, width=width)
+        r = width / 2
+        for (x, y) in (p0, p1):
+            d.ellipse([x - r, y - r, x + r, y + r], fill=edge)
 
-    apex, bl, br = pt(16, 8), pt(7, 23), pt(25, 23)
-
-    d.line([apex, bl], fill=edge, width=max(1, round(1.4 * u)))
-    d.line([bl, br], fill=edge, width=max(1, round(1.4 * u)))
-    d.line([apex, br], fill=lime, width=max(1, round(1.8 * u)))
-
-    for centre, colour in ((apex, lime), (bl, indigo), (br, indigo)):
-        r = 3.0 * u
-        d.ellipse(
-            [centre[0] - r, centre[1] - r, centre[0] + r, centre[1] + r],
-            fill=colour,
-        )
+    for index, (t, radius, alpha) in enumerate(LANE_DOTS):
+        x = cx + dx * LANE_HALF * u * t
+        y = cy + dy * LANE_HALF * u * t
+        front = index == len(LANE_DOTS) - 1
+        if mono:
+            colour = (255, 255, 255, round(255 * alpha))
+        else:
+            colour = LIME if front else _blend(INDIGO, alpha)
+        r = radius * u
+        d.ellipse([x - r, y - r, x + r, y + r], fill=colour)
 
 
 def tile(size: int) -> Image.Image:
@@ -82,19 +110,19 @@ def adaptive_background(size: int) -> Image.Image:
     return Image.new("RGBA", (size, size), BG)
 
 
-# Ink bounds of the glyph in favicon units: x 4→28 (nodes included), y 5→26.
-# Scaling by these — not by the nominal 32-unit box — makes the mark fill the
-# space it is given instead of floating in dead margin.
-INK_SPAN = 24.0
-INK_HEIGHT = 21.0
-INK_CENTRE_Y = 15.5
-INK_DIAGONAL = (INK_SPAN ** 2 + INK_HEIGHT ** 2) ** 0.5
+# Ink bounds of the lane glyph in favicon units, from the geometry above: the
+# far corners of the two edges (half-length 11, offset 4.2, half-stroke 0.75)
+# reach x ±12.3 and y ±10.1 around the centre, and the farthest ink from the
+# centre is 12.5 units. The glyph is symmetric about (16, 16).
+INK_SPAN = 24.6
+INK_HEIGHT = 20.3
+INK_CENTRE_Y = 16.0
+INK_RADIUS = 12.5
 
 # Adaptive icons are masked to a circle inscribed in the inner 72dp of the 108dp
-# canvas, so the ink must fit that circle by its DIAGONAL — sizing by width alone
-# pushes the base nodes past the mask and clips them.
+# canvas, so the ink must fit that circle by its farthest point, not its width.
 ADAPTIVE_SAFE_DIAMETER = (72.0 / 108.0) * 0.98
-ADAPTIVE_INK_FRACTION = ADAPTIVE_SAFE_DIAMETER * INK_SPAN / INK_DIAGONAL
+ADAPTIVE_INK_FRACTION = ADAPTIVE_SAFE_DIAMETER * INK_SPAN / (2 * INK_RADIUS)
 
 
 def _glyph_only(size: int, fraction: float, mono: bool) -> Image.Image:
@@ -127,7 +155,7 @@ def ios_icon(size: int) -> Image.Image:
     s = size * SS
     img = Image.new("RGB", (s, s), BG)
     d = ImageDraw.Draw(img)
-    u = (s * 0.66) / INK_SPAN
+    u = (s * 0.72) / INK_SPAN
     _mesh(d, u, s / 2, s / 2 + (16.0 - INK_CENTRE_Y) * u, mono=False)
     return img.resize((size, size), Image.LANCZOS)
 
