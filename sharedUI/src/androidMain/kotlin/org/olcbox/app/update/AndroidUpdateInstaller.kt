@@ -46,7 +46,7 @@ class AndroidUpdateInstaller(
         return runCatching {
             if (!canRequestPackageInstalls()) {
                 openUnknownSourcesSettings().getOrThrow()
-                return@runCatching "Allow ProofKit to install updates, then tap Download again"
+                return@runCatching "Allow Ghostlane to install updates, then tap Download again"
             }
 
             val file = download(asset, onProgress).getOrThrow()

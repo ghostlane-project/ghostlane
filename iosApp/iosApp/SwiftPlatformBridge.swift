@@ -58,7 +58,7 @@ final class SwiftPlatformBridge: NSObject, @preconcurrency IosPlatformBridge, UI
                 }
             case .denied, .restricted:
                 answer.callback.onError(
-                    message: "Camera access is off for ProofKit. Settings → ProofKit → Camera."
+                    message: "Camera access is off for Ghostlane. Settings → Ghostlane → Camera."
                 )
             @unknown default:
                 answer.callback.onError(message: "Camera unavailable")
@@ -208,7 +208,7 @@ final class SwiftPlatformBridge: NSObject, @preconcurrency IosPlatformBridge, UI
     }
 
     private func writeTemporaryFile(defaultName: String, content: String) throws -> URL {
-        let sanitized = (defaultName.isEmpty ? "proofkit-logs.txt" : defaultName)
+        let sanitized = (defaultName.isEmpty ? "ghostlane-logs.txt" : defaultName)
             .replacingOccurrences(of: "/", with: "_")
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-\(sanitized)")

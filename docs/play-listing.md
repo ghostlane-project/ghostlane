@@ -14,7 +14,7 @@ bundle on 2026-09-11; the `play` flavor and the CI upload landed the same day.
 
 | Field | Value |
 |---|---|
-| App name | `ProofKit` — matches `android:label` in `androidApp/src/main/AndroidManifest.xml` |
+| App name | `Ghostlane` — matches `android:label` in `androidApp/src/main/AndroidManifest.xml` |
 | Package name | `org.proofkit.app` — `applicationId` in `androidApp/build.gradle.kts`. Fixed for the life of the app; a bundle with any other id is refused at upload |
 | Default language | English (United States) – en-US |
 | App or game | App |
@@ -66,7 +66,7 @@ bundle on 2026-09-11; the `play` flavor and the CI upload landed the same day.
      is then the app signing key itself, which is what the release workflow
      signs with anyway.
 3. **Upload the AAB, not an APK, and the `play` one.** Every release carries
-   `ProofKit-<version>-android-play.aab`. Checked on 1.0.397: `targetSdk = 37`
+   `Ghostlane-<version>-android-play.aab`. Checked on 1.0.397: `targetSdk = 37`
    (Play requires ≥ 36 for new apps since 2026-08-31); every arm64-v8a and
    x86_64 `.so` is 16 KB-page aligned (`LOAD` align `0x4000`).
    `armeabi-v7a/libgojni.so` is 4 KB-aligned, which is fine — 32-bit is
@@ -107,7 +107,7 @@ releases page, unchanged) and **`play`**:
   and the Updates section is not drawn, the way the App Store build already
   behaves.
 - `release.yml` builds `:androidApp:assembleGithubRelease` for the APKs and
-  `:androidApp:bundlePlayRelease` → `dist/ProofKit-<version>-android-play.aab`,
+  `:androidApp:bundlePlayRelease` → `dist/Ghostlane-<version>-android-play.aab`,
   and refuses to publish a play bundle whose manifest still names either
   permission (the bundle's manifest is protobuf, but permission names are
   plain strings in it).
@@ -131,7 +131,7 @@ internal without anyone touching the console.
 **App name** (30 max) — [8]
 
 ```
-ProofKit
+Ghostlane
 ```
 
 **Short description** (80 max) — [78]
@@ -148,7 +148,7 @@ A tunnel inside a video call. olcRTC, Reality, Hysteria2 and XHTTP in one app.
 **Full description** (4000 max) — [2640]
 
 ```
-ProofKit carries your traffic inside a video call.
+Ghostlane carries your traffic inside a video call.
 
 Most tunnels are recognisable. On a network that inspects what passes through it
 and drops anything shaped like a VPN, they stop working — not because the
@@ -210,7 +210,7 @@ about you.
 REQUIREMENTS
 
 A server configuration from a VPN provider: a server-list URL, a QR code, or a
-pasted link. ProofKit does not sell one and does not include one. Any provider
+pasted link. Ghostlane does not sell one and does not include one. Any provider
 that speaks the protocols above will work.
 
 OPEN SOURCE
@@ -311,7 +311,7 @@ reviewer cannot open:
 list, and a reviewer who cannot connect cannot review.
 
 ```
-ProofKit is a client for a server list the user already has. It does not sell or
+Ghostlane is a client for a server list the user already has. It does not sell or
 include one, so it cannot be tested without a server-list link.
 
 A working test link is below. In the app: tap + (top right) → "Paste link or
@@ -352,7 +352,7 @@ only to scan a QR code, and only when the user taps that button.
 ## Release path
 
 1. **Internal testing, by hand once** — upload
-   `ProofKit-<version>-android-play.aab` from a release, add tester emails,
+   `Ghostlane-<version>-android-play.aab` from a release, add tester emails,
    share the opt-in link. No review. Verify on a real device installed *from
    Play*: connect works, the App Link `https://proofkit.org/add#…` opens the
    app, Settings has no Updates section.
@@ -362,7 +362,7 @@ only to scan a QR code, and only when the user taps that button.
    - Google Cloud Console → IAM → *Service accounts* → create one (any
      project; the name is for us) → *Keys* → add a JSON key.
    - Play Console → *Users and permissions* → *Invite new users* → the
-     service account's email → *App permissions* → ProofKit → tick **Release
+     service account's email → *App permissions* → Ghostlane → tick **Release
      to testing tracks** and **View app information**; add **Release to
      production** only if the `production` choice below is wanted.
    - GitHub → Settings → Secrets → Actions → `PLAY_SERVICE_ACCOUNT_JSON` =

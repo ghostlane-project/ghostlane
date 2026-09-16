@@ -18,7 +18,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>ProofKit</string>
+	<string>Ghostlane</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -76,7 +76,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>ProofKit uses the camera only to read a server-list QR code. No photo or video is recorded, stored or uploaded.</string>
+	<string>Ghostlane uses the camera only to read a server-list QR code. No photo or video is recorded, stored or uploaded.</string>
 	<!--
 		No UIBackgroundModes.
 

@@ -656,7 +656,7 @@ private fun SplitTunnelingSettingsContent(
         when (settings.mode) {
             AndroidSplitTunnelMode.AllApps -> SplitTunnelNoListCard()
             AndroidSplitTunnelMode.ProxySelected -> SplitTunnelAppListAction(
-                title = "Apps Using ProofKit",
+                title = "Apps Using Ghostlane",
                 value = settings.proxyPackages.activeListValue(requireSelection = true),
                 icon = PkIcons.Shield,
                 enabled = enabled,
@@ -2318,34 +2318,34 @@ private fun AndroidSplitTunnelMode.title(): String {
 
 private fun AndroidSplitTunnelMode.subtitle(settings: AndroidSplitTunnelSettings): String {
     return when (this) {
-        AndroidSplitTunnelMode.AllApps -> "Every app uses ProofKit"
+        AndroidSplitTunnelMode.AllApps -> "Every app uses Ghostlane"
         AndroidSplitTunnelMode.ProxySelected -> if (settings.proxyPackages.isEmpty()) {
-            "Choose apps that use ProofKit"
+            "Choose apps that use Ghostlane"
         } else {
-            "${appCount(settings.proxyPackages.size)} use ProofKit"
+            "${appCount(settings.proxyPackages.size)} use Ghostlane"
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "Choose apps that bypass ProofKit"
+            "Choose apps that bypass Ghostlane"
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass ProofKit"
+            "${appCount(settings.bypassPackages.size)} bypass Ghostlane"
         }
     }
 }
 
 private fun AndroidSplitTunnelMode.statusTitle(settings: AndroidSplitTunnelSettings): String {
     return when (this) {
-        AndroidSplitTunnelMode.AllApps -> "All apps use ProofKit"
+        AndroidSplitTunnelMode.AllApps -> "All apps use Ghostlane"
         AndroidSplitTunnelMode.ProxySelected -> if (settings.proxyPackages.isEmpty()) {
             "No apps selected"
         } else {
-            "Only ${appCount(settings.proxyPackages.size)} use ProofKit"
+            "Only ${appCount(settings.proxyPackages.size)} use Ghostlane"
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "No apps bypass ProofKit"
+            "No apps bypass Ghostlane"
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass ProofKit"
+            "${appCount(settings.bypassPackages.size)} bypass Ghostlane"
         }
     }
 }
@@ -2358,14 +2358,14 @@ private fun AndroidSplitTunnelMode.icon() = when (this) {
 
 private fun AndroidSplitTunnelList.title(): String {
     return when (this) {
-        AndroidSplitTunnelList.Proxy -> "Apps Using ProofKit"
+        AndroidSplitTunnelList.Proxy -> "Apps Using Ghostlane"
         AndroidSplitTunnelList.Bypass -> "Bypassed Apps"
     }
 }
 
 private fun AndroidSplitTunnelList.selectionSubtitle(count: Int): String {
     return when (this) {
-        AndroidSplitTunnelList.Proxy -> "${appCount(count)} use ProofKit"
+        AndroidSplitTunnelList.Proxy -> "${appCount(count)} use Ghostlane"
         AndroidSplitTunnelList.Bypass -> "${appCount(count)} bypassed"
     }
 }

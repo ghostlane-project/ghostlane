@@ -38,7 +38,7 @@ class AppUpdateServiceTest {
                   "published_at": "2026-05-13T12:00:00Z",
                   "assets": [
                     {
-                      "name": "ProofKit-1.0.42-android-release.apk",
+                      "name": "Ghostlane-1.0.42-android-release.apk",
                       "browser_download_url": "https://example/app.apk",
                       "size": 100,
                       "updated_at": "2026-05-13T12:00:00Z"
@@ -64,8 +64,8 @@ class AppUpdateServiceTest {
     @Test
     fun selectsPreferredAssetForPlatform() {
         val assets = listOf(
-            GithubReleaseAsset("ProofKit-1.0.0-windows-amd64-portable.zip", "https://example/zip"),
-            GithubReleaseAsset("ProofKit-1.0.0-windows-amd64.msi", "https://example/msi")
+            GithubReleaseAsset("Ghostlane-1.0.0-windows-amd64-portable.zip", "https://example/zip"),
+            GithubReleaseAsset("Ghostlane-1.0.0-windows-amd64.msi", "https://example/msi")
         )
 
         val selected = AppUpdateService.selectAsset(
@@ -73,7 +73,7 @@ class AppUpdateServiceTest {
             platform = UpdatePlatform("windows", "amd64")
         )
 
-        assertEquals("ProofKit-1.0.0-windows-amd64.msi", selected?.name)
+        assertEquals("Ghostlane-1.0.0-windows-amd64.msi", selected?.name)
     }
 
     @Test
@@ -92,8 +92,8 @@ class AppUpdateServiceTest {
     fun prefersAndroidAbiSpecificApk() {
         val selected = AppUpdateService.selectAsset(
             assets = listOf(
-                GithubReleaseAsset("ProofKit-1.0.70-android-release.apk", "https://example/universal.apk"),
-                GithubReleaseAsset("ProofKit-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk")
+                GithubReleaseAsset("Ghostlane-1.0.70-android-release.apk", "https://example/universal.apk"),
+                GithubReleaseAsset("Ghostlane-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk")
             ),
             platform = UpdatePlatform("android", "armeabi-v7a")
         )
@@ -105,8 +105,8 @@ class AppUpdateServiceTest {
     fun fallsBackToUniversalAndroidApk() {
         val selected = AppUpdateService.selectAsset(
             assets = listOf(
-                GithubReleaseAsset("ProofKit-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk"),
-                GithubReleaseAsset("ProofKit-1.0.70-android-release.apk", "https://example/universal.apk")
+                GithubReleaseAsset("Ghostlane-1.0.70-android-armeabi-v7a-release.apk", "https://example/armeabi.apk"),
+                GithubReleaseAsset("Ghostlane-1.0.70-android-release.apk", "https://example/universal.apk")
             ),
             platform = UpdatePlatform("android", "arm64")
         )

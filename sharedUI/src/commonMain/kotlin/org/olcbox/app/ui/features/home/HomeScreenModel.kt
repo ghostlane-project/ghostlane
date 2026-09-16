@@ -394,7 +394,7 @@ class HomeScreenViewModel(
     private fun updateLocationConfig(block: (LocationConfig) -> LocationConfig) {
         _state.update { it.copy(configData = block(it.configData)) }
     }
-    fun suggestedLogsFileName(): String = "proofkit-logs.txt"
+    fun suggestedLogsFileName(): String = "ghostlane-logs.txt"
 
     fun onSaveLogsToFile(
         target: Any,
@@ -469,7 +469,7 @@ class HomeScreenViewModel(
     ) {
         val payload = ImportLink.payloadOf(uri)
         if (payload == null) {
-            onError("Not a ProofKit import link")
+            onError("Not a Ghostlane import link")
             return
         }
         onImportFullConfig(payload, onComplete, onError)
@@ -499,7 +499,7 @@ class HomeScreenViewModel(
                         if (isPartnerLink(rawText)) {
                             "Link not recognised. Open your provider's bot and copy the server list link again."
                         } else {
-                            "No valid ProofKit config found"
+                            "No valid Ghostlane config found"
                         }
                     )
                     return@launch
@@ -606,7 +606,7 @@ class HomeScreenViewModel(
 
     private fun buildLogsExport(logs: List<String>): String {
         return buildString {
-            appendLine("ProofKit application logs")
+            appendLine("Ghostlane application logs")
             appendLine("Entries: ${logs.size}")
             appendLine()
             logs.forEachIndexed { index, line ->

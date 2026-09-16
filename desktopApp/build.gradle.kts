@@ -114,11 +114,11 @@ val olcrtcRepoDir = olcrtcRepo.map { rootProject.file(it) }
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
 val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()
-// Installed application name (ProofKit.app / ProofKit.exe / ProofKit.AppImage).
+// Installed application name (Ghostlane.app / Ghostlane.exe / Ghostlane.AppImage).
 // NOT an identity: macOS bundleID and the Windows upgradeUuid below are unchanged,
 // so Windows still upgrades in place. DesktopPaths.appDataDir() keeps its own
 // hardcoded "Olcbox" directory so existing installs keep their subscriptions.
-val desktopPackageName = "ProofKit"
+val desktopPackageName = "Ghostlane"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
 val tun2SocksVersion = "2.6.0"
 val wintunVersion = "0.14.1"

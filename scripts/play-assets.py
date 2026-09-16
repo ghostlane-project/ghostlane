@@ -46,7 +46,7 @@ x0 = 72
 d.text((x0, 100), '$', font=pm, fill=LIME)
 d.text((x0 + 26, 100), 'proofkit connect --olcrtc', font=pm, fill=DIM)
 # wordmark + tagline
-d.text((x0 - 4, 128), 'ProofKit', font=sg, fill=TEXT)
+d.text((x0 - 4, 128), 'Ghostlane', font=sg, fill=TEXT)
 d.text((x0, 262), 'A tunnel inside a video call', font=ps, fill=TEXT)
 # status line, as on the connected card
 cy = 340

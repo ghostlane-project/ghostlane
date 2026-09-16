@@ -1,4 +1,4 @@
-# ProofKit
+# Ghostlane
 
 A VPN client that can hide a tunnel inside a video call. Kotlin Multiplatform
 and Compose, one codebase for Android, iOS, macOS, Windows and Linux.
@@ -17,11 +17,10 @@ It speaks the ordinary protocols too, because a call-shaped tunnel costs
 bandwidth and is not needed until it is — and the moment you need the fallback is
 the worst possible moment to be installing a second app.
 
-It ships as **ProofKit** and is built on the olcbox codebase, a fork of
-[alananisimov/olcbox](https://github.com/alananisimov/olcbox) — the repository
-name says so, and both copyrights stand side by side in `LICENSE`, as MIT
-requires. The app's header names the protocol rather than the fork:
-`ProofKit · OLCRTC CORE`.
+It ships as **Ghostlane** and is built on the olcbox codebase, a fork of
+[alananisimov/olcbox](https://github.com/alananisimov/olcbox); both copyrights
+stand side by side in `LICENSE`, as MIT requires. The app's header names the
+protocol rather than the fork: `Ghostlane · OLCRTC CORE`.
 
 It is a client, not a service: you bring a server list from your provider — a
 subscription URL, a QR code, or a pasted link — and the app turns it into
@@ -96,7 +95,7 @@ Shipping on every platform.
 
 | Platform | Where it comes from |
 | --- | --- |
-| iOS | The App Store, as [ProofKit VPN](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) |
+| iOS | The App Store, as [Ghostlane](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) (listed under its former name until the rename is approved) |
 | Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now |
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
@@ -244,11 +243,11 @@ follows them there, starting the shapes rather than only checking them.
 | Android release | `./gradlew :androidApp:assembleGithubRelease` | `androidApp/build/outputs/apk/github/release/androidApp-github-release.apk` |
 | Android App Bundle for Play | `./gradlew :androidApp:bundlePlayRelease` | `androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab` |
 | iOS simulator | `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug build` | Xcode DerivedData app product |
-| macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/ProofKit-<version>.dmg` |
-| Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\ProofKit-<version>.exe` |
-| Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\ProofKit-<version>.msi` |
-| Windows portable zip | `.\gradlew.bat :desktopApp:packageReleasePortableZip` | `desktopApp\build\compose\binaries\main-release\portable\ProofKit-<version>-windows-amd64-portable.zip` |
-| Linux AppImage | `./gradlew :desktopApp:packageReleaseLinuxAppImage` | `desktopApp/build/compose/binaries/main-release/appimage/ProofKit-<version>-amd64.AppImage` |
+| macOS DMG | `./gradlew :desktopApp:packageReleaseDmg` | `desktopApp/build/compose/binaries/main-release/dmg/Ghostlane-<version>.dmg` |
+| Windows EXE | `.\gradlew.bat :desktopApp:packageReleaseExe` | `desktopApp\build\compose\binaries\main-release\exe\Ghostlane-<version>.exe` |
+| Windows MSI | `.\gradlew.bat :desktopApp:packageReleaseMsi` | `desktopApp\build\compose\binaries\main-release\msi\Ghostlane-<version>.msi` |
+| Windows portable zip | `.\gradlew.bat :desktopApp:packageReleasePortableZip` | `desktopApp\build\compose\binaries\main-release\portable\Ghostlane-<version>-windows-amd64-portable.zip` |
+| Linux AppImage | `./gradlew :desktopApp:packageReleaseLinuxAppImage` | `desktopApp/build/compose/binaries/main-release/appimage/Ghostlane-<version>-amd64.AppImage` |
 
 ## Native Assets
 

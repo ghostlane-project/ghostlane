@@ -42,7 +42,7 @@ internal object DesktopNativeAssets {
             ).distinct()
             DesktopOs.Windows -> listOf("olcrtc-windows-amd64.exe")
             DesktopOs.Linux -> listOf("olcrtc-linux-${desktopArch()}")
-            DesktopOs.Other -> error("ProofKit desktop supports macOS, Windows and Linux")
+            DesktopOs.Other -> error("Ghostlane desktop supports macOS, Windows and Linux")
         }
     }
 

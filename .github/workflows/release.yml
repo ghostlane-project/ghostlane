@@ -1,4 +1,4 @@
-name: Build ProofKit Releases
+name: Build Ghostlane Releases
 
 on:
   workflow_dispatch:
@@ -47,7 +47,7 @@ env:
   # ProofKit fork versionCode = PATCH_BASE + github.run_number (RUN_NUMBER_BASE 0,
   # since run numbers reset to 1 on this fork). PATCH_BASE is set ABOVE upstream's
   # current nightly (1.0.112) so our builds always read as the NEWEST version — the
-  # in-app updater (repointed to romanpodpriatov/olcbox) then never offers users an
+  # in-app updater (repointed to romanpodpriatov/ghostlane) then never offers users an
   # upstream build, and 1.0.2xx > any 1.0.1xx. Monotonic, so Android updates install.
   OLCBOX_RELEASE_RUN_NUMBER_BASE: "0"
   # 300, not 200, since 2026-09-09: the App Store already carries 1.0.301 from a
@@ -207,11 +207,11 @@ jobs:
           if [ "${GITHUB_REF_NAME}" = "universal-carrier" ]; then
             echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
             echo "nightly_tag=nightly-universal-carrier" >> "$GITHUB_OUTPUT"
-            echo "nightly_title=Nightly ProofKit universal-carrier builds" >> "$GITHUB_OUTPUT"
+            echo "nightly_title=Nightly Ghostlane universal-carrier builds" >> "$GITHUB_OUTPUT"
           else
             echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
             echo "nightly_tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "nightly_title=Nightly ProofKit builds" >> "$GITHUB_OUTPUT"
+            echo "nightly_title=Nightly Ghostlane builds" >> "$GITHUB_OUTPUT"
           fi
 
   build-windows:
@@ -312,13 +312,13 @@ jobs:
               throw "Portable app image not found under $appRoot"
             }
             New-Item -ItemType Directory -Force $portableDir | Out-Null
-            $portableZip = Join-Path $portableDir "ProofKit-windows-amd64-portable.zip"
+            $portableZip = Join-Path $portableDir "Ghostlane-windows-amd64-portable.zip"
             Compress-Archive -Path $appImage.FullName -DestinationPath $portableZip -Force
             $zip = Get-Item $portableZip
           }
-          Copy-Item $exe.FullName "dist/ProofKit-${env:OLCBOX_VERSION}-windows-amd64.exe"
-          Copy-Item $msi.FullName "dist/ProofKit-${env:OLCBOX_VERSION}-windows-amd64.msi"
-          Copy-Item $zip.FullName "dist/ProofKit-${env:OLCBOX_VERSION}-windows-amd64-portable.zip"
+          Copy-Item $exe.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64.exe"
+          Copy-Item $msi.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64.msi"
+          Copy-Item $zip.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64-portable.zip"
 
       - name: Sign Windows release assets
         shell: pwsh
@@ -357,12 +357,12 @@ jobs:
             }
           }
 
-          $exeAsset = Get-ChildItem "dist/ProofKit-*-windows-amd64.exe" | Select-Object -First 1
-          $msiAsset = Get-ChildItem "dist/ProofKit-*-windows-amd64.msi" | Select-Object -First 1
+          $exeAsset = Get-ChildItem "dist/Ghostlane-*-windows-amd64.exe" | Select-Object -First 1
+          $msiAsset = Get-ChildItem "dist/Ghostlane-*-windows-amd64.msi" | Select-Object -First 1
           Sign-File $exeAsset.FullName
           Sign-File $msiAsset.FullName
 
-          $portableZip = (Get-ChildItem "dist/ProofKit-*-windows-amd64-portable.zip" | Select-Object -First 1).FullName
+          $portableZip = (Get-ChildItem "dist/Ghostlane-*-windows-amd64-portable.zip" | Select-Object -First 1).FullName
           $portableDir = Join-Path $env:RUNNER_TEMP "olcbox-portable-sign"
           Remove-Item $portableDir -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path $portableZip -DestinationPath $portableDir
@@ -375,11 +375,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-windows-amd64
+          name: Ghostlane-windows-amd64
           path: |
-            olcbox/dist/ProofKit-*-windows-amd64.exe
-            olcbox/dist/ProofKit-*-windows-amd64.msi
-            olcbox/dist/ProofKit-*-windows-amd64-portable.zip
+            olcbox/dist/Ghostlane-*-windows-amd64.exe
+            olcbox/dist/Ghostlane-*-windows-amd64.msi
+            olcbox/dist/Ghostlane-*-windows-amd64-portable.zip
 
   build-macos:
     needs: [release_version, plan]
@@ -531,7 +531,7 @@ jobs:
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg "dist/ProofKit-${OLCBOX_VERSION}-macos-${{ matrix.arch }}.dmg"
+          cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg "dist/Ghostlane-${OLCBOX_VERSION}-macos-${{ matrix.arch }}.dmg"
 
       - name: Submit for notarisation
         id: notarise
@@ -543,7 +543,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          dmg="dist/ProofKit-${OLCBOX_VERSION}-macos-${ARCH}.dmg"
+          dmg="dist/Ghostlane-${OLCBOX_VERSION}-macos-${ARCH}.dmg"
 
           # Every macOS build is notarised, published or not.
           #
@@ -586,9 +586,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-macos-${{ matrix.arch }}-dmg
+          name: Ghostlane-macos-${{ matrix.arch }}-dmg
           path: |
-            olcbox/dist/ProofKit-*-macos-${{ matrix.arch }}.dmg
+            olcbox/dist/Ghostlane-*-macos-${{ matrix.arch }}.dmg
             olcbox/dist/notary-submission-id.txt
 
   build-linux:
@@ -680,7 +680,7 @@ jobs:
         working-directory: olcbox
         run: |
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main-release/appimage/*.AppImage "dist/ProofKit-${OLCBOX_VERSION}-linux-amd64.AppImage"
+          cp desktopApp/build/compose/binaries/main-release/appimage/*.AppImage "dist/Ghostlane-${OLCBOX_VERSION}-linux-amd64.AppImage"
 
       # Against the finished AppImage, not the staging directory. The files being
       # absent is one way to lose them; a packaging rule dropping them on the way
@@ -689,7 +689,7 @@ jobs:
         working-directory: olcbox
         run: |
           set -euo pipefail
-          img="dist/ProofKit-${OLCBOX_VERSION}-linux-amd64.AppImage"
+          img="dist/Ghostlane-${OLCBOX_VERSION}-linux-amd64.AppImage"
           chmod +x "$img"
           rm -rf squashfs-root && "./$img" --appimage-extract >/dev/null
 
@@ -719,8 +719,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-linux-amd64-appimage
-          path: olcbox/dist/ProofKit-*-linux-amd64.AppImage
+          name: Ghostlane-linux-amd64-appimage
+          path: olcbox/dist/Ghostlane-*-linux-amd64.AppImage
 
   build-android:
     needs: [release_version, plan]
@@ -995,7 +995,7 @@ jobs:
             echo "Android release APK was not found" >&2
             exit 1
           fi
-          cp "${release_apk}" "dist/ProofKit-${OLCBOX_VERSION}-android-release.apk"
+          cp "${release_apk}" "dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk"
 
       # Beside the APKs, never instead of them. Play does not accept an APK for a
       # new app, and the APKs are the channel nobody can revoke — clients for
@@ -1010,7 +1010,7 @@ jobs:
             echo "Android App Bundle (play flavor) was not found" >&2
             exit 1
           fi
-          aab="dist/ProofKit-${OLCBOX_VERSION}-android-play.aab"
+          aab="dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab"
           cp "${bundle}" "$aab"
 
           # What makes this bundle the Play one: the two permissions Play refuses
@@ -1047,7 +1047,7 @@ jobs:
         working-directory: olcbox
         run: |
           set -euo pipefail
-          apk="dist/ProofKit-${OLCBOX_VERSION}-android-release.apk"
+          apk="dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk"
           missing=0
           for abi in arm64-v8a armeabi-v7a x86_64; do
             for core in libsingboxcore.so libxraycore.so; do
@@ -1080,13 +1080,13 @@ jobs:
             echo "Android armeabi-v7a release APK was not found" >&2
             exit 1
           fi
-          cp "${release_apk}" "dist/ProofKit-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
+          cp "${release_apk}" "dist/Ghostlane-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
 
       - name: Verify cores packaged in the armeabi-v7a APK
         working-directory: olcbox
         run: |
           set -euo pipefail
-          apk="dist/ProofKit-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
+          apk="dist/Ghostlane-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
           for core in libsingboxcore.so libxraycore.so; do
             unzip -l "$apk" | grep -q "lib/armeabi-v7a/${core}" \
               || { echo "MISSING armeabi-v7a/${core}" >&2; exit 1; }
@@ -1096,11 +1096,11 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-android-apks
+          name: Ghostlane-android-apks
           path: |
-            olcbox/dist/ProofKit-*-android-release.apk
-            olcbox/dist/ProofKit-*-android-armeabi-v7a-release.apk
-            olcbox/dist/ProofKit-*-android-play.aab
+            olcbox/dist/Ghostlane-*-android-release.apk
+            olcbox/dist/Ghostlane-*-android-armeabi-v7a-release.apk
+            olcbox/dist/Ghostlane-*-android-play.aab
 
       # After the artifact, so a refusal from Play — the first bundle of an app
       # has to go through the console by hand, and a version code Play already
@@ -1136,7 +1136,7 @@ jobs:
           "$RUNNER_TEMP/play-venv/bin/python" scripts/play-upload.py \
             --service-account "$sa" \
             --package org.proofkit.app \
-            --bundle "dist/ProofKit-${OLCBOX_VERSION}-android-play.aab" \
+            --bundle "dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab" \
             --track "${PLAY_TRACK}" \
             --release-name "${OLCBOX_VERSION}" \
             --notes "ProofKit ${OLCBOX_VERSION}"
@@ -1160,7 +1160,7 @@ jobs:
               echo
               echo "Track \`${PLAY_TRACK}\`, version ${OLCBOX_VERSION} (${OLCBOX_VERSION_CODE}) — step outcome: \`${PLAY_OUTCOME}\`."
               echo
-              echo "The rest of the release is unaffected; the bundle is in the \`ProofKit-android-apks\` artifact."
+              echo "The rest of the release is unaffected; the bundle is in the \`Ghostlane-android-apks\` artifact."
               echo "Common causes: the service account has not been granted access in Play Console yet,"
               echo "the app has never had a release created by hand (Play requires the first one through the console),"
               echo "or this version code was already used."
@@ -1383,7 +1383,7 @@ jobs:
         if: steps.signing.outputs.signed == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-ios-dSYMs
+          name: Ghostlane-ios-dSYMs
           path: olcbox/build/ios-archive/ProofKit.xcarchive/dSYMs
 
       - name: Build unsigned iOS app
@@ -1454,15 +1454,15 @@ jobs:
           rm -rf build/ios-ipa/package dist
           mkdir -p build/ios-ipa/package/Payload dist
           cp -R "$app_path" build/ios-ipa/package/Payload/
-          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/ProofKit-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
-          unzip -t "dist/ProofKit-${OLCBOX_VERSION}-ios-unsigned.ipa"
+          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+          unzip -t "dist/Ghostlane-${OLCBOX_VERSION}-ios-unsigned.ipa"
 
       - name: Upload artifact
         if: steps.signing.outputs.signed != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-ios-unsigned-ipa
-          path: olcbox/dist/ProofKit-${{ env.OLCBOX_VERSION }}-ios-unsigned.ipa
+          name: Ghostlane-ios-unsigned-ipa
+          path: olcbox/dist/Ghostlane-${{ env.OLCBOX_VERSION }}-ios-unsigned.ipa
 
 
   notarise-wait:
@@ -1480,7 +1480,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
-          name: ProofKit-macos-${{ matrix.arch }}-dmg
+          name: Ghostlane-macos-${{ matrix.arch }}-dmg
           path: dist
       - name: Wait for the verdict
         env:
@@ -1509,14 +1509,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ProofKit-macos-${{ matrix.arch }}-dmg
+          name: Ghostlane-macos-${{ matrix.arch }}-dmg
           path: dist
       - name: Staple
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          dmg="dist/ProofKit-${OLCBOX_VERSION}-macos-${ARCH}.dmg"
+          dmg="dist/Ghostlane-${OLCBOX_VERSION}-macos-${ARCH}.dmg"
           if [ ! -f dist/notary-submission-id.txt ]; then
             echo "Not notarised; nothing to staple."
             exit 0
@@ -1530,8 +1530,8 @@ jobs:
           spctl -a -t open --context context:primary-signature -vv "$dmg" || true
       - uses: actions/upload-artifact@v7
         with:
-          name: ProofKit-macos-${{ matrix.arch }}-dmg
-          path: dist/ProofKit-*-macos-${{ matrix.arch }}.dmg
+          name: Ghostlane-macos-${{ matrix.arch }}-dmg
+          path: dist/Ghostlane-*-macos-${{ matrix.arch }}.dmg
           overwrite: true
 
   publish-nightly:
@@ -1583,7 +1583,7 @@ jobs:
         # The dSYMs ride along as a workflow artifact so a crash log can be
         # read later; they are not something to ship. Left here, the DWARF
         # binaries and their Info.plists became release assets once.
-        run: rm -rf dist/ProofKit-ios-dSYMs
+        run: rm -rf dist/Ghostlane-ios-dSYMs
 
       - name: Generate checksums and release notes
         run: |

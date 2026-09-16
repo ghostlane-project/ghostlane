@@ -25,7 +25,7 @@ object TransportMismatch {
     /** The sentence the connect button answers with, and what to do about it. */
     fun explanation(entry: LocationEntry): String? =
         parts(entry.location, entry.metadata)?.let { (asked, provider, runs) ->
-            "This link asks for $asked, and ProofKit runs $provider rooms over $runs. " +
+            "This link asks for $asked, and Ghostlane runs $provider rooms over $runs. " +
                 "Set the server's transport to ${entry.location.transport}, then connect."
         }
 

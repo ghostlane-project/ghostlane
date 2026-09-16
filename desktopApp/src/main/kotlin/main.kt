@@ -240,7 +240,7 @@ fun main(args: Array<String>) = application {
                             updateMessage = "${info.channel.name} update found: ${info.version}"
                         } else {
                             updateOffer = null
-                            updateMessage = "ProofKit is up to date"
+                            updateMessage = "Ghostlane is up to date"
                         }
                     } else {
                         updateOffer = null
@@ -320,7 +320,7 @@ fun main(args: Array<String>) = application {
     Tray(
         state = trayState,
         icon = painterResource("LinuxIcon.png"),
-        tooltip = "ProofKit",
+        tooltip = "Ghostlane",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })
             Item(
@@ -343,7 +343,7 @@ fun main(args: Array<String>) = application {
     )
 
     Window(
-        title = "ProofKit",
+        title = "Ghostlane",
         visible = isWindowVisible,
         state = rememberWindowState(width = 430.dp, height = 780.dp),
         onCloseRequest = {
@@ -836,14 +836,14 @@ private const val DESKTOP_PROXY_PASSWORD_ALPHABET =
     "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 
 private fun chooseConfigFile(owner: Frame): File? {
-    val dialog = FileDialog(owner, "Import ProofKit Config", FileDialog.LOAD)
+    val dialog = FileDialog(owner, "Import Ghostlane Config", FileDialog.LOAD)
     dialog.isVisible = true
 
     return dialog.files.firstOrNull()
 }
 
 private fun chooseSaveFile(owner: Frame, defaultName: String): File? {
-    val dialog = FileDialog(owner, "Save ProofKit Logs", FileDialog.SAVE)
+    val dialog = FileDialog(owner, "Save Ghostlane Logs", FileDialog.SAVE)
     dialog.file = defaultName
     dialog.isVisible = true
 
