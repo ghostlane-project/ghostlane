@@ -291,6 +291,75 @@ deletion of. Say so rather than leaving the URL field guessed at.
   replacement, and no routing decision made for any reason other than the exit
   the user selected.
 
+> **Returned 2026-09-16 as "Missing or Incomplete Declaration"** — "the information
+> you provided in the console declaration was insufficient". Not a policy finding;
+> the form had empty or one-word fields. Every field below gets a full answer,
+> pasted as written. Policy → App content → VPN service, then "Send changes for
+> review" on the Publishing overview. No appeal: an appeal is for a decision we
+> think is wrong, and this one is right.
+
+#### Declaration form — every field
+
+**Does your app use VpnService?** → Yes.
+
+**Core functionality that requires VpnService** → VPN app. (Not an exception
+category: the app is a VPN client and nothing else.)
+
+**Explain how your app uses VpnService** (paste):
+
+```
+Ghostlane is a VPN client. VpnService is its core functionality and its only
+purpose: the user imports a server list from their VPN provider (a link, a QR
+code or a file), picks a server, and the app opens a device-level tunnel to that
+server through android.net.VpnService. All of the device's traffic is routed
+into the tunnel and out through the selected server; in the split-tunnel
+setting the user can choose apps that stay outside the tunnel. The tunnel runs
+only while the user has connected it and stops when the user disconnects, when
+the server list entry is removed, or when Android revokes the VPN.
+
+Before the first connection the app shows its own full-screen prominent
+disclosure ("How the VPN connection works"), separate from any other consent,
+explaining that all traffic will go through the selected server and to no one
+else; the user must accept it before Android's VPN permission dialog appears.
+Declining leaves the app usable without a tunnel.
+
+The app does not inspect, record, redirect or modify the traffic it carries,
+does not resolve or log DNS queries for its own use, has no advertising and no
+ad SDK, and makes no routing decision other than the exit the user selected.
+The Play listing documents the use of VpnService in the description ("routes
+the whole device through the exit you picked, using Android's own VpnService").
+```
+
+**Does your app encrypt the data from the device to the VPN tunnel endpoint?** →
+Yes. Every transport the app connects with runs inside an encrypted channel:
+VLESS with Reality and VLESS over TLS use TLS 1.3; XHTTP runs over TLS; Hysteria2
+runs over QUIC with TLS 1.3; olcRTC carries the tunnel inside a WebRTC session
+protected by DTLS-SRTP, with an additional authenticated cipher on the tunnel
+stream itself. The engines are sing-box, Xray-core and our own olcRTC engine
+(github.com/romanpodpriatov/olcrtc), all open source.
+
+**Does your app collect or transmit personal and sensitive user data?** → No.
+No account, no sign-in, no analytics, no advertising identifier, no crash
+reporting. The tunnel carries the user's traffic to the server they selected and
+nothing is retained. The prominent disclosure is shown anyway, before the first
+connection.
+
+**Does your app redirect or manipulate user traffic from other apps for
+monetization?** → No. No ads, no ad injection or replacement, no traffic sold or
+routed for any purpose other than the exit the user selected.
+
+**Where the Play listing documents the VpnService use** → the store description,
+"BRINGING YOUR OWN SERVERS" paragraph: "Connecting routes the whole device
+through the exit you picked, using Android's own VpnService. Apps you choose can
+stay outside the tunnel."
+
+**Privacy policy URL** → `https://github.com/romanpodpriatov/ghostlane/blob/main/docs/privacy.md`
+(the same page the App Store listing uses; the Play listing's privacy URL field
+must say the same).
+
+**Videos** (if the form asks): the two unlisted YouTube links below, recorded on
+a phone, 90 seconds each.
+
 Two videos, 90 seconds each, unlisted on YouTube — **not private**, which a
 reviewer cannot open:
 
