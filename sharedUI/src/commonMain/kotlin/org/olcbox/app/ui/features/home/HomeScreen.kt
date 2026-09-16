@@ -494,6 +494,7 @@ fun HomeScreen(
             onDismissNotice = { viewModel.dismissFailure() },
             onPullToRefresh = { refreshSubscriptions() },
             onLocationSelected = { id ->
+                viewModel.cancelAutomaticSelection()
                 // Read before the switch: picking a card while connected tears the
                 // tunnel down and builds a new one, which took seconds and
                 // announced itself only as a spinner.

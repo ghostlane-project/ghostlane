@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
@@ -64,6 +67,40 @@ class HomeScreenViewModel(
 
     /** Same reasoning as [connectedSince]: the platform's own counter. */
     val traffic get() = vpnManager.traffic
+
+    private var selectionJob: Job? = null
+
+    /** Manual choice/stop wins over a pending rank or failover cooldown. */
+    fun cancelAutomaticSelection() {
+        selectionJob?.cancel()
+        selectionJob = null
+        if (vpnManager.status.value is VpnStatus.Disconnected || vpnManager.status.value is VpnStatus.Error) {
+            _state.update { it.copy(isVpnLoading = false) }
+        }
+    }
+
+    private fun startLowest() {
+        cancelAutomaticSelection()
+        _state.update { it.copy(isVpnLoading = true, failure = null) }
+        selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                LowestConnection(vpnManager, locationsRepository) {
+                    loadCurrentConfigNow()
+                }.run()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(isVpnLoading = false, failure = e.message ?: "Could not select a server") }
+            } finally {
+                // A cancelled old job must not clear a newer connection attempt.
+                if (selectionJob === currentCoroutineContext()[Job]) {
+                    selectionJob = null
+                    _state.update { it.copy(isVpnLoading = false) }
+                }
+            }
+        }
+        selectionJob?.start()
+    }
 
     /**
      * What a background refresh found, when the user asked to be told. A shared
@@ -168,6 +205,11 @@ class HomeScreenViewModel(
     }
 
     init {
+        viewModelScope.launch {
+            subscriptionSettings.collect { settings ->
+                if (!settings.autoSelectLowest) cancelAutomaticSelection()
+            }
+        }
         loadCurrentConfig()
         viewModelScope.launch {
             _subscriptionSettings.value = locationsRepository.getSubscriptionSettings()
@@ -194,7 +236,14 @@ class HomeScreenViewModel(
 
         viewModelScope.launch {
             vpnManager.status.collect { status ->
-                _state.update { it.applying(status) }
+                _state.update {
+                    val next = it.applying(status)
+                    // Ranking/cooldown happen with the old tunnel fully stopped.
+                    // Keep Stop available instead of presenting a second Connect.
+                    if (selectionJob?.isActive == true && status is VpnStatus.Disconnected) {
+                        next.copy(isVpnLoading = true)
+                    } else next
+                }
                 if (status !is VpnStatus.Connected) {
                     measurementEpoch++
                     _channelLatency.value = null
@@ -270,10 +319,11 @@ class HomeScreenViewModel(
 
     fun ToggleVpn() {
         val status = vpnManager.status.value
-        if (_state.value.isVpnLoading ||
+        if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) || _state.value.isVpnLoading ||
             status is VpnStatus.Connecting ||
             status is VpnStatus.Reconnecting
         ) {
+            cancelAutomaticSelection()
             viewModelScope.launch {
                 vpnManager.stopVpn()
                 _state.update { it.copy(isVpnConnected = false, isVpnLoading = false) }
@@ -285,6 +335,7 @@ class HomeScreenViewModel(
             _state.update { it.copy(isVpnLoading = true, failure = null) }
             try {
                 if (_state.value.isVpnConnected || vpnManager.status.value is VpnStatus.Connected) {
+                    cancelAutomaticSelection()
                     vpnManager.stopVpn()
                 } else {
                     val active = locationsRepository.getActiveLocation()
@@ -305,8 +356,15 @@ class HomeScreenViewModel(
                         _state.update { it.copy(isVpnLoading = false, failure = why) }
                         return@launch
                     }
-                    vpnManager.startVpn()
+                    if (locationsRepository.getSubscriptionSettings().autoSelectLowest &&
+                        !active.subscriptionUrl.isNullOrBlank()) {
+                        startLowest()
+                    } else {
+                        vpnManager.startVpn()
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.update {
                     it.copy(
@@ -319,6 +377,7 @@ class HomeScreenViewModel(
     }
 
     fun restartVpnIfRunning() {
+        cancelAutomaticSelection()
         when (vpnManager.status.value) {
             VpnStatus.Connected,
             VpnStatus.Connecting,
@@ -495,6 +554,7 @@ class HomeScreenViewModel(
         subscriptionUrl: String,
         onComplete: (removedCount: Int) -> Unit = {}
     ) {
+        cancelAutomaticSelection()
         viewModelScope.launch {
             val activeBelongsToSubscription = locationsRepository.getActiveLocation()
                 ?.subscriptionUrl?.trim() == subscriptionUrl.trim()

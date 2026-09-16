@@ -63,6 +63,17 @@ fun SubscriptionSettingsScreen(
         )
 
         Spacer(Modifier.height(20.dp))
+        PkSectionLabel("Connection")
+        SubscriptionToggleRow(
+            title = "Lowest at connect",
+            checked = settings.autoSelectLowest,
+            onCheckedChange = { onChanged(settings.copy(autoSelectLowest = it)) }
+        )
+        SubscriptionSettingsNote(
+            "Choose a server from the selected list before connecting. Switch only after a connection failure. " +
+                "Address checks do not verify VPN access; rooms are not joined for comparison."
+        )
+        Spacer(Modifier.height(18.dp))
         PkSectionLabel("Updating")
         Spacer(Modifier.height(10.dp))
 

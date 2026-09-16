@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
@@ -63,6 +64,30 @@ class HomeScreenModelImportLinkTest {
 
     private val realityLink = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443" +
         "?security=reality&encryption=none&pbk=PUBKEY&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#DE"
+
+    @Test fun stopDuringLowestRankingCancelsThePendingStart() = runTest {
+        source.stored = LocationBundleV4(
+            activeLocationId = "one",
+            locations = listOf(org.olcbox.app.data.model.LocationEntry(
+                storageId = "one", subscriptionUrl = "https://example.com/sub",
+                kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink
+            )),
+            settings = org.olcbox.app.data.model.SubscriptionSettings(autoUpdate = false, autoSelectLowest = true)
+        )
+        val vpn = IdleVpnManager()
+        val entered = CompletableDeferred<Unit>()
+        vpn.probe = { entered.complete(Unit); awaitCancellation() }
+        val vm = viewModel(vpn)
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            vm.ToggleVpn()
+            entered.await()
+            assertTrue(vm.state.value.isVpnLoading)
+            vm.ToggleVpn()
+            assertEquals(0, vpn.starts)
+            assertEquals(false, vm.state.value.isVpnLoading)
+        } finally { vm.viewModelScope.cancel() }
+    }
 
     @Test fun migrationKeepsStartupMeasurementAndMarksItsLateAnswerHistorical() = runTest {
         repository.importText(realityLink)
@@ -169,12 +194,15 @@ private class IdleVpnManager : VpnManager {
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(false)
     override val connectedSince = MutableStateFlow<Long?>(null)
     var measure: suspend () -> Long? = { null }
+    var probe: suspend () -> Long? = { null }
+    var starts = 0
     override suspend fun measureCurrentChannel(): Long? = measure()
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
-    override fun startVpn() {}
+    override fun startVpn() { starts++ }
     override fun stopVpn() {}
-    override suspend fun ping(locationConfig: LocationConfig): Long? = null
+    override fun canPing(locationConfig: LocationConfig) = true
+    override suspend fun ping(locationConfig: LocationConfig): Long? = probe()
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? = null
 }
 
