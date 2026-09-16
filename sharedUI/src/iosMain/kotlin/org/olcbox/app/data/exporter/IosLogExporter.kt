@@ -40,6 +40,6 @@ class IosLogExporter(
     }
 
     private companion object {
-        const val DEFAULT_LOG_FILE_NAME = "proofkit-logs.txt"
+        const val DEFAULT_LOG_FILE_NAME = "ghostlane-logs.txt"
     }
 }

@@ -84,7 +84,7 @@ object DesktopConnectionModePreference {
             DesktopConnectionModeOption(
                 mode = DesktopConnectionMode.Tun,
                 title = "System-wide tunnel",
-                summary = "Every app on this PC — ProofKit restarts as administrator"
+                summary = "Every app on this PC — Ghostlane restarts as administrator"
             ),
             DesktopConnectionModeOption(
                 mode = DesktopConnectionMode.Proxy,

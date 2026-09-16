@@ -29,7 +29,7 @@ class TransportMismatchTest {
         )
         assertEquals("LINK ASKS FOR VP8 · JITSI RUNS DATACHANNEL", TransportMismatch.caption(entry))
         assertEquals(
-            "This link asks for VP8, and ProofKit runs Jitsi rooms over DataChannel. " +
+            "This link asks for VP8, and Ghostlane runs Jitsi rooms over DataChannel. " +
                 "Set the server's transport to datachannel, then connect.",
             TransportMismatch.explanation(entry)
         )

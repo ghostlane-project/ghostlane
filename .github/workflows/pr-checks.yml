@@ -5,7 +5,7 @@ name: PR Checks
 # On pull_request alone, work pushed to a branch was compiled by nothing until
 # somebody opened a PR — so a branch could sit for a day looking finished while
 # not building at all. This is the cheap half of the pipeline (one ubuntu
-# runner), and the expensive half stays where it is: `Build ProofKit Releases`
+# runner), and the expensive half stays where it is: `Build Ghostlane Releases`
 # is workflow_dispatch only, on purpose, because macOS minutes bill at 10x.
 #
 # main is excluded because a push there is a merge of something already checked.

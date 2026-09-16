@@ -11,15 +11,17 @@ text below actually uses.
 
 ## Name and identity
 
-**App Name** (30 max) — [8]
+**App Name** (30 max) — [9]
 
 ```
-ProofKit
+Ghostlane
 ```
 
-> Check availability first. If `ProofKit` is taken, `ProofKit VPN` [12] is the
-> fallback, and the bundle's display name should be changed to match so the
-> home screen and the listing agree.
+> Renamed from ProofKit on 2026-09-16 (see `app-review-3.1.1-round3-reply.md`):
+> the store app is the open-source client, not the marketplace. Checked in the
+> US and RU storefronts: no app carries the name. The bundle's display name
+> (`Info.plist`), the Android label and the desktop package name all say
+> `Ghostlane` so the home screen and the listing agree.
 
 **Subtitle** (30 max) — [28]
 
@@ -55,7 +57,7 @@ every VPN protocol sees a call it already allows. Reality, Hysteria2 and XHTTP t
 ## Description (4000 max)
 
 ```
-ProofKit carries your traffic inside a video call.
+Ghostlane carries your traffic inside a video call.
 
 Most tunnels are recognisable. On a network that inspects what passes through it
 and drops anything shaped like a VPN, they stop working — not because the
@@ -123,7 +125,7 @@ that speaks the protocols above will work.
 
 OPEN SOURCE
 
-github.com/romanpodpriatov/olcbox
+github.com/romanpodpriatov/ghostlane
 ```
 
 > **"The app does not sell one", not "ProofKit does not sell one".** ProofKit the
@@ -176,9 +178,16 @@ First release.
 
 | Field | Value |
 |---|---|
-| Support URL | `https://proofkit.org/help` — **must resolve and must answer questions**; a 404 here is a rejection |
-| Marketing URL | `https://proofkit.org` |
-| Privacy Policy URL | `https://proofkit.org/privacy` — required, and required to match the App Privacy answers below |
+| Support URL | `https://github.com/romanpodpriatov/ghostlane/blob/main/docs/support.md` — **must resolve and must answer questions**; a 404 here is a rejection |
+| Marketing URL | `https://github.com/romanpodpriatov/ghostlane` |
+| Privacy Policy URL | `https://github.com/romanpodpriatov/ghostlane/blob/main/docs/privacy.md` — required, and required to match the App Privacy answers below |
+
+> Changed 2026-09-16 from the three proofkit.org pages. Every one of them opened on
+> "Pay-per-GB … Marketplace", "set per-GB pricing" or "bill pay-per-GB usage", and the
+> 2.1(b) and 3.1.1 rounds of September were built from those pages, not from the
+> binary. The client's own pages describe the client: what it does, how to import,
+> what it collects (nothing). The marketplace site may link to the app; the app's
+> listing never links to the marketplace.
 
 ---
 
@@ -231,7 +240,7 @@ Subject: `Notification of publicly available encryption source code`
 This is a notification under Section 742.15(b) of the Export Administration
 Regulations of publicly available encryption source code.
 
-Product:            ProofKit (olcbox) — VPN client for iOS, Android, macOS,
+Product:            Ghostlane (olcbox) — VPN client for iOS, Android, macOS,
                     Windows and Linux
 Source code URL:    https://github.com/romanpodpriatov/olcbox
 
@@ -284,7 +293,11 @@ self-classification report for ECCN 5D992.c**, emailed each January.
 Paste into "Notes" in App Store Connect:
 
 ```
-ProofKit's distinguishing feature is olcRTC: a transport that carries the
+This is a free client for standard VPN protocols. The server list below is a free
+test configuration issued for review. The app has no account, no sign-in, no
+purchase path and no In-App Purchase.
+
+Ghostlane's distinguishing feature is olcRTC: a transport that carries the
 device's traffic inside a WebRTC media session — an ordinary video call to a
 public meeting service — so that on networks which drop every VPN protocol by
 signature, what remains on the wire is a call the network already permits. We

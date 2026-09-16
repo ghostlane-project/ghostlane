@@ -33,7 +33,7 @@ import org.olcbox.app.ui.theme.LocalPkPalette
 
 /** Single source of in-UI brand strings (GeneratedAppInfo.NAME stays "olcbox"). */
 object PkBrand {
-    const val name = "ProofKit"
+    const val name = "Ghostlane"
 
     /**
      * Short on purpose. This sits in a centre-aligned app bar, whose title slot

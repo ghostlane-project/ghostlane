@@ -176,7 +176,7 @@ class HomeScreenModelImportLinkTest {
             onComplete = { outcome.complete("ok") },
             onError = { outcome.complete("error: $it") }
         )
-        assertEquals("error: Not a ProofKit import link", awaitForReal(outcome))
+        assertEquals("error: Not a Ghostlane import link", awaitForReal(outcome))
         assertTrue(repository.getAllLocations().isEmpty())
     }
 }

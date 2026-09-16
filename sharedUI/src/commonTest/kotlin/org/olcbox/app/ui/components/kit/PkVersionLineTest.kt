@@ -8,7 +8,7 @@ class PkVersionLineTest {
     @Test
     fun formatsBrandVersionAndBuild() {
         assertEquals(
-            "PROOFKIT · v1.0.209 · 9f3c1ab",
+            "GHOSTLANE · v1.0.209 · 9f3c1ab",
             pkVersionLine(AppInfo(name = "olcbox", version = "1.0.209", build = "9f3c1ab"))
         )
     }
@@ -16,7 +16,7 @@ class PkVersionLineTest {
     @Test
     fun stripsLeadingVIfAlreadyPresent() {
         assertEquals(
-            "PROOFKIT · v2.0.0 · 9f3c1ab",
+            "GHOSTLANE · v2.0.0 · 9f3c1ab",
             pkVersionLine(AppInfo(name = "olcbox", version = "v2.0.0", build = "9f3c1ab"))
         )
     }
@@ -24,7 +24,7 @@ class PkVersionLineTest {
     @Test
     fun aBuildWithNoIdLeavesNoDanglingSeparator() {
         assertEquals(
-            "PROOFKIT · v1.0.209",
+            "GHOSTLANE · v1.0.209",
             pkVersionLine(AppInfo(name = "olcbox", version = "1.0.209", build = "  "))
         )
     }
@@ -32,7 +32,7 @@ class PkVersionLineTest {
     @Test
     fun aDirtyTreeIsPartOfTheBuildId() {
         assertEquals(
-            "PROOFKIT · v1.0.273 · 9f3c1ab*",
+            "GHOSTLANE · v1.0.273 · 9f3c1ab*",
             pkVersionLine(AppInfo(name = "olcbox", version = "1.0.273", build = "9f3c1ab*"))
         )
     }

@@ -107,7 +107,7 @@ object MacOsTunnelDaemon {
             Registration.NotRegistered -> "Not installed — tap to install"
             Registration.RequiresApproval -> "Approve in System Settings › General › Login Items"
             Registration.Enabled -> "Installed"
-            Registration.NotFound -> "Missing from this build — reinstall ProofKit"
+            Registration.NotFound -> "Missing from this build — reinstall Ghostlane"
         }
     }
 

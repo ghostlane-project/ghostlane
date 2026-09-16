@@ -70,7 +70,7 @@ internal class WindowsTunController(
     private suspend fun requestAdministratorRestart() {
         val processInfo = ProcessHandle.current().info()
         val currentCommand = processInfo.command().orElse(null)
-            ?: error("ProofKit cannot resolve its Windows launcher for administrator restart")
+            ?: error("Ghostlane cannot resolve its Windows launcher for administrator restart")
         val currentArguments = processInfo.arguments().orElse(emptyArray()).toList()
         val restartArguments = if (ELEVATED_START_ARGUMENT in currentArguments) {
             currentArguments

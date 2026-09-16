@@ -179,7 +179,7 @@ private fun String.isDisclosureHeading(): Boolean =
  * and storage names keep the old spelling on purpose — this is about what a user
  * reads.
  */
-internal const val DISCLOSURE_BODY = """ProofKit connects using your device's system VPN.
+internal const val DISCLOSURE_BODY = """Ghostlane connects using your device's system VPN.
 
 WHAT IT DOES
 
@@ -195,7 +195,7 @@ Your server lists and the app's own log stay on this device.
 
 WHERE YOUR TRAFFIC GOES
 
-To the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them — ProofKit does not run it and does not sell one.
+To the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them — Ghostlane does not run it and does not sell one.
 
 Traffic is encrypted between this device and that server.
 
