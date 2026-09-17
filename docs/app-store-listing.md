@@ -293,36 +293,42 @@ self-classification report for ECCN 5D992.c**, emailed each January.
 Paste into "Notes" in App Store Connect:
 
 ```
-This is a free client for standard VPN protocols. The server list below is a free
-test configuration issued for review. The app has no account, no sign-in, no
-purchase path and no In-App Purchase.
+This is a free client for standard VPN protocols. The room link and the server
+list below are a free test configuration issued for review; nothing was bought
+to create them. The app has no account, no sign-in, no purchase path and no
+In-App Purchase. This version renames the app from "ProofKit VPN" to
+"Ghostlane": same bundle, same functionality, same developer. The name now
+reflects what it is, an independent open-source client
+(github.com/romanpodpriatov/ghostlane).
 
 Ghostlane's distinguishing feature is olcRTC: a transport that carries the
-device's traffic inside a WebRTC media session — an ordinary video call to a
-public meeting service — so that on networks which drop every VPN protocol by
+device's traffic inside a WebRTC media session, an ordinary video call to a
+public meeting service, so that on networks which drop every VPN protocol by
 signature, what remains on the wire is a call the network already permits. We
 maintain the transport engine and publish it at github.com/romanpodpriatov/olcrtc.
 This app is its only implementation on iOS.
 
-TO SEE THAT PART
+TO SEE THAT PART (two minutes)
 
-A working test server list is below. Tap + in the top right, choose "Paste link
-or URI", paste it, then open the server list. THE FIRST ENTRY IS AN olcRTC
-LOCATION — select it and tap START. The occupancy bar on that entry is live: it
-shows how many slots the relay room has left, and it moves as slots are taken.
+1. Tap + in the top right, choose "Paste link or URI", and paste this olcRTC
+   room link:
 
-Server list:
-  <PASTE A LIVE LINK HERE>
+<PASTE A LIVE olcrtc://crypt1/… ROOM LINK HERE>
 
-The same list also carries servers on the standard protocols (Reality,
-Hysteria2, XHTTP), which the app supports so that a user does not need a second
-app when the ordinary transports stop working. Any of them will connect. Traffic
-is routed through Apple's NEPacketTunnelProvider.
+   One entry appears, an olcRTC room. Its occupancy bar is live: it shows how
+   many slots the relay room has left and moves as slots are taken. Select it
+   and tap START. The app first shows its own disclosure ("How the VPN
+   connection works"), then iOS asks to add the VPN configuration.
 
-The app collects no data. There is no account, no sign-in and no purchase of any
-kind. The server list above is a free test configuration provided for review; it
-was not bought. The camera is used only to scan a server-list QR code, and only
-when the user taps that button.
+2. The standard protocols (Reality, Hysteria2, XHTTP), which the app supports
+   so that a user does not need a second app when the ordinary transports stop
+   working: paste this server list the same way, then pick any entry.
+
+<PASTE A LIVE SERVER-LIST URL HERE>
+
+Traffic is routed through Apple's NEPacketTunnelProvider. The app collects no
+data. The camera is used only to scan a server-list QR code, and only when the
+user taps that button.
 ```
 
 > **This is the single most likely cause of a rejection.** A reviewer who
@@ -330,10 +336,11 @@ when the user taps that button.
 > functionality" is 2.1. The link must be live on the day of review and for
 > some days after — a server list that expires mid-review fails it.
 
-> **The first entry must be an olcRTC location with free slots**, because these
-> notes and the 4.3 reply both tell review to select it. A reviewer who follows the
-> instruction and lands on a Reality server has been shown the generic half of the
-> app, which is the half that got it rejected.
+> **The room link comes first, as its own step**, because the marketplace list
+> carries no olcRTC entry at all (checked 2026-09-17: 88 entries, 58 VLESS, 29
+> Hysteria2, 1 SOCKS). A reviewer told "the first entry is an olcRTC location" and
+> handed that list lands on a Reality server, the generic half of the app, which is
+> the half that got it rejected. Check the room has free slots on the day.
 
 ---
 
