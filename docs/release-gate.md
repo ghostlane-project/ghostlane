@@ -158,14 +158,16 @@ would have hit.
 | `GATE_TELEMOST_ROOMS` | telemost | yes | Telemost room ids or links. The gate joins the **first** |
 | `GATE_WBSTREAM_ROOMS` | wbstream | yes | WB Stream room ids. A room link works too: the engine keeps its last path segment. The gate joins the **first** |
 | `GATE_WBSTREAM_TOKEN` | wbstream | yes | A WB Stream account access token. WB refuses a guest as the first participant of an idle room (`403 guests cannot create rooms`), so the suite's server signs in with it. The client stays a guest, as the app is |
-| `GATE_JITSI_HOSTS` | jitsi | no | Bare Jitsi host names, for example `meet.example.org`. When set, they replace the engine's `docs/jitsi.instances.yaml` |
+| `GATE_JITSI_HOSTS` | jitsi | no | Bare Jitsi host names, for example `meet.example.org`: no scheme, no port, no path. When set, they replace the engine's `docs/jitsi.instances.yaml` |
 
 Rules:
 
 - **Format.** Commas or newlines separate entries, and whitespace is trimmed.
   Every room id and host must be at least 6 characters, and the token at least
   16. A mask shorter than that shreds every log line it matches, so a shorter
-  value fails the check instead of running unmasked.
+  value fails the check instead of running unmasked. A Jitsi host with a port
+  fails the check too: a Go error prints the host without its port
+  (`lookup <host>`), and only the entry as given is masked and scrubbed.
 - **Which entry is used.** A leg always uses the first entry of its pool. Later
   entries are spares. To replace a room that stopped working, move a spare to
   the front. The engine picks from its pool by run number, which would differ
