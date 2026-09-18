@@ -257,7 +257,7 @@ cmd_render() {
 cmd_compare() {
   local severity="${1:-}" prev="${2:-}" cur="${3:-}"
   case "${severity}" in warn | fail) ;; *) die "usage: gate-run.sh compare <warn|fail> <prev> <cur>" ;; esac
-  [ -f "${prev}" ] && [ -f "${cur}" ] || die "compare needs two report files"
+  if [ ! -f "${prev}" ] || [ ! -f "${cur}" ]; then die "compare needs two report files"; fi
   prev="$(cd "$(dirname "${prev}")" && pwd)/$(basename "${prev}")"
   cur="$(cd "$(dirname "${cur}")" && pwd)/$(basename "${cur}")"
   cd "${engine_dir}"

@@ -167,9 +167,13 @@ jobs:
       - name: Offline tests
         run: python3 scripts/test_gate_scripts.py
 
+      # The runner's own shellcheck: Ubuntu 24.04's 0.9.0, older than a pip or
+      # brew install and stricter in places (SC2015 on `a && b || c`), so check
+      # the scripts locally with 0.9.0 as well. The log says which one ran.
       - name: shellcheck and bash -n
         run: |
           set -euo pipefail
+          shellcheck --version
           shellcheck -x scripts/olcrtc-pin.sh scripts/gate-*.sh
           for f in scripts/olcrtc-pin.sh scripts/gate-*.sh; do bash -n "$f"; done
 

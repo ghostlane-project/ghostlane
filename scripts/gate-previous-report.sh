@@ -70,7 +70,7 @@ done
 
 tried=0
 while IFS=$'\t' read -r tag url; do
-  [ -n "${tag}" ] && [ "${tag}" != "${current}" ] || continue
+  if [ -z "${tag}" ] || [ "${tag}" = "${current}" ]; then continue; fi
   tried=$((tried + 1))
   [ "${tried}" -le 5 ] || break
   file="${tmp}/${tried}.json"
