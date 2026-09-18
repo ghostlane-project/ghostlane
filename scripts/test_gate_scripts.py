@@ -923,5 +923,12 @@ class Wiring(unittest.TestCase):
         self.assertIn("olcrtc_ref: ${{ steps.pin.outputs.olcrtc_sha }}", release)
         self.assertEqual(5, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
 
+    def test_pr_checks_build_the_pinned_commit(self):
+        checks = self.read("pr-checks.yml")
+        self.assertNotIn("ref: proofkit", checks)
+        self.assertIn("ref: ${{ steps.pin.outputs.olcrtc_sha }}", checks)
+        self.assertIn("python3 scripts/test_gate_scripts.py", checks)
+
+
 if __name__ == "__main__":
     unittest.main()

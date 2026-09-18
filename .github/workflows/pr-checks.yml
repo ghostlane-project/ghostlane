@@ -53,11 +53,23 @@ jobs:
         with:
           path: olcbox
 
+      # The engine every release builds: OLCRTC_VERSION in scripts/cores-pins.sh,
+      # as a full commit (actions/checkout takes nothing shorter). A fork's
+      # read-only token still reads the public engine repository.
+      - name: Resolve the engine pin
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          olcbox/scripts/olcrtc-pin.sh > "$RUNNER_TEMP/pin.out"
+          cat "$RUNNER_TEMP/pin.out" >> "$GITHUB_OUTPUT"
+
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
           repository: romanpodpriatov/olcrtc
-          ref: proofkit
+          ref: ${{ steps.pin.outputs.olcrtc_sha }}
           path: olcrtc
           submodules: recursive
 
@@ -70,7 +82,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          # The release's toolchain, not `stable` (scripts/cores-pins.sh says why).
+          go-version: ${{ steps.pin.outputs.go_version }}
           cache-dependency-path: olcrtc/go.sum
 
       - name: Setup Android SDK
@@ -138,6 +151,27 @@ jobs:
           path: |
             olcbox/sharedUI/build/xray-configs/
             olcbox/sharedUI/build/reports/tests/jvmTest/
+
+  # The release gate's scripts decide what a release may ship and scrub what a
+  # public repository uploads, so they are tested offline on every push:
+  # scripts/test_gate_scripts.py runs them against a local stand-in for the
+  # GitHub API and a stub go. The gate itself runs in gate.yml.
+  gate-scripts:
+    if: github.event_name != 'workflow_dispatch'
+    name: Gate scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Offline tests
+        run: python3 scripts/test_gate_scripts.py
+
+      - name: shellcheck and bash -n
+        run: |
+          set -euo pipefail
+          shellcheck -x scripts/olcrtc-pin.sh scripts/gate-*.sh
+          for f in scripts/olcrtc-pin.sh scripts/gate-*.sh; do bash -n "$f"; done
 
   apple-compile:
     # Manual only: Apple compilation should not bill a macOS runner on each push.
