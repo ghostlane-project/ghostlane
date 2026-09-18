@@ -158,7 +158,7 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 
 | ID | Name | What it does | Pass |
 |---|---|---|---|
-| S0 | connect | connect, 10 MB pull, 5 MB push, close | both transfers complete; handshake (client start to a working tunnel) ≤ 15 s |
+| S0 | connect | connect, 10 MB pull, 5 MB push, close | both transfers complete; handshake (client start to a working tunnel) ≤ 25 s, the tightest app ready wait (Android); the engine's 15 s reply deadline starts only at the first hello |
 | S1 | idle burst | 24 concurrent connects to a 1 KB resource, then 24 sequential | 100 % succeed; p95 connect ≤ 5 s |
 | S2 | download saturation | 6 parallel 10 MB pulls; every 5 s a 1 KB connect on top (olcbox#23) | all 200; on-top connects 100 %, p95 ≤ 5 s; aggregate throughput ≥ floor |
 | S3 | upload saturation | 4 parallel 5 MB pushes; connects on top as in S2 (olcbox#15) | as S2 |
