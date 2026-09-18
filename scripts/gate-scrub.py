@@ -61,7 +61,12 @@ def entries(value):
 
 
 def forms(entry):
-    """The entry, without its query or fragment, and its last path segment."""
+    """The entry, without its query or fragment, and its last path segment.
+
+    A Jitsi host has only itself: gate-resolve.sh check refuses one with a
+    scheme, a port or a path, which is what keeps the bare host that a Go
+    error prints ("lookup <host>") equal to the entry scrubbed here.
+    """
     out = {entry}
     base = re.split(r"[?#]", entry, maxsplit=1)[0]
     out.add(base)

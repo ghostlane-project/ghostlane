@@ -12,7 +12,9 @@
 #
 # Nothing shorter than six characters is registered: a mask that short shreds
 # every log line it matches. gate-resolve.sh check refuses such a value before
-# anything runs with it, so it never reaches the suite unmasked.
+# anything runs with it, so it never reaches the suite unmasked. It also
+# refuses a Jitsi host with a scheme, a port or a path, so a host entry is
+# exactly the string an error prints ("lookup <host>").
 #
 # Prints nothing but ::add-mask:: lines. Workflow-command data is unescaped by
 # the runner (%25, %0D, %0A), so those three are escaped first; an unescaped %

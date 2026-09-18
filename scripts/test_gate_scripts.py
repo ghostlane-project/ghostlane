@@ -387,6 +387,19 @@ class Check(unittest.TestCase):
         self.assertIn("GATE_JITSI_HOSTS, entry 1: not a bare host name", r.stderr)
         self.assert_no_value(r)
 
+    def test_a_jitsi_host_with_a_port_is_refused(self):
+        # The mask and the scrubber take an entry as it is, and a Go error
+        # prints the host without its port ("lookup <host>"), so host:port
+        # would have left the bare host in the log and the report.
+        r = self.check("jitsi", GATE_JITSI_HOSTS=f"meet2.example.invalid, {JITSI_HOST}:8443")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GATE_JITSI_HOSTS, entry 2: not a bare host name (no scheme, no port, no path)", r.stderr)
+        self.assert_no_value(r)
+        r = self.check("jitsi", GATE_JITSI_HOSTS="ab.io:8443")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GATE_JITSI_HOSTS, entry 1: not a bare host name", r.stderr)
+        self.assertNotIn("ab.io", r.stdout + r.stderr)
+
     def test_a_leg_with_what_it_needs_passes(self):
         r = self.check("wbstream", GATE_WBSTREAM_ROOMS=f"{WB_ROOM}\n{WB_SPARE}", GATE_WBSTREAM_TOKEN=WB_TOKEN)
         self.assertEqual(0, r.returncode, r.stderr)
@@ -577,6 +590,7 @@ class Scrub(unittest.TestCase):
             f"joining {TELEMOST_URL}\nroom {TELEMOST_ID} and {TELEMOST_ID.upper()} spare {TELEMOST_SPARE}\n"
             f"wb {WB_ROOM} token {WB_TOKEN}\nkey {SESSION_KEY} and {SESSION_KEY.upper()}\n"
             f"jitsi https://{JITSI_HOST.upper()}/{JITSI_ROOM}\nengine {commit}\nlivekit {FAKE_JWT}\n"
+            f"dial tcp: lookup {JITSI_HOST} on 127.0.0.53:53: no such host\n"
         )
         report = self.dir / "mobile" / "gate-report.json"
         report.write_text(json.dumps({"engine_commit": commit, "cells": [

@@ -247,8 +247,12 @@ check_list() {
         fi
         ;;
       host)
-        if [[ ! "${e}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]; then
-          err "${name}, entry ${i}: not a bare host name (no scheme, no path)"
+        # A bare host and nothing else: gate-mask.sh and gate-scrub.py take the
+        # entry as it is, and a Go error prints the host without a port
+        # ("lookup <host>", "certificate is valid for ..., not <host>"). A
+        # host:port entry would leave that bare host unmasked and unscrubbed.
+        if [[ ! "${e}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+          err "${name}, entry ${i}: not a bare host name (no scheme, no port, no path)"
           bad=1
         elif [ "${#e}" -lt "${MIN}" ]; then
           err "${name}, entry ${i}: shorter than ${MIN} characters, too short to mask in a log"
