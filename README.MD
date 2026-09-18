@@ -151,7 +151,8 @@ The author does not support or encourage such use.
 - Latency where it can honestly be measured: through the tunnel for the
   connection you are on; for a server you are not connected to, ICMP first and a
   TCP connect to the port the link names where ICMP is filtered. An olcRTC room
-  is timed by standing a short-lived client up and timing a request through it.
+  has no address to probe, so it is timed only while you are in it, by a request
+  through the tunnel.
 - Sorting by ping or name, filtering by protocol, duplicate subscriptions
   refreshed rather than added twice, and a location or a whole list removed from
   the board itself.
