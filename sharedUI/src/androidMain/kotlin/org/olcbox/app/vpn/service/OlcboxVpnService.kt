@@ -901,7 +901,7 @@ class OlcboxVpnService : VpnService() {
             olcrtc.setSocksPort(targetSocksPort.toLong())
             olcrtc.setSocksCredentials(socksUsername, socksPassword)
             olcrtc.start()
-            olcrtc.waitReady(MOBILE_READY_TIMEOUT_MS)
+            olcrtc.waitReady(OLCRTC_READY_TIMEOUT_MS)
             if (requestedGeneration != generation) {
                 addLog("olcRTC start superseded")
                 return false
@@ -2079,6 +2079,14 @@ class OlcboxVpnService : VpnService() {
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858
         private const val MOBILE_READY_TIMEOUT_MS = 25_000L
+        /**
+         * How long olcRTC may take to come up: the room's auth, the call's own
+         * ICE and DTLS, then the handshake. The engine now gives a WB Stream
+         * (LiveKit) join 25 s by itself (it was the SDK's 5 s), and a cellular
+         * ICE negotiation has taken 21 s, so the 25 s the cores get is too
+         * short here. The iOS tunnel waits 35 s for the same start.
+         */
+        private const val OLCRTC_READY_TIMEOUT_MS = 35_000L
         private const val MOBILE_STOP_TIMEOUT_MS = 5_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L

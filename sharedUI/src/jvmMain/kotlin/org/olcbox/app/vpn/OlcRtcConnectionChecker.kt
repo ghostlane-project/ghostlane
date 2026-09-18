@@ -394,7 +394,8 @@ internal object OlcRtcConnectionChecker {
     private const val CONNECTION_CHECK_ATTEMPTS = 2
     private const val HTTP_PING_ATTEMPTS = 1
 
-    private const val OLC_READY_TIMEOUT_MS = 8_000L
+    /** A probe joins the room for real, so it waits as long as a join can take (WB Stream: 25 s). */
+    private const val OLC_READY_TIMEOUT_MS = 30_000L
     private const val READY_POLL_INTERVAL_MS = 100L
     private const val TCP_CONNECT_TIMEOUT_MS = 250L
 

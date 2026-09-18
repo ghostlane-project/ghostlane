@@ -1247,7 +1247,8 @@ class DesktopVpnManager private constructor(
         const val CORE_PORT_RELEASE_TIMEOUT_MS = 1_500L
         const val CORE_PORT_RELEASE_POLL_MS = 100L
         const val CORE_SOCKS_POLL_MS = 200L
-        const val OLC_READY_TIMEOUT_MS = 25_000L
+        /** As on the phones: a WB Stream join alone may take the engine's 25 s. */
+        const val OLC_READY_TIMEOUT_MS = 35_000L
         const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TCP_CONNECT_TIMEOUT_MS = 250L

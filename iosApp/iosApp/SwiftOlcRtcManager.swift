@@ -15,7 +15,10 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
     private let lock = NSLock()
     private let keepAlive = SilentAudioKeepAlive()
 
-    private static let readyTimeoutMillis = 8_000
+    /// The in-app engine serves the room probe and the connectivity check, and
+    /// both join the room for real: a WB Stream join alone may take the
+    /// engine's 25 s on cellular, so 8 s called working rooms dead.
+    private static let readyTimeoutMillis = 30_000
     private static let stopTimeoutMillis = 5_000
 
     override init() {
