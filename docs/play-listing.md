@@ -231,8 +231,13 @@ github.com/romanpodpriatov/olcbox
 > Not "Communication" and not "Travel & Local"; both invite a category-mismatch
 > review.
 
-**Contact details** — support email; website `https://proofkit.org`; privacy
-policy `https://proofkit.org/privacy-policy/`.
+**Contact details** — support email; website
+`https://github.com/romanpodpriatov/ghostlane`; privacy policy
+`https://github.com/romanpodpriatov/ghostlane/blob/main/docs/privacy.md` (App content →
+Privacy policy, by hand: the API does not carry it). Changed 2026-09-18 with the
+rename, for the same reason as on the App Store: the client's listing describes
+the client. `.github/workflows/play-listing.yml` pushes name, descriptions, icon and
+feature graphic from this document with the release's service account.
 
 > `proofkit.org/privacy` 301s to that slug now. Use the real one anyway: the
 > site is a single-page app and answers 200 with the landing page to unknown

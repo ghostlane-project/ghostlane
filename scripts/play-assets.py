@@ -44,7 +44,7 @@ pm_sb = ImageFont.truetype(F + 'ibm_plex_mono_semi_bold.ttf', 20)
 x0 = 72
 # eyebrow
 d.text((x0, 100), '$', font=pm, fill=LIME)
-d.text((x0 + 26, 100), 'proofkit connect --olcrtc', font=pm, fill=DIM)
+d.text((x0 + 26, 100), 'ghostlane connect --olcrtc', font=pm, fill=DIM)
 # wordmark + tagline
 d.text((x0 - 4, 128), 'Ghostlane', font=sg, fill=TEXT)
 d.text((x0, 262), 'A tunnel inside a video call', font=ps, fill=TEXT)

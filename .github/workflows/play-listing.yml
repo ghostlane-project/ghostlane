@@ -1,0 +1,59 @@
+name: Play store listing
+
+# Pushes the Google Play store listing — name, descriptions, icon, feature
+# graphic — from docs/play-listing.md and docs/play/, with the same service
+# account the release uses for the bundle. Manual only: a listing change is a
+# decision, not a side effect of a push. The privacy policy URL, the App content
+# declarations and the screenshots stay in the console (see scripts/play-listing.py).
+
+on:
+  workflow_dispatch:
+    inputs:
+      website:
+        description: 'Contact website for the listing (empty = leave as is)'
+        type: string
+        default: 'https://github.com/romanpodpriatov/ghostlane'
+      dry_run:
+        description: 'Print the copy that would be sent and send nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  listing:
+    name: Push the listing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to run without the service account
+        if: env.PLAY_SERVICE_ACCOUNT_JSON == ''
+        run: |
+          echo "::error::PLAY_SERVICE_ACCOUNT_JSON is not set; nothing can be pushed." && exit 1
+
+      - name: Render the store graphics from the app's own icon and fonts
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/play-venv"
+          "$RUNNER_TEMP/play-venv/bin/pip" install --quiet pillow google-api-python-client google-auth
+          "$RUNNER_TEMP/play-venv/bin/python" scripts/play-assets.py
+          ls -la docs/play/icon-512.png docs/play/feature-graphic.png
+
+      - name: Push the listing
+        env:
+          WEBSITE: ${{ inputs.website }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          sa="$RUNNER_TEMP/play-service-account.json"
+          printf '%s' "${PLAY_SERVICE_ACCOUNT_JSON}" > "$sa"
+          args=(--service-account "$sa" --package org.proofkit.app)
+          [ -n "$WEBSITE" ] && args+=(--website "$WEBSITE")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          "$RUNNER_TEMP/play-venv/bin/python" scripts/play-listing.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$sa"
