@@ -22,6 +22,17 @@ on:
           - internal     # Play's internal testing: testers get it in minutes, no review — the TestFlight of Android
           - production   # everyone, after Play's review; prefer promoting a tested internal build from the console
           - none         # build only
+      gate:
+        description: 'Release gate: required (a red gate builds and publishes nothing) or skip (emergency only; needs gate_reason, and the release notes say so)'
+        type: choice
+        default: 'required'
+        options:
+          - required
+          - skip
+      gate_reason:
+        description: 'With gate: skip, why. Printed in the release notes'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -34,15 +45,20 @@ concurrency:
 
 env:
   OLCBOX_VERSION_MAJOR_MINOR: "1.0"
-  # The fork branch on upstream master 189d16c; proofkit-udp-spike is archived.
-  OLCBOX_OLCRTC_REF: "proofkit"
+  # The engine is not named here. It is OLCRTC_VERSION in scripts/cores-pins.sh,
+  # which release_version resolves to a full commit (scripts/olcrtc-pin.sh); the
+  # gate tests that commit and every build job checks it out. Android and the
+  # desktop used to build the tip of the fork's `proofkit` branch while iOS
+  # linked the pin, so one release could carry two engines.
+  #
   # Every Go step below reads this. It used to be `stable`, and `stable` moved
   # from 1.26.5 to 1.27.1 between two runs of the cores bind: the 1.27.1 build
   # left golang.org/x/net/http2.(*Transport).connPool undefined in every slice
   # and Xcode could not link it (see scripts/cores-pins.sh). The Android job
   # builds sing-box and Xray — .so-named executables — from that same dependency
   # graph with the same external linker step, so the same toolchain is pinned
-  # here for the same reason.
+  # here for the same reason. It must equal GO_VERSION in scripts/cores-pins.sh,
+  # and release_version fails when it does not.
   GO_VERSION: "1.26.5"
   # ProofKit fork versionCode = PATCH_BASE + github.run_number (RUN_NUMBER_BASE 0,
   # since run numbers reset to 1 on this fork). PATCH_BASE is set ABOVE upstream's
@@ -186,11 +202,43 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_code: ${{ steps.version.outputs.version_code }}
-      olcrtc_ref: ${{ steps.version.outputs.olcrtc_ref }}
+      # The name is kept so the five build checkouts read the same output; its
+      # value is now the full commit of the pin, never a branch.
+      olcrtc_ref: ${{ steps.pin.outputs.olcrtc_sha }}
+      olcrtc_version: ${{ steps.pin.outputs.olcrtc_version }}
+      olcrtc_on_proofkit: ${{ steps.pin.outputs.olcrtc_on_proofkit }}
+      olcrtc_proofkit_ahead_by: ${{ steps.pin.outputs.olcrtc_proofkit_ahead_by }}
       nightly_tag: ${{ steps.version.outputs.nightly_tag }}
       nightly_title: ${{ steps.version.outputs.nightly_title }}
 
     steps:
+      - name: Checkout the pins
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+
+      # Once, here, on Linux: the Windows job must never source cores-pins.sh
+      # (no .gitattributes, so its checkout has CRLF and a value would end in \r).
+      # actions/checkout takes a commit only as 40 hex, which is why the 12-hex
+      # tail of OLCRTC_VERSION is resolved rather than passed along.
+      - name: Resolve the engine pin
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/olcrtc-pin.sh > "$RUNNER_TEMP/pin.out"
+          cat "$RUNNER_TEMP/pin.out" >> "$GITHUB_OUTPUT"
+
+      - name: One toolchain pin
+        env:
+          PINNED_GO: ${{ steps.pin.outputs.go_version }}
+        run: |
+          if [ "$PINNED_GO" != "$GO_VERSION" ]; then
+            echo "::error::release.yml's GO_VERSION (${GO_VERSION}) and scripts/cores-pins.sh's (${PINNED_GO}) disagree; the Cores and every other build must use one toolchain"
+            exit 1
+          fi
+
       - name: Resolve release version
         id: version
         run: |
@@ -201,21 +249,53 @@ jobs:
             exit 1
           fi
 
-          echo "version=${OLCBOX_VERSION_MAJOR_MINOR}.${patch}" >> "$GITHUB_OUTPUT"
-          echo "version_code=${patch}" >> "$GITHUB_OUTPUT"
-
           if [ "${GITHUB_REF_NAME}" = "universal-carrier" ]; then
-            echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
-            echo "nightly_tag=nightly-universal-carrier" >> "$GITHUB_OUTPUT"
-            echo "nightly_title=Nightly Ghostlane universal-carrier builds" >> "$GITHUB_OUTPUT"
+            nightly_tag="nightly-universal-carrier"
+            nightly_title="Nightly Ghostlane universal-carrier builds"
           else
-            echo "olcrtc_ref=${OLCBOX_OLCRTC_REF}" >> "$GITHUB_OUTPUT"
-            echo "nightly_tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "nightly_title=Nightly Ghostlane builds" >> "$GITHUB_OUTPUT"
+            nightly_tag="nightly"
+            nightly_title="Nightly Ghostlane builds"
           fi
 
+          {
+            echo "version=${OLCBOX_VERSION_MAJOR_MINOR}.${patch}"
+            echo "version_code=${patch}"
+            echo "nightly_tag=${nightly_tag}"
+            echo "nightly_title=${nightly_title}"
+          } >> "$GITHUB_OUTPUT"
+
+  # The engine under load before anything is built from it
+  # (.github/workflows/gate.yml, docs/release-gate.md). Every build job and the
+  # publish job need it: a red or cancelled gate builds and publishes nothing.
+  # Needing `plan` first means its secrets preflight fails a broken dispatch
+  # before the gate spends its twenty minutes.
+  gate:
+    name: Release gate
+    needs: [plan, release_version]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gate.yml
+    with:
+      mode: release
+      app_version: ${{ needs.release_version.outputs.version }}
+      engine_sha: ${{ needs.release_version.outputs.olcrtc_ref }}
+      engine_version: ${{ needs.release_version.outputs.olcrtc_version }}
+      skip: ${{ inputs.gate == 'skip' }}
+      skip_reason: ${{ inputs.gate_reason }}
+      # A literal: `with:` of a reusable-workflow call cannot read `env`. warn
+      # while the gate runs the local target only; fail is meant for when the
+      # link target (a fleet node) is compared release to release.
+      compare_severity: warn
+    # Named one by one, never `inherit`: the gate sees its own four secrets and
+    # none of the signing keys.
+    secrets:
+      GATE_TELEMOST_ROOMS: ${{ secrets.GATE_TELEMOST_ROOMS }}
+      GATE_WBSTREAM_ROOMS: ${{ secrets.GATE_WBSTREAM_ROOMS }}
+      GATE_WBSTREAM_TOKEN: ${{ secrets.GATE_WBSTREAM_TOKEN }}
+      GATE_JITSI_HOSTS: ${{ secrets.GATE_JITSI_HOSTS }}
+
   build-windows:
-    needs: [release_version, plan]
+    needs: [release_version, plan, gate]
     if: needs.plan.outputs.windows == 'true'
     runs-on: windows-latest
     permissions:
@@ -382,7 +462,7 @@ jobs:
             olcbox/dist/Ghostlane-*-windows-amd64-portable.zip
 
   build-macos:
-    needs: [release_version, plan]
+    needs: [release_version, plan, gate]
     if: needs.plan.outputs.macos_any == 'true'
     strategy:
       fail-fast: false
@@ -592,7 +672,7 @@ jobs:
             olcbox/dist/notary-submission-id.txt
 
   build-linux:
-    needs: [release_version, plan]
+    needs: [release_version, plan, gate]
     if: needs.plan.outputs.linux == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -723,7 +803,7 @@ jobs:
           path: olcbox/dist/Ghostlane-*-linux-amd64.AppImage
 
   build-android:
-    needs: [release_version, plan]
+    needs: [release_version, plan, gate]
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -1168,7 +1248,7 @@ jobs:
           fi
 
   build-ios:
-    needs: [release_version, plan]
+    needs: [release_version, plan, gate]
     if: needs.plan.outputs.ios == 'true'
     runs-on: macos-latest
     permissions:
@@ -1543,6 +1623,7 @@ jobs:
     needs:
       - plan
       - release_version
+      - gate
       - build-windows
       - build-macos
       - staple-macos
@@ -1553,14 +1634,23 @@ jobs:
     # release with whichever platforms happened to be selected, silently dropping the
     # rest. Skipped builds must not block this, hence the explicit failure check
     # instead of relying on `needs` alone.
-    if: ${{ needs.plan.outputs.publish == 'true' && !cancelled() && !contains(needs.*.result, 'failure') }}
+    #
+    # And only a gated one. A red gate leaves every build SKIPPED rather than
+    # failed, which the failure check alone would let through: this job would
+    # publish a v1.0.N holding nothing but the gate's report and then delete and
+    # recreate the rolling nightly the same way. Hence the gate's own result. A
+    # gate skipped by request (gate: skip) passes, with a report that says so.
+    if: ${{ needs.plan.outputs.publish == 'true' && needs.gate.result == 'success' && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     concurrency:
       group: publish-${{ github.repository }}-${{ needs.release_version.outputs.nightly_tag }}
       cancel-in-progress: false
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
-      OLCBOX_OLCRTC_REF: ${{ needs.release_version.outputs.olcrtc_ref }}
+      OLCBOX_OLCRTC_SHA: ${{ needs.release_version.outputs.olcrtc_ref }}
+      OLCBOX_OLCRTC_VERSION: ${{ needs.release_version.outputs.olcrtc_version }}
+      OLCBOX_OLCRTC_ON_PROOFKIT: ${{ needs.release_version.outputs.olcrtc_on_proofkit }}
+      OLCBOX_OLCRTC_AHEAD: ${{ needs.release_version.outputs.olcrtc_proofkit_ahead_by }}
       OLCBOX_NIGHTLY_TAG: ${{ needs.release_version.outputs.nightly_tag }}
       OLCBOX_NIGHTLY_TITLE: ${{ needs.release_version.outputs.nightly_title }}
 
@@ -1577,6 +1667,10 @@ jobs:
       - name: Download release assets
         uses: actions/download-artifact@v8
         with:
+          # Only what ships. Without a pattern every artifact of the run comes
+          # down, and the gate's per-leg plans and logs would become public
+          # release assets and enter SHA256SUMS.
+          pattern: Ghostlane-*
           path: dist
 
       - name: Keep the debug symbols out of the release
@@ -1584,6 +1678,23 @@ jobs:
         # read later; they are not something to ship. Left here, the DWARF
         # binaries and their Info.plists became release assets once.
         run: rm -rf dist/Ghostlane-ios-dSYMs
+
+      # The gate's verdict ships with the release: gate-report.json and .md are
+      # assets (the next release's gate compares against this json), and the
+      # notes carry the table under "### Gate", skipped-by-request included.
+      - name: The gate's report in the notes
+        run: |
+          set -euo pipefail
+          report=dist/Ghostlane-gate-report/gate-report.json
+          md=dist/Ghostlane-gate-report/gate-report.md
+          if [ ! -s "$report" ] || [ ! -s "$md" ]; then
+            echo "::error::the gate passed but its report is not among the run's artifacts; nothing is published without it"
+            exit 1
+          fi
+          if [ "$(jq -r '.skipped // false' "$report")" = "true" ]; then
+            echo "::warning::this release skipped the gate (gate: skip); its notes say so, and why"
+          fi
+          { echo "### Gate"; echo; cat "$md"; } > gate-section.md
 
       - name: Generate checksums and release notes
         run: |
@@ -1603,13 +1714,23 @@ jobs:
             echo
             echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Source branch: \`${GITHUB_REF_NAME}\`"
-            echo "- olcrtc branch: \`${OLCBOX_OLCRTC_REF}\`"
+            echo "- olcrtc revision: \`${OLCBOX_OLCRTC_SHA}\` (\`${OLCBOX_OLCRTC_VERSION}\`), what every platform here was built from"
+            if [ "${OLCBOX_OLCRTC_ON_PROOFKIT}" = "false" ]; then
+              echo "- olcrtc: this revision is not on the fork's \`proofkit\` branch"
+            fi
+            case "${OLCBOX_OLCRTC_AHEAD}" in
+              '' | 0 | unknown) ;;
+              *) echo "- olcrtc: \`proofkit\` is ${OLCBOX_OLCRTC_AHEAD} commit(s) ahead of this revision" ;;
+            esac
             echo "- App version: \`${OLCBOX_VERSION}\`"
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
             echo "- Android APKs: universal and \`armeabi-v7a\`"
             echo "- Android App Bundle: the \`play\` flavor, as uploaded to Google Play (no self-updater)"
             echo "- Workflow: \`.github/workflows/release.yml\`"
             echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            # Here, so the versioned notes and the rolling nightly both carry it.
+            cat gate-section.md
             echo
             echo "### SHA256"
             echo

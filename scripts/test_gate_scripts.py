@@ -902,5 +902,26 @@ class Wiring(unittest.TestCase):
     def test_gate_leaves_the_engine_names_to_gate_run_sh(self):
         self.assertNotRegex(self.read("gate.yml"), self.ENGINE_NAMES)
 
+    def test_release_leaves_the_engine_names_to_gate_run_sh(self):
+        self.assertNotRegex(self.read("release.yml"), self.ENGINE_NAMES)
+
+    def test_release_builds_and_publishes_nothing_without_the_gate(self):
+        release = self.read("release.yml")
+        for job in ("build-windows", "build-macos", "build-linux", "build-android", "build-ios"):
+            block = release.split(f"\n  {job}:\n", 1)[1]
+            self.assertRegex(block.split("\n", 1)[0], r"needs: \[release_version, plan, gate\]", job)
+        publish = release.split("\n  publish-nightly:\n", 1)[1]
+        self.assertIn("      - gate\n", publish)
+        self.assertIn("needs.gate.result == 'success'", publish)
+        self.assertIn("pattern: Ghostlane-*", publish)
+        self.assertIn("uses: ./.github/workflows/gate.yml", release)
+        self.assertNotIn("secrets: inherit", release)
+
+    def test_release_checks_the_pinned_commit_out_everywhere(self):
+        release = self.read("release.yml")
+        self.assertNotIn("OLCBOX_OLCRTC_REF", release)
+        self.assertIn("olcrtc_ref: ${{ steps.pin.outputs.olcrtc_sha }}", release)
+        self.assertEqual(5, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
+
 if __name__ == "__main__":
     unittest.main()
