@@ -33,8 +33,11 @@ from pathlib import Path
 
 CLIENTS = ("cli", "mobile")
 BUILDS = {"cli": "default", "mobile": "lean"}
-# The artifact each leg uploads (gate.yml) is downloaded to <legs-dir>/gate-leg-<provider>/.
-PART_DIR = "gate-leg-{provider}"
+# Where a leg's files are under --legs-dir. Each leg's artifact (gate.yml)
+# carries its provider's directory, and the verdict downloads them all merged
+# into one, so a flavour is at <legs-dir>/<provider>/<client>/ however many
+# legs uploaded. Unmerged, one artifact alone would lose that directory.
+PART_DIR = "{provider}"
 PLATFORM = "engine-linux"
 MAX_REASON = 500
 
