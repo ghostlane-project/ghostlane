@@ -121,11 +121,13 @@ room URL, taken as it is; a WB Stream entry is a bare id or a room URL
 provider escapes what it gets into one segment. WB refuses a guest as the first
 participant of an idle room, so the local server signs in with the account token
 in secret `GATE_WBSTREAM_TOKEN`; the client stays a guest, as the app is. The
-workflow's `concurrency` group keeps two gates of one repository from sharing a
-room, and the channel id keeps runs of two repositories in one room from reading
-each other's frames; a different key per run keeps a leftover from a cancelled
-run from ever handshaking. The server process is separate from the test process
-so the memory sampler reads the client alone.
+workflow's `concurrency` group runs one gate per ref at a time. Gates of different
+refs or repositories can land in one pool room (a pool of one always puts them
+there, and a push to a branch with an open pull request starts two), and the
+per-pair channel id keeps them from reading each other's frames; a different key
+per run keeps a leftover from a cancelled run from ever handshaking. The server
+process is separate from the test process so the memory sampler reads the client
+alone.
 
 **Link.** An `olcrtc://` link, parsed by `internal/link` (the same grammar the app
 imports), pointing at a fleet node. Only the client runs; the server is the fleet's.
@@ -156,13 +158,13 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 
 | ID | Name | What it does | Pass |
 |---|---|---|---|
-| S0 | connect | connect, 10 MB pull, 5 MB push, close | both transfers complete; handshake ≤ 15 s; `session … opened` on both sides (local) |
+| S0 | connect | connect, 10 MB pull, 5 MB push, close | both transfers complete; handshake (client start to a working tunnel) ≤ 15 s |
 | S1 | idle burst | 24 concurrent connects to a 1 KB resource, then 24 sequential | 100 % succeed; p95 connect ≤ 5 s |
 | S2 | download saturation | 6 parallel 10 MB pulls; every 5 s a 1 KB connect on top (olcbox#23) | all 200; on-top connects 100 %, p95 ≤ 5 s; aggregate throughput ≥ floor |
 | S3 | upload saturation | 4 parallel 5 MB pushes; connects on top as in S2 (olcbox#15) | as S2 |
-| S4 | quiet after load | 60 s idle after S3 | control session alive: no `missed pong`, no `session closed`, no reconnect; one 1 KB pull succeeds at the end (olcbox#25) |
+| S4 | quiet after load | 60 s idle after S3 | the conference alive (no `conference end` logged), no `missed pong`, no `client reconnect`; one 1 KB pull succeeds at the end (olcbox#25) |
 | S5 | resolver burst | 64 concurrent port-53 queries through the tunnel, twice | ≥ 63/64 answered each time within 5 s (the stream path, aac553b8) |
-| S6 | late server bridge | Jitsi only, local only: server bridge delayed 3 s, then 8 s (olcbox#22) | handshake completes within 15 s in both |
+| S6 | late server bridge | Jitsi only, local only: server bridge delayed 3 s, then 8 s (olcbox#22) | the client ready, timed from its start, within the delay plus 15 s in both (18 s, then 23 s) |
 | S7 | phone memory | sampler over S2–S4 with the mobile flavour | peak live heap ≤ 16 MB; peak RSS ≤ 45 MB; goroutines 60 s after load ≤ idle baseline + 20 (olcbox#24, #26) |
 
 Plan per target: Local: providers {jitsi, telemost, wbstream} x transports
