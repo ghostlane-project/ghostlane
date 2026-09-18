@@ -62,7 +62,9 @@ report format belong to the engine. See `docs/gate.md` in
 `transports` is passed to every chosen provider. Pick transports each of them
 carries: Telemost has `vp8channel` and `videochannel`; WB Stream has
 `vp8channel`, `videochannel` and `seichannel`; Jitsi has all four. Otherwise the
-engine refuses the plan.
+engine refuses the plan. `videochannel` runs only when named here: the default
+plan leaves it out because it moves about 7.5 KiB/s, too little for the 5 MB
+transfers of S0, and the phone build does not link it.
 
 ## Reading a result
 
