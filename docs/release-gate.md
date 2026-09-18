@@ -93,7 +93,12 @@ or a log names a room.
 The last step of `Verdict` lists every reason that applies:
 
 - An engine unit test failed, or a suite leg failed or was cancelled.
-- A cell failed.
+- A cell failed that is not a known failure. The engine lists the cells an
+  open engine issue fails on every run (`internal/gate/known.go`): such a cell
+  still runs and shows in the report with its issue, as `fail (known: #9)`,
+  and counts in `failed_known`, not against the gate. A cell that did not run
+  is never known. See "Known failures" in `docs/gate.md` in
+  `romanpodpriatov/olcrtc`.
 - A planned cell did not run. The engine writes its report when the test
   binary exits, so a `go test -timeout` or a crash loses it. The leg's plan
   still names the lost cells, and the merge fails each of them as `did not run:

@@ -238,7 +238,7 @@ cmd_summary() {
     if [ -s "${plan}" ]; then planned="$(grep -c . "${plan}") planned"; fi
     if [ -s "${report}" ] && jq -e . "${report}" >/dev/null 2>&1; then
       jq -r --arg leg "${provider}/${client}" --arg planned "${planned}" \
-        '"- `\($leg)`: \($planned); report: \(.passed // 0) passed, \(.failed // 0) failed of \(.planned // 0), \(.executed // 0) ran"' \
+        '"- `\($leg)`: \($planned); report: \(.passed // 0) passed, \(.failed // 0) failed\(if (.failed_known // 0) > 0 then " (\(.failed_known) known)" else "" end) of \(.planned // 0), \(.executed // 0) ran"' \
         "${report}"
     else
       echo "- \`${provider}/${client}\`: ${planned}; no report (a timeout, a crash or a missing secret: see this job's log)"
