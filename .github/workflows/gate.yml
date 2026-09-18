@@ -1,0 +1,501 @@
+name: Release gate
+
+# The engine the app pins, run the way users break it, before anything is built
+# from it: the engine's unit tests under both builds, then the suite
+# (internal/gate) against real relays with a server it starts - one leg per
+# provider, each leg the cli flavour in a default build and then the mobile
+# flavour in the lean build, one go test process each (engine plan A8). Then
+# one verdict: the legs' reports merged, compared with the previous release's,
+# rendered, leak-checked, published as the Ghostlane-gate-report artifact.
+#
+# Triggers:
+# - workflow_call: release.yml, before any build (mode "release"; a red or
+#   cancelled gate builds and publishes nothing). Break-glass: skip + reason.
+# - workflow_dispatch: a manual run; engine_ref gates a candidate before a re-pin.
+# - schedule: daily ("scheduled", not "nightly", which is release.yml's
+#   rolling release tag). Red means something outside the app changed.
+# - push: the pin or the gate changed ("pin"), on any branch.
+#
+# Every engine flag, env name, tag and path lives in scripts/gate-run.sh. The
+# secrets reach a step only through its env, only in the leg of their own
+# provider, and every value is masked before anything else in that job holds
+# it. No top-level concurrency: a called workflow's group would contend with
+# its caller's; the suite legs have their own (see there). docs/release-gate.md
+# is the manual.
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'What the caller is; release.yml passes "release"'
+        type: string
+        required: true
+      app_version:
+        description: The version being released
+        type: string
+        required: true
+      engine_sha:
+        description: The 40-hex engine commit release_version resolved from scripts/cores-pins.sh
+        type: string
+        required: true
+      engine_version:
+        description: Its pseudo-version (OLCRTC_VERSION)
+        type: string
+        required: true
+      skip:
+        description: 'Break-glass: run nothing, write a skipped report (skip_reason required)'
+        type: boolean
+        default: false
+      skip_reason:
+        description: Why the gate is skipped; the release notes print it
+        type: string
+        default: ''
+      compare_severity:
+        description: 'warn or fail: what a regression against the previous release does'
+        type: string
+        default: warn
+    secrets:
+      # Not required here: the leg that needs one fails with a message naming
+      # it, and a skipped gate needs none.
+      GATE_TELEMOST_ROOMS:
+        required: false
+      GATE_WBSTREAM_ROOMS:
+        required: false
+      GATE_WBSTREAM_TOKEN:
+        required: false
+      GATE_JITSI_HOSTS:
+        required: false
+  workflow_dispatch:
+    inputs:
+      engine_ref:
+        description: Engine commit, branch or tag to gate instead of the pin (a candidate); empty = the pin
+        type: string
+        default: ''
+      providers:
+        description: Providers, comma-separated (jitsi, telemost, wbstream); empty = all three, fewer = a limited run
+        type: string
+        default: ''
+      transports:
+        description: Transports passed to every chosen provider; empty = each provider's own set, any = a limited run
+        type: string
+        default: ''
+  schedule:
+    - cron: '17 4 * * *'
+  push:
+    # Branches only. Path filters are not evaluated for tag pushes, so without
+    # this every tag the release creates (with a PAT, which does trigger
+    # workflows) would start a full gate.
+    branches:
+      - '**'
+    paths:
+      - scripts/cores-pins.sh
+      - scripts/olcrtc-pin.sh
+      - 'scripts/gate-*'
+      - .github/workflows/gate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Engine revision and legs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.r.outputs.mode }}
+      engine_sha: ${{ steps.r.outputs.engine_sha }}
+      engine_short: ${{ steps.r.outputs.engine_short }}
+      engine_version: ${{ steps.r.outputs.engine_version }}
+      engine_pinned: ${{ steps.r.outputs.engine_pinned }}
+      engine_on_proofkit: ${{ steps.r.outputs.engine_on_proofkit }}
+      engine_proofkit_ahead_by: ${{ steps.r.outputs.engine_proofkit_ahead_by }}
+      go_version: ${{ steps.r.outputs.go_version }}
+      app_version: ${{ steps.r.outputs.app_version }}
+      current_tag: ${{ steps.r.outputs.current_tag }}
+      severity: ${{ steps.r.outputs.severity }}
+      skip: ${{ steps.r.outputs.skip }}
+      limited: ${{ steps.r.outputs.limited }}
+      providers: ${{ steps.r.outputs.providers }}
+      transports: ${{ steps.r.outputs.transports }}
+      legs: ${{ steps.r.outputs.legs }}
+    steps:
+      - name: Checkout ghostlane
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+          sparse-checkout: scripts
+
+      # This job holds no secret. It fails, with the re-pin instructions, when
+      # the engine revision has no internal/gate (the pin aaffe1e0 has none).
+      - name: Resolve
+        id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE_EVENT: ${{ github.event_name }}
+          GATE_CALL_MODE: ${{ inputs.mode }}
+          GATE_CALL_ENGINE_SHA: ${{ inputs.engine_sha }}
+          GATE_CALL_ENGINE_VERSION: ${{ inputs.engine_version }}
+          GATE_CALL_APP_VERSION: ${{ inputs.app_version }}
+          GATE_CALL_SKIP: ${{ inputs.skip }}
+          GATE_CALL_SKIP_REASON: ${{ inputs.skip_reason }}
+          GATE_CALL_SEVERITY: ${{ inputs.compare_severity }}
+          GATE_ENGINE_REF: ${{ inputs.engine_ref }}
+          GATE_PROVIDERS: ${{ inputs.providers }}
+          GATE_TRANSPORTS: ${{ inputs.transports }}
+        run: |
+          set -euo pipefail
+          # Through a file, so a failure part-way writes no output at all.
+          olcbox/scripts/gate-resolve.sh > "$RUNNER_TEMP/resolve.out"
+          cat "$RUNNER_TEMP/resolve.out" >> "$GITHUB_OUTPUT"
+
+  unit:
+    name: Engine unit tests (${{ matrix.build }})
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # lean is what the phones ship, default what the desktop ships.
+        build: [default, lean]
+    steps:
+      - name: Checkout ghostlane
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+          sparse-checkout: scripts
+
+      - name: Checkout olcrtc at the gated revision
+        uses: actions/checkout@v7
+        with:
+          repository: romanpodpriatov/olcrtc
+          ref: ${{ needs.resolve.outputs.engine_sha }}
+          path: olcrtc
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ needs.resolve.outputs.go_version }}
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: go test -race ./...
+        env:
+          BUILD: ${{ matrix.build }}
+        run: olcbox/scripts/gate-run.sh unit "$BUILD"
+
+  suite:
+    name: Suite (${{ matrix.provider }})
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    # Setup about 3, plan up to 10, cli up to 25, mobile up to 35, scrub and
+    # upload about 2: the job's limit stays above its steps' so the always()
+    # steps still run after a step times out.
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.legs) }}
+    # One run of this repository per provider at a time: Telemost and WB Stream
+    # rooms are pre-made and a leg always joins the first entry of its pool, so
+    # two runs in one room would knock each other out. Never cancelled for a
+    # newer run; note that GitHub keeps only one PENDING job per group, so a
+    # third run arriving cancels the one waiting (docs/release-gate.md).
+    concurrency:
+      group: ghostlane-gate-${{ matrix.provider }}
+      cancel-in-progress: false
+    env:
+      GATE_PROVIDER: ${{ matrix.provider }}
+      GATE_TRANSPORTS: ${{ needs.resolve.outputs.transports }}
+      GATE_ENGINE_SHA: ${{ needs.resolve.outputs.engine_sha }}
+      GATE_ENGINE_VERSION: ${{ needs.resolve.outputs.engine_version }}
+      GATE_APP_VERSION: ${{ needs.resolve.outputs.app_version }}
+      # Absolute: go test runs in the package directory.
+      GATE_LEG_DIR: ${{ github.workspace }}/gate-artifacts/${{ matrix.provider }}
+    steps:
+      - name: Checkout ghostlane
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+          sparse-checkout: scripts
+
+      # The checkout above holds no secret; this is the first step that does,
+      # and all it does is register every value with the masker. Each leg gets
+      # its own provider's secrets alone: the WB token reaches the wbstream leg
+      # and no other. The same four lines repeat on every step that needs them
+      # (never job env, never pasted into a script).
+      - name: Mask the leg's secrets
+        env:
+          GATE_TELEMOST_ROOMS: ${{ matrix.provider == 'telemost' && secrets.GATE_TELEMOST_ROOMS || '' }}
+          GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
+          GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
+          GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+        run: olcbox/scripts/gate-mask.sh
+
+      - name: Checkout olcrtc at the gated revision
+        uses: actions/checkout@v7
+        with:
+          repository: romanpodpriatov/olcrtc
+          ref: ${{ needs.resolve.outputs.engine_sha }}
+          path: olcrtc
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ needs.resolve.outputs.go_version }}
+          cache-dependency-path: olcrtc/go.sum
+
+      # Before the secrets are checked, so a leg that cannot run still says
+      # which cells it owed: the merge fails each of them as "did not run".
+      - name: Plan both flavours (dry run, no secrets)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          olcbox/scripts/gate-run.sh plan cli "$GATE_LEG_DIR/cli"
+          olcbox/scripts/gate-run.sh plan mobile "$GATE_LEG_DIR/mobile"
+
+      - name: Check the leg's secrets
+        id: check
+        env:
+          GATE_TELEMOST_ROOMS: ${{ matrix.provider == 'telemost' && secrets.GATE_TELEMOST_ROOMS || '' }}
+          GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
+          GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
+          GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+        run: olcbox/scripts/gate-resolve.sh check "$GATE_PROVIDER"
+
+      - name: Run the cli flavour (default build)
+        timeout-minutes: 25
+        env:
+          GATE_TELEMOST_ROOMS: ${{ matrix.provider == 'telemost' && secrets.GATE_TELEMOST_ROOMS || '' }}
+          GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
+          GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
+          GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+        run: olcbox/scripts/gate-run.sh run cli "$GATE_LEG_DIR/cli"
+
+      # After the cli flavour whatever it found: a red cli cell must not hide
+      # what the phones' build does in the same room.
+      - name: Run the mobile flavour (lean build)
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
+        timeout-minutes: 35
+        env:
+          GATE_TELEMOST_ROOMS: ${{ matrix.provider == 'telemost' && secrets.GATE_TELEMOST_ROOMS || '' }}
+          GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
+          GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
+          GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+        run: olcbox/scripts/gate-run.sh run mobile "$GATE_LEG_DIR/mobile"
+
+      # The repository is public and so are its artifacts: nothing is uploaded
+      # that this has not scrubbed and then verified clean.
+      - name: Scrub the leg's artifacts
+        id: scrub
+        if: always()
+        env:
+          GATE_TELEMOST_ROOMS: ${{ matrix.provider == 'telemost' && secrets.GATE_TELEMOST_ROOMS || '' }}
+          GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
+          GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
+          GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+        run: python3 olcbox/scripts/gate-scrub.py "$GATE_LEG_DIR"
+
+      - name: Leg summary
+        if: ${{ always() && steps.scrub.outcome == 'success' }}
+        run: |
+          {
+            echo "#### Leg: ${GATE_PROVIDER}"
+            echo
+            olcbox/scripts/gate-run.sh summary "$GATE_LEG_DIR"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Explicit patterns only, and only what the scrub step vouched for.
+      - name: Upload the leg's plans, reports and logs
+        if: ${{ always() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-leg-${{ matrix.provider }}
+          path: |
+            gate-artifacts/${{ matrix.provider }}/**/*.json
+            gate-artifacts/${{ matrix.provider }}/**/*.txt
+            gate-artifacts/${{ matrix.provider }}/**/*.log
+            gate-artifacts/${{ matrix.provider }}/**/*.csv
+          if-no-files-found: warn
+          retention-days: 14
+          # "Re-run failed jobs" uploads again under the same name.
+          overwrite: true
+
+  verdict:
+    name: Verdict
+    needs: [resolve, unit, suite]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SKIP: ${{ needs.resolve.outputs.skip }}
+      MODE: ${{ needs.resolve.outputs.mode }}
+      ENGINE_SHA: ${{ needs.resolve.outputs.engine_sha }}
+      ENGINE_VERSION: ${{ needs.resolve.outputs.engine_version }}
+      APP_VERSION: ${{ needs.resolve.outputs.app_version }}
+      CURRENT_TAG: ${{ needs.resolve.outputs.current_tag }}
+      SEVERITY: ${{ needs.resolve.outputs.severity }}
+      PROVIDERS: ${{ needs.resolve.outputs.providers }}
+      TRANSPORTS: ${{ needs.resolve.outputs.transports }}
+      LIMITED: ${{ needs.resolve.outputs.limited }}
+      PINNED: ${{ needs.resolve.outputs.engine_pinned }}
+      ON_PROOFKIT: ${{ needs.resolve.outputs.engine_on_proofkit }}
+      AHEAD: ${{ needs.resolve.outputs.engine_proofkit_ahead_by }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Checkout ghostlane
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+          sparse-checkout: scripts
+
+      # Break-glass: the builds still need a report to publish, one that says
+      # the release was not gated and why, and that never becomes a baseline.
+      - name: The skipped-by-request report
+        id: skipped
+        if: needs.resolve.outputs.skip == 'true'
+        env:
+          REASON: ${{ inputs.skip_reason }}
+        run: |
+          set -euo pipefail
+          mkdir -p gate
+          python3 olcbox/scripts/gate-merge-reports.py skipped --reason "$REASON" \
+            --engine-commit "$ENGINE_SHA" --engine-ref "$ENGINE_VERSION" --app-version "$APP_VERSION" \
+            --mode "$MODE" --run-url "$RUN_URL" --out-json gate/gate-report.json --out-md gate/gate-report.md
+          echo "::warning title=Release gate::skipped by request: nothing this run builds or uploads to a store is gated; a published release says so in its notes, with the reason"
+
+      - name: Checkout olcrtc at the gated revision
+        if: needs.resolve.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: romanpodpriatov/olcrtc
+          ref: ${{ needs.resolve.outputs.engine_sha }}
+          path: olcrtc
+
+      - name: Setup Go
+        if: needs.resolve.outputs.skip != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ needs.resolve.outputs.go_version }}
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: Download the legs
+        if: ${{ !cancelled() && needs.resolve.outputs.skip != 'true' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: gate-leg-*
+          path: legs
+
+      # Runs whatever the legs did: a leg that uploaded nothing still owes its
+      # cells, and the merge fails them.
+      - name: Merge the legs
+        id: merge
+        if: ${{ !cancelled() && needs.resolve.outputs.skip != 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p gate
+          olcbox/scripts/gate-run.sh merge --legs-dir legs --providers "$PROVIDERS" \
+            --expect-commit "$ENGINE_SHA" --engine-ref "$ENGINE_VERSION" --app-version "$APP_VERSION" \
+            --mode "$MODE" --out gate/gate-report.json
+
+      - name: The previous release's report
+        id: prev
+        if: ${{ !cancelled() && needs.resolve.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: olcbox/scripts/gate-previous-report.sh "$RUNNER_TEMP/previous.json" "$CURRENT_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: The report as markdown
+        id: md
+        if: ${{ !cancelled() && steps.merge.outcome == 'success' }}
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+          SUITE_RESULT: ${{ needs.suite.result }}
+          PREVIOUS_TAG: ${{ steps.prev.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          report="$GITHUB_WORKSPACE/gate/gate-report.json"
+          md="$RUNNER_TEMP/gate.md"
+          {
+            python3 olcbox/scripts/gate-merge-reports.py header --report "$report" \
+              --pinned "$PINNED" --on-proofkit "$ON_PROOFKIT" --ahead-by "$AHEAD" --limited "$LIMITED" \
+              --providers "$PROVIDERS" --transports "$TRANSPORTS" \
+              --unit-result "$UNIT_RESULT" --suite-result "$SUITE_RESULT" --run-url "$RUN_URL"
+            olcbox/scripts/gate-run.sh render "$report"
+            echo
+          } > "$md"
+          regression=false
+          if [ -s "$RUNNER_TEMP/previous.json" ]; then
+            set +e
+            olcbox/scripts/gate-run.sh compare "$SEVERITY" "$RUNNER_TEMP/previous.json" "$report" > "$RUNNER_TEMP/compare.md"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+              {
+                echo "Compared with \`${PREVIOUS_TAG}\` at severity \`${SEVERITY}\` (warn reports a regression, fail also fails the gate)."
+                echo
+                cat "$RUNNER_TEMP/compare.md"
+              } >> "$md"
+              if [ "$rc" -eq 2 ]; then regression=true; fi
+            else
+              echo "Compared with \`${PREVIOUS_TAG}\`: the comparison could not run (exit ${rc}), so the relative checks were skipped." >> "$md"
+            fi
+          else
+            echo "Compared with: nothing. No earlier release carries a comparable gate report (the first gated release), so the relative checks were skipped." >> "$md"
+          fi
+          # GitHub's markdown drops anything shaped like an HTML tag, and the
+          # scrubber's placeholders (<room>, <key>) are shaped like one.
+          sed -E 's/<([A-Za-z][A-Za-z0-9_-]*)>/\&lt;\1\&gt;/g' "$md" > gate/gate-report.md
+          echo "regression=${regression}" >> "$GITHUB_OUTPUT"
+
+      # Nothing reaches the summary, an artifact or a release before this.
+      - name: Leak check
+        id: leak
+        if: ${{ !cancelled() }}
+        run: python3 olcbox/scripts/gate-scrub.py --check-only gate
+
+      - name: Summary
+        if: ${{ !cancelled() && steps.leak.outcome == 'success' }}
+        run: |
+          if [ -f gate/gate-report.md ]; then
+            cat gate/gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No gate report was written; the Decide step says why." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the gate's report
+        id: upload
+        if: ${{ !cancelled() && steps.leak.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Ghostlane-gate-report
+          path: |
+            gate/gate-report.json
+            gate/gate-report.md
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Decide
+        if: ${{ !cancelled() }}
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+          SUITE_RESULT: ${{ needs.suite.result }}
+          REGRESSION: ${{ steps.md.outputs.regression }}
+          SKIPPED_OUTCOME: ${{ steps.skipped.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          MD_OUTCOME: ${{ steps.md.outcome }}
+          LEAK_OUTCOME: ${{ steps.leak.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          steps=(--step "leak check=${LEAK_OUTCOME}" --step "upload=${UPLOAD_OUTCOME}")
+          if [ "$SKIP" = true ]; then
+            steps+=(--step "skipped report=${SKIPPED_OUTCOME}")
+          else
+            steps+=(--step "merge=${MERGE_OUTCOME}" --step "markdown=${MD_OUTCOME}")
+          fi
+          python3 olcbox/scripts/gate-merge-reports.py decide --report gate/gate-report.json \
+            --skip "$SKIP" --unit-result "$UNIT_RESULT" --suite-result "$SUITE_RESULT" \
+            --regression "${REGRESSION:-false}" --severity "$SEVERITY" "${steps[@]}"

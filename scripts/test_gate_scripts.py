@@ -879,5 +879,28 @@ class PreviousReport(unittest.TestCase):
         self.assertEqual((0, "previous_tag="), (r.returncode, r.stdout.strip()))
 
 
+class Wiring(unittest.TestCase):
+    """What the workflows promise, read off their text."""
+
+    workflows = REPO / ".github" / "workflows"
+    OWNER = {"GATE_TELEMOST_ROOMS": "telemost", "GATE_WBSTREAM_ROOMS": "wbstream",
+             "GATE_WBSTREAM_TOKEN": "wbstream", "GATE_JITSI_HOSTS": "jitsi"}
+    ENGINE_NAMES = r"-olcrtc\.gate|OLCRTC_GATE_|olcrtc_lean|cmd/gate-report"
+
+    def read(self, name):
+        return (self.workflows / name).read_text()
+
+    def test_gate_hands_a_secret_only_to_its_own_providers_leg(self):
+        uses = [line.strip() for line in self.read("gate.yml").splitlines() if "secrets." in line]
+        self.assertTrue(uses)
+        for line in uses:
+            m = re.fullmatch(r"(GATE_[A-Z_]+): \$\{\{ matrix\.provider == '([a-z]+)' && secrets\.(GATE_[A-Z_]+) \|\| '' \}\}", line)
+            self.assertIsNotNone(m, line)
+            self.assertEqual(m.group(1), m.group(3), line)
+            self.assertEqual(self.OWNER[m.group(1)], m.group(2), line)
+
+    def test_gate_leaves_the_engine_names_to_gate_run_sh(self):
+        self.assertNotRegex(self.read("gate.yml"), self.ENGINE_NAMES)
+
 if __name__ == "__main__":
     unittest.main()
