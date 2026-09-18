@@ -15,6 +15,11 @@
 # Sourced by build-cores-ios.sh and fetch-cores-ios.sh. Bump a version here and
 # the cache key, the release tag and the lookup all move together.
 #
+# Two of the pins now reach past the Cores: OLCRTC_VERSION is the engine of every
+# platform and GO_VERSION the toolchain every build checks itself against.
+# scripts/olcrtc-pin.sh reads them, with both variables unset first so an
+# inherited value cannot win, for release.yml, pr-checks.yml and the release gate.
+#
 # The workflow keeps its own copy in `env:` because a job-level cache key cannot
 # be computed from a sourced shell file; it checks itself against this one.
 
@@ -26,7 +31,8 @@
 # nothing else about the two differed: same three pins, byte-identical headers.
 # Exact rather than a floor, for the same reason the modules are: the bind is a
 # 20-minute step on a 10x runner and a "works on 1.26.x" claim is only as good
-# as the x it was checked on.
+# as the x it was checked on. release.yml carries a copy in its env; its
+# release_version job fails when the copy and this line disagree.
 GO_VERSION="${GO_VERSION:-1.26.5}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.14}"
 LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
@@ -148,6 +154,25 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # session, the rest are refused at once, and a reconnect waits for a route
 # (one socket the pin accepts) before it opens a hundred — the network-loss
 # death of olcbox#37. No API change.
+#
+# Since the release gate (docs/release-gate.md) this line is the engine of every
+# platform, not the Cores' alone. release_version resolves it to the full commit
+# (scripts/olcrtc-pin.sh: the 12-hex tail must exist in romanpodpriatov/olcrtc
+# and the time in the pseudo-version must be that commit's), the gate tests that
+# commit, and then Windows, macOS, Linux, Android and the iOS app's OlcRtcMobile
+# check it out while the extension's Cores fetch it through the module proxy.
+# Android and the desktop used to follow the tip of `proofkit` instead, so an
+# engine fix now reaches users only through a re-pin, in this order:
+#   1. dispatch "Release gate" (gate.yml) with engine_ref=<the candidate commit>;
+#   2. green: set this to v0.0.0-<commit time, UTC, yyyymmddhhmmss>-<first 12
+#      hex>, bump CORES_BUILD below, and copy the value into
+#      .github/workflows/ios-frameworks.yml's env;
+#   3. run "iOS Frameworks" so the Cores for the new CORES_TAG exist;
+#   4. push (the push runs the gate against the new pin), then release.
+# The pin must carry internal/gate. aaffe1e05c3b predates it and the gate refuses
+# it, so until the next re-pin a release passes only with gate: skip. Pin commits
+# on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
+# it then fails.
 OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260916015604-aaffe1e05c3b}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
