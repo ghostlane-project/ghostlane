@@ -165,12 +165,14 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 | S4 | quiet after load | 60 s idle after S3 | the conference alive (no `conference end` logged), no `missed pong`, no `client reconnect`; one 1 KB pull succeeds at the end (olcbox#25) |
 | S5 | resolver burst | 64 concurrent port-53 queries through the tunnel, twice | ≥ 63/64 answered each time within 5 s (the stream path, aac553b8) |
 | S6 | late server bridge | Jitsi only, local only: server bridge delayed 3 s, then 8 s (olcbox#22) | the client ready, timed from its start, within the delay plus 15 s in both (18 s, then 23 s) |
-| S7 | phone memory | sampler over S2–S4 with the mobile flavour | peak live heap ≤ 16 MB; peak RSS ≤ 45 MB; goroutines 60 s after load ≤ idle baseline + 20 (olcbox#24, #26) |
+| S7 | phone memory | sampler over S2–S4 with the mobile flavour, from a baseline taken after a GC just before the client starts | heap growth ≤ 12.5 MiB and RSS growth ≤ 19 MiB over that baseline (the 16 MiB / 45 MiB phone bounds less what a client-only lean process holds before its client starts, measured 3.5 / 26 MiB); goroutines 60 s after load ≤ idle baseline + 20 (olcbox#24, #26) |
 
 Plan per target: Local: providers {jitsi, telemost, wbstream} x transports
-{datachannel, videochannel, seichannel, vp8channel}, less the pairs a provider does
-not carry (Telemost carries vp8channel and videochannel, WB Stream all but
-datachannel), x flavours {cli, mobile} for S0; S1-S5 and S7 for {jitsi/datachannel,
+{datachannel, seichannel, vp8channel}, less the pairs a provider does not carry
+(Telemost carries vp8channel and videochannel, WB Stream all but datachannel), x
+flavours {cli, mobile} for S0. videochannel runs only when named with
+`-olcrtc.gate-transports`: it moves about 7.5 KiB/s, so S0's 5 MB transfers can
+never pass on it, and the phone build does not link it; S1-S5 and S7 for {jitsi/datachannel,
 telemost/vp8channel, wbstream/vp8channel} with the mobile flavour; S6 for
 jitsi/datachannel with both flavours. Link (DE): the mobile flavour, S0-S5 and S7.
 One flavour runs per process, cli in a default build and mobile in the lean one
@@ -193,7 +195,10 @@ one nginx `location /gate/`, cached by Cloudflare; `/gate/kb` is its 1 KB neighb
 
 ```go
 var Local = Thresholds{ConnectP95: 5s, ThroughputDown: 2 Mbit/s, ThroughputUp: 2 Mbit/s,
-    HeapPeak: 16 MiB, RSSPeak: 45 MiB, GoroutineGrowth: 20, ResolverAnswered: 63}
+    HeapGrowth: 12.5 MiB, RSSGrowth: 19 MiB, GoroutineGrowth: 20, ResolverAnswered: 63}
+// S7 judges growth over a baseline taken after a GC just before the client starts:
+// the absolute 16 MiB / 45 MiB phone bounds weighed the test binary's own pages
+// (28 MiB of file-backed RSS on Linux) and whatever earlier pairs left behind.
 var Link  = Thresholds{ConnectP95: 5s, ThroughputDown: 0.8 Mbit/s, ThroughputUp: 1.5 Mbit/s, /* rest as Local */}
 ```
 
