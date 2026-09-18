@@ -541,6 +541,15 @@ class Run(unittest.TestCase):
         self.assertIn("`jitsi/cli`: 1 planned; report: 1 passed, 0 failed of 1, 1 ran", r.stdout)
         self.assertIn("`jitsi/mobile`: no plan; no report", r.stdout)
 
+    def test_the_summary_says_how_many_failures_are_known(self):
+        mobile = self.leg / "jitsi" / "mobile"
+        mobile.mkdir(parents=True)
+        (mobile / "gate-report.json").write_text(json.dumps(
+            {"planned": 25, "executed": 25, "passed": 22, "failed": 3, "failed_known": 2}))
+        r = self.gate_run("summary", str(self.leg / "jitsi"))
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("`jitsi/mobile`: no plan; report: 22 passed, 3 failed (2 known) of 25, 25 ran", r.stdout)
+
     def test_compare_needs_both_reports_and_puts_the_severity_before_them(self):
         prev, cur = self.box.root / "prev.json", self.box.root / "cur.json"
         cur.write_text("{}")
@@ -650,13 +659,22 @@ class Scrub(unittest.TestCase):
         self.assertEqual({}, table)
 
 
-def cell(provider, client, transport, scenario, status="pass"):
-    return {
+# Issues of the engine's known list, as its report names them.
+ISSUE9 = "https://github.com/romanpodpriatov/olcrtc/issues/9"
+ISSUE11 = "https://github.com/romanpodpriatov/olcrtc/issues/11"
+ISSUE15 = "https://github.com/romanpodpriatov/olcrtc/issues/15"
+
+
+def cell(provider, client, transport, scenario, status="pass", known=None):
+    c = {
         "id": f"engine-linux/{provider}/{transport}/{client}/{scenario}", "platform": "engine-linux",
         "provider": provider, "transport": transport, "client": client, "scenario": scenario, "status": status,
         "metrics": {}, "thresholds": {}, "failures": [] if status == "pass" else ["something failed"],
         "duration_s": 1,
     }
+    if known is not None:
+        c["known"] = known
+    return c
 
 
 def report(cells, executed=None, commit=PIN_SHA, target="local", started="2026-01-02T03:04:05Z", duration=100):
@@ -665,7 +683,7 @@ def report(cells, executed=None, commit=PIN_SHA, target="local", started="2026-0
         "schema": 1, "engine_commit": commit, "engine_ref": PIN_VERSION, "app_version": "1.0.999", "target": target,
         "runner": "Linux/fake", "started_at": started, "duration_s": duration, "planned": len(cells),
         "executed": len(cells) if executed is None else executed, "passed": passed, "failed": len(cells) - passed,
-        "cells": cells,
+        "failed_known": sum(1 for c in cells if c["status"] != "pass" and c.get("known")), "cells": cells,
     }
 
 
@@ -796,6 +814,76 @@ class Merge(unittest.TestCase):
         rep = self.merged(providers="jitsi")
         self.assertIn("rejected (it is not JSON)", self.by_id(rep)["engine-linux/jitsi/datachannel/cli/S0"]["failures"][0])
 
+    def decided(self, rep):
+        path = self.root / "decide.json"
+        path.write_text(json.dumps(rep))
+        buf = StringIO()
+        with redirect_stdout(buf):
+            code = merge.main(["decide", "--report", str(path), "--unit-result", "success",
+                               "--suite-result", "success", "--step", "merge=success"])
+        return code, buf.getvalue()
+
+    def test_known_failures_are_kept_counted_per_leg_and_summed_and_fail_no_verdict(self):
+        cli = [cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9), cell("jitsi", "cli", "datachannel", "S0")]
+        mobile = [cell("jitsi", "mobile", "seichannel", "S0", known=ISSUE9),
+                  cell("jitsi", "mobile", "datachannel", "S2", "fail", known=ISSUE15),
+                  cell("jitsi", "mobile", "datachannel", "S0")]
+        self.part("jitsi", "cli", [c["id"] for c in cli], report(cli))
+        self.part("jitsi", "mobile", [c["id"] for c in mobile], report(mobile))
+        self.full_leg("telemost", "vp8channel")
+        rep = self.merged(providers="jitsi,telemost")
+        known = {f"{leg['provider']}/{leg['client']}": leg["failed_known"] for leg in rep["legs"]}
+        self.assertEqual({"jitsi/cli": 1, "jitsi/mobile": 1, "telemost/cli": 0, "telemost/mobile": 0}, known)
+        self.assertEqual((8, 2, 2), (rep["planned"], rep["failed"], rep["failed_known"]))
+        self.assertEqual(rep["failed_known"], sum(known.values()))
+        cells = self.by_id(rep)
+        self.assertEqual(ISSUE15, cells["engine-linux/jitsi/datachannel/mobile/S2"]["known"])
+        self.assertEqual(ISSUE9, cells["engine-linux/jitsi/seichannel/mobile/S0"]["known"], "a known cell that passed")
+        self.assertNotIn("known", cells["engine-linux/jitsi/datachannel/cli/S0"])
+        code, out = self.decided(rep)
+        self.assertEqual(0, code, out)
+        self.assertIn("the gate passed (2 known failure(s), tracked by issues)", out)
+
+    def test_a_failure_off_the_known_list_still_fails_the_verdict(self):
+        cli = [cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9), cell("jitsi", "cli", "datachannel", "S0", "fail")]
+        mobile = [cell("jitsi", "mobile", "datachannel", "S2", "fail", known=ISSUE15)]
+        self.part("jitsi", "cli", [c["id"] for c in cli], report(cli))
+        self.part("jitsi", "mobile", [c["id"] for c in mobile], report(mobile))
+        rep = self.merged(providers="jitsi")
+        self.assertEqual((3, 2), (rep["failed"], rep["failed_known"]))
+        code, out = self.decided(rep)
+        self.assertEqual(1, code)
+        self.assertIn("::error title=Release gate::3 of 3 cells failed (2 known, tracked by issues)", out)
+
+    def test_a_cell_the_merge_fails_is_never_known(self):
+        # Both lost cells are on the engine's list (jitsi/datachannel/*/S6 and
+        # jitsi/datachannel/mobile/S2), and the mobile report marks its other
+        # cell known; but the cli run wrote no report and the mobile report
+        # lost S2, so the merge fails both as not run, and never as known.
+        self.part("jitsi", "cli", ["engine-linux/jitsi/datachannel/cli/S6"])
+        kept = cell("jitsi", "mobile", "datachannel", "S5", "fail", known=ISSUE11)
+        self.part("jitsi", "mobile", [kept["id"], "engine-linux/jitsi/datachannel/mobile/S2"], report([kept]))
+        rep = self.merged(providers="jitsi")
+        cells = self.by_id(rep)
+        for cell_id in ("engine-linux/jitsi/datachannel/cli/S6", "engine-linux/jitsi/datachannel/mobile/S2"):
+            self.assertTrue(cells[cell_id]["failures"][0].startswith("did not run"), cells[cell_id])
+            self.assertNotIn("known", cells[cell_id])
+        self.assertEqual((3, 1), (rep["failed"], rep["failed_known"]))
+        self.assertEqual([0, 1], [leg["failed_known"] for leg in rep["legs"]])
+        code, out = self.decided(rep)
+        self.assertEqual(1, code)
+        self.assertIn("3 of 3 cells failed (1 known, tracked by issues)", out)
+        self.assertIn("2 of 3 planned cells did not run", out)
+
+    def test_a_known_issue_that_is_not_text_rejects_the_report(self):
+        c = cell("jitsi", "cli", "datachannel", "S0", "fail", known=9)
+        self.part("jitsi", "cli", [c["id"]], report([c]))
+        rep = self.merged(providers="jitsi")
+        leg = rep["legs"][0]
+        self.assertEqual(("rejected", "a cell's known issue is not text"), (leg["report"], leg["reason"]))
+        self.assertNotIn("known", self.by_id(rep)[c["id"]])
+        self.assertEqual(0, rep["failed_known"])
+
     def test_the_skipped_stub_says_why_and_is_no_baseline(self):
         out_json, out_md = self.root / "s.json", self.root / "s.md"
         with redirect_stdout(StringIO()):
@@ -827,6 +915,21 @@ class Merge(unittest.TestCase):
         self.assertIn("which is 3 commit(s) ahead", text)
 
 
+    def test_the_header_counts_known_failures_in_the_failed_column(self):
+        cli = [cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9), cell("jitsi", "cli", "datachannel", "S0")]
+        self.part("jitsi", "cli", [c["id"] for c in cli], report(cli))
+        self.part("jitsi", "mobile", ["engine-linux/jitsi/datachannel/mobile/S0"],
+                  report([cell("jitsi", "mobile", "datachannel", "S0", "fail")]))
+        path = self.root / "m.json"
+        path.write_text(json.dumps(self.merged(providers="jitsi")))
+        buf = StringIO()
+        with redirect_stdout(buf):
+            merge.main(["header", "--report", str(path)])
+        text = buf.getvalue()
+        self.assertIn("| `jitsi/cli` | default | 2 | present | 1 | 1 (1 known) |", text)
+        self.assertIn("| `jitsi/mobile` | lean | 1 | present | 0 | 1 |", text)
+
+
 class Decide(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -855,6 +958,29 @@ class Decide(unittest.TestCase):
         r = self.decide(rep, "--regression", "true", "--severity", "fail")
         self.assertEqual(1, r.returncode)
         self.assertIn("regression", r.stdout)
+
+    def test_known_failures_alone_do_not_fail_the_gate(self):
+        rep = report([cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9),
+                      cell("jitsi", "mobile", "datachannel", "S2", "fail", known=ISSUE15),
+                      cell("jitsi", "cli", "datachannel", "S0")])
+        r = self.decide(rep)
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("the gate passed (2 known failure(s), tracked by issues)", r.stdout)
+
+    def test_an_unknown_failure_fails_the_gate_and_says_how_many_are_known(self):
+        rep = report([cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9),
+                      cell("jitsi", "mobile", "datachannel", "S2", "fail", known=ISSUE15),
+                      cell("jitsi", "mobile", "datachannel", "S3", "fail"), cell("jitsi", "cli", "datachannel", "S0")])
+        r = self.decide(rep)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("3 of 4 cells failed (2 known, tracked by issues)", r.stdout)
+
+    def test_a_report_without_the_known_count_reads_every_failure_as_one(self):
+        rep = report([cell("jitsi", "cli", "seichannel", "S0", "fail", known=ISSUE9)])
+        del rep["failed_known"]
+        r = self.decide(rep)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("::error title=Release gate::1 of 1 cells failed\n", r.stdout)
 
     def test_nothing_planned_is_not_a_pass(self):
         self.assertEqual(1, self.decide(report([])).returncode)

@@ -18,7 +18,15 @@ processes the way the engine holds it within one (spec section 11).
 
 A report is rejected, and its flavour's planned cells fail, when its schema is
 not 1, when it names another engine commit, when its target is not local, or
-when a cell in it is repeated or belongs to another leg or flavour.
+when a cell in it is repeated, belongs to another leg or flavour, or names its
+known issue as anything but text.
+
+Known failures: the engine marks a cell on its known list (internal/gate/known.go,
+a bug an open issue tracks) with `known`, the issue's URL. merge keeps it and
+counts the failed cells that carry one in `failed_known`, per leg and in all;
+`failed` still counts every failed cell. decide fails only on failures that
+are not known. A cell merge fails itself ("did not run: ...") never carries
+`known`, whatever its id: the engine's docs/gate.md, "Known failures".
 
 Invoked through gate-run.sh merge, which supplies the report's file name (the
 engine's name for it lives there and only there). Standard library only.
@@ -112,10 +120,22 @@ def reject_reason(report, provider, client, expect_commit):
             return "a cell belongs to another leg or flavour"
         if cell.get("status") not in ("pass", "fail"):
             return "a cell ended neither pass nor fail"
+        if not isinstance(cell.get("known", ""), str):
+            return "a cell's known issue is not text"
     for key in ("planned", "executed", "passed", "failed"):
         if not isinstance(report.get(key), int):
             return f"no {key} count"
     return None
+
+
+def failed_known(cells):
+    """The failed cells a known issue tracks: they fail no gate."""
+    return sum(1 for c in cells if c.get("status") != "pass" and c.get("known"))
+
+
+def failed_text(failed, known):
+    """A failed count as the tables show it: 3, or 3 (2 known)."""
+    return f"{failed} ({known} known)" if known else f"{failed}"
 
 
 def merge(args):
@@ -191,6 +211,7 @@ def merge(args):
             "planned": len(own),
             "passed": sum(1 for c in own if c.get("status") == "pass"),
             "failed": sum(1 for c in own if c.get("status") != "pass"),
+            "failed_known": failed_known(own),
         })
 
     ordered = [cells[k] for k in sorted(cells)]
@@ -210,11 +231,13 @@ def merge(args):
         "executed": executed,
         "passed": passed,
         "failed": len(ordered) - passed,
+        "failed_known": failed_known(ordered),
         "legs": legs,
         "cells": ordered,
     }
     Path(args.out).write_text(json.dumps(merged, indent=2) + "\n")
-    print(f"merged {len(legs)} leg flavour(s): {merged['planned']} cells, {merged['failed']} failed, "
+    print(f"merged {len(legs)} leg flavour(s): {merged['planned']} cells, "
+          f"{failed_text(merged['failed'], merged['failed_known'])} failed, "
           f"{merged['planned'] - merged['executed']} did not run")
     return 0
 
@@ -249,7 +272,8 @@ def header(args):
             state += f" ({leg['reason']})"
         lines.append(
             f"| `{md(leg.get('provider', ''))}/{md(leg.get('client', ''))}` | {md(leg.get('build', ''))} | "
-            f"{leg.get('planned', 0)} | {md(state)} | {leg.get('passed', 0)} | {leg.get('failed', 0)} |"
+            f"{leg.get('planned', 0)} | {md(state)} | {leg.get('passed', 0)} | "
+            f"{failed_text(leg.get('failed', 0), leg.get('failed_known', 0))} |"
         )
     lines += [
         "",
@@ -316,10 +340,14 @@ def decide(args):
             planned = int(report.get("planned") or 0)
             executed = int(report.get("executed") or 0)
             failed = int(report.get("failed") or 0)
+            # Known failures fail no gate; a report without the count, an
+            # older engine's, reads every failure as one.
+            known = int(report.get("failed_known") or 0)
             if planned == 0:
                 reasons.append("the gate planned no cells")
-            if failed:
-                reasons.append(f"{failed} of {planned} cells failed")
+            if failed - known > 0:
+                reasons.append(f"{failed} of {planned} cells failed"
+                               + (f" ({known} known, tracked by issues)" if known else ""))
             if executed < planned:
                 reasons.append(f"{planned - executed} of {planned} planned cells did not run")
         if args.regression == "true" and args.severity == "fail":
@@ -328,7 +356,11 @@ def decide(args):
         for reason in reasons:
             print(f"::error title=Release gate::{reason}")
         return 1
-    print("the gate was skipped by request" if args.skip == "true" else "the gate passed")
+    if args.skip == "true":
+        print("the gate was skipped by request")
+    else:
+        known = int(report.get("failed_known") or 0)
+        print("the gate passed" + (f" ({known} known failure(s), tracked by issues)" if known else ""))
     return 0
 
 
