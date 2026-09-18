@@ -155,6 +155,13 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # (one socket the pin accepts) before it opens a hundred — the network-loss
 # death of olcbox#37. No API change.
 #
+# aaffe1e05c3b -> 653bb167b496 (2026-09-18): Jitsi fetches config.js like a
+# browser and falls back to meet.jitsi on host-unknown (ghostlane#22: a docker
+# Jitsi whose config.js did not load refused the XMPP stream); LiveKit, which
+# serves WB Stream, joins on a 25 s budget instead of the SDK's 5 s (ghostlane#38:
+# WB Stream on cellular); and the release gate (internal/gate), which the app's
+# gate needs in the pinned engine. No API change.
+#
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
 # (scripts/olcrtc-pin.sh: the 12-hex tail must exist in romanpodpriatov/olcrtc
@@ -173,7 +180,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260916015604-aaffe1e05c3b}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260918215248-653bb167b496}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -223,7 +230,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260916015604-aaffe1e05c3b}"
 # which the extension now calls on every start.
 #
 # 24 → 25: the engine pin above (aaffe1e05c3b), olcbox#37; same API.
-CORES_BUILD="${CORES_BUILD:-25}"
+# 25 → 26: the engine pin above (653bb167b496): the Jitsi config.js fallback, the
+# LiveKit join budget and the release gate; same API.
+CORES_BUILD="${CORES_BUILD:-26}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
