@@ -528,6 +528,19 @@ class Run(unittest.TestCase):
         self.assertIn("`jitsi/cli`: 1 planned; report: 1 passed, 0 failed of 1, 1 ran", r.stdout)
         self.assertIn("`jitsi/mobile`: no plan; no report", r.stdout)
 
+    def test_compare_needs_both_reports_and_puts_the_severity_before_them(self):
+        prev, cur = self.box.root / "prev.json", self.box.root / "cur.json"
+        cur.write_text("{}")
+        r = self.gate_run("compare", "warn", str(prev), str(cur))
+        self.assertEqual(1, r.returncode)
+        self.assertIn("compare needs two report files", r.stderr)
+        self.assertEqual([], self.box.go_calls())
+        prev.write_text("{}")
+        r = self.gate_run("compare", "fail", str(prev), str(cur))
+        self.assertEqual(0, r.returncode, r.stderr)
+        (call,) = self.box.go_calls()
+        self.assertEqual(["run", "./cmd/gate-report", "compare", "-severity", "fail", str(prev), str(cur)], call["argv"])
+
     def test_the_unit_tests_run_race_under_the_asked_build(self):
         self.assertEqual(0, self.gate_run("unit", "lean").returncode)
         self.assertEqual(0, self.gate_run("unit", "default").returncode)
