@@ -145,7 +145,7 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 
 | ID | Name | What it does | Pass |
 |---|---|---|---|
-| S0 | connect | connect, 5 MB pull, 5 MB push, close | both transfers complete; handshake ≤ 15 s; `session … opened` on both sides (local) |
+| S0 | connect | connect, 10 MB pull, 5 MB push, close | both transfers complete; handshake ≤ 15 s; `session … opened` on both sides (local) |
 | S1 | idle burst | 24 concurrent connects to a 1 KB resource, then 24 sequential | 100 % succeed; p95 connect ≤ 5 s |
 | S2 | download saturation | 6 parallel 10 MB pulls; every 5 s a 1 KB connect on top (olcbox#23) | all 200; on-top connects 100 %, p95 ≤ 5 s; aggregate throughput ≥ floor |
 | S3 | upload saturation | 4 parallel 5 MB pushes; connects on top as in S2 (olcbox#15) | as S2 |
@@ -164,7 +164,7 @@ sequence; the local plan fits in about ten minutes, the link plan in eight.
 ### 5. Load endpoints
 
 Local target: an HTTP origin inside the test process (random port on loopback)
-serving `/kb`, `/60mb` and `/sink` (`POST`, counts bytes); the server reaches it as
+serving `/kb`, `/big` (10 MB, `-olcrtc.gate-big-mb`) and `/sink` (`POST`, counts bytes); the server reaches it as
 the client's exit. Link target: the fleet server cannot reach the runner, so pulls
 come from `https://proofkit.org/gate/10mb.bin` (a static file on both APP servers,
 one nginx `location /gate/`, cached by Cloudflare; `/gate/kb` is its 1 KB neighbour) and pushes go to
