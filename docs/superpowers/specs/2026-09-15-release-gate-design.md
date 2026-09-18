@@ -106,15 +106,26 @@ cell failed.
 
 **Local.** The suite builds `cmd/olcrtc` with `-tags olcrtc_testhooks` and starts it
 as a child process in `mode: srv` for each (provider, transport) pair, with a fresh
-64-hex key and `debug: true`; its log is an artifact. Rooms: Jitsi — a random name
-on an instance from `docs/jitsi.instances.yaml`, checked with one HTTPS request
-first, the next instance on failure; Telemost and WB Stream — no provider in this
-fork can create rooms (`auth.RoomCreators()` is empty), so each has a pool of
-pre-made rooms passed as flags from secrets, and a run takes `pool[run_number mod
-len]`. The workflow's `concurrency` group keeps two gates from sharing a room; a
-different key per run keeps a leftover from a cancelled run from ever
-handshaking. The server process is separate from the test process so the memory
-sampler reads the client alone.
+64-hex key, a fresh channel id (`gate-<12 hex>`) and `debug: true`; its YAML and raw
+log stay in a private directory, and a scrubbed copy of the log is an artifact.
+Jitsi rooms get a random name on an instance from `docs/jitsi.instances.yaml`, or
+from the optional host list in secret `GATE_JITSI_HOSTS`, checked with one HTTPS
+request first, the next instance on failure. For Telemost and WB Stream no provider
+in this fork can create rooms (`auth.RoomCreators()` is empty), so each has a pool
+of pre-made rooms from the secrets `GATE_TELEMOST_ROOMS` and `GATE_WBSTREAM_ROOMS`,
+handed to the suite in the environment (never argv), and a run takes
+`pool[run_number mod len]`. Entries are separated by commas or line breaks. A
+Telemost entry is a bare id, joined as `https://telemost.yandex.ru/j/<id>`, or a
+room URL, taken as it is; a WB Stream entry is a bare id or a room URL
+(`https://stream.wb.ru/room/<id>`), cut to its last path segment, because the
+provider escapes what it gets into one segment. WB refuses a guest as the first
+participant of an idle room, so the local server signs in with the account token
+in secret `GATE_WBSTREAM_TOKEN`; the client stays a guest, as the app is. The
+workflow's `concurrency` group keeps two gates of one repository from sharing a
+room, and the channel id keeps runs of two repositories in one room from reading
+each other's frames; a different key per run keeps a leftover from a cancelled
+run from ever handshaking. The server process is separate from the test process
+so the memory sampler reads the client alone.
 
 **Link.** An `olcrtc://` link, parsed by `internal/link` (the same grammar the app
 imports), pointing at a fleet node. Only the client runs; the server is the fleet's.
@@ -154,12 +165,16 @@ user would call "the tunnel works". Each scenario records its metrics into the c
 | S6 | late server bridge | Jitsi only, local only: server bridge delayed 3 s, then 8 s (olcbox#22) | handshake completes within 15 s in both |
 | S7 | phone memory | sampler over S2–S4 with the mobile flavour | peak live heap ≤ 16 MB; peak RSS ≤ 45 MB; goroutines 60 s after load ≤ idle baseline + 20 (olcbox#24, #26) |
 
-Plan per target: Local — providers {jitsi, telemost, wbstream} × transports
-{datachannel, vp8channel, seichannel} × flavours {cli, mobile} for S0; S1–S5 and S7
-for {jitsi/datachannel, telemost/vp8channel, wbstream/vp8channel} with the mobile
-flavour; S6 for jitsi/datachannel with both flavours. Link (DE) — the mobile
-flavour, S0–S5 and S7. Providers run in parallel, transports and scenarios in
-sequence; the local plan fits in about ten minutes, the link plan in eight.
+Plan per target: Local: providers {jitsi, telemost, wbstream} x transports
+{datachannel, videochannel, seichannel, vp8channel}, less the pairs a provider does
+not carry (Telemost carries vp8channel and videochannel, WB Stream all but
+datachannel), x flavours {cli, mobile} for S0; S1-S5 and S7 for {jitsi/datachannel,
+telemost/vp8channel, wbstream/vp8channel} with the mobile flavour; S6 for
+jitsi/datachannel with both flavours. Link (DE): the mobile flavour, S0-S5 and S7.
+One flavour runs per process, cli in a default build and mobile in the lean one
+(which links no videochannel), so the phone's memory settings never weigh a cli
+cell. Providers, transports and scenarios run in sequence, so a captured log line
+belongs to one cell; CI gives the cli run 25 minutes and the mobile run 45.
 
 ### 5. Load endpoints
 
@@ -211,11 +226,18 @@ severity. Unit tests cover the parser, the threshold evaluator, render and compa
 **Engine `ci.yml`.** (a) Hygiene goes green: `go mod tidy` drops the 198 stale
 `go.sum` lines. (b) The unit-test job runs twice, default and `-tags olcrtc_lean`;
 the lean run is what would have caught the wbstream regression
-(`internal/engine/builtin/registry_test.go`). (c) A `gate-local` job replaces the
-"Real E2E" job (a dry-run step prints the plan first): it runs the suite against the local target for both flavours, with
-the room pools from repository secrets `GATE_TELEMOST_ROOMS` and `GATE_WBSTREAM_ROOMS`,
-uploads `gate-report.json` and the server logs as artifacts, writes the table to
-the job summary, `concurrency: gate-${{ github.ref }}`.
+(`internal/engine/builtin/registry_test.go`). (c) A `gate-plan` job prints the plan
+of both builds first (the dry run): it needs no secret, so it runs for a fork's pull
+request too, and it fails when a build plans no cell or a cell of the other
+flavour. A `gate-local` job, which needs it, replaces the "Real E2E" job: it runs
+the suite against the local target, the cli flavour in the default build and then
+the mobile flavour in the lean build, with the repository secrets
+`GATE_TELEMOST_ROOMS`, `GATE_WBSTREAM_ROOMS` and `GATE_WBSTREAM_TOKEN` (required: a
+missing one fails the job by name) and `GATE_JITSI_HOSTS` (optional), every entry
+masked first and handed to `go test` through step `env` as `OLCRTC_GATE_*`, never
+argv; it uploads `gate-report.json`, the scrubbed logs and the samples as
+artifacts, writes the tables to the job summary, `concurrency: gate-${{ github.ref }}`.
+A fork's pull request gets no secrets, so of the two it runs `gate-plan` only.
 
 **App `release.yml`.** A `gate` job after `release_version` that every `build-*` job
 `needs`:
@@ -280,9 +302,10 @@ never reach git, the report, the release or the job log:
 - Load scenarios are not retried: a flake under load is a finding, and the report
   shows the metric that missed so a human can judge.
 - Artifacts on every run: the report, server logs per pair, client logs per cell,
-  sampler CSV (`t,heap,rss,goroutines`) for S7 cells.
-- Budget: `timeout-minutes: 30` on the job; a cell has its own deadline (S2/S3
-  5 min, others 2 min) so one stuck cell cannot eat the run.
+  sampler CSV (`t_ms,heap_inuse,rss,goroutines`) for S7 cells.
+- Budget: `timeout-minutes: 85` on the job, `go test -timeout` 25 min for the cli
+  run and 45 for the mobile run; a cell has its own deadline (S2/S3 10 min, others
+  5 min) so one stuck cell cannot eat the run.
 
 ## Testing the gate itself
 
