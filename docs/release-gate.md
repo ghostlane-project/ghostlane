@@ -37,8 +37,9 @@ Each suite leg runs the same steps:
    olcrtc_lean`, which is what Android and iOS ship (`mobile.Runtime` with the
    phone's memory limits). It runs even when the cli flavour was red. The
    phone's memory settings apply to this process only (engine plan A8).
-5. Everything under the leg's directory is scrubbed and then verified clean.
-   Only then is it uploaded.
+5. Everything under `gate-artifacts/`, which holds the leg's directory and is
+   the upload's root, is scrubbed and then verified clean. Only then is it
+   uploaded.
 
 The two flavours of a leg run one after the other in the same room. That is why
 one room per provider is enough.
@@ -75,9 +76,11 @@ engine refuses the plan.
   - `Ghostlane-gate-report` holds the merged report and markdown, with default
     retention. Its name matches `Ghostlane-*`, which is how `publish-nightly`
     picks it up.
-  - `gate-leg-<provider>` holds each flavour's plan, report and scrubbed logs,
-    and the memory samples. It is kept for 14 days and is never a release
-    asset.
+  - `gate-leg-<provider>` holds `<provider>/cli/` and `<provider>/mobile/`:
+    each flavour's plan, report and scrubbed logs, and the memory samples. It
+    is kept for 14 days and is never a release asset. `Verdict` downloads
+    every leg's artifact merged into one directory, so a run with one leg
+    lays out like a run with three.
 
 A cell is `platform/provider/transport/client/scenario`, for example
 `engine-linux/telemost/vp8channel/mobile/S2`. Nothing in a cell name, a report

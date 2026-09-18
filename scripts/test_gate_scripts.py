@@ -652,7 +652,9 @@ class Merge(unittest.TestCase):
         self.tmp.cleanup()
 
     def part(self, provider, client, plan=None, rep=None):
-        d = self.legs / f"gate-leg-{provider}" / client
+        # What the verdict's download makes of the legs' artifacts (gate.yml):
+        # merged into one directory, each under its provider.
+        d = self.legs / provider / client
         d.mkdir(parents=True, exist_ok=True)
         if plan is not None:
             (d / "plan.txt").write_text("".join(f"{line}\n" for line in plan))
@@ -695,6 +697,15 @@ class Merge(unittest.TestCase):
             code = merge.main(["decide", "--report", str(green), "--unit-result", "success",
                                "--suite-result", "success", "--step", "merge=success"])
         self.assertEqual(0, code)
+
+    def test_a_one_provider_run_is_found_like_a_full_one(self):
+        # A manual run for one provider uploads one artifact. Unmerged,
+        # download-artifact would have put it straight into legs/ and this
+        # green leg would have merged as two "never planned" failures.
+        self.full_leg("telemost", "vp8channel")
+        rep = self.merged(providers="telemost")
+        self.assertEqual((3, 3, 3, 0), (rep["planned"], rep["executed"], rep["passed"], rep["failed"]))
+        self.assertEqual(["present", "present"], [leg["report"] for leg in rep["legs"]])
 
     def test_a_missing_leg_becomes_did_not_run_cells(self):
         self.full_leg("jitsi", "datachannel")
@@ -890,6 +901,13 @@ class Wiring(unittest.TestCase):
     def read(self, name):
         return (self.workflows / name).read_text()
 
+    def step(self, workflow, name):
+        """One step's text, up to the next step or job."""
+        text = self.read(workflow)
+        rest = text[text.index(f"- name: {name}\n"):]
+        end = re.search(r"\n(?:      - name: |  [A-Za-z0-9_-]+:\n)", rest)
+        return rest[:end.start()] if end else rest
+
     def test_gate_hands_a_secret_only_to_its_own_providers_leg(self):
         uses = [line.strip() for line in self.read("gate.yml").splitlines() if "secrets." in line]
         self.assertTrue(uses)
@@ -898,6 +916,23 @@ class Wiring(unittest.TestCase):
             self.assertIsNotNone(m, line)
             self.assertEqual(m.group(1), m.group(3), line)
             self.assertEqual(self.OWNER[m.group(1)], m.group(2), line)
+
+    def test_the_verdict_finds_every_leg_in_one_layout_however_many_uploaded(self):
+        # download-artifact extracts a pattern that matches one artifact
+        # straight into its path and several into path/<artifact>/. Merged, with
+        # every artifact rooted at gate-artifacts so it carries its provider's
+        # directory, the merge's legs/<provider>/<client>/ holds for any count.
+        download = self.step("gate.yml", "Download the legs")
+        self.assertIn("pattern: gate-leg-*", download)
+        self.assertIn("merge-multiple: true", download)
+        upload = self.step("gate.yml", "Upload the leg's plans, reports and logs")
+        paths = re.findall(r"^ +(gate-artifacts/\S*)$", upload, re.M)
+        self.assertEqual(4, len(paths), upload)
+        self.assertTrue(all(p.startswith("gate-artifacts/**/") for p in paths), paths)
+        self.assertEqual("{provider}", merge.PART_DIR)
+        # What is uploaded is what was scrubbed: the same root.
+        self.assertIn("GATE_ARTIFACTS: ${{ github.workspace }}/gate-artifacts\n", self.read("gate.yml"))
+        self.assertIn('gate-scrub.py "$GATE_ARTIFACTS"', self.step("gate.yml", "Scrub the leg's artifacts"))
 
     def test_gate_leaves_the_engine_names_to_gate_run_sh(self):
         self.assertNotRegex(self.read("gate.yml"), self.ENGINE_NAMES)

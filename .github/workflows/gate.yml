@@ -210,7 +210,11 @@ jobs:
       GATE_ENGINE_SHA: ${{ needs.resolve.outputs.engine_sha }}
       GATE_ENGINE_VERSION: ${{ needs.resolve.outputs.engine_version }}
       GATE_APP_VERSION: ${{ needs.resolve.outputs.app_version }}
-      # Absolute: go test runs in the package directory.
+      # Absolute: go test runs in the package directory. The leg writes under
+      # its provider's directory only. The scrub and the upload start one level
+      # up, at gate-artifacts, so the artifact carries the provider's directory
+      # (see the upload step).
+      GATE_ARTIFACTS: ${{ github.workspace }}/gate-artifacts
       GATE_LEG_DIR: ${{ github.workspace }}/gate-artifacts/${{ matrix.provider }}
     steps:
       - name: Checkout ghostlane
@@ -286,7 +290,9 @@ jobs:
         run: olcbox/scripts/gate-run.sh run mobile "$GATE_LEG_DIR/mobile"
 
       # The repository is public and so are its artifacts: nothing is uploaded
-      # that this has not scrubbed and then verified clean.
+      # that this has not scrubbed and then verified clean. It takes the
+      # upload's root, not just the leg's directory, so what the upload finds
+      # is exactly what this vouched for.
       - name: Scrub the leg's artifacts
         id: scrub
         if: always()
@@ -295,7 +301,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
-        run: python3 olcbox/scripts/gate-scrub.py "$GATE_LEG_DIR"
+        run: python3 olcbox/scripts/gate-scrub.py "$GATE_ARTIFACTS"
 
       - name: Leg summary
         if: ${{ always() && steps.scrub.outcome == 'success' }}
@@ -306,17 +312,21 @@ jobs:
             olcbox/scripts/gate-run.sh summary "$GATE_LEG_DIR"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Explicit patterns only, and only what the scrub step vouched for.
+      # Explicit patterns only, and only what the scrub step vouched for. They
+      # start at gate-artifacts, not at the leg's directory: an artifact's root
+      # is where its patterns' globs start, so this one holds
+      # <provider>/<client>/..., which is where the verdict's merge looks for a
+      # leg however many legs uploaded ("Download the legs").
       - name: Upload the leg's plans, reports and logs
         if: ${{ always() && steps.scrub.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: gate-leg-${{ matrix.provider }}
           path: |
-            gate-artifacts/${{ matrix.provider }}/**/*.json
-            gate-artifacts/${{ matrix.provider }}/**/*.txt
-            gate-artifacts/${{ matrix.provider }}/**/*.log
-            gate-artifacts/${{ matrix.provider }}/**/*.csv
+            gate-artifacts/**/*.json
+            gate-artifacts/**/*.txt
+            gate-artifacts/**/*.log
+            gate-artifacts/**/*.csv
           if-no-files-found: warn
           retention-days: 14
           # "Re-run failed jobs" uploads again under the same name.
@@ -380,12 +390,19 @@ jobs:
           go-version: ${{ needs.resolve.outputs.go_version }}
           cache-dependency-path: olcrtc/go.sum
 
+      # Merged, always. download-artifact (v5 on) extracts a pattern that
+      # matches one artifact straight into `path` and several into
+      # path/<artifact>/, so a one-provider manual run, or a run where one leg
+      # alone uploaded, would land in another layout than a full run. Each
+      # artifact carries its provider's directory, so merged it is
+      # legs/<provider>/<client>/ whatever the count.
       - name: Download the legs
         if: ${{ !cancelled() && needs.resolve.outputs.skip != 'true' }}
         uses: actions/download-artifact@v8
         with:
           pattern: gate-leg-*
           path: legs
+          merge-multiple: true
 
       # Runs whatever the legs did: a leg that uploaded nothing still owes its
       # cells, and the merge fails them.
