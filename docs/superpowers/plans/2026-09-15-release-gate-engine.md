@@ -1,6 +1,6 @@
 # Release Gate, Plan A: the engine suite — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **AMENDMENTS 2026-09-18 at the very end of this file (section "Amendments 2026-09-18") override the tasks they name - read them before starting any of Tasks 10-16 and before a live run.**
 
 **Goal:** A `go test` suite in the engine (`internal/gate`) that pairs the engine's client with a real relay and a server — a child process it starts, or the fleet's DE node through an `olcrtc://` link — runs the load shapes that broke the tunnel, judges them against thresholds in one file, and writes a report the release compares against the previous one; plus the engine CI running it on every push.
 
@@ -4524,3 +4524,33 @@ git commit -m "docs: how to run the gate and read its report"
 **Placeholders.** None: every step carries its code. Two spots an executor must reconcile rather than invent: `Env` gains `handshake float64` and `Delayed` in Task 4/12 and the tests of Task 13 use the final `RunCell` signature.
 
 **Type consistency.** `DialFunc`, `Endpoint`, `Tunnel`, `Client`, `Target`, `OpenOptions`, `LoadURLs`, `Metrics`, `Cell`, `Report`, `Recorder`, `Thresholds`, `Sampler`, `UDPAssoc`, `CellLog`, `Capture`, `Options` keep the names given in the file structure across Tasks 4–14; metric keys match the list under the file structure.
+
+## Amendments 2026-09-18
+
+Measured live on 2026-09-18 against the real services, before Tasks 10-16 ran. They override the task text where they differ.
+
+**A1. Per-provider transports (Tasks 10, 12, 13).** Not every provider carries every transport; the cross product makes cells that can never pass. The support table, from the engine's own real E2E expectations (`internal/e2e/tunnel_test.go`) and confirmed live:
+
+| Provider | Transports that must work |
+|---|---|
+| jitsi | datachannel, videochannel, seichannel, vp8channel |
+| telemost | vp8channel, videochannel (Telemost drops SCTP; seichannel fails by design) |
+| wbstream | vp8channel, videochannel, seichannel (WB guests cannot publish data, so datachannel is out) |
+
+`LocalTarget.Pairs()` returns, provider by provider in the given order, only the requested transports that provider supports (one table in `internal/gate`, unit-tested; an unsupported combination asked for explicitly is a plan error at startup, not a cell). The default transport list becomes all four (datachannel, videochannel, seichannel, vp8channel) so the gate keeps the coverage of the `real-e2e` job it replaces. S1-S5 and S7 keep the plan's pairs (jitsi/datachannel, telemost/vp8channel, wbstream/vp8channel).
+
+**A2. WB Stream needs an account token on the server side (Tasks 10, 13, 15, 16).** A guest cannot be the first participant of an idle WB room: `connection-details` answers `403 {"code":7,"message":"guests cannot create rooms"}` after a successful guest-register and join. The engine already supports a WB account token (`auth.token` in the server YAML; `SetProviderToken` in `mobile.Runtime`; `ProviderToken` in `pkg/olcrtc/client`). The local target writes `auth: { provider: wbstream, token: <token> }` into the child server's YAML only; the client stays a guest, as the app is. The token comes from the environment variable `OLCRTC_GATE_WBSTREAM_TOKEN` (not a flag, so it never shows in a process list or a `go test -v` line), is added to the scrubber's secret list, and the server YAML is written outside every directory the CI job uploads. If the token is empty, every wbstream cell fails with the reason `wbstream: OLCRTC_GATE_WBSTREAM_TOKEN is not set (WB refuses a guest as the first participant of an idle room)`; it never skips. An auth failure of any provider (403, 404, 401, 429, network) is retried once after 30 s and then fails the cells that needed it, with the provider's answer in the reason.
+
+**A3. Room pool entries (Task 10).** WB takes only the bare room id (the code after `/room/` in `https://stream.wb.ru/room/<id>`); a full URL is path-escaped into one segment and joins 404, so normalise a URL to its last path segment. Telemost: a bare id becomes `https://telemost.yandex.ru/j/<id>`, a URL passes unchanged. Unit-test both with made-up ids.
+
+**A4. A unique channel per pair and run (Tasks 10, 11).** Concurrent runs in the same room (the engine CI and the app's gate share the room secrets) break each other on seichannel and videochannel when their frame token is the room-derived default. Every pair gets a fresh random channel id (e.g. `gate-<12 hex>`): the server YAML sets `room.channel`, the cli client sets `ChannelID`, the mobile client calls `SetChannel`. Keys stay fresh per pair as the plan says.
+
+**A5. Jitsi hosts (Tasks 10, 13, 15).** Optional override list (`-olcrtc.gate-jitsi-hosts`, secret `GATE_JITSI_HOSTS`), used instead of `docs/jitsi.instances.yaml` when non-empty. The host the engine CI has used reliably is `meet.ffmuc.net`, which is not in the instance list.
+
+**A6. Secrets and CI (Task 15).** Repository secrets: `GATE_TELEMOST_ROOMS`, `GATE_WBSTREAM_ROOMS` (comma-separated pools; bare ids or room URLs), `GATE_WBSTREAM_TOKEN` (the WB account access token; exported to the test step as `OLCRTC_GATE_WBSTREAM_TOKEN`), `GATE_JITSI_HOSTS` (optional). The first step masks every pool entry, the token and each Jitsi host with `::add-mask::`. A missing required secret fails the job with a message naming it. Give `go test` an explicit `-timeout` well above the plan's worst case (the default 10 m panics the binary).
+
+**A7. Secrets never in argv (Tasks 13, 15).** Every pool flag and the Jitsi host override also read an environment variable when the flag is empty: `OLCRTC_GATE_TELEMOST_ROOMS`, `OLCRTC_GATE_WBSTREAM_ROOMS`, `OLCRTC_GATE_JITSI_HOSTS` (the WB token is env-only, A2). CI passes all of them through step `env:`, never on the command line, and never pastes `${{ secrets.* }}` into script text.
+
+**A8. One flavour per process (Tasks 13, 15, 16).** The cli flavour runs in a `go test` process built without tags; the mobile flavour in a separate process built with `-tags olcrtc_lean`. The phone settings (`mobile.SetMemoryLimit(40 MiB)`, `debug.SetGCPercent(10)`) are applied only in the mobile process, so cli cells are not measured under the phone's limits. `-olcrtc.gate-clients` selects the flavour; asking for `mobile` in a build without `olcrtc_lean` is a plan error at startup.
+
+**A9. Nothing raw next to the report (Tasks 9, 10, 13).** The child server's YAML (room, key, WB token) and its raw stdout/stderr live in a private work directory that is never uploaded; what goes into `-olcrtc.gate-dir` is the scrubbed copy of each log (the run's rooms, keys, channel ids and token replaced) and the report. `Recorder` scrubs every failure string with the same secret list before it is written, because the report becomes a public release asset. `-olcrtc.gate-dir` is made absolute at startup (a relative path would land under `internal/gate/`, the test's working directory). A test proves a failure string and a server log line carrying the run's own room and key come out clean.
