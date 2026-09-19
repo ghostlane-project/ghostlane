@@ -498,9 +498,27 @@ val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("ve
     requiredPaths.set(requiredHostNativeResourcePaths())
 }
 
+// sing-box and Xray are supplied as pinned release inputs rather than built by
+// Gradle (see the release workflow). Keep their verification separate from the
+// generated olcRTC/TUN resources above: otherwise a local jpackage build can
+// succeed and only report the missing carrier after the user presses Connect.
+// Requiring the exact resource names here makes every runnable desktop package
+// fail during processResources when its two connection cores were not staged.
+val verifyBundledDesktopCores = tasks.register<VerifyNativeResourcesTask>("verifyBundledDesktopCores") {
+    val executableSuffix = if (currentBuildOs.isWindows) ".exe" else ""
+    resourcesDir.set(layout.projectDirectory.dir("src/main/resources"))
+    requiredPaths.set(
+        listOf(
+            "native/sing-box$executableSuffix",
+            "native/xray$executableSuffix"
+        )
+    )
+}
+
 tasks.register("buildDesktopNativeAssets") {
     dependsOn(desktopNativeAssetTasks)
     dependsOn(verifyDesktopNativeResources)
+    dependsOn(verifyBundledDesktopCores)
 }
 
 sourceSets {
@@ -534,6 +552,7 @@ if (currentBuildOs.isWindows) {
 
 tasks.named("processResources") {
     dependsOn(verifyDesktopNativeResources)
+    dependsOn(verifyBundledDesktopCores)
 }
 
 listOf(
