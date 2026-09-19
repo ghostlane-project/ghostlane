@@ -42,14 +42,17 @@ object LinkParser {
     private fun parseVless(s: String): OutboundSpec.Vless? {
         val p = splitLink(s, "vless://") ?: return null
         val type = p.query["type"] ?: "tcp"
-        val transport = if (type == "xhttp") {
-            TransportSpec.Xhttp(
-                path = urlDecode(p.query["path"] ?: "/"),
+        val transport = when (type.lowercase()) {
+            "xhttp" -> TransportSpec.Xhttp(
+                path = p.query["path"] ?: "/",
                 host = p.query["host"] ?: p.query["sni"].orEmpty(),
                 mode = p.query["mode"] ?: "auto",
             )
-        } else {
-            TransportSpec.Tcp
+            "grpc" -> TransportSpec.Grpc(p.query["serviceName"].orEmpty())
+            "tcp", "raw" -> TransportSpec.Tcp
+            // Unknown transports cannot be dialled as TCP: that looks like a
+            // valid imported profile but never speaks the server's protocol.
+            else -> return null
         }
         return OutboundSpec.Vless(
             uuid = p.userinfo,
@@ -59,7 +62,7 @@ object LinkParser {
             publicKey = p.query["pbk"].orEmpty(),
             shortId = p.query["sid"].orEmpty(),
             fingerprint = p.query["fp"] ?: "chrome",
-            flow = if (transport is TransportSpec.Xhttp) null else p.query["flow"]?.takeIf { it.isNotBlank() },
+            flow = if (transport is TransportSpec.Tcp) p.query["flow"]?.takeIf { it.isNotBlank() } else null,
             transport = transport,
             tag = p.tag.ifBlank { p.host },
         )

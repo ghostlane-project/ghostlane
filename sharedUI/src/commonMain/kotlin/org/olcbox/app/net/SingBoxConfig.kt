@@ -25,7 +25,7 @@ import kotlinx.serialization.json.putJsonObject
  * bumps by staying minimal, emitting none of the inbound fields 1.13 removed.
  *
  * The shapes that reach for newer schema are the resolve-over-TCP case and
- * everything [Routing.BypassRussia] adds: a `dns` section in the typed 1.12+
+ * everything [Routing.Rules] adds: a `dns` section in the typed 1.12+
  * format with `rule_set` rules, `route.rule_set` entries of the local binary
  * kind, and `route` rules in the `action` form (`sniff`, `hijack-dns`). Those
  * are the parts to re-check first on the next bump; `SingBoxConfigDumpTest`
@@ -42,7 +42,9 @@ object SingBoxConfig {
         outbound: OutboundSpec,
         socksPort: Int = SINGBOX_SOCKS_PORT,
         routing: Routing = Routing.Global,
-    ): String = render(socksPort, routing) { addOutbound(outbound) }
+        resolveOverTcp: Boolean = false,
+        verboseLogs: Boolean = false,
+    ): String = render(socksPort, routing, resolveOverTcp, verboseLogs) { addOutbound(outbound) }
 
     /// iOS addressing. Fixed rather than negotiated: the extension applies these
     /// same values to the system when it hands the core its descriptor, so the two
@@ -129,7 +131,11 @@ object SingBoxConfig {
         username: String = "",
         password: String = "",
         routing: Routing = Routing.Global,
-    ): String = render(socksPort, routing) { addSocksOutbound(upstreamPort, username, password) }
+        resolveOverTcp: Boolean = false,
+        verboseLogs: Boolean = false,
+    ): String = render(socksPort, routing, resolveOverTcp, verboseLogs) {
+        addSocksOutbound(upstreamPort, username, password)
+    }
 
     private fun JsonArrayBuilder.addSocksOutbound(port: Int, username: String, password: String) {
         addJsonObject {
@@ -194,8 +200,12 @@ object SingBoxConfig {
         bindInterface: String? = null,
         /** Where the fake-address mapping persists; the daemon's own directory. */
         cacheFilePath: String? = null,
+        /** Desktop core processes must escape the TUN when they redial their carrier. */
+        bypassProcessPaths: List<String> = emptyList(),
+        /** A per-start name avoids colliding with a Wintun adapter still closing. */
+        interfaceName: String? = null,
     ): String {
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.Rules
         require(bypass == null || !bindInterface.isNullOrBlank()) {
             "a direct outbound inside the tun's own process needs an interface to bind to"
         }
@@ -205,8 +215,12 @@ object SingBoxConfig {
         // too, exactly as iOS does and for the same twenty seconds a lookup.
         val answersDns = upstreamUdpIsLossy || bypass != null
         val obj = buildJsonObject {
-            putJsonObject("log") { put("level", "warn") }
+            putJsonObject("log") { put("level", routing.coreLogLevel()) }
             putJsonObject("dns") {
+                // Keep every lookup sing-box performs for a dial on IPv4. The
+                // rules below separately reject AAAA and HTTPS/SVCB answers
+                // exposed to clients; both halves are required for IPv6-off.
+                if (bypass?.disableIpv6 != false) put("strategy", "ipv4_only")
                 putJsonArray("servers") {
                     // Order is the default. The first server answers anything no
                     // rule claims, so `dns-remote` has to come first whenever
@@ -221,6 +235,7 @@ object SingBoxConfig {
                 }
                 if (directDnsDomains.isNotEmpty() || answersDns) {
                     putJsonArray("rules") {
+                        if (bypass?.disableIpv6 != false) addIpv6DnsReject()
                         // The server's own name first: the core redials it while
                         // the tun is up, and answering that through the tunnel
                         // needs the tunnel being redialled.
@@ -230,18 +245,24 @@ object SingBoxConfig {
                                 put("server", "dns-direct")
                             }
                         }
-                        if (bypass != null) addRussianNamesRule()
-                        if (answersDns) addFakeIpRules()
+                        if (bypass != null) addRegionalDnsRules(bypass)
+                        if (answersDns) addFakeIpRules(
+                            rejectHttps = bypass?.disableIpv6 == false
+                        )
                     }
                 }
                 if (answersDns) {
                     put("final", "dns-remote")
-                    if (bypass != null) put("reverse_mapping", true)
+                    if (bypass != null) {
+                        put("reverse_mapping", true)
+                        put("independent_cache", true)
+                    }
                 }
             }
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("type", "tun"); put("tag", "tun-in")
+                    if (!interfaceName.isNullOrBlank()) put("interface_name", interfaceName)
                     putJsonArray("address") { add(address); add(address6) }
                     put("mtu", mtu)
                     put("auto_route", true)
@@ -275,6 +296,7 @@ object SingBoxConfig {
                 }
             }
             putJsonObject("route") {
+                if (bypassProcessPaths.isNotEmpty()) put("auto_detect_interface", true)
                 if (bypass != null) putRuleSetDeclarations(bypass)
                 // Required since 1.12 as soon as a `dns` section exists: without
                 // it sing-box refuses to start, naming a deprecation and an
@@ -284,6 +306,14 @@ object SingBoxConfig {
                 // both correct and inert here.
                 put("default_domain_resolver", "dns-direct")
                 putJsonArray("rules") {
+                    // Match only the child cores, never the GUI: GUI probes must
+                    // still traverse the VPN. This also covers new SFU addresses
+                    // after a Telemost reconnect, which static /32 routes cannot.
+                    if (bypassProcessPaths.isNotEmpty()) addJsonObject {
+                        putJsonArray("inbound") { add("tun-in") }
+                        putJsonArray("process_path") { bypassProcessPaths.forEach { add(it) } }
+                        put("outbound", "direct")
+                    }
                     if (answersDns) {
                         addJsonObject { put("action", "sniff") }
                         // Without this the `dns` block above is dead weight for the
@@ -293,7 +323,7 @@ object SingBoxConfig {
                         // resolver is still caught and answered rather than refused.
                         addJsonObject { put("action", "hijack-dns"); put("port", 53) }
                     }
-                    if (bypass != null) addBypassRouteRules()
+                    if (bypass != null) addBypassRouteRules(bypass)
                     // IPv6 is claimed and refused, not carried.
                     //
                     // Claimed because auto_route only takes the families the
@@ -307,7 +337,7 @@ object SingBoxConfig {
                     // Eyeballs falls back to IPv4 in milliseconds; forwarding into
                     // a node without IPv6 would hang instead, which is the same
                     // outcome bought with a timeout.
-                    addJsonObject { put("action", "reject"); put("ip_version", 6) }
+                    if (bypass == null) addJsonObject { put("action", "reject"); put("ip_version", 6) }
                 }
                 if (bypass != null) put("final", "out")
             }
@@ -380,15 +410,17 @@ object SingBoxConfig {
         directDns: DirectDns,
         outbounds: JsonArrayBuilder.() -> Unit,
     ): String {
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.Rules
         val direct = bypass?.directDns ?: directDns
         val obj = buildJsonObject {
-            putJsonObject("log") { put("level", "warn") }
+            putJsonObject("log") { put("level", routing.coreLogLevel()) }
             putIosDns(remoteOverTcp = resolveOverTcp, direct = direct, bypass = bypass)
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("type", "tun"); put("tag", "tun-in")
-                    putJsonArray("address") { add(address) }
+                    // Claim both families. Disable mode rejects IPv6 in the core;
+                    // leaving it off the TUN would let the OS route around us.
+                    putJsonArray("address") { add(address); add(DESKTOP_TUN_ADDRESS6) }
                     put("mtu", mtu)
                     put("auto_route", true)
                     put("stack", "gvisor")
@@ -409,29 +441,37 @@ object SingBoxConfig {
         return obj.toString()
     }
 
-    private fun JsonObjectBuilder.putIosDns(remoteOverTcp: Boolean, direct: DirectDns, bypass: Routing.BypassRussia?) {
+    private fun JsonObjectBuilder.putIosDns(remoteOverTcp: Boolean, direct: DirectDns, bypass: Routing.Rules?) {
         putJsonObject("dns") {
+            // Keep sing-box's own dial lookups on IPv4. Client-visible IPv6
+            // answers, including HTTPS/SVCB hints, are rejected below.
+            if (bypass?.disableIpv6 != false) put("strategy", "ipv4_only")
             putJsonArray("servers") {
                 addRemoteDnsServer(overTcp = remoteOverTcp)
                 addDirectDnsServer(direct)
                 addFakeIpServer()
             }
             putJsonArray("rules") {
-                if (bypass != null) addRussianNamesRule()
-                addFakeIpRules()
+                if (bypass?.disableIpv6 != false) addIpv6DnsReject()
+                if (bypass != null) addRegionalDnsRules(bypass)
+                addFakeIpRules(rejectHttps = bypass?.disableIpv6 == false)
             }
             put("final", "dns-remote")
-            if (bypass != null) put("reverse_mapping", true)
+            if (bypass != null) {
+                put("reverse_mapping", true)
+                put("independent_cache", true)
+            }
         }
     }
 
-    private fun JsonObjectBuilder.putIosRoute(bypass: Routing.BypassRussia?) {
+    private fun JsonObjectBuilder.putIosRoute(bypass: Routing.Rules?) {
         putJsonObject("route") {
             if (bypass != null) putRuleSetDeclarations(bypass)
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                if (bypass != null) addBypassRouteRules()
+                if (bypass != null) addBypassRouteRules(bypass)
+                else addJsonObject { put("action", "reject"); put("ip_version", 6) }
             }
             put("final", "out")
             put("default_domain_resolver", "dns-direct")
@@ -441,15 +481,21 @@ object SingBoxConfig {
     fun buildOlcrtcSocks(olcrtcPort: Int, socksPort: Int = SINGBOX_SOCKS_PORT): String =
         buildSocksChain(olcrtcPort, socksPort)
 
-    private fun render(socksPort: Int, routing: Routing, outbounds: JsonArrayBuilder.() -> Unit): String {
-        val bypass = routing as? Routing.BypassRussia
+    private fun render(
+        socksPort: Int,
+        routing: Routing,
+        resolveOverTcp: Boolean,
+        verboseLogs: Boolean,
+        outbounds: JsonArrayBuilder.() -> Unit
+    ): String {
+        val bypass = routing as? Routing.Rules
         val obj = buildJsonObject {
             // Without this sing-box applies its own default, which is "info" — and
             // that names every connection the user makes, in a log we invite them to
             // export. This renderer is behind the plain socks path, so it is the one
             // most users are actually on.
-            putJsonObject("log") { put("level", "warn") }
-            if (bypass != null) putBypassDns(bypass, remoteOverTcp = false)
+            putJsonObject("log") { put("level", routing.coreLogLevel(verboseLogs)) }
+            if (bypass != null) putBypassDns(bypass, remoteOverTcp = resolveOverTcp)
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("type", "socks"); put("tag", "in")
@@ -468,6 +514,9 @@ object SingBoxConfig {
     private fun JsonArrayBuilder.addDirectOutbound() {
         addJsonObject { put("type", "direct"); put("tag", "direct") }
     }
+
+    private fun Routing.coreLogLevel(explicit: Boolean = false): String =
+        if (explicit || (this as? Routing.Rules)?.verboseLogs == true) "debug" else "warn"
 
     /** The tunnel-side resolver, reached through `out`; TCP when the upstream's UDP is lossy. */
     private fun JsonArrayBuilder.addRemoteDnsServer(overTcp: Boolean) {
@@ -509,15 +558,18 @@ object SingBoxConfig {
     }
 
     /**
-     * A and AAAA get a fake address at once; HTTPS-type queries, which a
-     * client sends beside them and would otherwise wait on the tunnel for,
-     * are refused, which a client treats as "no such record" and carries on.
-     * Anything else still goes wherever `final` points.
+     * Refuse every DNS form that can give a client an IPv6 destination.
+     *
+     * Chromium reads `ipv6hint` from HTTPS/SVCB records and can therefore dial
+     * IPv6 without accepting an AAAA answer. On an IPv4-only carrier that made
+     * it retry an unreachable address through TUN->SOCKS until the page failed.
+     * Rejecting HTTPS records is safe here: browsers fall back to ordinary A
+     * records and TLS, while the actual HTTPS connection is unaffected.
      */
-    private fun JsonArrayBuilder.addFakeIpRules() {
+    private fun JsonArrayBuilder.addIpv6DnsReject() {
         addJsonObject {
-            putJsonArray("query_type") { add("A"); add("AAAA") }
-            put("server", "dns-fakeip")
+            putJsonArray("query_type") { add("AAAA") }
+            put("action", "reject")
         }
         addJsonObject {
             putJsonArray("query_type") { add("HTTPS") }
@@ -525,17 +577,41 @@ object SingBoxConfig {
         }
     }
 
-    /** Names on the Russian lists resolve on the network underneath. */
-    private fun JsonArrayBuilder.addRussianNamesRule() {
+    /**
+     * A gets a fake address at once; HTTPS-type queries, which a
+     * client sends beside them and would otherwise wait on the tunnel for,
+     * are refused, which a client treats as "no such record" and carries on.
+     * Anything else still goes wherever `final` points.
+     */
+    private fun JsonArrayBuilder.addFakeIpRules(rejectHttps: Boolean = true) {
         addJsonObject {
-            putJsonArray("rule_set") { RuleSets.domains.forEach { add(it.tag) } }
+            putJsonArray("query_type") { add("A") }
+            put("server", "dns-fakeip")
+        }
+        if (rejectHttps) {
+            addJsonObject {
+                putJsonArray("query_type") { add("HTTPS") }
+                put("action", "reject")
+            }
+        }
+    }
+
+    /** Names on the regional lists resolve on the network underneath. */
+    private fun JsonArrayBuilder.addRegionalDnsRules(bypass: Routing.Rules) {
+        if (bypass.blockAds) addJsonObject {
+            putJsonArray("rule_set") { add(RuleSets.GEOSITE_CATEGORY_ADS_ALL.tag) }
+            put("action", "reject")
+        }
+        val domains = RuleSets.regionalDomains(bypass.region)
+        if (domains.isNotEmpty()) addJsonObject {
+            putJsonArray("rule_set") { domains.forEach { add(it.tag) } }
             put("server", "dns-direct")
         }
     }
 
-    private fun JsonObjectBuilder.putRuleSetDeclarations(bypass: Routing.BypassRussia) {
+    private fun JsonObjectBuilder.putRuleSetDeclarations(bypass: Routing.Rules) {
         putJsonArray("rule_set") {
-            RuleSets.all.forEach { file ->
+            RuleSets.selected(bypass).forEach { file ->
                 addJsonObject {
                     put("type", "local"); put("tag", file.tag)
                     put("format", "binary"); put("path", "${bypass.ruleSetDir}/${file.name}")
@@ -552,11 +628,24 @@ object SingBoxConfig {
      * skips IP rules for an unresolved name, so nothing here resolves a
      * foreign name on the network underneath.
      */
-    private fun JsonArrayBuilder.addBypassRouteRules() {
-        addJsonObject { put("ip_is_private", true); put("outbound", "direct") }
-        addJsonObject {
-            putJsonArray("rule_set") { RuleSets.all.forEach { add(it.tag) } }
-            put("outbound", "direct")
+    private fun JsonArrayBuilder.addBypassRouteRules(bypass: Routing.Rules) {
+        // Blocking precedes every direct rule, including regional matches.
+        if (bypass.blockAds) addJsonObject {
+            putJsonArray("rule_set") { add(RuleSets.GEOSITE_CATEGORY_ADS_ALL.tag) }
+            put("action", "reject")
+        }
+        // Refuse IPv6 before regional rules. DNS filtering above keeps clients
+        // on A records; this route rule also covers applications using their
+        // own DoH or literal IPv6 addresses, so they cannot leak around TUN.
+        if (bypass.disableIpv6) addJsonObject {
+            put("action", "reject"); put("ip_version", 6)
+        }
+        if (bypass.region != null) {
+            addJsonObject { put("ip_is_private", true); put("outbound", "direct") }
+            addJsonObject {
+                putJsonArray("rule_set") { RuleSets.regional(bypass.region).forEach { add(it.tag) } }
+                put("outbound", "direct")
+            }
         }
     }
 
@@ -569,15 +658,26 @@ object SingBoxConfig {
      * of every address handed out, so a connection to it is matched by the
      * domain lists even when nothing in it can be sniffed.
      */
-    private fun JsonObjectBuilder.putBypassDns(bypass: Routing.BypassRussia, remoteOverTcp: Boolean) {
+    private fun JsonObjectBuilder.putBypassDns(bypass: Routing.Rules, remoteOverTcp: Boolean) {
         putJsonObject("dns") {
+            // Keep sing-box's own dial lookups on IPv4. The rules below also
+            // stop clients learning IPv6 endpoints from AAAA or HTTPS/SVCB.
+            if (bypass.disableIpv6) put("strategy", "ipv4_only")
             putJsonArray("servers") {
                 addRemoteDnsServer(overTcp = remoteOverTcp)
                 addDirectDnsServer(bypass.directDns)
             }
-            putJsonArray("rules") { addRussianNamesRule() }
+            putJsonArray("rules") {
+                if (bypass.disableIpv6) addIpv6DnsReject()
+                addRegionalDnsRules(bypass)
+            }
             put("final", "dns-remote")
             put("reverse_mapping", true)
+            // Regional and tunnel resolvers may legitimately return different
+            // answers for the same name. Sharing their cache can attach a
+            // tunnel answer to a later direct route (or the reverse). Hiddify
+            // isolates these caches for the same split-DNS arrangement.
+            put("independent_cache", true)
         }
     }
 
@@ -590,13 +690,13 @@ object SingBoxConfig {
      * network underneath. Tunnel-bound names never reach it; sing-box sends
      * those to the server unresolved.
      */
-    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.BypassRussia) {
+    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.Rules) {
         putJsonObject("route") {
             putRuleSetDeclarations(bypass)
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                addBypassRouteRules()
+                addBypassRouteRules(bypass)
             }
             put("final", "out")
             put("default_domain_resolver", "dns-direct")
@@ -610,6 +710,10 @@ object SingBoxConfig {
                 put("server", spec.host); put("server_port", spec.port)
                 put("uuid", spec.uuid); put("packet_encoding", "xudp")
                 if (spec.flow != null) put("flow", spec.flow)
+                if (spec.transport is TransportSpec.Grpc) putJsonObject("transport") {
+                    put("type", "grpc")
+                    put("service_name", spec.transport.serviceName)
+                }
                 putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
                     putJsonObject("utls") { put("enabled", true); put("fingerprint", spec.fingerprint) }

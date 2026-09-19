@@ -12,7 +12,9 @@ import kotlin.test.assertTrue
 
 class RoutingSettingsTest {
     @Test fun defaultIsEverythingThroughTheTunnel() = runTest {
-        assertEquals(RoutingMode.Global, LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings().mode)
+        val settings = LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings()
+        assertEquals(RoutingMode.Global, settings.mode)
+        assertTrue(settings.disableIpv6)
     }
 
     @Test fun savedModeComesBack() = runTest {

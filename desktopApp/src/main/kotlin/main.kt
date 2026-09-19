@@ -291,7 +291,10 @@ fun main(args: Array<String>) = application {
         checkUpdate(manual = false)
         if (WINDOWS_ELEVATED_START_ARGUMENT in args) {
             dependencies.homeViewModel.loadCurrentConfig {
-                dependencies.homeViewModel.ToggleVpn()
+                // The pre-elevation process has already completed any visible
+                // Lowest measurement and persisted its chosen member. Resume
+                // that location directly instead of ranking the list twice.
+                dependencies.homeViewModel.resumeVpnAfterElevation()
             }
         }
     }
@@ -369,6 +372,7 @@ fun main(args: Array<String>) = application {
             val subscriptionSettings by dependencies.homeViewModel.subscriptionSettings.collectAsState()
             val routingSettings by dependencies.homeViewModel.routingSettings.collectAsState()
             val socksProxySettings by dependencies.vpnManager.socksProxySettings.collectAsState()
+            val lanProxyEndpoint by dependencies.vpnManager.lanProxyEndpoint.collectAsState()
 
             fun reloadLocationsAfterImport(onComplete: () -> Unit = {}) {
                 dependencies.locationViewModel.loadLocations {
@@ -506,7 +510,7 @@ fun main(args: Array<String>) = application {
                         } else {
                             emptyList()
                         },
-                        socksProxySettings = socksProxySettings.toApplicationSocksProxySettings(),
+                        socksProxySettings = socksProxySettings.toApplicationSocksProxySettings().copy(lanEndpoint = lanProxyEndpoint),
                         tunnelDaemonSummary = tunnelDaemonSummary,
                         onTunnelDaemonClick = {
                             // Approval is a trip to System Settings that only the
@@ -595,6 +599,12 @@ fun main(args: Array<String>) = application {
                             if (homeState.isVpnConnected) {
                                 dependencies.homeViewModel.restartVpnIfRunning()
                             }
+                        },
+                        onLanSharingChanged = { enabled ->
+                            val settings = socksProxySettings.copy(shareOnLan = enabled)
+                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            scope.launch { dependencies.socksProxySettingsStore.save(settings) }
+                            dependencies.homeViewModel.restartVpnIfRunning()
                         },
                         onSocksProxyPasswordRegenerated = {
                             val settings = socksProxySettings.copy(
@@ -819,7 +829,9 @@ private fun DesktopSocksProxySettings.toApplicationSocksProxySettings(): Applica
         host = host,
         port = port,
         username = username,
-        password = password
+        password = password,
+        lanSharingSupported = true,
+        shareOnLan = shareOnLan
     )
 }
 

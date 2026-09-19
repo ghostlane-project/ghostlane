@@ -87,6 +87,7 @@ fun HomeScreen(
     var isRefreshingSubscriptions by remember { mutableStateOf(false) }
     var refreshingSubscriptionUrl by remember { mutableStateOf<String?>(null) }
     var showAdminDialog by remember { mutableStateOf(false) }
+    var lowestMeasureRequest by remember { mutableStateOf(0L) }
     // Asked once per launch, before the system's own prompt. On iOS that prompt
     // cannot be shown twice, so arriving at it with no explanation attached is a
     // permission spent.
@@ -99,6 +100,7 @@ fun HomeScreen(
     val connectedSince by viewModel.connectedSince.collectAsState()
     val channelLatency by viewModel.channelLatency.collectAsState()
     val subscriptionSettings by viewModel.subscriptionSettings.collectAsState()
+    val routingSettings by viewModel.routingSettings.collectAsState()
     val subscriptionSettingsLoaded by viewModel.subscriptionSettingsLoaded.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -230,20 +232,6 @@ fun HomeScreen(
         )
     }
 
-    if (showVpnDisclosure) {
-        VpnDisclosureScreen(
-            onAccept = {
-                showVpnDisclosure = false
-                viewModel.acceptVpnDisclosure()
-                onToggleClick()
-            },
-            // Declining leaves the app exactly as it was, connecting nothing.
-            // Pressing the bar again brings it back, which is the half of the flow
-            // the Play declaration video has to show.
-            onDecline = { showVpnDisclosure = false }
-        )
-    }
-
     /**
      * The config the tunnel is currently built from, or null when nothing is running.
      *
@@ -288,7 +276,10 @@ fun HomeScreen(
         }
     }
 
-    fun refreshHttpPings(targetLocationIds: List<String>? = null) {
+    fun refreshHttpPings(
+        targetLocationIds: List<String>? = null,
+        onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> }
+    ) {
         // The control is always there; the measurement is not always possible.
         // Latency is timed through a connection, so with nothing connected only an
         // olcRTC room can be probed — say that instead of appearing to do nothing,
@@ -308,6 +299,7 @@ fun HomeScreen(
                     }
                 )
             }
+            onComplete(0, 0)
             return
         }
 
@@ -315,6 +307,7 @@ fun HomeScreen(
             targetLocationIds = targetLocationIds,
             performPing = { config -> viewModel.performPingFor(config) },
             canPing = { config -> viewModel.canPing(config) },
+            onComplete = onComplete,
         )
     }
 
@@ -388,18 +381,83 @@ fun HomeScreen(
 
     // ── what the board is, computed once for the head and the list ──────────
 
+    val selectedId = locationViewModel.selectedLocationId
+    val selectedItem = locations.firstOrNull { it.storageId == selectedId }
+    val selectedConfig = selectedItem?.config
+    val knownSubscriptionUrls = locations.mapNotNull {
+        it.subscriptionUrl?.trim()?.takeIf(String::isNotEmpty)
+    }.toSet()
+    val lowestSubscriptionUrls = knownSubscriptionUrls.filterTo(mutableSetOf()) {
+        subscriptionSettings.lowestEnabledFor(it)
+    }
     val model = rememberBoardModel(
         locations = locations,
         activeFilterKey = transportFilter,
         sort = subscriptionSettings.sort,
+        lowestSubscriptionUrls = lowestSubscriptionUrls,
         pingsState = pingsState
     )
+    val lowestActive = selectedItem?.subscriptionUrl?.trim()?.let { it in lowestSubscriptionUrls } == true
+    val actualSelectedName = selectedItem?.let { locationDisplayParts(it).second }
+    val selectedName = if (lowestActive) {
+        "Lowest / ${actualSelectedName.orEmpty()}"
+    } else {
+        actualSelectedName
+    }
+    val selectedSlots = if (lowestActive) null else selectedId?.let { locationViewModel.olcrtcSlots[it] }
 
-    val selectedId = locationViewModel.selectedLocationId
-    val selectedItem = locations.firstOrNull { it.storageId == selectedId }
-    val selectedConfig = selectedItem?.config
-    val selectedName = selectedItem?.let { locationDisplayParts(it).second }
-    val selectedSlots = selectedId?.let { locationViewModel.olcrtcSlots[it] }
+    fun startSelectedConnection() {
+        val selectedSubscription = selectedItem?.subscriptionUrl?.trim()
+        val groupIds = locations.filter {
+            !selectedSubscription.isNullOrEmpty() &&
+                it.subscriptionUrl?.trim() == selectedSubscription
+        }.map { it.storageId }
+
+        // The busy action is Cancel. Invalidate the completion callback before
+        // cancelling its probes so a late result cannot start a tunnel anyway.
+        if (state.isVpnLoading) {
+            lowestMeasureRequest++
+            locationViewModel.cancelPings(groupIds)
+            onToggleClick()
+            return
+        }
+        if (state.isVpnConnected || !lowestActive || groupIds.isEmpty()) {
+            onToggleClick()
+            return
+        }
+
+        val request = ++lowestMeasureRequest
+        // A manual Measure may still be running. Start one complete, coherent
+        // snapshot for Connect instead of waiting for only the rows it missed.
+        locationViewModel.cancelPings(groupIds)
+        viewModel.startVpnContinuation()
+        refreshHttpPings(groupIds) { _, _ ->
+            if (request != lowestMeasureRequest) return@refreshHttpPings
+            val pings = locationViewModel.pingSnapshot(groupIds)
+            val providerOrder = groupIds.withIndex().associate { it.value to it.index }
+            val ranked = groupIds.sortedWith(
+                compareBy<String> { pings[it] ?: Int.MAX_VALUE }
+                    .thenBy { providerOrder[it] ?: Int.MAX_VALUE }
+            )
+            scope.launch {
+                // Give Compose one frame to render the final values and order
+                // before connection setup begins changing the status strip.
+                delay(120)
+                if (request == lowestMeasureRequest) viewModel.connectLowest(ranked)
+            }
+        }
+    }
+
+    if (showVpnDisclosure) {
+        VpnDisclosureScreen(
+            onAccept = {
+                showVpnDisclosure = false
+                viewModel.acceptVpnDisclosure()
+                startSelectedConnection()
+            },
+            onDecline = { showVpnDisclosure = false }
+        )
+    }
 
     HomeScreenContent(
         chrome = HomeChrome(
@@ -441,7 +499,7 @@ fun HomeScreen(
                 requiresSetup = requiresSetup,
                 isConnected = state.isVpnConnected,
                 isConnecting = state.isVpnLoading,
-                selectedIsRoom = selectedConfig?.transportKind() == TransportKind.Olcrtc,
+                selectedIsRoom = !lowestActive && selectedConfig?.transportKind() == TransportKind.Olcrtc,
                 selectedIsFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                 exitName = selectedName
             ),
@@ -461,6 +519,7 @@ fun HomeScreen(
             transportFilter = transportFilter,
             isRefreshingSubscriptions = isRefreshingSubscriptions,
             refreshingSubscriptionUrl = refreshingSubscriptionUrl,
+            lowestSubscriptionUrls = lowestSubscriptionUrls,
             collapsible = subscriptionSettings.collapsible,
             showSettings = admin,
             showCustomLocation = canCreateCustomLocation,
@@ -488,7 +547,7 @@ fun HomeScreen(
                     // something the user meets after granting it. Stopping never
                     // asks.
                     !vpnDisclosureAccepted && !state.isVpnConnected -> showVpnDisclosure = true
-                    else -> onToggleClick()
+                    else -> startSelectedConnection()
                 }
             },
             onDismissNotice = { viewModel.dismissFailure() },
@@ -501,17 +560,41 @@ fun HomeScreen(
                 val wasConnected = state.isVpnConnected
                 val name = locations.firstOrNull { it.storageId == id }
                     ?.let { locationDisplayParts(it).second }
-                locationViewModel.selectLocation(id) {
-                    viewModel.loadCurrentConfig()
-                    viewModel.restartVpnIfRunning()
-                    if (wasConnected) {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                name?.takeIf { it.isNotBlank() }
-                                    ?.let { "Reconnecting through $it" }
-                                    ?: "Reconnecting through the new location"
-                            )
+                val target = locations.firstOrNull { it.storageId == id }
+                val settings = subscriptionSettings.withLowestEnabled(
+                    target?.subscriptionUrl,
+                    enabled = false,
+                    knownSubscriptionUrls = knownSubscriptionUrls
+                )
+                viewModel.updateSubscriptionSettings(settings) {
+                    locationViewModel.selectLocation(id) {
+                        viewModel.loadCurrentConfig()
+                        viewModel.restartVpnIfRunning()
+                        if (wasConnected) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    name?.takeIf { it.isNotBlank() }
+                                        ?.let { "Reconnecting through $it" }
+                                        ?: "Reconnecting through the new location"
+                                )
+                            }
                         }
+                    }
+                }
+            },
+            onLowestSelected = { subscriptionUrl, fallbackId ->
+                viewModel.cancelAutomaticSelection()
+                val settings = subscriptionSettings.withLowestEnabled(
+                    subscriptionUrl,
+                    enabled = true,
+                    knownSubscriptionUrls = knownSubscriptionUrls
+                )
+                viewModel.updateSubscriptionSettings(settings) {
+                    val alreadyInList = locations.firstOrNull { it.storageId == selectedId }
+                        ?.subscriptionUrl?.trim() == subscriptionUrl.trim()
+                    val selectId = if (alreadyInList) selectedId else fallbackId
+                    locationViewModel.selectLocation(selectId ?: fallbackId) {
+                        viewModel.loadCurrentConfig()
                     }
                 }
             },
@@ -545,6 +628,10 @@ fun HomeScreen(
         val logs by viewModel.logs.collectAsState()
         LogsSheet(
             logs = logs,
+            verboseDebugLogs = routingSettings.verboseDebugLogs,
+            onVerboseDebugLogsChanged = { enabled ->
+                viewModel.updateRoutingSettings(routingSettings.copy(verboseDebugLogs = enabled))
+            },
             onSaveClick = {
                 onSaveLogsRequested(
                     { message -> scope.launch { snackbarHostState.showSnackbar(message) } },

@@ -48,6 +48,7 @@ import org.olcbox.app.ui.components.kit.PkIconButton
 import org.olcbox.app.ui.components.kit.PkPlanBar
 import org.olcbox.app.ui.components.kit.PkRoomCard
 import org.olcbox.app.ui.components.kit.PkSectionEyebrow
+import org.olcbox.app.ui.components.kit.SeatDisplay
 import org.olcbox.app.ui.components.kit.pkSubscriptionHost
 import org.olcbox.app.ui.components.kit.pkSubscriptionIsSecret
 import org.olcbox.app.ui.components.kit.planFraction
@@ -123,12 +124,13 @@ fun rememberBoardModel(
     locations: List<LocationItem>,
     activeFilterKey: String?,
     sort: SubscriptionSort,
+    lowestSubscriptionUrls: Set<String> = emptySet(),
     pingsState: PingsState
-): BoardModel = remember(locations, activeFilterKey, sort, pingsState) {
+): BoardModel = remember(locations, activeFilterKey, sort, lowestSubscriptionUrls, pingsState) {
     // Keyed on the ping state itself, not on a `(String) -> Int?` built at the call
     // site: that lambda is a fresh object every composition, so remembering on it
     // would never hit and this would be memoisation in name only.
-    buildBoardModel(locations, activeFilterKey, sort) { id -> pingsState.pingFor(id) }
+    buildBoardModel(locations, activeFilterKey, sort, lowestSubscriptionUrls) { id -> pingsState.pingFor(id) }
 }
 
 /**
@@ -142,6 +144,7 @@ fun buildBoardModel(
     locations: List<LocationItem>,
     activeFilterKey: String?,
     sort: SubscriptionSort,
+    lowestSubscriptionUrls: Set<String> = emptySet(),
     pingFor: (String) -> Int?
 ): BoardModel {
     // olcRTC's own carriers (VP8 / SEI / DataChannel) sit one level below the
@@ -169,7 +172,7 @@ fun buildBoardModel(
     // Sorted within a group, never across: the grouping is what tells a user which
     // provider a row came from, and ordering the whole list by ping would shuffle
     // two server lists into each other.
-    fun List<LocationItem>.sorted(): List<LocationItem> = when (sort) {
+    fun List<LocationItem>.sorted(effectiveSort: SubscriptionSort = sort): List<LocationItem> = when (effectiveSort) {
         SubscriptionSort.None -> this
         SubscriptionSort.Alphabetical -> sortedBy { item ->
             (item.metadata?.name?.takeIf { it.isNotBlank() } ?: item.fullName).lowercase()
@@ -182,7 +185,15 @@ fun buildBoardModel(
     val fromSubscriptions = visible.filter { !it.subscriptionUrl.isNullOrBlank() }
     val groups = fromSubscriptions
         .groupBy { it.subscriptionGroupKey() }
-        .map { (key, items) -> BoardGroup(key, items.sorted()) }
+        .map { (key, items) ->
+            val url = items.firstOrNull()?.subscriptionUrl?.trim()
+            val groupSort = if (!url.isNullOrEmpty() && url in lowestSubscriptionUrls) {
+                SubscriptionSort.Ping
+            } else {
+                sort
+            }
+            BoardGroup(key, items.sorted(groupSort))
+        }
 
     return BoardModel(
         filterOptions = options,
@@ -263,7 +274,9 @@ fun RoomBoard(
     showCustomLocation: Boolean,
     showGetSubscription: Boolean,
     refreshingSubscriptionUrl: String?,
+    lowestSubscriptionUrls: Set<String>,
     onLocationSelected: (String) -> Unit,
+    onLowestSelected: (subscriptionUrl: String, fallbackLocationId: String) -> Unit,
     onLocationSettingsClick: (String) -> Unit,
     onMeasure: (List<String>) -> Unit,
     onRefreshSubscriptionClick: (String) -> Unit,
@@ -301,8 +314,15 @@ fun RoomBoard(
         model.subscriptionGroups.forEach { group ->
             val isCollapsed = collapsible && group.key in collapsed
             val ids = group.locations.map { it.storageId }
-            val first = group.locations.firstOrNull()
-            val groupUrl = first?.subscriptionUrl?.trim()
+            // A group comes from groupBy over at least one location.
+            val first = group.locations.first()
+            val groupUrl = first.subscriptionUrl?.trim()
+            val lowestEnabled = !groupUrl.isNullOrBlank() && groupUrl in lowestSubscriptionUrls
+            // Lowest is stored per subscription, but only the list containing
+            // the active location is the current selection. Highlighting every
+            // enabled preference looked like several live VPN connections.
+            val lowestSelected = lowestEnabled &&
+                group.locations.any { it.storageId == selectedLocationId }
             val isPinging = pingsState is PingsState.Loading &&
                 pingsState.pendingLocationIds.any { it in ids }
 
@@ -310,17 +330,17 @@ fun RoomBoard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                val subscription = first?.metadata?.subscription
+                val subscription = first.metadata?.subscription
                 val fraction = planFraction(subscription?.used, subscription?.available)
 
                 PkGroupHeader(
-                    title = first?.subscriptionTitle().orEmpty().ifBlank { "Server list" },
+                    title = first.subscriptionTitle().ifBlank { "Server list" },
                     // Both the quota and the expiry move into the bar where there
                     // is one, rather than being printed twice in two shapes. What
                     // is left on this line is how stale the list is, which is
                     // short enough to survive four buttons beside it.
                     meta = subscriptionMetaLine(
-                        quota = if (fraction == null) first?.subscriptionQuota() else null,
+                        quota = if (fraction == null) first.subscriptionQuota() else null,
                         expiresAtEpochMs = subscription?.expiresAtEpochMs
                             ?.takeIf { fraction == null },
                         lastRefreshAtEpochMs = subscription?.lastRefreshAtEpochMs,
@@ -376,17 +396,51 @@ fun RoomBoard(
                 if (fraction != null && !isCollapsed) {
                     PkPlanBar(
                         label = planLabel(subscription?.expiresAtEpochMs, nowMillis()),
-                        value = first?.subscriptionQuota().orEmpty(),
+                        value = first.subscriptionQuota().orEmpty(),
                         fraction = fraction
                     )
                 }
 
                 if (!isCollapsed) {
                     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        if (!groupUrl.isNullOrBlank()) {
+                            val measurable = group.locations.filter { it.config?.let(canPing) == true }
+                            val measuredPings = group.locations.mapNotNull { pingsState.pingFor(it.storageId) }
+                            val selectedServer = group.locations
+                                .firstOrNull { it.storageId == selectedLocationId }
+                                ?.let { locationDisplayParts(it).second }
+                            PkRoomCard(
+                                title = "Lowest latency",
+                                tag = "AUTO",
+                                emoji = "⚡",
+                                selected = lowestSelected,
+                                connectedHere = lowestSelected && isConnected,
+                                blocked = false,
+                                seats = SeatDisplay.None,
+                                seatCountText = null,
+                                freeText = null,
+                                freeIsFull = false,
+                                freeIsTight = false,
+                                history = emptyList(),
+                                pingMs = measuredPings.minOrNull(),
+                                isMeasuring = isPinging,
+                                isOffline = measurable.isNotEmpty() && measurable.all {
+                                    pingsState.isOffline(it.storageId)
+                                },
+                                keyGone = false,
+                                wire = if (lowestSelected && isConnected && !selectedServer.isNullOrBlank()) {
+                                    "CONNECTED VIA $selectedServer"
+                                } else {
+                                    "MEASURE THIS SERVER LIST AND CONNECT TO ITS FASTEST AVAILABLE SERVER"
+                                },
+                                onClick = { onLowestSelected(groupUrl, first.storageId) },
+                                onMeasure = if (measurable.isNotEmpty()) ({ onMeasure(ids) }) else null
+                            )
+                        }
                         group.locations.forEach { location ->
                             BoardRoomCard(
                                 location = location,
-                                selected = location.storageId == selectedLocationId,
+                                selected = !lowestSelected && location.storageId == selectedLocationId,
                                 isConnected = isConnected,
                                 pingsState = pingsState,
                                 slots = olcrtcSlots[location.storageId],

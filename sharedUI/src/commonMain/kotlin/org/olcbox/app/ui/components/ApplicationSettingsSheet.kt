@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -115,7 +117,10 @@ data class ApplicationSocksProxySettings(
     val host: String = "127.0.0.1",
     val port: Int = DEFAULT_PORT,
     val username: String = "",
-    val password: String = ""
+    val password: String = "",
+    val lanSharingSupported: Boolean = false,
+    val shareOnLan: Boolean = false,
+    val lanEndpoint: String? = null
 ) {
     companion object {
         const val DEFAULT_PORT = 10808
@@ -178,6 +183,7 @@ fun ApplicationSettingsSheet(
      * under the cards, which are then not selectable. Null where it applies.
      */
     routingUnavailableReason: String? = null,
+    adBlockingUnavailableReason: String? = null,
     /**
      * False where the store owns updates.
      *
@@ -199,6 +205,7 @@ fun ApplicationSettingsSheet(
     onSubscriptionDeleteClick: (String) -> Unit = {},
     onSocksProxySettingsSaved: (String, String, Int) -> Unit = { _, _, _ -> },
     onSocksProxyPasswordRegenerated: () -> Unit = {},
+    onLanSharingChanged: (Boolean) -> Unit = {},
     /**
      * Clears the note that the first-run walkthrough has been shown.
      *
@@ -274,7 +281,8 @@ fun ApplicationSettingsSheet(
                     onSubscriptionOptionsClick = { route = SharedSettingsRoute.SubscriptionOptions },
                     showUpdates = showUpdates,
                     connectionSummary = connectionModeSummary,
-                    routingSummary = routingSettings.mode.hubSummary(),
+                    routingSummary = routingSettings.mode.hubSummary() +
+                        if (routingSettings.blockAds && adBlockingUnavailableReason == null) " · ads blocked" else "",
                     subscriptionsCount = subscriptions.size,
                     onConnectionClick = { route = SharedSettingsRoute.Connection },
                     onRoutingClick = { route = SharedSettingsRoute.Routing },
@@ -304,9 +312,12 @@ fun ApplicationSettingsSheet(
                     onBack = { route = SharedSettingsRoute.Connection }
                 )
 
-                SharedSettingsRoute.Routing -> SharedRoutingSettingsContent(
+                SharedSettingsRoute.Routing -> RoutingSettingsScreen(
                     settings = routingSettings,
+                    enabled = routingUnavailableReason == null,
+                    adBlockingEnabled = routingUnavailableReason == null && adBlockingUnavailableReason == null,
                     unavailableReason = routingUnavailableReason,
+                    adBlockingUnavailableReason = adBlockingUnavailableReason,
                     onChanged = onRoutingSettingsChanged,
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
@@ -317,7 +328,8 @@ fun ApplicationSettingsSheet(
                         isConnectionActive = isConnectionActive,
                         onBack = { route = SharedSettingsRoute.Connection },
                         onProxySettingsSaved = onSocksProxySettingsSaved,
-                        onProxyPasswordRegenerated = onSocksProxyPasswordRegenerated
+                        onProxyPasswordRegenerated = onSocksProxyPasswordRegenerated,
+                        onLanSharingChanged = onLanSharingChanged
                     )
                 }
 
@@ -393,7 +405,7 @@ private fun SharedSettingsHubContent(
         )
 
         SharedNavigationRow(
-            title = "Routing",
+            title = "Routing & ad blocking",
             value = routingSummary,
             icon = PkIcons.SwapVert,
             onClick = onRoutingClick
@@ -515,7 +527,7 @@ private fun SharedConnectionSettingsContent(
             // Editing the local proxy credentials/port is plumbing: admin-only.
             if (socksProxySettings != null && AdminState.configuratorVisible) {
                 SharedNavigationRow(
-                    title = "SOCKS5 Proxy",
+                    title = if (socksProxySettings.lanSharingSupported) "Local network sharing" else "SOCKS5 Proxy",
                     value = "${socksProxySettings.host}:${socksProxySettings.port}",
                     icon = PkIcons.Public,
                     onClick = onSocksProxyClick
@@ -587,62 +599,13 @@ private fun SharedConnectionModeSettingsContent(
 }
 
 @Composable
-private fun SharedRoutingSettingsContent(
-    settings: RoutingSettings,
-    unavailableReason: String?,
-    onChanged: (RoutingSettings) -> Unit,
-    onBack: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp)
-            .padding(bottom = 32.dp)
-    ) {
-        SharedDetailHeader(
-            title = "Routing",
-            subtitle = settings.mode.hubSummary(),
-            onBack = onBack
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            RoutingMode.entries.forEach { mode ->
-                SharedSelectableSettingsCard(
-                    selected = settings.mode == mode,
-                    icon = if (mode == RoutingMode.Global) PkIcons.Public else PkIcons.SwapVert,
-                    title = mode.title(),
-                    subtitle = mode.summary(),
-                    enabled = unavailableReason == null,
-                    onClick = { onChanged(settings.copy(mode = mode)) }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // What "Russia" means here, because a list has edges and the person
-        // choosing this deserves to know where they are.
-        Text(
-            text = unavailableReason
-                ?: "Russian destinations are matched by lists bundled with the app: " +
-                    "v2fly's category-ru, the Russian top-level domains and the Russian IP ranges. " +
-                    "Names on those lists are resolved by the network you are on; every other name " +
-                    "is resolved through the tunnel. Changing this restarts the connection.",
-            style = MaterialTheme.typography.bodySmall,
-            color = LocalPkPalette.current.textDim
-        )
-    }
-}
-
-@Composable
 private fun SharedSocksProxySettingsContent(
     settings: ApplicationSocksProxySettings,
     isConnectionActive: Boolean,
     onBack: () -> Unit,
     onProxySettingsSaved: (String, String, Int) -> Unit,
-    onProxyPasswordRegenerated: () -> Unit
+    onProxyPasswordRegenerated: () -> Unit,
+    onLanSharingChanged: (Boolean) -> Unit
 ) {
     var editedHost by remember(settings.host) { mutableStateOf(settings.host) }
     var editedPort by remember(settings.port) { mutableStateOf(settings.port.toString()) }
@@ -674,6 +637,19 @@ private fun SharedSocksProxySettingsContent(
         )
 
         Spacer(Modifier.height(20.dp))
+
+        if (settings.lanSharingSupported) {
+            SharedSelectableSettingsCard(
+                selected = settings.shareOnLan,
+                icon = PkIcons.Public,
+                title = "Share VPN on local network",
+                subtitle = settings.lanEndpoint?.let { "SOCKS5 $it — no username or password" }
+                    ?: "Connect another device through this PC without a password. Listens on a private LAN address. Reconnects when changed.",
+                enabled = true,
+                onClick = { onLanSharingChanged(!settings.shareOnLan) }
+            )
+            Spacer(Modifier.height(16.dp))
+        }
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -1322,6 +1298,104 @@ private fun SharedSelectableSettingsCard(
                 )
             }
         }
+    }
+}
+
+/** A radio-style row used when several mutually related choices share one box. */
+@Composable
+private fun SharedCompactChoiceRow(
+    selected: Boolean,
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val alpha = if (enabled) 1f else 0.42f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+                else Color.Transparent
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = (if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = alpha),
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedCompactValueRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    value: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val alpha = if (enabled) 1f else 0.42f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+            Text(subtitle, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = alpha))
+        Spacer(Modifier.width(5.dp))
+        Icon(PkIcons.ChevronRight, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+            modifier = Modifier.size(18.dp))
     }
 }
 

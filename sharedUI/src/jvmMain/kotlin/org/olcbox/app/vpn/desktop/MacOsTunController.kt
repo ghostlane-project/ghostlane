@@ -35,8 +35,8 @@ internal class MacOsTunController(
         // process that owns the tun, so those sockets are bound to the physical
         // interface by name. No name, no bypass: a direct socket with nothing
         // to bind to enters the tun, and that does not degrade, it loops.
-        val bindInterface = if (routing is Routing.BypassRussia) defaultInterface() else null
-        if (routing is Routing.BypassRussia && bindInterface == null) {
+        val bindInterface = if (routing is Routing.Rules) defaultInterface() else null
+        if (routing is Routing.Rules && bindInterface == null) {
             addLog("cannot tell which interface carries the internet, so the bypass cannot bind to it")
             error("no interface to bind direct traffic to")
         }

@@ -1,6 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 import java.io.FileInputStream
+import org.gradle.api.tasks.Sync
 
 plugins {
     alias(libs.plugins.compose.compiler)
@@ -35,6 +36,16 @@ val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
 
 require(androidAbiFilters.isNotEmpty()) {
     "olcbox.android.abiFilters must contain at least one Android ABI"
+}
+
+val sharedComposeAssets = layout.buildDirectory.dir("generated/sharedComposeAssets")
+val syncSharedComposeResources = tasks.register<Sync>("syncSharedComposeResources") {
+    from(rootProject.file("sharedUI/src/commonMain/composeResources"))
+    into(
+        sharedComposeAssets.map {
+            it.dir("composeResources/multiplatform_app.sharedui.generated.resources")
+        }
+    )
 }
 
 android {
@@ -117,6 +128,11 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs", "jniLibs")
+            // Compose's Android resource reader expects common file resources under an
+            // assets prefix containing the generated resource package. AGP 9 does not
+            // currently merge those files from this Kotlin Multiplatform library, so the
+            // Sync task supplies that exact layout. The bytes remain owned by sharedUI.
+            assets.srcDir(sharedComposeAssets.get().asFile)
         }
         // Stated explicitly rather than relying on the plugin default, so the
         // instrumented sources cannot silently stop being compiled.
@@ -141,6 +157,27 @@ android {
             useLegacyPackaging = true
         }
     }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(syncSharedComposeResources)
+}
+
+val verifyAndroidRuleAssets = tasks.register<Exec>("verifyAndroidRuleAssets") {
+    group = "verification"
+    description = "Fails when an assembled APK omits a routing rule set required at runtime."
+    // Exec stores only its executable and arguments, keeping the task compatible
+    // with the configuration cache used by the PR workflow.
+    commandLine(
+        "python",
+        rootProject.file("tools/verify-android-rule-assets.py").absolutePath,
+        layout.buildDirectory.dir("outputs/apk").get().asFile.absolutePath,
+        rootProject.file("sharedUI/src/commonMain/composeResources/files/rules").absolutePath
+    )
+}
+
+tasks.matching { it.name.startsWith("assemble") }.configureEach {
+    finalizedBy(verifyAndroidRuleAssets)
 }
 
 // In AGP 9.0+ Kotlin settings for Android are configured like this:

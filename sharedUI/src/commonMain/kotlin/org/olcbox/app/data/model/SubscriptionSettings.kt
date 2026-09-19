@@ -39,6 +39,10 @@ data class SubscriptionSettings(
     @SerialName("auto_select_lowest")
     val autoSelectLowest: Boolean = false,
 
+    /** Subscriptions that choose their fastest measured member at connect. */
+    @SerialName("lowest_subscription_urls")
+    val lowestSubscriptionUrls: Set<String> = emptySet(),
+
     /** Refresh subscriptions on a timer while the app is running. */
     @SerialName("auto_update")
     val autoUpdate: Boolean = true,
@@ -76,8 +80,38 @@ data class SubscriptionSettings(
     val collapsible: Boolean = true
 ) {
     fun normalized(): SubscriptionSettings = copy(
-        updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS)
+        updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
+        lowestSubscriptionUrls = lowestSubscriptionUrls.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.toSet()
     )
+
+    /** The old global flag remains a read-only migration fallback. */
+    fun lowestEnabledFor(subscriptionUrl: String?): Boolean {
+        val url = subscriptionUrl?.trim().orEmpty()
+        return url.isNotEmpty() && (url in lowestSubscriptionUrls ||
+            (autoSelectLowest && lowestSubscriptionUrls.isEmpty()))
+    }
+
+    /**
+     * Selects the virtual Lowest row for one server list. [knownSubscriptionUrls]
+     * materialises the old global flag before changing one list, so upgrading an
+     * existing installation does not silently switch Lowest off everywhere else.
+     */
+    fun withLowestEnabled(
+        subscriptionUrl: String?,
+        enabled: Boolean,
+        knownSubscriptionUrls: Set<String>
+    ): SubscriptionSettings {
+        val url = subscriptionUrl?.trim().orEmpty()
+        if (url.isEmpty()) return this
+        val known = knownSubscriptionUrls.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.toSet()
+        val current = if (autoSelectLowest && lowestSubscriptionUrls.isEmpty()) known else lowestSubscriptionUrls
+        return copy(
+            autoSelectLowest = false,
+            lowestSubscriptionUrls = if (enabled) current + url else current - url
+        ).normalized()
+    }
+
+    fun hasAnyLowest(): Boolean = autoSelectLowest || lowestSubscriptionUrls.isNotEmpty()
 
     companion object {
         const val DEFAULT_INTERVAL_HOURS = 1

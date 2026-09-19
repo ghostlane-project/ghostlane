@@ -396,6 +396,9 @@ class IosVpnManager(
         // olcRTC has no link to parse — a room and a key address it — so it is
         // read off the location rather than through LinkParser.
         if (location.kind == LocationKind.Olcrtc) {
+            if (routing is Routing.Rules && routing.blockAds) {
+                addLog("Ad blocking is unavailable for olcRTC on iOS; regional direct rules still apply")
+            }
             if (!location.isComplete()) {
                 setStatus(VpnStatus.Error("No active location"))
                 addLog("Add a valid location before connecting")
@@ -409,8 +412,8 @@ class IosVpnManager(
             // hev-socks5-tunnel fronts olcRTC on this platform and routes
             // nothing, so the routing choice reaches the engine as its own
             // direct rules: the same three lists Xray gets on xhttp.
-            val directRules = if (routing is Routing.BypassRussia) {
-                OlcrtcDirectRules.text()
+            val directRules = if (routing is Routing.Rules && routing.region != null) {
+                OlcrtcDirectRules.text(XrayGeodata.lists(routing.region))
             } else {
                 OlcrtcDirectRules.NONE
             }
@@ -458,8 +461,9 @@ class IosVpnManager(
             XrayConfig.buildXhttp(
                 vless,
                 routing = routing,
-                geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                geodata = if (routing is Routing.Rules) XrayGeodata.lists(routing.region, routing.blockAds) else null,
                 answersDns = true,
+                verboseLogs = (routing as? Routing.Rules)?.verboseLogs == true,
             )
         } else {
             null
@@ -482,19 +486,19 @@ class IosVpnManager(
      * placeholder where the direct resolver goes, because only the extension
      * can read the network's own before the tunnel replaces it.
      */
-    private suspend fun routing(): Routing =
-        when (val mode = locationsRepository.getRoutingSettings().mode) {
-            RoutingMode.Global -> Routing.Global
-            RoutingMode.BypassRussia -> {
-                addLog("Routing: ${mode.hubSummary()}")
-                Routing.BypassRussia(RuleSets.IOS_RELATIVE_DIR, DirectDns.Placeholder)
-            }
-        }
+    private suspend fun routing(): Routing {
+        val settings = locationsRepository.getRoutingSettings()
+        addLog("Routing: ${settings.mode.hubSummary()}")
+        return Routing.Rules(
+            RuleSets.IOS_RELATIVE_DIR, DirectDns.Placeholder, settings.mode.region,
+            settings.blockAds, settings.disableIpv6, settings.verboseDebugLogs
+        )
+    }
 
     @OptIn(ExperimentalEncodingApi::class)
     private suspend fun ruleSetsFor(routing: Routing): Map<String, String> =
-        if (routing is Routing.BypassRussia) {
-            RuleSets.all.associate { it.name to Base64.encode(RuleSets.bytes(it)) }
+        if (routing is Routing.Rules) {
+            RuleSets.selected(routing).associate { it.name to Base64.encode(RuleSets.bytes(it)) }
         } else {
             emptyMap()
         }

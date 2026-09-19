@@ -29,7 +29,7 @@ class ChannelLatencyTest {
         try {
             assertNotNull(session.measure())
             assertNotNull(session.measure())
-            assertEquals(2, requests)
+            assertEquals(3, requests) // one warm-up, then two displayed samples
         } finally { session.close() }
     } }
 
@@ -42,11 +42,20 @@ class ChannelLatencyTest {
         assertNotNull(ChannelLatency.measure(client))
     } }
 
-    @Test fun successfulStatusAloneDoesNotProveTheExpectedProbeAnswered() = runTest { withContext(Dispatchers.Default) {
-        for (status in listOf(HttpStatusCode.OK, HttpStatusCode.Found, HttpStatusCode.ServiceUnavailable)) {
+    @Test fun oneShotProxyStyleMeasurementWarmsBeforeTiming() = runTest { withContext(Dispatchers.Default) {
+        var requests = 0
+        val client = HttpClient(MockEngine { requests++; respond("", HttpStatusCode.OK) })
+        assertNotNull(ChannelLatency.measure(client, warmUp = true))
+        assertEquals(2, requests)
+    } }
+
+    @Test fun onlySuccessfulResponsesCountAsLatency() = runTest { withContext(Dispatchers.Default) {
+        for (status in listOf(HttpStatusCode.Found, HttpStatusCode.ServiceUnavailable)) {
             val client = HttpClient(MockEngine { respond("", status) }) { followRedirects = false }
             assertNull(ChannelLatency.measure(client), "Unexpected HTTP ${status.value}")
         }
+        val ok = HttpClient(MockEngine { respond("Success", HttpStatusCode.OK) })
+        assertNotNull(ChannelLatency.measure(ok))
     } }
 
     @Test fun cancellationIsNotReportedAsADeadTunnel() = runTest { withContext(Dispatchers.Default) {

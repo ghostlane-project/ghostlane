@@ -85,7 +85,19 @@ class HomeScreenModelImportLinkTest {
             assertTrue(vm.state.value.isVpnLoading)
             vm.ToggleVpn()
             assertEquals(0, vpn.starts)
+            assertEquals(1, vpn.stops)
             assertEquals(false, vm.state.value.isVpnLoading)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    @Test fun elevatedWindowsResumeStartsThePersistedWinnerWithoutRankingAgain() = runTest {
+        val vpn = IdleVpnManager()
+        vpn.probe = { error("elevated resume must not repeat Lowest measurement") }
+        val vm = viewModel(vpn)
+        try {
+            vm.resumeVpnAfterElevation()
+            assertEquals(1, vpn.starts)
+            assertTrue(vm.state.value.isVpnLoading)
         } finally { vm.viewModelScope.cancel() }
     }
 
@@ -196,11 +208,12 @@ private class IdleVpnManager : VpnManager {
     var measure: suspend () -> Long? = { null }
     var probe: suspend () -> Long? = { null }
     var starts = 0
+    var stops = 0
     override suspend fun measureCurrentChannel(): Long? = measure()
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
     override fun startVpn() { starts++ }
-    override fun stopVpn() {}
+    override fun stopVpn() { stops++ }
     override fun canPing(locationConfig: LocationConfig) = true
     override suspend fun ping(locationConfig: LocationConfig): Long? = probe()
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? = null

@@ -83,7 +83,7 @@ class SingBoxConfigDumpTest {
                 verifyPort = 10811,
                 excludeAddresses = listOf("203.0.113.7/32"),
                 directDnsDomains = listOf("de1.example.org"),
-                routing = Routing.BypassRussia(rules.absolutePath, DirectDns.System),
+                routing = Routing.Rules(rules.absolutePath, DirectDns.System),
                 bindInterface = "en0",
                 cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db"
             )
@@ -166,8 +166,8 @@ class SingBoxConfigDumpTest {
     @Test fun dumpBypassShapes() = runTest {
         val rules = File(outDir, "rules").apply { mkdirs() }
         for (file in RuleSets.all) File(rules, file.name).writeBytes(RuleSets.bytes(file))
-        val android = Routing.BypassRussia(rules.absolutePath, DirectDns.Servers(listOf("10.20.30.40")))
-        val ios = Routing.BypassRussia(rules.absolutePath, DirectDns.Placeholder)
+        val android = Routing.Rules(rules.absolutePath, DirectDns.Servers(listOf("10.20.30.40")))
+        val ios = Routing.Rules(rules.absolutePath, DirectDns.Placeholder)
 
         val reality = LinkParser.parse(
             "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +

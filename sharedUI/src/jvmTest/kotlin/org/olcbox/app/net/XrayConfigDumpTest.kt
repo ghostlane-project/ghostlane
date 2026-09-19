@@ -43,7 +43,7 @@ class XrayConfigDumpTest {
             "vless-xhttp-bypass-russia",
             XrayConfig.buildXhttp(
                 spec,
-                routing = Routing.BypassRussia("unused-on-xray", DirectDns.Servers(listOf("77.88.8.8"))),
+                routing = Routing.Rules("unused-on-xray", DirectDns.Servers(listOf("77.88.8.8"))),
                 geodata = XrayGeodata.lists(),
             )
         )

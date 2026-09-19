@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -18,9 +21,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
@@ -79,14 +79,14 @@ class HomeScreenViewModel(
         }
     }
 
-    private fun startLowest() {
+    private fun startLowest(preferredLocationIds: List<String>? = null) {
         cancelAutomaticSelection()
         _state.update { it.copy(isVpnLoading = true, failure = null) }
         selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 LowestConnection(vpnManager, locationsRepository) {
                     loadCurrentConfigNow()
-                }.run()
+                }.run(preferredLocationIds)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -101,6 +101,9 @@ class HomeScreenViewModel(
         }
         selectionJob?.start()
     }
+
+    /** Connect in the order already measured and displayed by the home screen. */
+    fun connectLowest(preferredLocationIds: List<String>? = null) = startLowest(preferredLocationIds)
 
     /**
      * What a background refresh found, when the user asked to be told. A shared
@@ -145,11 +148,12 @@ class HomeScreenViewModel(
     private val _subscriptionSettingsLoaded = MutableStateFlow(false)
     val subscriptionSettingsLoaded = _subscriptionSettingsLoaded.asStateFlow()
 
-    fun updateSubscriptionSettings(settings: SubscriptionSettings) {
+    fun updateSubscriptionSettings(settings: SubscriptionSettings, onComplete: () -> Unit = {}) {
         val normalized = settings.normalized()
         viewModelScope.launch {
             locationsRepository.saveSubscriptionSettings(normalized)
             _subscriptionSettings.value = normalized
+            onComplete()
         }
     }
 
@@ -207,7 +211,7 @@ class HomeScreenViewModel(
     init {
         viewModelScope.launch {
             subscriptionSettings.collect { settings ->
-                if (!settings.autoSelectLowest) cancelAutomaticSelection()
+                if (!settings.hasAnyLowest()) cancelAutomaticSelection()
             }
         }
         loadCurrentConfig()
@@ -238,11 +242,13 @@ class HomeScreenViewModel(
             vpnManager.status.collect { status ->
                 _state.update {
                     val next = it.applying(status)
-                    // Ranking/cooldown happen with the old tunnel fully stopped.
-                    // Keep Stop available instead of presenting a second Connect.
+                    // Between failover attempts the old tunnel is deliberately
+                    // down. Keep Cancel visible until the selection job ends.
                     if (selectionJob?.isActive == true && status is VpnStatus.Disconnected) {
                         next.copy(isVpnLoading = true)
-                    } else next
+                    } else {
+                        next
+                    }
                 }
                 if (status !is VpnStatus.Connected) {
                     measurementEpoch++
@@ -312,6 +318,18 @@ class HomeScreenViewModel(
         _state.update { it.copy(isVpnLoading = true, failure = null) }
     }
 
+    /**
+     * Continue the exact location selected before Windows restarted us with
+     * administrator rights. Lowest has already measured, displayed and stored
+     * its winner; calling [ToggleVpn] here would rank the subscription again in
+     * the new process and make the elevation restart look like a long hang.
+     */
+    fun resumeVpnAfterElevation() {
+        cancelAutomaticSelection()
+        _state.update { it.copy(isVpnLoading = true, failure = null) }
+        viewModelScope.launch { vpnManager.startVpn() }
+    }
+
     /** The user has read the last failure and waved it away. */
     fun dismissFailure() {
         _state.update { it.copy(failure = null) }
@@ -319,7 +337,8 @@ class HomeScreenViewModel(
 
     fun ToggleVpn() {
         val status = vpnManager.status.value
-        if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) || _state.value.isVpnLoading ||
+        if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) ||
+            _state.value.isVpnLoading ||
             status is VpnStatus.Connecting ||
             status is VpnStatus.Reconnecting
         ) {
@@ -356,8 +375,8 @@ class HomeScreenViewModel(
                         _state.update { it.copy(isVpnLoading = false, failure = why) }
                         return@launch
                     }
-                    if (locationsRepository.getSubscriptionSettings().autoSelectLowest &&
-                        !active.subscriptionUrl.isNullOrBlank()) {
+                    if (locationsRepository.getSubscriptionSettings()
+                            .lowestEnabledFor(active.subscriptionUrl)) {
                         startLowest()
                     } else {
                         vpnManager.startVpn()

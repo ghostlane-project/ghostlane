@@ -56,6 +56,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -117,6 +118,7 @@ import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.ui.components.SubscriptionSettingsScreen
+import org.olcbox.app.ui.components.RoutingSettingsScreen
 import org.olcbox.app.ui.components.hubSummary
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.AndroidSplitTunnelSettings
@@ -188,6 +190,7 @@ internal fun AppSettingsSheet(
             is AppSettingsRoute.AppList -> AppSettingsRoute.SplitTunneling
             AppSettingsRoute.ConnectionMode,
             AppSettingsRoute.SocksProxy,
+            AppSettingsRoute.Routing,
             AppSettingsRoute.SplitTunneling -> AppSettingsRoute.ConnectionSettings
 
             else -> AppSettingsRoute.Hub
@@ -272,6 +275,8 @@ internal fun AppSettingsSheet(
                         onBack = { route = AppSettingsRoute.Hub },
                         onConnectionModeClick = { route = AppSettingsRoute.ConnectionMode },
                         onProxySettingsClick = { route = AppSettingsRoute.SocksProxy },
+                        routingSettings = routingSettings,
+                        onRoutingClick = { route = AppSettingsRoute.Routing },
                         onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling }
                     )
 
@@ -291,17 +296,20 @@ internal fun AppSettingsSheet(
                         onProxyPasswordRegenerated = onProxyPasswordRegenerated
                     )
 
+                    AppSettingsRoute.Routing -> RoutingSettingsScreen(
+                        settings = routingSettings,
+                        enabled = enabled,
+                        onBack = { route = AppSettingsRoute.ConnectionSettings },
+                        onChanged = onRoutingSettingsChanged
+                    )
+
                     AppSettingsRoute.SplitTunneling -> SplitTunnelingSettingsContent(
                         settings = splitTunnelSettings,
                         enabled = enabled,
                         isConnectionActive = isConnectionActive,
                         selectedMode = selectedMode,
-                        routingSettings = routingSettings,
                         onBack = { route = AppSettingsRoute.ConnectionSettings },
                         onModeSelected = onSplitTunnelModeSelected,
-                        onRoutingModeSelected = { mode ->
-                            onRoutingSettingsChanged(routingSettings.copy(mode = mode))
-                        },
                         onAppListClick = { list -> route = AppSettingsRoute.AppList(list) }
                     )
 
@@ -440,6 +448,8 @@ private fun ConnectionSettingsContent(
     onBack: () -> Unit,
     onConnectionModeClick: () -> Unit,
     onProxySettingsClick: () -> Unit,
+    routingSettings: RoutingSettings,
+    onRoutingClick: () -> Unit,
     onSplitTunnelingClick: () -> Unit
 ) {
     Column(
@@ -474,6 +484,17 @@ private fun ConnectionSettingsContent(
                     onClick = onProxySettingsClick
                 )
             }
+            SettingsNavigationRow(
+                title = "Routing",
+                value = buildString {
+                    append(routingSettings.mode.hubSummary())
+                    if (routingSettings.blockAds) append(" · ads blocked")
+                    if (routingSettings.disableIpv6) append(" · IPv6 off")
+                },
+                icon = PkIcons.SwapVert,
+                enabled = enabled,
+                onClick = onRoutingClick
+            )
             SettingsNavigationRow(
                 title = "Split Tunneling",
                 value = splitTunnelSettings.settingsSummary(),
@@ -607,10 +628,8 @@ private fun SplitTunnelingSettingsContent(
     enabled: Boolean,
     isConnectionActive: Boolean,
     selectedMode: AndroidConnectionMode,
-    routingSettings: RoutingSettings,
     onBack: () -> Unit,
     onModeSelected: (AndroidSplitTunnelMode) -> Unit,
-    onRoutingModeSelected: (RoutingMode) -> Unit,
     onAppListClick: (AndroidSplitTunnelList) -> Unit
 ) {
     Column(
@@ -672,38 +691,6 @@ private fun SplitTunnelingSettingsContent(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
-
-        // Apps decide *who* uses the tunnel; this decides *where to*. Kept on
-        // the same screen because a person looking for "let Sber through" does
-        // not know which of the two they want until both are in front of them.
-        SettingsSectionLabel("Destinations")
-
-        Spacer(Modifier.height(8.dp))
-
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            RoutingMode.entries.forEach { mode ->
-                SplitTunnelRoutingOption(
-                    selected = routingSettings.mode == mode,
-                    enabled = enabled,
-                    icon = if (mode == RoutingMode.Global) PkIcons.Public else PkIcons.SwapVert,
-                    title = mode.title(),
-                    subtitle = mode.hubSummary(),
-                    onClick = { onRoutingModeSelected(mode) }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        Text(
-            text = "Russian destinations are matched by lists bundled with the app: " +
-                "v2fly's category-ru, the Russian top-level domains and the Russian IP ranges. " +
-                "Names on those lists are resolved by the network you are on; every other name " +
-                "is resolved through the tunnel. Changing this restarts the connection.",
-            style = MaterialTheme.typography.bodySmall,
-            color = LocalPkPalette.current.textDim
-        )
     }
 }
 
@@ -2207,6 +2194,7 @@ private sealed class AppSettingsRoute(val depth: Int) {
     object ConnectionSettings : AppSettingsRoute(1)
     object ConnectionMode : AppSettingsRoute(1)
     object SocksProxy : AppSettingsRoute(1)
+    object Routing : AppSettingsRoute(1)
     object SplitTunneling : AppSettingsRoute(1)
     object SubscriptionsSharing : AppSettingsRoute(1)
     object SubscriptionOptions : AppSettingsRoute(1)

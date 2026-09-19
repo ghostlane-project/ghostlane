@@ -156,6 +156,8 @@ class OlcboxVpnService : VpnService() {
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
+    private var blockAds = false
+    private var disableIpv6 = true
 
     /**
      * Whether sing-box is standing in front of olcRTC. Both then have to be
@@ -485,7 +487,10 @@ class OlcboxVpnService : VpnService() {
                         return@withLock
                     }
                     OlcboxVpnState.activeLocation = location.normalized()
-                    routingMode = repository.getRoutingSettings().mode
+                    val routingSettings = repository.getRoutingSettings()
+                    routingMode = routingSettings.mode
+                    blockAds = routingSettings.blockAds
+                    disableIpv6 = routingSettings.disableIpv6
 
                     if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
                         reconnectTransport(location, requestedGeneration)
@@ -698,11 +703,11 @@ class OlcboxVpnService : VpnService() {
         requestedGeneration: Long,
         setErrorOnFailure: Boolean
     ): Boolean {
-        val routing = routingFor(upstream)
+        val routing = routingFor()
         return if (location.kind == LocationKind.Olcrtc) {
             activeCorePort = null
             val started = startMobile(location, upstream, requestedGeneration, setErrorOnFailure)
-            if (started && routing is Routing.BypassRussia) startFront(routing, setErrorOnFailure) else started
+            if (started && routing is Routing.Rules) startFront(routing, setErrorOnFailure) else started
         } else {
             startCore(location, setErrorOnFailure, routing)
         }
@@ -714,7 +719,7 @@ class OlcboxVpnService : VpnService() {
      * the promised endpoint is olcRTC's own port, and a front there would be a
      * second port nobody was told about.
      */
-    private suspend fun startFront(routing: Routing.BypassRussia, setErrorOnFailure: Boolean): Boolean {
+    private suspend fun startFront(routing: Routing.Rules, setErrorOnFailure: Boolean): Boolean {
         if (connectionMode != AndroidConnectionMode.Tun) {
             addLog("Routing: proxy mode keeps olcRTC global")
             return true
@@ -736,7 +741,8 @@ class OlcboxVpnService : VpnService() {
                     socksPort = port,
                     username = socksUsername,
                     password = socksPassword,
-                    routing = routing
+                    routing = routing,
+                    resolveOverTcp = true
                 )
             )
             activeCorePort = port
@@ -797,26 +803,50 @@ class OlcboxVpnService : VpnService() {
             // Which processes must be alive once the port answers. A port that
             // answers proves nothing about who answers.
             val alive: () -> Boolean
-            val fronted = routing is Routing.BypassRussia && connectionMode == AndroidConnectionMode.Tun
+            val fronted = routing is Routing.Rules && connectionMode == AndroidConnectionMode.Tun
             if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
                 if (fronted) {
                     // Xray does not route; sing-box does, so it goes in front.
-                    xrayCore.start(XrayConfig.buildXhttp(spec, socksPort = XRAY_BEHIND_FRONT_PORT))
+                    xrayCore.start(
+                        XrayConfig.buildXhttp(
+                            spec,
+                            socksPort = XRAY_BEHIND_FRONT_PORT,
+                            verboseLogs = routing.verboseLogs
+                        )
+                    )
                     singBoxCore.start(
-                        SingBoxConfig.buildSocksChain(XRAY_BEHIND_FRONT_PORT, socksPort = port, routing = routing)
+                        SingBoxConfig.buildSocksChain(
+                            XRAY_BEHIND_FRONT_PORT,
+                            socksPort = port,
+                            routing = routing,
+                            resolveOverTcp = true
+                        )
                     )
                     label = "sing-box front + Xray/xhttp"
                     diagnose = { singBoxCore.diagnostics() + "\n" + xrayCore.diagnostics() }
                     alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
                 } else {
-                    if (routing is Routing.BypassRussia) addLog("Routing: proxy mode keeps xhttp global")
-                    xrayCore.start(XrayConfig.buildXhttp(spec, socksPort = port))
+                    if (routing is Routing.Rules) addLog("Routing: proxy mode keeps xhttp global")
+                    xrayCore.start(
+                        XrayConfig.buildXhttp(
+                            spec,
+                            socksPort = port,
+                            verboseLogs = (routing as? Routing.Rules)?.verboseLogs == true
+                        )
+                    )
                     label = "Xray/xhttp"
                     diagnose = xrayCore::diagnostics
                     alive = xrayCore::isRunning
                 }
             } else {
-                singBoxCore.start(SingBoxConfig.build(spec, socksPort = port, routing = routing))
+                singBoxCore.start(
+                    SingBoxConfig.build(
+                        spec,
+                        socksPort = port,
+                        routing = routing,
+                        resolveOverTcp = true
+                    )
+                )
                 label = "sing-box/${location.kind}"
                 diagnose = singBoxCore::diagnostics
                 alive = singBoxCore::isRunning
@@ -1008,6 +1038,19 @@ class OlcboxVpnService : VpnService() {
                 .addDnsServer(MAPDNS_ADDRESS)
                 .setBlocking(true)
 
+            if (!disableIpv6) {
+                builder
+                    .addAddress(TUN_IPV6_ADDRESS, IPV6_PREFIX_LENGTH)
+                    .addRoute("::", 0)
+            } else {
+                // Android blocks a family when the VPN declares no address,
+                // route or DNS server for it. Let the OS reject IPv6 at the
+                // socket boundary: browsers then perform normal IPv4 fallback.
+                // Feeding IPv6 into tun2socks and rejecting it in sing-box made
+                // Chromium retry the same cached ipv6hint until the page failed.
+                addLog("IPv6 blocked by Android VPN")
+            }
+
             if (!applySplitTunneling(builder)) return null
 
             currentNetwork?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
@@ -1112,6 +1155,21 @@ class OlcboxVpnService : VpnService() {
                 "\n              password: '$socksPassword'"
         }
 
+        // sing-box and Xray implement SOCKS5 UDP ASSOCIATE and must receive
+        // datagrams as datagrams. Forcing them through hev's UDP-over-TCP mode
+        // breaks QUIC's loss recovery (observed as ERR_QUIC_PROTOCOL_ERROR on
+        // Google and Yandex) and adds head-of-line blocking to calls and games.
+        // olcRTC's own SOCKS endpoint is a stream relay, so its established
+        // UDP-over-TCP path remains unchanged.
+        val udpMode = if (activeCorePort != null) "udp" else "tcp"
+
+        // Do not enable hev's mapdns here. It returns synthetic 100.64/10
+        // addresses to Android and later presents only those addresses to the
+        // SOCKS core. sing-box can sniff an SNI to select a regional rule, but
+        // it cannot replace that synthetic destination with the sniffed name;
+        // a direct route therefore dials the fake address and Chrome reports
+        // ERR_CONNECTION_CLOSED. Forwarding the DNS packet through SOCKS
+        // returns a real address while retaining domain sniffing and GeoIP.
         file.writeText(
             """
             tunnel:
@@ -1123,15 +1181,8 @@ class OlcboxVpnService : VpnService() {
             socks5:
               address: ${socksConnectHost()}
               port: ${activeCorePort ?: socksListenPort}
-              udp: 'tcp'
+              udp: '$udpMode'
               pipeline: false$socksAuth
-
-            mapdns:
-              address: $MAPDNS_ADDRESS
-              port: 53
-              network: $MAPDNS_NETWORK
-              netmask: $MAPDNS_NETMASK
-              cache-size: 10000
 
             misc:
               task-stack-size: 24576
@@ -1741,24 +1792,25 @@ class OlcboxVpnService : VpnService() {
      * network's resolvers for direct names. Files are rewritten on every start —
      * 59 KB, and the alternative is a version check that can be wrong.
      */
-    private suspend fun routingFor(upstream: Network?): Routing = when (routingMode) {
-        RoutingMode.Global -> Routing.Global
-        RoutingMode.BypassRussia -> {
-            val dir = File(filesDir, RULE_SETS_DIR).apply { mkdirs() }
-            for (file in RuleSets.all) File(dir, file.name).writeBytes(RuleSets.bytes(file))
-            addLog("Routing: ${routingMode.hubSummary()}")
-            Routing.BypassRussia(
-                ruleSetDir = dir.absolutePath,
-                directDns = DirectDns.Servers(upstreamDnsAddresses(upstream))
-            )
-        }
+    private suspend fun routingFor(): Routing {
+        val settings = repository.getRoutingSettings()
+        val dir = File(filesDir, RULE_SETS_DIR).apply { mkdirs() }
+        val routing = Routing.Rules(
+            // Keep direct DNS independent from Android's VPN resolver. A
+            // `local` sing-box DNS transport enters netd's Private DNS path;
+            // once the VPN advertises its own resolver, strict Private DNS can
+            // try to validate through the tunnel and close the lookup. Hiddify
+            // uses the same explicit public resolver shape for its direct DNS.
+            // The core process is excluded from this VpnService, so this UDP
+            // query leaves on the physical network and regional names still
+            // resolve and connect with the user's local address.
+            dir.absolutePath, DirectDns.Servers(listOf(SingBoxConfig.DIRECT_DNS_FALLBACK)), routingMode.region,
+            blockAds, settings.disableIpv6, settings.verboseDebugLogs
+        )
+        for (file in RuleSets.selected(routing)) File(dir, file.name).writeBytes(RuleSets.bytes(file))
+        addLog("Routing: ${routingMode.hubSummary()}")
+        return routing
     }
-
-    /** The network's resolvers as the system lists them, for the direct DNS server. */
-    private fun upstreamDnsAddresses(network: Network?): List<String> =
-        network?.let { connectivityManager.getLinkProperties(it)?.dnsServers }
-            ?.mapNotNull { it.hostAddress }
-            .orEmpty()
 
     private fun Network.transportOrNull(): UpstreamTransport? {
         val caps = connectivityManager.getNetworkCapabilities(this) ?: return null
@@ -2124,9 +2176,9 @@ class OlcboxVpnService : VpnService() {
         private const val FRONT_ALTERNATE_PORT = 10812
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
+        private const val TUN_IPV6_ADDRESS = "fdfe:dcba:9876::1"
+        private const val IPV6_PREFIX_LENGTH = 126
         private const val MAPDNS_ADDRESS = "1.1.1.1"
-        private const val MAPDNS_NETWORK = "100.64.0.0"
-        private const val MAPDNS_NETMASK = "255.192.0.0"
         private const val NOTIFICATION_CHANNEL_ID = "olcbox_vpn"
         private const val NOTIFICATION_ID = 100
         private const val TAG = "OlcboxVpnService"

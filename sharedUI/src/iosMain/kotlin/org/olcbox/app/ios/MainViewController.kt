@@ -286,6 +286,8 @@ private fun IosApp(
                     subscriptionSettings = subscriptionSettings,
                     onSubscriptionSettingsChanged = dependencies.homeViewModel::updateSubscriptionSettings,
                     routingSettings = routingSettings,
+                    adBlockingUnavailableReason = if (activeLocation?.kind == org.olcbox.app.net.LocationKind.Olcrtc)
+                        "Not available for Telemost/olcRTC on iOS yet. Available for VLESS and XHTTP." else null,
                     onRoutingSettingsChanged = dependencies.homeViewModel::updateRoutingSettings,
                     connectionModeTitle = "System VPN",
                     connectionModeSummary = "All device traffic through the tunnel",

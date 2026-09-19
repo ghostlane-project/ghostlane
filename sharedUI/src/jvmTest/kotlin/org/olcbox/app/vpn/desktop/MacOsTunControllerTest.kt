@@ -98,7 +98,7 @@ class MacOsTunControllerTest {
         assertNull(MacOsTunController.defaultInterfaceName(""))
     }
 
-    private val bypass = Routing.BypassRussia("/Library/Application Support/org.olcbox.app/rules", DirectDns.System)
+    private val bypass = Routing.Rules("/Library/Application Support/org.olcbox.app/rules", DirectDns.System)
     private val ruleFiles = mapOf("geoip-ru.srs" to "eA==")
     private val idle = """{"ok":true,"state":"idle","logTail":"","protocol":2}"""
     private val running = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":2}"""

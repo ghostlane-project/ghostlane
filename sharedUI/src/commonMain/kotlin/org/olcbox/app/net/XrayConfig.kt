@@ -61,7 +61,7 @@ object XrayConfig {
      *
      * [routing] and [directDns] are the same choices [SingBoxConfig] takes, for
      * the platform where Xray is the only router in the path: iOS with a
-     * tun2socks in front of it instead of sing-box. Under [Routing.BypassRussia]
+     * tun2socks in front of it instead of sing-box. Under [Routing.Rules]
      * the config carries the lists in [geodata] inline — Russian names and
      * addresses and the local network go to a `freedom` outbound, everything
      * else through the tunnel — and answers the system's DNS itself, Russian
@@ -80,14 +80,16 @@ object XrayConfig {
         directDns: DirectDns = DirectDns.Placeholder,
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
+        verboseLogs: Boolean = false,
     ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
             ?: error("XrayConfig.buildXhttp requires an xhttp transport")
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.Rules
         require(bypass == null || geodata != null) {
             "Bypass Russia on Xray carries its lists inline: pass XrayGeodata.lists()"
         }
         val direct = bypass?.directDns ?: directDns
+        val disableIpv6 = bypass?.disableIpv6 ?: true
         val resolvesNames = answersDns || bypass != null
         // A server named by a hostname has to be resolved before the tunnel
         // exists, on the network underneath, never through the resolver that
@@ -96,8 +98,10 @@ object XrayConfig {
         val serverByName = resolvesNames && !isIpLiteral(spec.host)
         val hasDirect = bypass != null || serverByName
         val obj = buildJsonObject {
-            putJsonObject("log") { put("loglevel", "warning") }
-            if (resolvesNames) putDns(direct, bypass?.let { geodata }, spec.host.takeIf { serverByName })
+            putJsonObject("log") { put("loglevel", if (verboseLogs) "debug" else "warning") }
+            if (resolvesNames) putDns(
+                direct, bypass?.let { geodata }, spec.host.takeIf { serverByName }, disableIpv6
+            )
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("tag", "in"); put("listen", "127.0.0.1"); put("port", socksPort)
@@ -191,9 +195,14 @@ object XrayConfig {
                         // is the tun — a lookup that would wait on the tunnel
                         // being dialled. `dns-direct` answers it underneath.
                         if (serverByName) {
-                            putJsonObject("sockopt") { put("domainStrategy", "UseIPv4") }
+                            putJsonObject("sockopt") {
+                                put("domainStrategy", if (disableIpv6) "UseIPv4" else "UseIP")
+                            }
                         }
                     }
+                }
+                if (geodata?.blockedDomains?.isNotEmpty() == true) addJsonObject {
+                    put("tag", "blocked"); put("protocol", "blackhole")
                 }
                 if (hasDirect) {
                     addJsonObject {
@@ -202,7 +211,9 @@ object XrayConfig {
                         // sniff — resolves through the resolver above, which
                         // sends Russian names underneath. "AsIs" would ask the
                         // system, which inside the extension is the tun.
-                        putJsonObject("settings") { put("domainStrategy", "UseIPv4") }
+                        putJsonObject("settings") {
+                            put("domainStrategy", if (disableIpv6) "UseIPv4" else "UseIP")
+                        }
                     }
                 }
                 // Answers the datagrams the rule below sends here with the
@@ -223,9 +234,17 @@ object XrayConfig {
      * remote one comes last. `UseIPv4` because the iOS tun carries no IPv6:
      * an AAAA answer would be an address the phone cannot reach through us.
      */
-    private fun JsonObjectBuilder.putDns(direct: DirectDns, geodata: XrayGeodata.Lists?, serverName: String?) {
+    private fun JsonObjectBuilder.putDns(
+        direct: DirectDns,
+        geodata: XrayGeodata.Lists?,
+        serverName: String?,
+        disableIpv6: Boolean
+    ) {
         putJsonObject("dns") {
-            put("queryStrategy", "UseIPv4")
+            put("queryStrategy", if (disableIpv6) "UseIPv4" else "UseIP")
+            if (geodata?.blockedDomains?.isNotEmpty() == true) putJsonObject("hosts") {
+                geodata.blockedDomains.forEach { put(it, "0.0.0.0") }
+            }
             putJsonArray("servers") {
                 val directNames = (geodata?.domains ?: emptyList()) + listOfNotNull(serverName?.let { "full:$it" })
                 if (directNames.isNotEmpty()) {
@@ -293,18 +312,23 @@ object XrayConfig {
                     putJsonArray("inboundTag") { add("dns-remote") }
                     put("outboundTag", "out")
                 }
+                if (geodata?.blockedDomains?.isNotEmpty() == true) addJsonObject {
+                    put("type", "field")
+                    putJsonArray("domain") { geodata.blockedDomains.forEach { add(it) } }
+                    put("outboundTag", "blocked")
+                }
                 if (geodata != null) {
-                    addJsonObject {
+                    if (geodata.domains.isNotEmpty() || geodata.cidrs.isNotEmpty()) addJsonObject {
                         put("type", "field")
                         putJsonArray("ip") { PRIVATE_RANGES.forEach { add(it) } }
                         put("outboundTag", "direct")
                     }
-                    addJsonObject {
+                    if (geodata.domains.isNotEmpty()) addJsonObject {
                         put("type", "field")
                         putJsonArray("domain") { geodata.domains.forEach { add(it) } }
                         put("outboundTag", "direct")
                     }
-                    addJsonObject {
+                    if (geodata.cidrs.isNotEmpty()) addJsonObject {
                         put("type", "field")
                         putJsonArray("ip") { geodata.cidrs.forEach { add(it) } }
                         put("outboundTag", "direct")

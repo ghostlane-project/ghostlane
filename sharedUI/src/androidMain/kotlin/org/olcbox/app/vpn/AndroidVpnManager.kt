@@ -42,6 +42,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME_INITIALIZED
 import org.olcbox.app.vpn.data.vpnPrefDataStore
 import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
+import java.io.File
 import java.security.SecureRandom
 
 class AndroidVpnManager(private val context: Context) : VpnManager {
@@ -318,6 +319,26 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
+    override fun diagnosticsLog(): String = buildString {
+        // Core stdout is redirected to private files on Android. Include it in
+        // Export/Share so the detailed-log switch is useful without ADB access.
+        // Each file is capped independently: debug logging can be noisy, while
+        // the tail still contains the DNS and route decision around a failure.
+        listOf("singbox", "xray").forEach { core ->
+            val log = File(File(appContext.cacheDir, "olcbox-$core"), "$core.log")
+            val lines = runCatching {
+                if (log.isFile) log.readLines().takeLast(MAX_EXPORTED_CORE_LOG_LINES) else emptyList()
+            }.getOrElse { error ->
+                listOf("could not read ${log.name}: ${error.message}")
+            }
+            if (lines.isNotEmpty()) {
+                if (isNotEmpty()) appendLine()
+                appendLine("--- $core core ---")
+                lines.forEach(::appendLine)
+            }
+        }
+    }.trimEnd()
+
 
     private suspend fun ensureProxySettings() {
         appContext.vpnPrefDataStore.edit { preferences ->
@@ -429,6 +450,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
+        const val MAX_EXPORTED_CORE_LOG_LINES = 2_000
         val random = SecureRandom()
     }
 }

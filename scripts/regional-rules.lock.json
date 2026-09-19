@@ -1,0 +1,44 @@
+[
+  {
+    "name": "geosite-category-ir",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geosite/2188cad8cff230c36953175811304957e6d04326/geosite-category-ir.srs",
+    "srs_sha256": "5e4ef5289e0b4f73018854730b2ab049860ec1e87e1a601fdbe976bcb6c669b6",
+    "text_sha256": "5d49b6d202b10129bbb4d18d64be7ab661d4d53ca82b28dbfea9e5e6dd8b35d9",
+    "bytes": 1652
+  },
+  {
+    "name": "geosite-cn",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geosite/2188cad8cff230c36953175811304957e6d04326/geosite-cn.srs",
+    "srs_sha256": "a32d727f1a71b2f9c67627ea4ae489d8d6cfb010f8ec2d6800538493fe5a77ae",
+    "text_sha256": "726522a3d53a9461b714a9201c59627058a3ad1e3000d8d47751fc4fc12eb72e",
+    "bytes": 55615
+  },
+  {
+    "name": "geosite-tld-cn",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geosite/2188cad8cff230c36953175811304957e6d04326/geosite-tld-cn.srs",
+    "srs_sha256": "246d4792b8d1959854d485420e4f85ea906f85562860c08a34bfd20b1a33c630",
+    "text_sha256": "4ee36a855e07257c29b4e5ac5b28a75b897db9a942b1bbca43c0a42d963122d3",
+    "bytes": 470
+  },
+  {
+    "name": "geoip-ir",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geoip/7fe82a879ad2666526730c195b55a6d8d9147908/geoip-ir.srs",
+    "srs_sha256": "c88af3372f71234f6d015d0452ba472f26b0d9d62e82ae5167d066c1df24b8f5",
+    "text_sha256": "869c45611bb50ee6128107916e178cbd2b9533bda3c2c158839d34ab0b5119bc",
+    "bytes": 12863
+  },
+  {
+    "name": "geoip-cn",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geoip/7fe82a879ad2666526730c195b55a6d8d9147908/geoip-cn.srs",
+    "srs_sha256": "ebee603fdf402314b44b9f653cdcf6d9cc9c41e84e2b3515e3123c5c920a93bc",
+    "text_sha256": "c867901e8c8a2c50ccbf6f58d08e7ebaf718261549254570ccf1ab4b09bb3ece",
+    "bytes": 34185
+  },
+  {
+    "name": "geosite-category-ads-all",
+    "source": "https://raw.githubusercontent.com/SagerNet/sing-geosite/2188cad8cff230c36953175811304957e6d04326/geosite-category-ads-all.srs",
+    "srs_sha256": "d2d51c2e8df3c2b1391136f78ca2c8f69220346d20895b524a587f6face77508",
+    "text_sha256": "c4439949675bcc8ee90336cd73fb0dcbcf36838bfacaebc2c1293b6a45207462",
+    "bytes": 8251
+  }
+]

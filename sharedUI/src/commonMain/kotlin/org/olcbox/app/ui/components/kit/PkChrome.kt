@@ -524,6 +524,10 @@ fun PkActionBar(
         PkActionKind.Busy -> palette.textDim
         PkActionKind.Blocked -> palette.textMuted
     }
+    // Busy is an action as well as a status: the view model treats its second
+    // tap as an authoritative cancellation. It cancels Lowest measurement and
+    // any pending start before stopping the core, so it cannot accidentally
+    // turn into another start against a Windows adapter that is being removed.
     val enabled = action.kind != PkActionKind.Blocked
 
     Column(

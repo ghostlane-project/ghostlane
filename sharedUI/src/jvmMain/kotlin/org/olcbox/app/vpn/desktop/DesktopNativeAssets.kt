@@ -126,8 +126,17 @@ internal object DesktopNativeAssets {
 
         val resource = javaClass.classLoader.getResourceAsStream(resourceName)
         if (resource != null) {
-            resource.use {
-                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            // Windows locks an executable while it runs. A second sing-box
+            // instance (TUN front or latency probe) must reuse identical bytes,
+            // not overwrite the backend's running executable.
+            val staged = Files.createTempFile(target.parent, "native-", ".tmp")
+            try {
+                resource.use { Files.copy(it, staged, StandardCopyOption.REPLACE_EXISTING) }
+                if (!Files.exists(target) || Files.mismatch(staged, target) != -1L) {
+                    Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                Files.deleteIfExists(staged)
             }
             makeExecutable(target)
             return target

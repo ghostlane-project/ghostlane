@@ -1,7 +1,12 @@
 package org.olcbox.app.ui.components.kit
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -43,6 +49,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
+import kotlin.math.PI
+import kotlin.math.sin
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
 
@@ -73,6 +82,36 @@ fun pkPingColor(pingMs: Int): Color {
         pingMs < 150 -> palette.success
         pingMs < 400 -> palette.accent2
         else -> palette.danger
+    }
+}
+
+/** Three lightweight pips that keep moving while a network measurement is alive. */
+@Composable
+private fun PkBouncingDots(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    val phase by rememberInfiniteTransition(label = "latencyDots").animateFloat(
+        initialValue = 0f,
+        targetValue = (PI * 2).toFloat(),
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+        label = "latencyDotsPhase"
+    )
+    Row(
+        modifier = modifier.height(14.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { index ->
+            Box(
+                Modifier
+                    .padding(horizontal = 1.5.dp)
+                    .offset(y = (-abs(sin(phase - index * 0.75f)) * 3f).dp)
+                    .size(3.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            )
+        }
     }
 }
 
@@ -262,7 +301,7 @@ fun PkRoomCard(
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                maxLines = if (selected) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
                 // The name takes the room, and the tag beside it is one word. Both
                 // used to be sized to their content with the tag carrying the whole
@@ -308,20 +347,25 @@ fun PkRoomCard(
                 failed = isOffline,
                 connectedHere = connectedHere
             )
-            Text(
-                text = ping.label,
-                style = pkMono(10, 0.4),
-                color = when (ping.state) {
-                    PkPingState.Measured -> pkPingColor(pingMs ?: 0)
-                    // Amber, not red: a probe that got nothing is a fact about the
-                    // attempt, and red here read as a verdict on the server.
-                    PkPingState.NoAnswer -> palette.accent2
-                    PkPingState.Measuring, PkPingState.Unmeasured -> palette.textMuted
-                },
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                modifier = Modifier.width(54.dp)
-            )
+            val pingColor = when (ping.state) {
+                PkPingState.Measured -> pkPingColor(pingMs ?: 0)
+                // Amber, not red: a probe that got nothing is a fact about the
+                // attempt, and red here read as a verdict on the server.
+                PkPingState.NoAnswer -> palette.accent2
+                PkPingState.Measuring, PkPingState.Unmeasured -> palette.textMuted
+            }
+            if (ping.state == PkPingState.Measuring) {
+                PkBouncingDots(color = pingColor, modifier = Modifier.width(54.dp))
+            } else {
+                Text(
+                    text = ping.label,
+                    style = pkMono(10, 0.4),
+                    color = pingColor,
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    modifier = Modifier.width(54.dp)
+                )
+            }
         }
 
         // Said where the seats would be, because their absence is the symptom the
@@ -381,20 +425,28 @@ fun PkRoomCard(
                 )
                 if (onMeasure != null) {
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = if (isMeasuring) "···" else "MEASURE",
-                        style = pkMono(10, 1.2),
-                        color = palette.link,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                            .clickable(
-                                onClickLabel = "Measure latency",
-                                role = Role.Button
-                            ) { onMeasure() }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    )
+                    val measureModifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                    if (isMeasuring) {
+                        PkBouncingDots(color = palette.link, modifier = measureModifier.width(34.dp))
+                    } else {
+                        Text(
+                            text = "MEASURE",
+                            style = pkMono(10, 1.2),
+                            color = palette.link,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .clickable(
+                                    onClickLabel = "Measure latency",
+                                    role = Role.Button
+                                ) { onMeasure() }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        )
+                    }
                 }
             }
         }

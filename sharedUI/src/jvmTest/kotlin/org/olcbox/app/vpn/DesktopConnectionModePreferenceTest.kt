@@ -24,11 +24,11 @@ class DesktopConnectionModePreferenceTest {
         assertEquals(tun, DesktopConnectionModePreference.effective(listOf(tun), DesktopConnectionMode.Proxy))
     }
 
-    @Test fun routingAppliesInTheProxyAndTheMacTunnelAndNowhereElseYet() {
+    @Test fun routingAppliesInTheProxyAndMacAndWindowsTunnels() {
         assertNull(routingUnavailableReasonFor(DesktopOs.MacOS, DesktopConnectionMode.Tun))
         assertNull(routingUnavailableReasonFor(DesktopOs.MacOS, DesktopConnectionMode.Proxy))
         assertNull(routingUnavailableReasonFor(DesktopOs.Windows, DesktopConnectionMode.Proxy))
-        assertNotNull(routingUnavailableReasonFor(DesktopOs.Windows, DesktopConnectionMode.Tun))
+        assertNull(routingUnavailableReasonFor(DesktopOs.Windows, DesktopConnectionMode.Tun))
         assertNotNull(routingUnavailableReasonFor(DesktopOs.Linux, DesktopConnectionMode.Tun))
         assertNotNull(routingUnavailableReasonFor(DesktopOs.Linux, null))
     }

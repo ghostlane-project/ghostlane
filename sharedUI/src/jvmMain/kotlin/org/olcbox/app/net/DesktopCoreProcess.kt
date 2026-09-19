@@ -65,9 +65,14 @@ internal class DesktopCoreProcess(
             p.destroyForcibly()
             p.waitFor(KILL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         }
+        // A latency test owns a short-lived core. Do not leave its UUID or
+        // upstream credentials in a temp config once the process is gone.
+        if (!p.isAlive) runCatching { Files.deleteIfExists(workDir.resolve("config.json")) }
     }
 
     fun isRunning(): Boolean = process?.isAlive == true
+
+    internal fun runningProcess(): Process? = process?.takeIf { it.isAlive }
 
     /** Exit code once the core has finished; null while it is still running. */
     fun exitCodeOrNull(): Int? = process?.let { if (it.isAlive) null else it.exitValue() }

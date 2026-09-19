@@ -135,11 +135,11 @@ fun desktopRoutingUnavailableReason(effective: DesktopConnectionMode?): String? 
 internal fun routingUnavailableReasonFor(os: DesktopOs, effective: DesktopConnectionMode?): String? {
     val tunWithoutAWayOut = when (os) {
         DesktopOs.Linux -> true
-        DesktopOs.Windows -> effective != DesktopConnectionMode.Proxy
+        DesktopOs.Windows -> false
         DesktopOs.MacOS, DesktopOs.Other -> false
     }
     return if (tunWithoutAWayOut) {
-        "Applies in proxy mode and in the macOS tunnel. The Linux and Windows tunnels follow in a later build."
+        "Available in proxy mode and Windows/macOS tunnels. Linux TUN routing is not supported yet."
     } else {
         null
     }

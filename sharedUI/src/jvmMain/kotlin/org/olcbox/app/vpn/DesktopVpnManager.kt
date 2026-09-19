@@ -84,6 +84,10 @@ class DesktopVpnManager private constructor(
 
     private val _socksProxySettings = MutableStateFlow(DesktopSocksProxySettings())
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
+    private val lanProxy = DesktopLanProxy(::addLog)
+    private var lanWatchJob: Job? = null
+    private val _lanProxyEndpoint = MutableStateFlow<String?>(null)
+    val lanProxyEndpoint: StateFlow<String?> = _lanProxyEndpoint.asStateFlow()
 
     /** Where traffic actually comes out, as measured after connecting. */
     private val _exitInfo = MutableStateFlow<org.olcbox.app.net.TunnelExit?>(null)
@@ -105,6 +109,8 @@ class DesktopVpnManager private constructor(
 
     /** The daemon's own socks inbound, which is what a green light is measured through. */
     private var macTunVerifyPort: Int? = null
+    private var windowsTunVerifyPort: Int? = null
+    private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::addLog)
 
     /**
      * Whether this session started a macOS tunnel at all.
@@ -208,13 +214,10 @@ class DesktopVpnManager private constructor(
         }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
-            val (host, port) = serverEndpoint(config) ?: return null
-            return withContext(Dispatchers.IO) { PathLatency.measure(host, port) }
+            val spec = config.rawLink?.let(LinkParser::parse) ?: return null
+            return org.olcbox.app.net.DesktopChannelProbe.measure(spec)
         }
-        return OlcRtcConnectionChecker.ping(
-            locationConfig = locationConfig,
-            deviceId = locationsRepository.getDeviceIdentity()
-        )
+        return null // A spare room is not joined merely to measure its latency.
     }
 
     override suspend fun measureCurrentChannel(): Long? {
@@ -315,10 +318,13 @@ class DesktopVpnManager private constructor(
             // them to the physical interface. The Linux and Windows tunnels route
             // by policy and by metric, and a direct socket from the core would
             // enter them; they stay global until they have a way out.
-            val routingMode = locationsRepository.getRoutingSettings().mode
-            val bypassApplies = routingMode == RoutingMode.BypassRussia &&
-                (desktopMode == DesktopMode.SystemProxy || desktopMode == DesktopMode.MacTun)
-            if (routingMode == RoutingMode.BypassRussia && !bypassApplies) {
+            val routingSettings = locationsRepository.getRoutingSettings()
+            val routingMode = routingSettings.mode
+            // Routing.Rules also carries the explicit IPv6 choice. Keep this
+            // policy object even for region=Other and ads=off.
+            val bypassApplies = desktopMode == DesktopMode.SystemProxy ||
+                desktopMode == DesktopMode.MacTun || desktopMode == DesktopMode.WindowsTun
+            if (!bypassApplies) {
                 addLog("Routing: $desktopMode keeps everything through the tunnel for now")
             } else if (bypassApplies) {
                 addLog("Routing: ${routingMode.hubSummary()}")
@@ -326,7 +332,10 @@ class DesktopVpnManager private constructor(
             // In the proxy the rules live in the core; in the macOS tunnel they
             // live in the daemon, and the core stays as it was.
             val coreRouting: Routing = if (bypassApplies && desktopMode == DesktopMode.SystemProxy) {
-                Routing.BypassRussia(installRuleSets().toString(), DirectDns.System)
+                Routing.Rules(
+                    installRuleSets().toString(), DirectDns.System, routingMode.region,
+                    routingSettings.blockAds, routingSettings.disableIpv6, routingSettings.verboseDebugLogs
+                )
             } else {
                 Routing.Global
             }
@@ -370,11 +379,14 @@ class DesktopVpnManager private constructor(
                     socksPort = socksSettings.port,
                     requestGeneration = requestGeneration
                 )
-                if (coreRouting is Routing.BypassRussia) {
+                if (coreRouting is Routing.Rules) {
                     frontPort = startOlcRtcFront(socksSettings, coreRouting)
                 }
             } else {
-                startDesktopCore(location, effectiveSocksPort, coreRouting)
+                startDesktopCore(
+                    location, effectiveSocksPort, coreRouting,
+                    verboseLogs = routingSettings.verboseDebugLogs
+                )
             }
 
             if (requestGeneration != generation) {
@@ -383,14 +395,23 @@ class DesktopVpnManager private constructor(
 
             when (desktopMode) {
                 DesktopMode.LinuxTun -> startLinuxTun(effectiveSocksPort, requestGeneration)
-                DesktopMode.WindowsTun -> startWindowsTun(effectiveSocksPort, requestGeneration)
+                DesktopMode.WindowsTun -> startWindowsTun(
+                    effectiveSocksPort, requestGeneration, location, isOlcrtc, socksSettings,
+                    if (bypassApplies) Routing.Rules(
+                        installRuleSets().toString(), DirectDns.System, routingMode.region,
+                        routingSettings.blockAds, routingSettings.disableIpv6, routingSettings.verboseDebugLogs
+                    ) else Routing.Global
+                )
                 DesktopMode.MacTun -> startMacTun(
                     corePort = effectiveSocksPort,
                     isOlcrtc = isOlcrtc,
                     socksSettings = socksSettings,
                     location = location,
                     routing = if (bypassApplies) {
-                        Routing.BypassRussia(TunnelDaemonProtocol.RULES_DIR, DirectDns.System)
+                        Routing.Rules(
+                            TunnelDaemonProtocol.RULES_DIR, DirectDns.System, routingMode.region,
+                            routingSettings.blockAds, routingSettings.disableIpv6, routingSettings.verboseDebugLogs
+                        )
                     } else {
                         Routing.Global
                     },
@@ -441,17 +462,22 @@ class DesktopVpnManager private constructor(
             // In TUN mode the probe goes through the daemon's own inbound, so a
             // green light means the tun carried the request — not merely that the
             // core would have. That inbound has no auth; only the olcRTC core's has.
-            val verifiedThroughTun = desktopMode == DesktopMode.MacTun && macTunVerifyPort != null
+            val tunVerifyPort = when (desktopMode) {
+                DesktopMode.MacTun -> macTunVerifyPort
+                DesktopMode.WindowsTun -> windowsTunVerifyPort
+                else -> null
+            }
+            val verifiedThroughTun = tunVerifyPort != null
             // Through the front when there is one: it has no auth, and a green
             // light has to be about the chain the traffic actually takes.
             val directToOlcrtc = isOlcrtc && !verifiedThroughTun && frontPort == null
             channelProxy = SubscriptionFetchProxy(socksSettings.host,
-                if (verifiedThroughTun) macTunVerifyPort!! else (frontPort ?: effectiveSocksPort),
+                tunVerifyPort ?: (frontPort ?: effectiveSocksPort),
                 if (directToOlcrtc) socksSettings.username else "",
                 if (directToOlcrtc) socksSettings.password else "")
             val exit = org.olcbox.app.net.TunnelVerifier.verify(
                 socksHost = socksSettings.host,
-                socksPort = if (verifiedThroughTun) macTunVerifyPort!! else (frontPort ?: effectiveSocksPort),
+                socksPort = tunVerifyPort ?: (frontPort ?: effectiveSocksPort),
                 username = if (directToOlcrtc) socksSettings.username else "",
                 password = if (directToOlcrtc) socksSettings.password else ""
             )
@@ -471,6 +497,28 @@ class DesktopVpnManager private constructor(
                 error("$transport is up but no traffic reached the internet through it")
             }
             _exitInfo.value = exit
+            if (socksSettings.shareOnLan) {
+                try {
+                    _lanProxyEndpoint.value = lanProxy.start(socksSettings, channelProxy!!)
+                    addLog("LAN SOCKS5 sharing on ${_lanProxyEndpoint.value} (no authentication)")
+                    lanWatchJob = scope.launch {
+                        while (isActive && requestGeneration == generation) {
+                            delay(1_000)
+                            if (!lanProxy.isRunning()) {
+                                _lanProxyEndpoint.value = null
+                                addLog("LAN sharing stopped: its proxy process exited")
+                                break
+                            }
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lanProxy.stop()
+                    _lanProxyEndpoint.value = null
+                    addLog("LAN sharing could not start: ${e.message}")
+                }
+            }
             setStatus(VpnStatus.Connected)
             addLog("$transport connected — exit ${exit.label()}")
         } catch (e: Exception) {
@@ -499,16 +547,86 @@ class DesktopVpnManager private constructor(
         startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
     }
 
-    private suspend fun startWindowsTun(socksPort: Int, requestGeneration: Long) {
-        val tun2SocksBinary = DesktopNativeAssets.resolveWindowsTun2SocksBinary()
-        tunProcess = windowsTunController.start(tun2SocksBinary, socksPort)
-
-        if (requestGeneration != generation) {
-            throw CancellationException("Desktop start superseded")
+    private suspend fun startWindowsTun(
+        socksPort: Int,
+        requestGeneration: Long,
+        location: LocationConfig,
+        isOlcrtc: Boolean,
+        socksSettings: DesktopSocksProxySettings,
+        routing: Routing
+    ) {
+        val physicalInterface = windowsTunController.physicalInterface()
+        val children = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
+        val corePaths = (children.map { child ->
+            child.info().command().orElseThrow { IllegalStateException("Cannot identify VPN core for TUN bypass") }
+        } + listOf(DesktopNativeAssets.resolveSingBoxBinary().toString(), DesktopNativeAssets.resolveXrayBinary().toString())).distinct()
+        require(corePaths.isNotEmpty()) { "No VPN core to route outside the TUN" }
+        val carrier = windowsCarrierRoute(location)
+        val verifyPort = allocateVerifyPort(socksPort)
+        var ready = false
+        for (attempt in 0 until WINDOWS_TUN_START_ATTEMPTS) {
+            windowsTunCore.start(org.olcbox.app.net.SingBoxConfig.buildDesktopTun(
+                corePort = socksPort,
+                verifyPort = verifyPort,
+                username = if (isOlcrtc) socksSettings.username else "",
+                password = if (isOlcrtc) socksSettings.password else "",
+                upstreamUdpIsLossy = isOlcrtc,
+                // Process matching is retained for olcRTC's changing SFU addresses.
+                // Normal proxy links also get an exact route exclusion: Windows can
+                // otherwise capture a newly opened HTTP/2 (gRPC) carrier before the
+                // process rule has associated the socket with its owner.
+                excludeAddresses = carrier.addresses,
+                directDnsDomains = carrier.domains,
+                routing = routing,
+                bindInterface = physicalInterface,
+                bypassProcessPaths = corePaths,
+                cacheFilePath = DesktopPaths.appDataDir().resolve("windows-tun-cache.db").toString(),
+                interfaceName = "Ghostlane-${requestGeneration.toString(16)}-${attempt + 1}"
+            ))
+            // Creating or removing a Wintun adapter can take more than ten
+            // seconds after a reconnect. A stale adapter can also make Wintun
+            // fail once with ERROR_ALREADY_EXISTS while it is being removed.
+            ready = waitForCoreSocks(
+                verifyPort, WINDOWS_TUN_READY_TIMEOUT_MS, windowsTunCore::isRunning
+            ) && windowsTunCore.isRunning()
+            if (ready) break
+            windowsTunCore.stopNow()
+            if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
+            if (attempt + 1 < WINDOWS_TUN_START_ATTEMPTS) {
+                addLog("Windows TUN adapter was not ready; retrying with a fresh adapter")
+                delay(WINDOWS_TUN_RETRY_DELAY_MS)
+            }
         }
-
-        startTunLogReader(tunProcess ?: error("tun2socks process is missing"))
+        if (!ready) error("Windows TUN did not open its verification port after retries; see the core log")
+        tunProcess = windowsTunCore.runningProcess() ?: error("Windows TUN core exited")
+        windowsTunVerifyPort = verifyPort
+        if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
+        // All transports need supervision, including XHTTP/Reality, not only olcRTC.
+        startTunExitWatcher(tunProcess!!, requestGeneration)
+        addLog("Windows TUN ready; carrier processes bypass via $physicalInterface")
     }
+
+    private suspend fun windowsCarrierRoute(location: LocationConfig): WindowsCarrierRoute {
+        if (location.kind == org.olcbox.app.net.LocationKind.Olcrtc) return WindowsCarrierRoute()
+        val host = location.rawLink?.let(org.olcbox.app.net.LinkParser::parse)?.host ?: return WindowsCarrierRoute()
+        val addresses = withContext(Dispatchers.IO) {
+            runCatching { java.net.InetAddress.getAllByName(host).toList() }.getOrDefault(emptyList())
+        }.mapNotNull { address ->
+            when (address) {
+                is java.net.Inet4Address -> "${address.hostAddress}/32"
+                is java.net.Inet6Address -> "${address.hostAddress.substringBefore('%')}/128"
+                else -> null
+            }
+        }.distinct()
+        if (addresses.isEmpty()) addLog("Windows TUN: could not resolve carrier $host; using process bypass")
+        val isLiteral = runCatching { java.net.InetAddress.getByName(host).hostAddress == host }.getOrDefault(false)
+        return WindowsCarrierRoute(addresses, if (isLiteral) emptyList() else listOf(host))
+    }
+
+    private data class WindowsCarrierRoute(
+        val addresses: List<String> = emptyList(),
+        val domains: List<String> = emptyList()
+    )
 
     private suspend fun startSystemProxy(
         socksSettings: DesktopSocksProxySettings,
@@ -588,7 +706,12 @@ class DesktopVpnManager private constructor(
     }
 
     /** Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port. */
-    private suspend fun startDesktopCore(location: LocationConfig, port: Int, routing: Routing) {
+    private suspend fun startDesktopCore(
+        location: LocationConfig,
+        port: Int,
+        routing: Routing,
+        verboseLogs: Boolean,
+    ) {
         val raw = location.rawLink ?: error("core location has no link")
         val spec = org.olcbox.app.net.LinkParser.parse(raw) ?: error("unparseable core link")
         stopDesktopCores()
@@ -597,21 +720,37 @@ class DesktopVpnManager private constructor(
         // Which processes must be alive once the port answers. A port that
         // answers proves nothing about who answers.
         val alive: () -> Boolean
-        if (xhttp != null && routing is Routing.BypassRussia) {
+        if (xhttp != null && routing is Routing.Rules) {
             // Xray does not route; sing-box does, so it goes in front.
             val xrayPort = allocateVerifyPort(port)
-            xrayCore.start(org.olcbox.app.net.XrayConfig.buildXhttp(xhttp, socksPort = xrayPort))
+            xrayCore.start(
+                org.olcbox.app.net.XrayConfig.buildXhttp(
+                    xhttp,
+                    socksPort = xrayPort,
+                    verboseLogs = verboseLogs
+                )
+            )
             singBoxCore.start(
                 org.olcbox.app.net.SingBoxConfig.buildSocksChain(xrayPort, socksPort = port, routing = routing)
             )
             addLog("Xray/xhttp core on 127.0.0.1:$xrayPort behind a sing-box front on 127.0.0.1:$port")
             alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
         } else if (xhttp != null) {
-            xrayCore.start(org.olcbox.app.net.XrayConfig.buildXhttp(xhttp, socksPort = port))
+            xrayCore.start(
+                org.olcbox.app.net.XrayConfig.buildXhttp(
+                    xhttp,
+                    socksPort = port,
+                    verboseLogs = verboseLogs
+                )
+            )
             addLog("Xray/xhttp core starting on 127.0.0.1:$port")
             alive = xrayCore::isRunning
         } else {
-            singBoxCore.start(org.olcbox.app.net.SingBoxConfig.build(spec, socksPort = port, routing = routing))
+            singBoxCore.start(
+                org.olcbox.app.net.SingBoxConfig.build(
+                    spec, socksPort = port, routing = routing, verboseLogs = verboseLogs
+                )
+            )
             addLog("sing-box core (${location.kind}) starting on 127.0.0.1:$port")
             alive = singBoxCore::isRunning
         }
@@ -632,7 +771,7 @@ class DesktopVpnManager private constructor(
      */
     private suspend fun startOlcRtcFront(
         socksSettings: DesktopSocksProxySettings,
-        routing: Routing.BypassRussia
+        routing: Routing.Rules
     ): Int {
         stopDesktopCores()
         val port = allocateCorePort()
@@ -665,7 +804,7 @@ class DesktopVpnManager private constructor(
     private suspend fun installRuleSets(): Path {
         val dir = DesktopPaths.appDataDir().resolve("rulesets")
         Files.createDirectories(dir)
-        for (file in org.olcbox.app.net.RuleSets.all) {
+        for (file in org.olcbox.app.net.RuleSets.bundled) {
             Files.write(dir.resolve(file.name), org.olcbox.app.net.RuleSets.bytes(file))
         }
         return dir
@@ -673,7 +812,7 @@ class DesktopVpnManager private constructor(
 
     /** The same files for the macOS daemon, which writes them itself, root-owned. */
     private suspend fun daemonRuleFiles(): Map<String, String> =
-        org.olcbox.app.net.RuleSets.all.associate {
+        org.olcbox.app.net.RuleSets.bundled.associate {
             it.name to java.util.Base64.getEncoder().encodeToString(org.olcbox.app.net.RuleSets.bytes(it))
         }
 
@@ -718,10 +857,15 @@ class DesktopVpnManager private constructor(
         activeCorePort = null
     }
 
-    private suspend fun waitForCoreSocks(port: Int): Boolean {
-        val deadline = System.currentTimeMillis() + CORE_SOCKS_READY_TIMEOUT_MS
+    private suspend fun waitForCoreSocks(
+        port: Int,
+        timeoutMs: Long = CORE_SOCKS_READY_TIMEOUT_MS,
+        isAlive: () -> Boolean = { true }
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (canConnectToSocks(port)) return true
+            if (!isAlive()) return false
             delay(CORE_SOCKS_POLL_MS)
         }
         return canConnectToSocks(port)
@@ -766,6 +910,11 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // Close the public-facing listener before changing the upstream routes.
+        lanWatchJob?.cancel()
+        lanWatchJob = null
+        lanProxy.stop()
+        _lanProxyEndpoint.value = null
         // macTunActive belongs in this guard: on macOS the cores are owned by
         // their own controllers and the tun by the daemon, so both `process` and
         // `tunProcess` are null while a tunnel is very much up. Without it a stop
@@ -795,10 +944,14 @@ class DesktopVpnManager private constructor(
             }
             DesktopOs.Windows -> {
                 runCatching {
+                    windowsTunCore.stopNow()
+                    windowsTunVerifyPort = null
                     windowsTunController.stop(tunProcess)
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }
+                runCatching { proxyController.restore() }
+                    .onFailure { addLog("Windows proxy restore failed: ${it.message}") }
                 tunProcess = null
             }
             DesktopOs.MacOS,
@@ -1243,6 +1396,9 @@ class DesktopVpnManager private constructor(
     private companion object {
         const val MAX_LOG_ENTRIES = 5_000
         const val CORE_SOCKS_READY_TIMEOUT_MS = 10_000L
+        const val WINDOWS_TUN_READY_TIMEOUT_MS = 45_000L
+        const val WINDOWS_TUN_START_ATTEMPTS = 3
+        const val WINDOWS_TUN_RETRY_DELAY_MS = 1_200L
         /** How long a stopped core may keep holding its port before we move on. */
         const val CORE_PORT_RELEASE_TIMEOUT_MS = 1_500L
         const val CORE_PORT_RELEASE_POLL_MS = 100L

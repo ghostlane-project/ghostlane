@@ -6,7 +6,7 @@ package org.olcbox.app.net
  *
  * A builder-level model, deliberately separate from the persisted setting
  * ([org.olcbox.app.data.model.RoutingMode]): the setting is one word, this is
- * what the platform resolved that word into — where it put the rule-set files
+ * what the platform resolved that word into вЂ” where it put the rule-set files
  * and which resolver "direct" traffic may use.
  */
 sealed interface Routing {
@@ -21,7 +21,14 @@ sealed interface Routing {
      * the path (Android); relative to the core's working directory where only
      * the extension does (iOS, [RuleSets.IOS_RELATIVE_DIR]).
      */
-    data class BypassRussia(val ruleSetDir: String, val directDns: DirectDns) : Routing
+    data class Rules(
+        val ruleSetDir: String,
+        val directDns: DirectDns,
+        val region: String? = "ru",
+        val blockAds: Boolean = false,
+        val disableIpv6: Boolean = true,
+        val verboseLogs: Boolean = false
+    ) : Routing
 }
 
 /**
@@ -32,19 +39,19 @@ sealed interface Routing {
 sealed interface DirectDns {
     /**
      * The operating system's resolver. Only where the core reaches it without
-     * looping through its own tun — desktop. Inside an iOS tunnel the system
+     * looping through its own tun вЂ” desktop. Inside an iOS tunnel the system
      * resolver *is* the tun, and sing-box's darwin `local` transport falls back
      * to exactly that once a tun inbound exists.
      */
     data object System : DirectDns
 
     /**
-     * Explicit resolver addresses as the platform lists them — IP literals,
+     * Explicit resolver addresses as the platform lists them вЂ” IP literals,
      * with or without a `%zone`. One is used: sing-box has no failover
      * between servers, so [pick] chooses the first IPv4, else the first
-     * global IPv6, else a link-local IPv6 that still carries its zone — the
+     * global IPv6, else a link-local IPv6 that still carries its zone вЂ” the
      * router on an IPv6-only Wi-Fi advertises exactly that, and sing-box
-     * dials a zoned address as Go does — else the public fallback.
+     * dials a zoned address as Go does вЂ” else the public fallback.
      */
     data class Servers(val addresses: List<String>) : DirectDns {
         fun pick(): String {
@@ -66,8 +73,8 @@ sealed interface DirectDns {
 
     /**
      * iOS. The extension learns the network's resolver only after the config
-     * has been written — it reads it just before the tunnel's settings replace
-     * the system resolver with our own tun — so the builder emits
+     * has been written вЂ” it reads it just before the tunnel's settings replace
+     * the system resolver with our own tun вЂ” so the builder emits
      * [SingBoxConfig.DIRECT_DNS_PLACEHOLDER] and the extension replaces it.
      */
     data object Placeholder : DirectDns

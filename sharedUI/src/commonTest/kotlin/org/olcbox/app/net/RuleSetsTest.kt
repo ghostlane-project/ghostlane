@@ -11,7 +11,7 @@ class RuleSetsTest {
         // The hashes are what scripts/update-rule-sets.sh fetched; a bundle whose
         // bytes differ is either an unrecorded refresh or a corrupted resource, and
         // either one ships a bypass list nobody reviewed.
-        for (file in RuleSets.all) {
+        for (file in RuleSets.bundled) {
             val bytes = RuleSets.bytes(file)
             assertTrue(bytes.isNotEmpty(), "${file.name} is empty")
             assertEquals(file.sha256, PlatformCrypto.sha256(bytes).toHex(), "${file.name} is not the pinned build")

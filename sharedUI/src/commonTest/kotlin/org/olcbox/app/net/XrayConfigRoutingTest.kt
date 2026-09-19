@@ -37,7 +37,7 @@ class XrayConfigRoutingTest {
         XrayConfig.buildXhttp(xhttp(host), routing = routing, geodata = geodata, answersDns = answersDns)
     ).jsonObject
 
-    private fun bypass() = Routing.BypassRussia("unused-on-xray", DirectDns.Placeholder)
+    private fun bypass() = Routing.Rules("unused-on-xray", DirectDns.Placeholder)
 
     private fun JsonObject.str(key: String) = this[key]!!.jsonPrimitive.content
     private fun JsonArray.strings() = map { it.jsonPrimitive.content }
@@ -156,5 +156,13 @@ class XrayConfigRoutingTest {
         assertFalse(XrayConfig.isIpLiteral("edge.example.org"))
         assertFalse(XrayConfig.isIpLiteral("1.2.3"))
         assertFalse(XrayConfig.isIpLiteral("999.1.1.1"))
+    }
+
+    @Test fun detailedLoggingIsOptIn() {
+        assertEquals("warning", build()["log"]!!.jsonObject.str("loglevel"))
+        val detailed = Json.parseToJsonElement(
+            XrayConfig.buildXhttp(xhttp(), verboseLogs = true)
+        ).jsonObject
+        assertEquals("debug", detailed["log"]!!.jsonObject.str("loglevel"))
     }
 }

@@ -38,6 +38,13 @@ object RuleSets {
         sha256 = "1a8115af741918ff24b37b87d3c6da21eccabc58f1eec059e461dca8bac16ff7"
     )
 
+    val GEOSITE_CATEGORY_IR = File(name = "geosite-category-ir.srs", tag = "geosite-category-ir", sha256 = "5e4ef5289e0b4f73018854730b2ab049860ec1e87e1a601fdbe976bcb6c669b6")
+    val GEOSITE_CN = File(name = "geosite-cn.srs", tag = "geosite-cn", sha256 = "a32d727f1a71b2f9c67627ea4ae489d8d6cfb010f8ec2d6800538493fe5a77ae")
+    val GEOSITE_TLD_CN = File(name = "geosite-tld-cn.srs", tag = "geosite-tld-cn", sha256 = "246d4792b8d1959854d485420e4f85ea906f85562860c08a34bfd20b1a33c630")
+    val GEOIP_IR = File(name = "geoip-ir.srs", tag = "geoip-ir", sha256 = "c88af3372f71234f6d015d0452ba472f26b0d9d62e82ae5167d066c1df24b8f5")
+    val GEOIP_CN = File(name = "geoip-cn.srs", tag = "geoip-cn", sha256 = "ebee603fdf402314b44b9f653cdcf6d9cc9c41e84e2b3515e3123c5c920a93bc")
+    val GEOSITE_CATEGORY_ADS_ALL = File(name = "geosite-category-ads-all.srs", tag = "geosite-category-ads-all", sha256 = "d2d51c2e8df3c2b1391136f78ca2c8f69220346d20895b524a587f6face77508")
+
     /** Everything the route rules match on. */
     val all: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU, GEOIP_RU)
 
@@ -53,6 +60,23 @@ object RuleSets {
      * there through the Swift bridge; the config never needs the full path.
      */
     const val IOS_RELATIVE_DIR = "rules"
+
+
+    /** Bundled data: available offline before the first connection. */
+    val bundled: List<File> = all + listOf(GEOSITE_CATEGORY_IR, GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_IR, GEOIP_CN, GEOSITE_CATEGORY_ADS_ALL)
+
+    fun regional(region: String?): List<File> = when (region) {
+        null -> emptyList()
+        "ru" -> all
+        "ir" -> listOf(GEOSITE_CATEGORY_IR, GEOIP_IR)
+        "cn" -> listOf(GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_CN)
+        else -> error("Unknown routing region: $region")
+    }
+
+    fun regionalDomains(region: String?): List<File> = regional(region).filter { it.name.startsWith("geosite-") }
+
+    fun selected(routing: Routing.Rules): List<File> = regional(routing.region) +
+        if (routing.blockAds) listOf(GEOSITE_CATEGORY_ADS_ALL) else emptyList()
 
     suspend fun bytes(file: File): ByteArray = Res.readBytes("files/rules/${file.name}")
 }

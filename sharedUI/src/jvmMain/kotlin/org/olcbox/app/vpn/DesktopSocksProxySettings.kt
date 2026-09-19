@@ -8,7 +8,9 @@ data class DesktopSocksProxySettings(
     val host: String = PacServer.LOCAL_SOCKS_HOST,
     val port: Int = PacServer.LOCAL_SOCKS_PORT,
     val username: String = "",
-    val password: String = ""
+    val password: String = "",
+    val shareOnLan: Boolean = false,
+    val lanPort: Int = 10818
 ) {
     val isConfigured: Boolean
         get() = username.isNotBlank() && password.isNotBlank()
@@ -17,6 +19,7 @@ data class DesktopSocksProxySettings(
         return copy(
             host = host.ifBlank { PacServer.LOCAL_SOCKS_HOST },
             port = sanitizePort(port),
+            lanPort = sanitizePort(lanPort).let { if (it == sanitizePort(port)) if (it == MAX_PORT) it - 1 else it + 1 else it },
             username = username.take(MAX_CREDENTIAL_LENGTH),
             password = password.take(MAX_CREDENTIAL_LENGTH)
         )

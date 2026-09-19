@@ -342,6 +342,21 @@ class LocationViewModel(
         }
     }
 
+    /** A stable copy used to connect in the same order the board just rendered. */
+    fun pingSnapshot(locationIds: Collection<String>): Map<String, Int?> {
+        val wanted = locationIds.toSet()
+        return currentPingsSnapshot().filterKeys { it in wanted }
+    }
+
+    /** Cancel an in-flight Connect measurement without discarding completed values. */
+    fun cancelPings(locationIds: Collection<String>? = null) {
+        pingEpoch++
+        val wanted = locationIds?.toSet()
+        val ids = activePingJobs.keys.filter { wanted == null || it in wanted }
+        ids.forEach { id -> activePingJobs.remove(id)?.cancel() }
+        emitPingState()
+    }
+
     private fun emitPingState(
         pings: Map<String, Int?> = currentPingsSnapshot()
     ) {
