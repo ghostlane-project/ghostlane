@@ -242,7 +242,7 @@ Regulations of publicly available encryption source code.
 
 Product:            Ghostlane (olcbox) — VPN client for iOS, Android, macOS,
                     Windows and Linux
-Source code URL:    https://github.com/romanpodpriatov/olcbox
+Source code URL:    https://github.com/romanpodpriatov/ghostlane
 
 The complete corresponding source code is available at the URL above without
 charge and without restriction on access. Cryptographic functionality is
