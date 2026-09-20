@@ -215,7 +215,7 @@ that speaks the protocols above will work.
 
 OPEN SOURCE
 
-github.com/romanpodpriatov/olcbox
+github.com/romanpodpriatov/ghostlane
 ```
 
 > Two things stay out of this text. **No purchase pointer** ("the app can open

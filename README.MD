@@ -240,7 +240,7 @@ Override it with `OLCRTC_REPO`:
 OLCRTC_REPO=/path/to/olcrtc ./gradlew :desktopApp:run
 ```
 
-Relative `OLCRTC_REPO` values are resolved from the `olcbox` project root:
+Relative `OLCRTC_REPO` values are resolved from this project's root:
 
 ```bash
 OLCRTC_REPO=../olcrtc-ansible-deploy/olcrtc ./gradlew :androidApp:assembleGithubRelease
