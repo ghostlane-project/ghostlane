@@ -180,7 +180,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260918215248-653bb167b496}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260920182049-7142c4a04b8b}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -232,7 +232,10 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260918215248-653bb167b496}"
 # 24 → 25: the engine pin above (aaffe1e05c3b), olcbox#37; same API.
 # 25 → 26: the engine pin above (653bb167b496): the Jitsi config.js fallback, the
 # LiveKit join budget and the release gate; same API.
-CORES_BUILD="${CORES_BUILD:-26}"
+# 26 → 27: the engine pin above (7142c4a04b8b): the release gate's whole wave -
+# transport-cc to Jitsi, the relay window, the datachannel batching, the
+# seichannel window, the WB publish ceiling and the reconnect rewrite; same API.
+CORES_BUILD="${CORES_BUILD:-27}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
