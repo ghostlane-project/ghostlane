@@ -50,6 +50,7 @@ separately and pinned to each other.
 | Community standards | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 | Funding, and who holds the money | [FUNDING.md](FUNDING.md) |
 | Licences of what ships inside | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+| The project as a whole, for funders and packagers | [docs/open-source-collective.md](docs/open-source-collective.md) |
 
 Every release is gated on a suite that moves real traffic through real relays,
 on every supported provider, and the report of that run is attached to the
@@ -110,9 +111,12 @@ proofkit://add?url=<payload>
 https://proofkit.org/add#<payload>
 ```
 
-The web spelling is for the places that will not open a custom scheme: a phone
-with the app installed opens it in the app, a phone without it lands on a page
-with the downloads. There the payload rides the fragment on purpose — a fragment
+`proofkit` there is the scheme the app registered under its former name. It is
+kept because links already handed out by providers, and copies already
+installed, use it; renaming it would break them for no gain. The web spelling is
+for the places that will not open a custom scheme: a phone with the app
+installed opens it in the app, a phone without it lands on a page with the
+downloads. There the payload rides the fragment on purpose — a fragment
 never leaves the browser, so the list, which is a credential, is in nobody's
 access log. For the same reason the app shows where a list came from and never
 reads the link itself back out.
@@ -142,21 +146,38 @@ iOS packet tunnel, the sing-box and Xray transports, and the current interface
 were added here; the original copyright stands alongside ours in `LICENSE`, as
 MIT requires and as it should.
 
-## Support
+## Getting help
 
 Bug reports, questions and feature requests go to the issue tracker;
 [SUPPORT.md](SUPPORT.md) says what makes a report useful and what must never be
 pasted into a public issue. Security problems go through the private channel in
 [SECURITY.md](SECURITY.md), never an issue.
 
-> **Nothing here is for sale.** Not the app, not access, not configurations,
-> not server lists, not support. The project accepts voluntary funding only,
-> and spends it in the open: see [FUNDING.md](FUNDING.md).
+## Supporting the project
 
-> **Здесь ничего не продаётся.**
-> Ни приложение, ни доступ, ни конфигурации, ни списки серверов, ни поддержка.
-> Проект принимает только добровольное финансирование и тратит его открыто:
-> см. [FUNDING.md](FUNDING.md).
+The app is free and stays free: nothing in it is sold, there is no account, and
+no feature waits behind a payment. Development has been unfunded so far.
+
+If the project is funded, the money goes to the work that keeps it alive:
+
+- development and maintenance, including review of other people's changes;
+- infrastructure: build machines, the relays the release gate exercises, code
+  signing and notarisation, developer program fees;
+- testing: devices, and network access in the places this software is for;
+- security: audits, dependency review, and rewards for reported vulnerabilities
+  when the budget allows;
+- documentation and translation;
+- compensation of maintainers and contributors for actual project work.
+
+Funding would be held by Open Source Collective as fiscal host, and every
+contribution and expense is public and itemised there. Globvent Inc., which
+publishes the mobile applications, neither receives nor controls those funds.
+[FUNDING.md](FUNDING.md) sets out the rules, including the ones the maintainers
+hold themselves to when they are paid.
+
+> **Здесь ничего не продаётся.** Ни приложение, ни доступ, ни конфигурации, ни
+> списки серверов, ни поддержка. Проект принимает только добровольное
+> финансирование и тратит его открыто: см. [FUNDING.md](FUNDING.md).
 
 ## Legal Notice
 This software is intended for development, testing and research purposes only.
