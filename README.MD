@@ -315,7 +315,6 @@ Built into `desktopApp/build/generated/desktopNativeResources/` by
 | macOS `olcrtc` library, for room checks | `native/libolcrtc-darwin-<arch>.dylib` |
 | macOS tunnel-daemon bridge | `native/libolcboxtunneld.dylib` |
 | Windows `olcrtc` | `native/olcrtc-windows-amd64.exe`, `native/olcrtc-windows-amd64.dll` |
-| Windows `tun2socks` | `native/tun2socks-windows-amd64.exe` |
 | Windows Wintun runtime | `native/wintun.dll` |
 | Linux `olcrtc` | `native/olcrtc-linux-<arch>`, `native/libolcrtc-linux-<arch>.so` |
 | Linux `hev-socks5-tunnel` | `native/hev-socks5-tunnel-linux-<arch>` |

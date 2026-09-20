@@ -165,7 +165,8 @@ object SingBoxConfig {
      * hostname, that query enters the tun like any other, and answering it needs
      * the tunnel being redialled; those names go to the system resolver instead.
      *
-     * [verifyPort] is a second socks inbound, for `TunnelVerifier`. Verifying
+     * [verifyPort] is a second socks inbound for `TunnelVerifier`; desktop callers
+     * can protect it with the verification credentials. Verifying
      * through the core's own port would prove the core works and say nothing
      * about the tun in front of it — which is the half that is new here, so it is
      * the half a green light has to be about.
@@ -177,6 +178,8 @@ object SingBoxConfig {
     fun buildDesktopTun(
         corePort: Int,
         verifyPort: Int?,
+        verifyUsername: String = "",
+        verifyPassword: String = "",
         username: String = "",
         password: String = "",
         excludeAddresses: List<String> = emptyList(),
@@ -200,6 +203,9 @@ object SingBoxConfig {
         interfaceName: String? = null,
     ): String {
         val bypass = routing as? Routing.BypassRussia
+        require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
+            "verification proxy credentials must be supplied as a pair"
+        }
         require(bypass == null || !bindInterface.isNullOrBlank()) {
             "a direct outbound inside the tun's own process needs an interface to bind to"
         }
@@ -260,6 +266,14 @@ object SingBoxConfig {
                 if (verifyPort != null) addJsonObject {
                     put("type", "socks"); put("tag", "verify-in")
                     put("listen", "127.0.0.1"); put("listen_port", verifyPort)
+                    if (verifyUsername.isNotBlank()) {
+                        putJsonArray("users") {
+                            addJsonObject {
+                                put("username", verifyUsername)
+                                put("password", verifyPassword)
+                            }
+                        }
+                    }
                 }
             }
             putJsonArray("outbounds") {

@@ -109,6 +109,30 @@ class SingBoxConfigDumpTest {
         )
         assertTrue(File(outDir, "desktop-tun-native.json").exists())
     }
+
+    /** The exact Windows shape: named Wintun, carrier bypass, bound direct, and authenticated probe. */
+    @Test fun dumpDesktopTunWindows() {
+        dumpWithSocksTwin(
+            "desktop-tun-windows",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                verifyUsername = "random-probe-user",
+                verifyPassword = "random-probe-password",
+                username = "upstream-user",
+                password = "upstream-password",
+                excludeAddresses = listOf("203.0.113.7/32"),
+                directDnsDomains = listOf("edge.example.org"),
+                bindInterface = "Ethernet",
+                bypassProcessPaths = listOf(
+                    "C:\\Program Files\\Ghostlane\\sing-box.exe",
+                    "C:\\Program Files\\Ghostlane\\xray.exe"
+                ),
+                interfaceName = "Ghostlane-a1b2c3d4-1-0"
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-windows.json").exists())
+    }
     /**
      * Bypass Russia. Every rule-set is a real file here, because `sing-box check`
      * opens local rule-sets while building the router — a missing file fails the

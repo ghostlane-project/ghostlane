@@ -4,8 +4,8 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -84,9 +84,14 @@ abstract class ExtractZipEntryTask : DefaultTask() {
 }
 
 abstract class VerifyNativeResourcesTask : DefaultTask() {
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.RELATIVE)
+    // Do not declare this as InputDirectory: Gradle rejects a missing directory
+    // before the task can report which bundled resources are absent.
+    @get:Internal
     abstract val resourcesDir: DirectoryProperty
+
+    @get:Input
+    val resourcesPath: String
+        get() = resourcesDir.get().asFile.absolutePath
 
     @get:Input
     abstract val requiredPaths: ListProperty<String>
@@ -120,7 +125,6 @@ val currentBuildOs = OperatingSystem.current()
 // hardcoded "Olcbox" directory so existing installs keep their subscriptions.
 val desktopPackageName = "Ghostlane"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
-val tun2SocksVersion = "2.6.0"
 val wintunVersion = "0.14.1"
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
@@ -432,22 +436,8 @@ if (currentBuildOs.isMacOsX) {
 }
 
 if (currentBuildOs.isWindows) {
-    val tun2SocksWindowsOutput = generatedNativeResources.map {
-        it.file("native/tun2socks-windows-amd64.exe")
-    }
     val wintunWindowsOutput = generatedNativeResources.map {
         it.file("native/wintun.dll")
-    }
-
-    val downloadTun2SocksWindowsAmd64 = tasks.register<DownloadFileTask>("downloadTun2SocksWindowsAmd64") {
-        sourceUrl.set("https://github.com/xjasonlyu/tun2socks/releases/download/v$tun2SocksVersion/tun2socks-windows-amd64.zip")
-        outputFile.set(layout.buildDirectory.file("tmp/tun2socks/tun2socks-windows-amd64-$tun2SocksVersion.zip"))
-    }
-
-    val extractTun2SocksWindowsAmd64 = tasks.register<ExtractZipEntryTask>("extractTun2SocksWindowsAmd64") {
-        zipFile.set(downloadTun2SocksWindowsAmd64.flatMap { it.outputFile })
-        entrySuffix.set("tun2socks-windows-amd64.exe")
-        outputFile.set(tun2SocksWindowsOutput)
     }
 
     val downloadWintunWindowsAmd64 = tasks.register<DownloadFileTask>("downloadWintunWindowsAmd64") {
@@ -461,9 +451,7 @@ if (currentBuildOs.isWindows) {
         outputFile.set(wintunWindowsOutput)
     }
 
-    desktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
     desktopNativeAssetTasks.add(extractWintunWindowsAmd64)
-    hostDesktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
     hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
@@ -481,7 +469,6 @@ fun requiredHostNativeResourcePaths(): List<String> = buildList {
         currentBuildOs.isWindows -> {
             add("native/olcrtc-windows-amd64.exe")
             add("native/olcrtc-windows-amd64.dll")
-            add("native/tun2socks-windows-amd64.exe")
             add("native/wintun.dll")
         }
         currentBuildOs.isLinux -> {

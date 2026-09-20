@@ -542,12 +542,17 @@ class DesktopVpnManager private constructor(
         require(bypassPaths.isNotEmpty()) { "No VPN core to route outside the TUN" }
 
         val carrier = windowsCarrierRoute(location)
+        val verifyPort = allocateVerifyPort(socksPort)
+        val verifyUsername = UUID.randomUUID().toString()
+        val verifyPassword = UUID.randomUUID().toString()
         var ready = false
         for (attempt in 0 until WINDOWS_TUN_START_ATTEMPTS) {
             windowsTunCore.start(
                 org.olcbox.app.net.SingBoxConfig.buildDesktopTun(
                     corePort = socksPort,
-                    verifyPort = null,
+                    verifyPort = verifyPort,
+                    verifyUsername = verifyUsername,
+                    verifyPassword = verifyPassword,
                     username = if (isOlcrtc) socksSettings.username else "",
                     password = if (isOlcrtc) socksSettings.password else "",
                     upstreamUdpIsLossy = isOlcrtc,
@@ -562,7 +567,9 @@ class DesktopVpnManager private constructor(
                     )
                 )
             )
-            windowsTunExit = awaitWindowsTunTraffic(requestGeneration)
+            windowsTunExit = awaitWindowsTunTraffic(
+                requestGeneration, verifyPort, verifyUsername, verifyPassword
+            )
             ready = windowsTunExit != null && windowsTunCore.isRunning()
             if (ready) break
             windowsTunCore.stopNow()
@@ -579,11 +586,22 @@ class DesktopVpnManager private constructor(
         addLog("Windows TUN ready; carrier processes bypass via $physicalInterface")
     }
 
-    private suspend fun awaitWindowsTunTraffic(requestGeneration: Long): org.olcbox.app.net.TunnelExit? {
+    private suspend fun awaitWindowsTunTraffic(
+        requestGeneration: Long,
+        verifyPort: Int,
+        verifyUsername: String,
+        verifyPassword: String
+    ): org.olcbox.app.net.TunnelExit? {
         val deadline = System.currentTimeMillis() + WINDOWS_TUN_READY_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline && windowsTunCore.isRunning()) {
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
-            org.olcbox.app.net.TunnelVerifier.verifyDirect(WINDOWS_TUN_PROBE_TIMEOUT_MS)?.let { return it }
+            org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = "127.0.0.1",
+                socksPort = verifyPort,
+                username = verifyUsername,
+                password = verifyPassword,
+                timeoutMs = WINDOWS_TUN_PROBE_TIMEOUT_MS
+            )?.let { return it }
             delay(WINDOWS_TUN_RETRY_DELAY_MS)
         }
         return null
@@ -671,7 +689,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * A port for the daemon's own socks inbound, never the core's.
+     * A port for the TUN process's own verification inbound, never the carrier core's.
      *
      * Verifying through the core's port would prove the core works and say
      * nothing about the tun in front of it — which is the half that is new, so it
@@ -903,7 +921,6 @@ class DesktopVpnManager private constructor(
                 runCatching {
                     windowsTunCore.stopNow()
                     windowsTunExit = null
-                    windowsTunController.stop(tunProcess)
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }

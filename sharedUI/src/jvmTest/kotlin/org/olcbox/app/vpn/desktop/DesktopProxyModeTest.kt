@@ -296,22 +296,6 @@ class DesktopProxyModeTest {
     }
 
     @Test
-    fun windowsTunCommandUsesTun2SocksWintunAndLocalSocks() {
-        val command = WindowsTunController.tun2SocksCommand(
-            tun2SocksBinary = Path.of("C:/Olcbox/bin/tun2socks-windows-amd64.exe"),
-            socksPort = 10812
-        )
-
-        assertContains(command, Path.of("C:/Olcbox/bin/tun2socks-windows-amd64.exe").toString())
-        assertContains(command, "--device")
-        assertContains(command, "Olcbox")
-        assertContains(command, "--proxy")
-        assertContains(command, "socks5://127.0.0.1:10812")
-        assertContains(command, "--mtu")
-        assertContains(command, "1500")
-    }
-
-    @Test
     fun windowsTunAdministratorRestartUsesRunAsAndPreservesArguments() {
         val script = WindowsTunController.restartAsAdministratorScript(
             command = "C:/Olc's/Olcbox.exe",
@@ -363,21 +347,6 @@ class DesktopProxyModeTest {
         assertContains(down, "ip -6 rule del uidrange 0-0 lookup main pref 10")
         assertContains(down, "ip -6 rule del lookup 51820 pref 20")
         assertContains(down, "ip -6 route flush table 51820")
-    }
-
-    @Test
-    fun windowsTunRoutesClaimIpv6AsWellAsIpv4() {
-        // Same leak, same shape: without an IPv6 address on the adapter, Windows
-        // keeps its IPv6 default on the physical NIC. `::/1` and `8000::/1` beat
-        // `::/0` by longest prefix, the way the IPv4 halves already do.
-        val install = WindowsTunController.installRoutesScript()
-        val remove = WindowsTunController.removeRoutesScript()
-
-        assertContains(install, "-AddressFamily IPv6")
-        assertContains(install, "'::/1'")
-        assertContains(install, "'8000::/1'")
-        assertContains(remove, "'::/1'")
-        assertContains(remove, "'8000::/1'")
     }
 
     @Test

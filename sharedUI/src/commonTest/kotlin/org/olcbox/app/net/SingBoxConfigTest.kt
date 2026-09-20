@@ -383,19 +383,42 @@ class SingBoxConfigTest {
     }
 
     @Test
-    fun windowsTunOmitsVerificationInboundAndBypassesOnlyCarrierProcesses() {
+    fun windowsTunAuthenticatesVerificationAndBypassesOnlyCarrierProcessesFirst() {
+        // Both exclusions are required. process_path keeps the carrier cores out
+        // of the route they provide; route_exclude_address keeps their remote
+        // endpoints reachable even when Windows cannot report a process path.
         val json = SingBoxConfig.buildDesktopTun(
             corePort = 10810,
-            verifyPort = null,
-            bypassProcessPaths = listOf("C:/Ghostlane/sing-box.exe", "C:/Ghostlane/xray.exe"),
+            verifyPort = 10811,
+            verifyUsername = "probe-user",
+            verifyPassword = "probe-password",
+            username = "upstream-user",
+            password = "upstream-password",
+            excludeAddresses = listOf("203.0.113.7/32"),
+            bypassProcessPaths = listOf("C:\\Ghostlane\\sing-box.exe", "C:\\Ghostlane\\xray.exe"),
             interfaceName = "Ghostlane-aaaaaaaa-1-1"
         )
-        assertTrue("verify-in" !in json)
-        assertContains(json, "\"interface_name\":\"Ghostlane-aaaaaaaa-1-1\"")
-        assertContains(json, "\"auto_detect_interface\":true")
-        assertContains(
-            json,
-            "\"process_path\":[\"C:/Ghostlane/sing-box.exe\",\"C:/Ghostlane/xray.exe\"]"
+        val root = obj(json)
+        val inbounds = root["inbounds"]!!.jsonArray.map { it.jsonObject }
+        val tun = inbounds.first { str(it, "tag") == "tun-in" }
+        val verify = inbounds.first { str(it, "tag") == "verify-in" }
+        val probeUser = verify["users"]!!.jsonArray.single().jsonObject
+        assertEquals("Ghostlane-aaaaaaaa-1-1", str(tun, "interface_name"))
+        assertEquals(listOf("203.0.113.7/32"), strings(tun, "route_exclude_address"))
+        assertEquals("probe-user", str(probeUser, "username"))
+        assertEquals("probe-password", str(probeUser, "password"))
+
+        val upstream = root["outbounds"]!!.jsonArray.first().jsonObject
+        assertEquals("upstream-user", str(upstream, "username"))
+        assertEquals("upstream-password", str(upstream, "password"))
+
+        val route = root["route"]!!.jsonObject
+        assertEquals(true, route["auto_detect_interface"]!!.jsonPrimitive.content.toBoolean())
+        val bypass = route["rules"]!!.jsonArray.first().jsonObject
+        assertEquals(listOf("tun-in"), strings(bypass, "inbound"))
+        assertEquals(
+            listOf("C:\\Ghostlane\\sing-box.exe", "C:\\Ghostlane\\xray.exe"),
+            strings(bypass, "process_path")
         )
     }
 
