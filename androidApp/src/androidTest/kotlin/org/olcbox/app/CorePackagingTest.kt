@@ -8,7 +8,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.OutboundSpec
+import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.XrayGeodata
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -30,6 +32,21 @@ class CorePackagingTest {
     /** The core is shipped as a lib*.so so the installer extracts it somewhere exec is allowed. */
     private fun coreBinary(name: String): File =
         File(context.applicationInfo.nativeLibraryDir, name)
+
+    @Test
+    fun regionalRoutingFilesArePackaged() {
+        val prefix = "composeResources/multiplatform_app.sharedui.generated.resources/files"
+        val expected =
+            RuleSets.all.map { "$prefix/rules/${it.name}" } +
+                XrayGeodata.all.map { "$prefix/xray/${it.name}" }
+
+        expected.forEach { path ->
+            val hasBytes = runCatching {
+                context.assets.open(path).use { it.read() != -1 }
+            }.getOrDefault(false)
+            assertTrue("Compose resource missing or empty in installed APK: $path", hasBytes)
+        }
+    }
 
     @Test
     fun singBoxIsPackagedAndExecutable() {
