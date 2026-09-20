@@ -3,6 +3,7 @@ package org.olcbox.app.vpn
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
@@ -18,6 +19,7 @@ import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.net.DesktopSingBoxController
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 
 /** A credentialed SOCKS5 listener bound to one explicitly selected private adapter. */
@@ -33,19 +35,45 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
         val available = privateAddresses()
         val host = normalized.lanAddress.takeIf { it in available }
             ?: error("The selected private network interface is no longer available")
-        core.start(config(host, normalized.lanPort, normalized.lanUsername, normalized.lanPassword, upstream))
-        withTimeout(5_000) {
-            while (true) {
-                check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
-                if (runCatching {
-                        Socket().use { it.connect(InetSocketAddress(host, normalized.lanPort), 200) }
-                    }.isSuccess
-                ) break
-                delay(100)
+        requirePortFree(host, normalized.lanPort)
+        val ownershipPort = allocateLoopbackPort()
+        val ownershipUsername = DesktopSocksProxySettings.randomToken(16)
+        val ownershipPassword = DesktopSocksProxySettings.randomToken(32)
+
+        try {
+            if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
+            core.start(
+                config(
+                    host, normalized.lanPort, normalized.lanUsername, normalized.lanPassword, upstream,
+                    ownershipPort, ownershipUsername, ownershipPassword
+                )
+            )
+            withTimeout(5_000) {
+                while (true) {
+                    check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
+                    if (runCatching {
+                            Socket().use { it.connect(InetSocketAddress("127.0.0.1", ownershipPort), 200) }
+                        }.isSuccess
+                    ) break
+                    delay(100)
+                }
             }
+            // This private, random loopback inbound exists in the same config as
+            // the LAN listener. If the requested LAN port belonged to another
+            // process, sing-box could not bind the config and this check cannot pass.
+            TunnelVerifier.verify(
+                socksHost = "127.0.0.1",
+                socksPort = ownershipPort,
+                username = ownershipUsername,
+                password = ownershipPassword,
+                timeoutMs = 5_000
+            ) ?: error("LAN SOCKS ownership check did not reach the VPN")
+            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort)
+            return "$host:${normalized.lanPort}"
+        } catch (e: Exception) {
+            stop()
+            throw e
         }
-        if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort)
-        return "$host:${normalized.lanPort}"
     }
 
     fun stop() {
@@ -67,49 +95,83 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
             "-RemoteAddress LocalSubnet -Profile Private -Program '${program.replace("'", "''")}' | Out-Null"
         // Keep the name before executing: PowerShell may create the rule and time out afterwards.
         firewallRule = rule
-        runCatching { firewall(script) }.onFailure {
-            onOutput("LAN sharing: Windows firewall permission was not added; allow the selected private network if clients cannot connect")
-        }
+        firewall(script)
+    }
+
+    private fun cleanupStaleWindowsFirewallRules() {
+        firewall(
+            "Get-NetFirewallRule -Name 'Ghostlane-LAN-*' -ErrorAction SilentlyContinue | " +
+                "Remove-NetFirewallRule -ErrorAction Stop"
+        )
     }
 
     private fun firewall(script: String) {
         val process = ProcessBuilder(
             "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
             "\$ErrorActionPreference = 'Stop'; $script"
-        ).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+        ).redirectErrorStream(true).start()
         if (!process.waitFor(8, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             error("Firewall command timed out")
         }
-        check(process.exitValue() == 0) { "Firewall command needs administrator privileges" }
+        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+        check(process.exitValue() == 0) {
+            output.ifBlank { "Firewall command needs administrator privileges" }
+        }
+    }
+
+    private fun requirePortFree(host: String, port: Int) {
+        runCatching {
+            ServerSocket().use { socket ->
+                socket.reuseAddress = false
+                socket.bind(InetSocketAddress(host, port))
+            }
+        }.getOrElse { error("LAN port $host:$port is already in use") }
+    }
+
+    private fun allocateLoopbackPort(): Int = ServerSocket().use { socket ->
+        socket.reuseAddress = false
+        socket.bind(InetSocketAddress("127.0.0.1", 0))
+        socket.localPort
     }
 
     companion object {
         fun privateAddresses(): List<String> = NetworkInterface.getNetworkInterfaces().toList()
             .filter { it.isUp && !it.isLoopback && it.hardwareAddress != null }
-            .filterNot {
-                it.displayName.orEmpty().contains(
-                    Regex("(?i)wintun|wireguard|tun2socks|tap-windows|ghostlane|olcbox")
-                )
-            }
+            .filterNot { isVirtualAdapter("${it.name} ${it.displayName}") }
             .flatMap { it.inetAddresses.toList() }
             .filterIsInstance<Inet4Address>()
             .filter { it.isSiteLocalAddress && !it.isLoopbackAddress }
             .map { it.hostAddress }
             .distinct()
-            .sorted()
+            .sortedBy(::ipv4SortKey)
+
+        internal fun isVirtualAdapter(name: String): Boolean = name.contains(
+            Regex(
+                "(?i)wintun|wireguard|tun2socks|tap-windows|ghostlane|olcbox|" +
+                    "docker|(^|[^a-z])br-|vbox|virtualbox|vmnet|vmware|vEthernet|wsl|hyper-v|" +
+                    "tailscale|zerotier"
+            )
+        )
+
+        private fun ipv4SortKey(address: String): Long = address.split('.')
+            .fold(0L) { value, octet -> value * 256 + (octet.toLongOrNull() ?: 0L) }
 
         fun config(
             host: String,
             port: Int,
             username: String,
             password: String,
-            upstream: SubscriptionFetchProxy
+            upstream: SubscriptionFetchProxy,
+            ownershipPort: Int? = null,
+            ownershipUsername: String = "",
+            ownershipPassword: String = ""
         ): String {
             require(port in 1024..65535 && port != upstream.port) { "LAN port must differ from the core port" }
             require(username.isNotBlank() && password.isNotBlank()) { "LAN credentials are required" }
             require(username.length <= DesktopSocksProxySettings.MAX_CREDENTIAL_LENGTH)
             require(password.length <= DesktopSocksProxySettings.MAX_CREDENTIAL_LENGTH)
+            require(ownershipPort == null || ownershipUsername.isNotBlank() && ownershipPassword.isNotBlank())
             val parts = host.split('.').map { it.toIntOrNull() }
             require(parts.size == 4 && parts.all { it != null && it in 0..255 })
             require(parts[0] == 10 || (parts[0] == 172 && parts[1] in 16..31) || (parts[0] == 192 && parts[1] == 168))
@@ -131,6 +193,18 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
                         addJsonObject {
                             put("username", username)
                             put("password", password)
+                        }
+                    })
+                }
+                if (ownershipPort != null) addJsonObject {
+                    put("type", "socks")
+                    put("tag", "owner-in")
+                    put("listen", "127.0.0.1")
+                    put("listen_port", ownershipPort)
+                    put("users", buildJsonArray {
+                        addJsonObject {
+                            put("username", ownershipUsername)
+                            put("password", ownershipPassword)
                         }
                     })
                 }

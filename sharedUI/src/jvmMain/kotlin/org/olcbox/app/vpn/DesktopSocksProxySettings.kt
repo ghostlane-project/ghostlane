@@ -53,7 +53,7 @@ data class DesktopSocksProxySettings(
 
         private fun alternatePort(port: Int): Int = if (port == MAX_PORT) port - 1 else port + 1
 
-        private fun randomToken(length: Int): String = buildString(length) {
+        internal fun randomToken(length: Int): String = buildString(length) {
             repeat(length) { append(TOKEN_ALPHABET[secureRandom.nextInt(TOKEN_ALPHABET.length)]) }
         }
     }

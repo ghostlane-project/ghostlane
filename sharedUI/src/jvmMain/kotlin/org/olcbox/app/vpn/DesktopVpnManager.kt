@@ -86,12 +86,20 @@ class DesktopVpnManager private constructor(
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
     private val lanProxy = DesktopLanProxy(::addLog)
     private var lanWatchJob: Job? = null
+    private var lanControlJob: Job? = null
     private val _lanProxyEndpoint = MutableStateFlow<String?>(null)
     val lanProxyEndpoint: StateFlow<String?> = _lanProxyEndpoint.asStateFlow()
     private val _lanProxyHealth = MutableStateFlow<String?>(null)
     val lanProxyHealth: StateFlow<String?> = _lanProxyHealth.asStateFlow()
     private val _lanAddresses = MutableStateFlow(DesktopLanProxy.privateAddresses())
     val lanAddresses: StateFlow<List<String>> = _lanAddresses.asStateFlow()
+    val lanSecurityNotice: String? = when (DesktopPaths.os) {
+        DesktopOs.Windows ->
+            "The Windows firewall rule accepts Private-network LocalSubnet clients and is removed when sharing stops."
+        DesktopOs.MacOS, DesktopOs.Linux ->
+            "The proxy binds only to the selected private interface; your system firewall still controls which local devices can reach it."
+        DesktopOs.Other -> null
+    }
     private val lanShutdownHook = Thread({ lanProxy.stop() }, "ghostlane-lan-cleanup")
 
     /** Where traffic actually comes out, as measured after connecting. */
@@ -272,6 +280,25 @@ class DesktopVpnManager private constructor(
 
     fun refreshLanAddresses() {
         _lanAddresses.value = DesktopLanProxy.privateAddresses()
+    }
+
+    /** Apply LAN-only changes without tearing down and rebuilding the VPN tunnel. */
+    fun applyLanSharingSettings(settings: DesktopSocksProxySettings) {
+        val normalized = settings.normalized()
+        updateSocksProxySettings(normalized)
+        lanControlJob?.cancel()
+        lanWatchJob?.cancel()
+        lanWatchJob = null
+        lanControlJob = scope.launch {
+            lanProxy.stop()
+            _lanProxyEndpoint.value = null
+            _lanProxyHealth.value = null
+            if (!normalized.shareOnLan) return@launch
+            val upstream = channelProxy
+            val requestGeneration = generation
+            if (_status.value !is VpnStatus.Connected || upstream == null) return@launch
+            startLanSharing(normalized, upstream, requestGeneration)
+        }
     }
 
     init {
@@ -486,8 +513,12 @@ class DesktopVpnManager private constructor(
                 error("$transport is up but no traffic reached the internet through it")
             }
             _exitInfo.value = exit
-            if (socksSettings.shareOnLan) {
-                startLanSharing(socksSettings, channelProxy!!, requestGeneration)
+            // LAN settings may change while the primary tunnel is still being
+            // verified. Read the current value here so a regenerated password or
+            // an off toggle cannot start a listener with the stale snapshot.
+            val currentLanSettings = _socksProxySettings.value
+            if (currentLanSettings.shareOnLan) {
+                startLanSharing(currentLanSettings, channelProxy!!, requestGeneration)
             }
             setStatus(VpnStatus.Connected)
             addLog("$transport connected — exit ${exit.label()}")
@@ -837,6 +868,8 @@ class DesktopVpnManager private constructor(
         // tunnel it chains to, including partially started and already-disconnected paths.
         lanWatchJob?.cancel()
         lanWatchJob = null
+        lanControlJob?.cancel()
+        lanControlJob = null
         lanProxy.stop()
         _lanProxyEndpoint.value = null
         _lanProxyHealth.value = null

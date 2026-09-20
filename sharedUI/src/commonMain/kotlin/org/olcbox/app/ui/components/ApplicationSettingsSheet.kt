@@ -124,7 +124,8 @@ data class ApplicationSocksProxySettings(
     val lanPassword: String = "",
     val lanAddresses: List<String> = emptyList(),
     val lanEndpoint: String? = null,
-    val lanHealth: String? = null
+    val lanHealth: String? = null,
+    val lanSecurityNotice: String? = null
 ) {
     companion object {
         const val DEFAULT_PORT = 10808
@@ -670,6 +671,7 @@ private fun SharedSocksProxySettingsContent(
     var editedPort by remember(settings.port) { mutableStateOf(settings.port.toString()) }
     var editedUsername by remember(settings.username) { mutableStateOf(settings.username) }
     var editedPassword by remember(settings.password) { mutableStateOf(settings.password) }
+    var revealLanPassword by remember(settings.lanPassword) { mutableStateOf(false) }
     val parsedPort = editedPort.toIntOrNull()
     val hostValid = editedHost.isNotBlank()
     val portValid = parsedPort != null && ApplicationSocksProxySettings.isValidPort(parsedPort)
@@ -740,8 +742,14 @@ private fun SharedSocksProxySettingsContent(
                 if (settings.lanUsername.isNotBlank() && settings.lanPassword.isNotBlank()) {
                     SharedInfoRow("Endpoint", settings.lanEndpoint ?: "${settings.lanAddress}:${settings.lanPort}")
                     SharedInfoRow("Username", settings.lanUsername)
-                    SharedInfoRow("Password", settings.lanPassword)
+                    SharedInfoRow(
+                        "Password",
+                        if (revealLanPassword) settings.lanPassword else "•".repeat(settings.lanPassword.length)
+                    )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { revealLanPassword = !revealLanPassword }) {
+                            Text(if (revealLanPassword) "Hide password" else "Show password")
+                        }
                         TextButton(onClick = onLanCredentialsRegenerated) {
                             Text("Regenerate LAN credentials")
                         }
@@ -749,8 +757,10 @@ private fun SharedSocksProxySettingsContent(
                 }
 
                 Text(
-                    "Devices using these credentials send traffic through this VPN. Share them only with trusted devices. " +
-                        "On Windows the firewall rule is limited to Private networks and LocalSubnet and is removed when sharing stops.",
+                    buildString {
+                        append("Devices using these credentials send traffic through this VPN. Share them only with trusted devices.")
+                        settings.lanSecurityNotice?.let { append(' ').append(it) }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = LocalPkPalette.current.textDim
                 )

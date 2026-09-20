@@ -298,8 +298,8 @@ fun main(args: Array<String>) = application {
         }
         if (safeProxySettings.shareOnLan && safeProxySettings.lanAddress !in availableLanAddresses) {
             safeProxySettings = safeProxySettings.copy(
-                lanAddress = availableLanAddresses.firstOrNull().orEmpty(),
-                shareOnLan = availableLanAddresses.isNotEmpty()
+                lanAddress = "",
+                shareOnLan = false
             )
         }
         safeProxySettings = safeProxySettings.normalized()
@@ -531,7 +531,8 @@ fun main(args: Array<String>) = application {
                         socksProxySettings = socksProxySettings.toApplicationSocksProxySettings(
                             lanAddresses = lanAddresses,
                             lanEndpoint = lanProxyEndpoint,
-                            lanHealth = lanProxyHealth
+                            lanHealth = lanProxyHealth,
+                            lanSecurityNotice = dependencies.vpnManager.lanSecurityNotice
                         ),
                         tunnelDaemonSummary = tunnelDaemonSummary,
                         onTunnelDaemonClick = {
@@ -629,37 +630,27 @@ fun main(args: Array<String>) = application {
                             if (settings.lanUsername.isBlank() || settings.lanPassword.isBlank()) {
                                 settings = settings.withGeneratedLanCredentials()
                             }
-                            if (settings.lanAddress !in addresses) {
-                                settings = settings.copy(lanAddress = addresses.firstOrNull().orEmpty())
-                            }
                             settings = settings.copy(
-                                shareOnLan = enabled && settings.lanAddress.isNotBlank()
+                                shareOnLan = enabled && settings.lanAddress in addresses
                             ).normalized()
-                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
-                            desktopNotice = if (settings.shareOnLan) {
-                                "LAN sharing enabled"
-                            } else {
-                                "LAN sharing disabled"
+                            desktopNotice = when {
+                                settings.shareOnLan -> "LAN sharing enabled"
+                                enabled -> "Select a LAN interface before enabling sharing"
+                                else -> "LAN sharing disabled"
                             }
-                            if (homeState.isVpnConnected) dependencies.homeViewModel.restartVpnIfRunning()
                         },
                         onLanAddressSelected = { address ->
                             val settings = socksProxySettings.copy(lanAddress = address).normalized()
-                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
-                            if (homeState.isVpnConnected && settings.shareOnLan) {
-                                dependencies.homeViewModel.restartVpnIfRunning()
-                            }
                         },
                         onLanCredentialsRegenerated = {
                             val settings = socksProxySettings.withGeneratedLanCredentials().normalized()
-                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
                             desktopNotice = "LAN credentials regenerated"
-                            if (homeState.isVpnConnected && settings.shareOnLan) {
-                                dependencies.homeViewModel.restartVpnIfRunning()
-                            }
                         },
                         onSocksProxyPasswordRegenerated = {
                             val settings = socksProxySettings.copy(
@@ -882,7 +873,8 @@ private fun DesktopNotice(
 private fun DesktopSocksProxySettings.toApplicationSocksProxySettings(
     lanAddresses: List<String>,
     lanEndpoint: String?,
-    lanHealth: String?
+    lanHealth: String?,
+    lanSecurityNotice: String?
 ): ApplicationSocksProxySettings {
     return ApplicationSocksProxySettings(
         host = host,
@@ -897,7 +889,8 @@ private fun DesktopSocksProxySettings.toApplicationSocksProxySettings(
         lanPassword = lanPassword,
         lanAddresses = lanAddresses,
         lanEndpoint = lanEndpoint,
-        lanHealth = lanHealth
+        lanHealth = lanHealth,
+        lanSecurityNotice = lanSecurityNotice
     )
 }
 
