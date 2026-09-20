@@ -383,6 +383,23 @@ class SingBoxConfigTest {
     }
 
     @Test
+    fun windowsTunOmitsVerificationInboundAndBypassesOnlyCarrierProcesses() {
+        val json = SingBoxConfig.buildDesktopTun(
+            corePort = 10810,
+            verifyPort = null,
+            bypassProcessPaths = listOf("C:/Ghostlane/sing-box.exe", "C:/Ghostlane/xray.exe"),
+            interfaceName = "Ghostlane-aaaaaaaa-1-1"
+        )
+        assertTrue("verify-in" !in json)
+        assertContains(json, "\"interface_name\":\"Ghostlane-aaaaaaaa-1-1\"")
+        assertContains(json, "\"auto_detect_interface\":true")
+        assertContains(
+            json,
+            "\"process_path\":[\"C:/Ghostlane/sing-box.exe\",\"C:/Ghostlane/xray.exe\"]"
+        )
+    }
+
+    @Test
     fun desktopTunCarriesSocksCredentialsOnlyWhenTheCoreAskedForThem() {
         val bare = SingBoxConfig.buildDesktopTun(corePort = 10810, verifyPort = 10811)
         assertTrue("\"username\"" !in bare)

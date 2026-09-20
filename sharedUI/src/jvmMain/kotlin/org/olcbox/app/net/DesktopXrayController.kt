@@ -25,6 +25,7 @@ class DesktopXrayController(
     /** Non-suspend stop for desktop stop paths (not coroutines). */
     fun stopNow() = proc.stop()
     fun isRunning(): Boolean = proc.isRunning()
+    internal fun runningProcess(): Process? = proc.runningProcess()
     /** Exit code once the core has finished; null while it is still running. */
     fun exitCodeOrNull(): Int? = proc.exitCodeOrNull()
 }

@@ -144,4 +144,40 @@ object TunnelVerifier {
             client.close()
         }
     }
+
+    /**
+     * Verifies a system TUN without opening a second proxy inbound in the TUN
+     * process. The caller must arrange for this application's ordinary network
+     * traffic to enter that TUN while only carrier child processes bypass it.
+     */
+    suspend fun verifyDirect(
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        probeUrls: List<String> = DEFAULT_PROBE_URLS
+    ): TunnelExit? {
+        val client = createProxyHttpClient(
+            subscriptionProxy = null,
+            connectTimeoutMs = timeoutMs,
+            requestTimeoutMs = timeoutMs,
+            socketTimeoutMs = timeoutMs
+        )
+        return try {
+            for (url in probeUrls) {
+                val exit = try {
+                    parseTrace(client.get(url).bodyAsText())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                if (exit != null) return exit
+            }
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } finally {
+            client.close()
+        }
+    }
 }
