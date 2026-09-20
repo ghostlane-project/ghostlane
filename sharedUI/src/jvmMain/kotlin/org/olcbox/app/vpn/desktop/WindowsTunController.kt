@@ -60,7 +60,10 @@ internal class WindowsTunController(
         ${'$'}ErrorActionPreference = 'Stop'
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
         ${'$'}route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-          Where-Object { ${'$'}_.InterfaceAlias -ne '$TUN_NAME' } |
+          Where-Object {
+            ${'$'}_.InterfaceAlias -ne '$TUN_NAME' -and
+            ${'$'}_.InterfaceAlias -notlike 'Ghostlane-*'
+          } |
           Sort-Object @{Expression={ ${'$'}_.RouteMetric + (Get-NetIPInterface -InterfaceIndex ${'$'}_.InterfaceIndex -AddressFamily IPv4).InterfaceMetric }} |
           Select-Object -First 1
         if (${'$'}null -eq ${'$'}route) { throw 'No physical IPv4 default route' }

@@ -98,7 +98,13 @@ internal object DesktopNativeAssets {
      * env override (tests / dev) before falling back to the bundled resource.
      */
     fun resolveSingBoxBinary(): Path =
-        resolveExternalCore(singBoxFileName(), "OLCBOX_SINGBOX_BINARY")
+        resolveExternalCore(singBoxFileName(), "OLCBOX_SINGBOX_BINARY").also {
+            // The sing-box TUN path creates the Wintun adapter itself. The old
+            // tun2socks path copied this runtime beside its executable, but the
+            // replacement path never did, so a clean profile could depend on a
+            // DLL left behind by an older installation.
+            if (DesktopPaths.os == DesktopOs.Windows) copyRuntimeAsset("wintun.dll")
+        }
 
     /**
      * Resolve the bundled `xray` core binary (used for xhttp locations). Honors the

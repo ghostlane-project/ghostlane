@@ -48,6 +48,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import org.olcbox.app.log.LogScrubber
 
@@ -103,6 +104,14 @@ class DesktopVpnManager private constructor(
     private var tunProcess: Process? = null
     private var olcRtcConfigPath: Path? = null
     private var generation = 0L
+    /**
+     * Adapter names must remain unique across application processes. [generation]
+     * starts at one after every launch, while Windows may retain Wintun adapters
+     * from a process that crashed or was killed. Reusing `Ghostlane-1-1` then
+     * produces Wintun's contradictory ERROR_ALREADY_EXISTS/Element not found
+     * failure until Windows finishes removing the old device.
+     */
+    private val windowsTunSessionId = UUID.randomUUID().toString().take(8)
     private val linuxTunController = LinuxTunController(::addLog)
     private val windowsTunController = WindowsTunController(::addLog)
     private val macOsTunController = MacOsTunController(::addLog)
@@ -557,9 +566,18 @@ class DesktopVpnManager private constructor(
     ) {
         val physicalInterface = windowsTunController.physicalInterface()
         val children = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
-        val corePaths = (children.map { child ->
-            child.info().command().orElseThrow { IllegalStateException("Cannot identify VPN core for TUN bypass") }
-        } + listOf(DesktopNativeAssets.resolveSingBoxBinary().toString(), DesktopNativeAssets.resolveXrayBinary().toString())).distinct()
+        // ProcessHandle.Info.command() is allowed to be empty on Windows even
+        // for our own elevated child. Keep it as a useful exact path when it is
+        // available, and fall back to the binaries the app itself resolved.
+        val resolvedCorePaths = buildList {
+            add(DesktopNativeAssets.resolveSingBoxBinary().toString())
+            add(DesktopNativeAssets.resolveXrayBinary().toString())
+            if (isOlcrtc) {
+                addAll(DesktopNativeAssets.resolveOlcRtcBinaryCandidates().map(Path::toString))
+            }
+        }
+        val corePaths = (children.mapNotNull { child -> child.info().command().orElse(null) } +
+                resolvedCorePaths).distinct()
         require(corePaths.isNotEmpty()) { "No VPN core to route outside the TUN" }
         val carrier = windowsCarrierRoute(location)
         val verifyPort = allocateVerifyPort(socksPort)
@@ -581,7 +599,11 @@ class DesktopVpnManager private constructor(
                 bindInterface = physicalInterface,
                 bypassProcessPaths = corePaths,
                 cacheFilePath = DesktopPaths.appDataDir().resolve("windows-tun-cache.db").toString(),
-                interfaceName = "Ghostlane-${requestGeneration.toString(16)}-${attempt + 1}"
+                interfaceName = windowsTunInterfaceName(
+                    sessionId = windowsTunSessionId,
+                    requestGeneration = requestGeneration,
+                    attempt = attempt
+                )
             ))
             // Creating or removing a Wintun adapter can take more than ten
             // seconds after a reconnect. A stale adapter can also make Wintun
@@ -1427,6 +1449,12 @@ class DesktopVpnManager private constructor(
         }
     }
 }
+
+internal fun windowsTunInterfaceName(
+    sessionId: String,
+    requestGeneration: Long,
+    attempt: Int
+): String = "Ghostlane-$sessionId-${requestGeneration.toString(16)}-${attempt + 1}"
 
 /**
  * How this desktop puts traffic through the tunnel.
