@@ -1219,7 +1219,7 @@ jobs:
             --bundle "dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab" \
             --track "${PLAY_TRACK}" \
             --release-name "${OLCBOX_VERSION}" \
-            --notes "ProofKit ${OLCBOX_VERSION}"
+            --notes "Ghostlane ${OLCBOX_VERSION}"
           rm -f "$sa"
 
       # Says what happened to the Play upload in the run summary, so that
@@ -1799,7 +1799,7 @@ jobs:
           else
             gh release create "$version_tag" \
               --target "$GITHUB_SHA" \
-              --title "ProofKit ${OLCBOX_VERSION}" \
+              --title "Ghostlane ${OLCBOX_VERSION}" \
               --notes-file versioned-notes.md \
               --prerelease \
               --draft
