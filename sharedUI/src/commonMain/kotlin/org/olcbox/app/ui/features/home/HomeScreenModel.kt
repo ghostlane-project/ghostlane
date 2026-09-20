@@ -69,9 +69,11 @@ class HomeScreenViewModel(
     val traffic get() = vpnManager.traffic
 
     private var selectionJob: Job? = null
+    private var pendingLowestCandidates: List<String>? = null
 
     /** Manual choice/stop wins over a pending rank or failover cooldown. */
     fun cancelAutomaticSelection() {
+        pendingLowestCandidates = null
         selectionJob?.cancel()
         selectionJob = null
         if (vpnManager.status.value is VpnStatus.Disconnected || vpnManager.status.value is VpnStatus.Error) {
@@ -104,6 +106,20 @@ class HomeScreenViewModel(
 
     /** Connect in the order already measured and displayed by the home screen. */
     fun connectLowest(preferredLocationIds: List<String>? = null) = startLowest(preferredLocationIds)
+
+    /** Keep the measured order while the platform obtains VPN permission. */
+    fun queueLowestAfterPermission(preferredLocationIds: List<String>) {
+        pendingLowestCandidates = preferredLocationIds
+        _state.update { it.copy(isVpnLoading = true, failure = null) }
+    }
+
+    /** Android calls this when its system permission sheet is declined. */
+    fun cancelPendingLowest() {
+        if (pendingLowestCandidates != null) {
+            pendingLowestCandidates = null
+            _state.update { it.copy(isVpnLoading = false) }
+        }
+    }
 
     /**
      * What a background refresh found, when the user asked to be told. A shared
@@ -325,6 +341,11 @@ class HomeScreenViewModel(
 
     fun ToggleVpn() {
         val status = vpnManager.status.value
+        pendingLowestCandidates?.let { ranked ->
+            pendingLowestCandidates = null
+            startLowest(ranked)
+            return
+        }
         if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) ||
             _state.value.isVpnLoading ||
             status is VpnStatus.Connecting ||

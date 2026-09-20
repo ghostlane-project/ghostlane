@@ -438,11 +438,12 @@ fun HomeScreen(
                 compareBy<String> { pings[it] ?: Int.MAX_VALUE }
                     .thenBy { providerOrder[it] ?: Int.MAX_VALUE }
             )
-            scope.launch {
-                // Give Compose one frame to render the final values and order
-                // before connection setup begins changing the status strip.
-                delay(120)
-                if (request == lowestMeasureRequest) viewModel.connectLowest(ranked)
+            if (request == lowestMeasureRequest) {
+                // The platform callback owns VPN permission. Keeping the ranked
+                // candidates in the ViewModel also survives this composable
+                // leaving while Android's system dialog is visible.
+                viewModel.queueLowestAfterPermission(ranked)
+                onToggleClick()
             }
         }
     }

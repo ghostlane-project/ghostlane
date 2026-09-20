@@ -602,13 +602,21 @@ private fun BoardRoomCard(
     )
 }
 
-/** `PLAN · RESETS IN 12D`, or just `PLAN` where no expiry was reported. */
+/**
+ * `TRAFFIC · RESETS IN 12D`, or just `TRAFFIC` where no expiry was reported.
+ *
+ * The word is "traffic" and not "plan" on purpose. The figure comes from the
+ * list's own `subscription-userinfo` header and says how much of an allowance
+ * the provider reports; "plan" reads as something bought, and App Review has
+ * twice taken a screen of this row as evidence that the app unlocks a purchase
+ * made elsewhere (Guideline 3.1.1).
+ */
 internal fun planLabel(expiresAtEpochMs: Long?, nowEpochMs: Long): String {
     val days = expiresAtEpochMs
         ?.let { (it - nowEpochMs) / DAY_MILLIS }
         ?.takeIf { it >= 0 }
-        ?: return "Plan"
-    return if (days == 0L) "Plan · resets today" else "Plan · resets in ${days}d"
+        ?: return "Traffic"
+    return if (days == 0L) "Traffic · resets today" else "Traffic · resets in ${days}d"
 }
 
 // ── the empty board ────────────────────────────────────────────────────────

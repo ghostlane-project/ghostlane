@@ -14,6 +14,7 @@ import org.olcbox.app.net.OlcrtcStatusClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -295,7 +296,7 @@ class LocationViewModel(
                     completedNormally = true
                     errorMessage = e.message ?: "HTTP ping failed"
                 } finally {
-                    activePingJobs.remove(location.storageId)
+                    activePingJobs.remove(location.storageId, currentCoroutineContext()[Job])
                     val updatedPings = currentPingsSnapshot().toMutableMap()
                     if (completedNormally) updatedPings[location.storageId] = ping
                     if (ping != null) onlineForThisRequest++
@@ -315,7 +316,13 @@ class LocationViewModel(
 
         emitPingState(previousPings)
         deadlineJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            delay(LOCATION_PING_REQUEST_DEADLINE_MS)
+            val batches = (totalForThisRequest + LOCATION_PING_PARALLELISM - 1) /
+                LOCATION_PING_PARALLELISM
+            val requestDeadline = maxOf(
+                LOCATION_PING_MINIMUM_DEADLINE_MS,
+                batches * LOCATION_PING_TIMEOUT_MS + LOCATION_PING_DEADLINE_GRACE_MS
+            )
+            delay(requestDeadline)
             jobsToStart.filter(Job::isActive).forEach { it.cancel() }
         }
         jobsToStart.forEach { it.start() }
@@ -578,7 +585,8 @@ class LocationViewModel(
         const val LOCATION_PING_TIMEOUT_MS = 12_000L
         const val LOCATION_PING_RETRY_DELAY_MS = 0L
         const val LOCATION_PING_PARALLELISM = 4
-        const val LOCATION_PING_REQUEST_DEADLINE_MS = 30_000L
+        const val LOCATION_PING_MINIMUM_DEADLINE_MS = 30_000L
+        const val LOCATION_PING_DEADLINE_GRACE_MS = 2_000L
     }
 
     private data class ProviderDraft(

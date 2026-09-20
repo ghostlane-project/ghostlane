@@ -17,6 +17,7 @@ object ChannelLatency {
     // It also remains usable under iOS ATS without a cleartext exception.
     const val URL = "https://www.gstatic.com/generate_204"
     const val TIMEOUT_MS = 5_000L
+    private const val SESSION_TIMEOUT_MS = TIMEOUT_MS * 2 + 1_000L
 
     /** One HTTP pool per live connection. Owners close it on stop or migration. */
     class Session internal constructor(
@@ -31,7 +32,7 @@ object ChannelLatency {
         // competing requests; the deadline includes time waiting for this lock.
         private val mutex = kotlinx.coroutines.sync.Mutex()
         private var warmed = false
-        suspend fun measure(): Long? = withTimeoutOrNull(TIMEOUT_MS) {
+        suspend fun measure(): Long? = withTimeoutOrNull(SESSION_TIMEOUT_MS) {
             mutex.lock()
             try {
                 if (!warmed) {
