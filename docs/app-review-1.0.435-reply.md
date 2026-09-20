@@ -22,25 +22,33 @@ once: it lists Android commits and ends with "Latest desktop, Android, and iOS b
 from public GitHub Actions CI". The App Store text has to be written separately, for
 iOS only. Text to paste is below.
 
-**3.1.1 has a concrete trail this time, and it is in the listing, not the binary.**
-Two of the five store screenshots (`docs/screenshots/03-connected.PNG` and
-`05-serverlistnotconnected.PNG`, the 2026-09-08 set) show, at the top of the server
-list, an orange usage bar reading `PLAN · RESETS IN 2913D … 4.3/5.0 GB`, directly under
-a list named `@Xrayvlesspayment…`. A reviewer reading that screen sees a plan with a
-quota and the word "payment", in an app with no In-App Purchase. Both screenshots also
-still carry the old name, ProofKit, which the app no longer uses.
+**3.1.1: what we know and what we do not.** The listing's screenshots are **not** the
+trail. The set live in App Store Connect is the Ghostlane one: the onboarding cards
+("Carried over WebRTC", "Every room has seats", "You bring the servers - No account,
+nothing to buy, nothing collected"), the server-list settings screen, and the home
+screen with the "How the VPN connection works" sheet, which says in the app's own words
+that nothing is collected, that there is no account, and that the server belongs to
+whoever gave the list and "Ghostlane does not run it and does not sell one". The old
+ProofKit frames in `docs/screenshots/` (the 2026-09-08 set), two of which show an orange
+`PLAN · RESETS IN 2913D … 4.3/5.0 GB` bar above a list named `@Xrayvlesspayment…`, are
+**not** what is published.
 
-Three facts about that row, all verifiable:
-- It is drawn from the `subscription-userinfo` header the server list itself returns
-  (`LocationsDatasource.kt:1466`), which is the standard field every client of these
-  protocols reads. The app displays what the list reports and nothing else.
-- The list in the screenshot is a third party's public Telegram list, not ours.
-- ProofKit's own lists send no `subscription-userinfo` at all, so for them this row
-  never appears.
+So the reviewer's attached screenshot was taken during review, and we have not seen it.
+Until we do, the candidates are, in order:
+1. **The What's New text** we pasted, which contained "the client and the ProofKit
+   marketplace are two different things". It was written to separate the two; to a
+   reviewer scanning for a payment trail it introduces one. It also carried the Android
+   lines that earned 2.3.10.
+2. **The listing URLs**, which still lead to the pay-per-GB site: Marketing
+   `proofkit.org`, Support `/help`, Privacy `/privacy`. This has been the reviewer's
+   case in every round.
+3. **A usage row inside the app**, if the reviewer imported a list that reports one.
+   That row is the `subscription-userinfo` field a server list returns about itself
+   (`LocationsDatasource.kt:1466`); ProofKit's own lists send no such header, so the
+   review list cannot produce it.
 
-The What's New text also contained the sentence "the client and the ProofKit
-marketplace are two different things". It was written to separate the two; to a
-reviewer scanning for a payment trail it introduces one.
+**Ask the reviewer's screenshot from App Store Connect before sending anything that
+describes it.** The reply below says nothing about what it shows.
 
 ## Changed on our side
 
@@ -89,14 +97,13 @@ reads, and it connects to what the list names. It cannot tell whether a list was
 for, given away or typed by hand, and it behaves identically in each case. There is
 nothing in the app for an In-App Purchase to unlock.
 
-2. About the usage row in the screenshot. That line is not ours and not a purchase
-record: it is the "subscription-userinfo" field that a server list itself returns in
-its HTTP response, a standard field of these protocols that every client of them
-displays. The app shows what a list reports about itself and nothing more. The list
-shown in our screenshots is a third party's public list, which is why it reports a
-figure at all. In the build we are submitting, that row is labelled "Traffic" rather
-than "Plan", and we are replacing the store screenshots so the point is not implied
-again.
+2. About usage figures, in case the screenshot shows one. Some server lists report an
+allowance about themselves in the standard "subscription-userinfo" field of their HTTP
+response, and every client of these protocols displays what the list reports. It is not
+a purchase record and it is not ours: the app has no way to know what, if anything, was
+paid, and the lists we issue for review send no such field at all. In the build we are
+submitting, that row is labelled "Traffic" rather than "Plan" so it cannot be read as a
+purchased plan.
 
 3. Our reading of the guidelines is 3.1.3(f): a free, stand-alone app. Some of our
 users also use a paid service on a website; it is bought and managed entirely there,
@@ -115,10 +122,10 @@ material that would help.
 
 1. **What's New**: paste the text above. Nothing about Android, desktop, Windows,
    macOS, Google Play, the marketplace, or prices.
-2. **Screenshots**: replace at least the two frames that show the usage bar. New frames
-   must show the Ghostlane name and must not show a usage bar, a provider list whose
-   name contains "payment", or any figure that can be read as an allowance. The empty
-   board, the VPN permission prompt, a connected room and Settings are enough.
+2. **Screenshots**: nothing to do. The published set is already the Ghostlane one and
+   shows no usage bar; two of its frames state that there is no account and nothing to
+   buy. Keep `docs/screenshots/` in mind only as a reminder that the old ProofKit set is
+   stale.
 3. **App Review Information**, first line: "This is a client for standard VPN
    protocols. The server list below is a free test configuration issued for review. The
    app has no account, no purchase path and no In-App Purchase."
