@@ -84,6 +84,15 @@ class DesktopVpnManager private constructor(
 
     private val _socksProxySettings = MutableStateFlow(DesktopSocksProxySettings())
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
+    private val lanProxy = DesktopLanProxy(::addLog)
+    private var lanWatchJob: Job? = null
+    private val _lanProxyEndpoint = MutableStateFlow<String?>(null)
+    val lanProxyEndpoint: StateFlow<String?> = _lanProxyEndpoint.asStateFlow()
+    private val _lanProxyHealth = MutableStateFlow<String?>(null)
+    val lanProxyHealth: StateFlow<String?> = _lanProxyHealth.asStateFlow()
+    private val _lanAddresses = MutableStateFlow(DesktopLanProxy.privateAddresses())
+    val lanAddresses: StateFlow<List<String>> = _lanAddresses.asStateFlow()
+    private val lanShutdownHook = Thread({ lanProxy.stop() }, "ghostlane-lan-cleanup")
 
     /** Where traffic actually comes out, as measured after connecting. */
     private val _exitInfo = MutableStateFlow<org.olcbox.app.net.TunnelExit?>(null)
@@ -261,7 +270,12 @@ class DesktopVpnManager private constructor(
         )
     }
 
+    fun refreshLanAddresses() {
+        _lanAddresses.value = DesktopLanProxy.privateAddresses()
+    }
+
     init {
+        Runtime.getRuntime().addShutdownHook(lanShutdownHook)
         // A tunnel outlives the process that asked for it: the daemon keeps the
         // tun after the app is killed, so the app has to ask what is true rather
         // than assume it starts from idle. Assuming idle is the iOS bug that
@@ -290,6 +304,7 @@ class DesktopVpnManager private constructor(
 
             scope.cancel()
         }
+        runCatching { Runtime.getRuntime().removeShutdownHook(lanShutdownHook) }
     }
 
     private suspend fun startDesktopMode(requestGeneration: Long, isRestart: Boolean) {
@@ -471,6 +486,9 @@ class DesktopVpnManager private constructor(
                 error("$transport is up but no traffic reached the internet through it")
             }
             _exitInfo.value = exit
+            if (socksSettings.shareOnLan) {
+                startLanSharing(socksSettings, channelProxy!!, requestGeneration)
+            }
             setStatus(VpnStatus.Connected)
             addLog("$transport connected — exit ${exit.label()}")
         } catch (e: Exception) {
@@ -718,6 +736,55 @@ class DesktopVpnManager private constructor(
         activeCorePort = null
     }
 
+    private suspend fun startLanSharing(
+        settings: DesktopSocksProxySettings,
+        upstream: SubscriptionFetchProxy,
+        requestGeneration: Long
+    ) {
+        try {
+            _lanProxyHealth.value = "Checking"
+            val endpoint = lanProxy.start(settings, upstream)
+            val exit = org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = settings.lanAddress,
+                socksPort = settings.lanPort,
+                username = settings.lanUsername,
+                password = settings.lanPassword
+            ) ?: error("the LAN listener did not carry traffic through the VPN")
+            if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
+            _lanProxyEndpoint.value = endpoint
+            _lanProxyHealth.value = "Healthy · ${exit.label()}"
+            addLog("LAN sharing ready on the selected private interface; authenticated tunnel check passed")
+            lanWatchJob?.cancel()
+            lanWatchJob = scope.launch {
+                while (isActive && requestGeneration == generation) {
+                    delay(LAN_HEALTH_INTERVAL_MS)
+                    val healthy = lanProxy.isRunning() && org.olcbox.app.net.TunnelVerifier.verify(
+                        socksHost = settings.lanAddress,
+                        socksPort = settings.lanPort,
+                        username = settings.lanUsername,
+                        password = settings.lanPassword,
+                        timeoutMs = LAN_HEALTH_TIMEOUT_MS
+                    ) != null
+                    if (!healthy) {
+                        lanProxy.stop()
+                        _lanProxyEndpoint.value = null
+                        _lanProxyHealth.value = "Stopped · tunnel health check failed"
+                        addLog("LAN sharing stopped because its tunnel health check failed")
+                        break
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            lanProxy.stop()
+            throw e
+        } catch (e: Exception) {
+            lanProxy.stop()
+            _lanProxyEndpoint.value = null
+            _lanProxyHealth.value = "Unavailable · ${e.message ?: "startup failed"}"
+            addLog("LAN sharing could not start: ${e.message}")
+        }
+    }
+
     private suspend fun waitForCoreSocks(port: Int): Boolean {
         val deadline = System.currentTimeMillis() + CORE_SOCKS_READY_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
@@ -766,6 +833,13 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // The LAN listener is externally reachable. Close it before changing the
+        // tunnel it chains to, including partially started and already-disconnected paths.
+        lanWatchJob?.cancel()
+        lanWatchJob = null
+        lanProxy.stop()
+        _lanProxyEndpoint.value = null
+        _lanProxyHealth.value = null
         // macTunActive belongs in this guard: on macOS the cores are owned by
         // their own controllers and the tun by the daemon, so both `process` and
         // `tunProcess` are null while a tunnel is very much up. Without it a stop
@@ -1255,6 +1329,8 @@ class DesktopVpnManager private constructor(
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         /** Two of these is the worst-case delay before a dead tunnel is reported. */
         const val MAC_TUN_WATCH_INTERVAL_MS = 4_000L
+        const val LAN_HEALTH_INTERVAL_MS = 15_000L
+        const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
 

@@ -287,7 +287,26 @@ fun main(args: Array<String>) = application {
     LaunchedEffect(Unit) {
         val loaded = dependencies.updateSettingsStore.load()
         updateSettings = loaded
-        dependencies.vpnManager.updateSocksProxySettings(dependencies.socksProxySettingsStore.load())
+        dependencies.vpnManager.refreshLanAddresses()
+        val savedProxySettings = dependencies.socksProxySettingsStore.load()
+        val availableLanAddresses = dependencies.vpnManager.lanAddresses.value
+        var safeProxySettings = savedProxySettings
+        if (safeProxySettings.shareOnLan &&
+            (safeProxySettings.lanUsername.isBlank() || safeProxySettings.lanPassword.isBlank())
+        ) {
+            safeProxySettings = safeProxySettings.withGeneratedLanCredentials()
+        }
+        if (safeProxySettings.shareOnLan && safeProxySettings.lanAddress !in availableLanAddresses) {
+            safeProxySettings = safeProxySettings.copy(
+                lanAddress = availableLanAddresses.firstOrNull().orEmpty(),
+                shareOnLan = availableLanAddresses.isNotEmpty()
+            )
+        }
+        safeProxySettings = safeProxySettings.normalized()
+        dependencies.vpnManager.updateSocksProxySettings(safeProxySettings)
+        if (safeProxySettings != savedProxySettings) {
+            dependencies.socksProxySettingsStore.save(safeProxySettings)
+        }
         checkUpdate(manual = false)
         if (WINDOWS_ELEVATED_START_ARGUMENT in args) {
             dependencies.homeViewModel.loadCurrentConfig {
@@ -369,6 +388,9 @@ fun main(args: Array<String>) = application {
             val subscriptionSettings by dependencies.homeViewModel.subscriptionSettings.collectAsState()
             val routingSettings by dependencies.homeViewModel.routingSettings.collectAsState()
             val socksProxySettings by dependencies.vpnManager.socksProxySettings.collectAsState()
+            val lanProxyEndpoint by dependencies.vpnManager.lanProxyEndpoint.collectAsState()
+            val lanProxyHealth by dependencies.vpnManager.lanProxyHealth.collectAsState()
+            val lanAddresses by dependencies.vpnManager.lanAddresses.collectAsState()
 
             fun reloadLocationsAfterImport(onComplete: () -> Unit = {}) {
                 dependencies.locationViewModel.loadLocations {
@@ -506,7 +528,11 @@ fun main(args: Array<String>) = application {
                         } else {
                             emptyList()
                         },
-                        socksProxySettings = socksProxySettings.toApplicationSocksProxySettings(),
+                        socksProxySettings = socksProxySettings.toApplicationSocksProxySettings(
+                            lanAddresses = lanAddresses,
+                            lanEndpoint = lanProxyEndpoint,
+                            lanHealth = lanProxyHealth
+                        ),
                         tunnelDaemonSummary = tunnelDaemonSummary,
                         onTunnelDaemonClick = {
                             // Approval is a trip to System Settings that only the
@@ -593,6 +619,45 @@ fun main(args: Array<String>) = application {
                             }
                             desktopNotice = "SOCKS proxy saved"
                             if (homeState.isVpnConnected) {
+                                dependencies.homeViewModel.restartVpnIfRunning()
+                            }
+                        },
+                        onLanSharingChanged = { enabled ->
+                            dependencies.vpnManager.refreshLanAddresses()
+                            val addresses = dependencies.vpnManager.lanAddresses.value
+                            var settings = socksProxySettings
+                            if (settings.lanUsername.isBlank() || settings.lanPassword.isBlank()) {
+                                settings = settings.withGeneratedLanCredentials()
+                            }
+                            if (settings.lanAddress !in addresses) {
+                                settings = settings.copy(lanAddress = addresses.firstOrNull().orEmpty())
+                            }
+                            settings = settings.copy(
+                                shareOnLan = enabled && settings.lanAddress.isNotBlank()
+                            ).normalized()
+                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            scope.launch { dependencies.socksProxySettingsStore.save(settings) }
+                            desktopNotice = if (settings.shareOnLan) {
+                                "LAN sharing enabled"
+                            } else {
+                                "LAN sharing disabled"
+                            }
+                            if (homeState.isVpnConnected) dependencies.homeViewModel.restartVpnIfRunning()
+                        },
+                        onLanAddressSelected = { address ->
+                            val settings = socksProxySettings.copy(lanAddress = address).normalized()
+                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            scope.launch { dependencies.socksProxySettingsStore.save(settings) }
+                            if (homeState.isVpnConnected && settings.shareOnLan) {
+                                dependencies.homeViewModel.restartVpnIfRunning()
+                            }
+                        },
+                        onLanCredentialsRegenerated = {
+                            val settings = socksProxySettings.withGeneratedLanCredentials().normalized()
+                            dependencies.vpnManager.updateSocksProxySettings(settings)
+                            scope.launch { dependencies.socksProxySettingsStore.save(settings) }
+                            desktopNotice = "LAN credentials regenerated"
+                            if (homeState.isVpnConnected && settings.shareOnLan) {
                                 dependencies.homeViewModel.restartVpnIfRunning()
                             }
                         },
@@ -814,12 +879,25 @@ private fun DesktopNotice(
     }
 }
 
-private fun DesktopSocksProxySettings.toApplicationSocksProxySettings(): ApplicationSocksProxySettings {
+private fun DesktopSocksProxySettings.toApplicationSocksProxySettings(
+    lanAddresses: List<String>,
+    lanEndpoint: String?,
+    lanHealth: String?
+): ApplicationSocksProxySettings {
     return ApplicationSocksProxySettings(
         host = host,
         port = port,
         username = username,
-        password = password
+        password = password,
+        lanSharingSupported = true,
+        shareOnLan = shareOnLan,
+        lanAddress = lanAddress,
+        lanPort = lanPort,
+        lanUsername = lanUsername,
+        lanPassword = lanPassword,
+        lanAddresses = lanAddresses,
+        lanEndpoint = lanEndpoint,
+        lanHealth = lanHealth
     )
 }
 

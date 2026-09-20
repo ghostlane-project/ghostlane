@@ -115,7 +115,16 @@ data class ApplicationSocksProxySettings(
     val host: String = "127.0.0.1",
     val port: Int = DEFAULT_PORT,
     val username: String = "",
-    val password: String = ""
+    val password: String = "",
+    val lanSharingSupported: Boolean = false,
+    val shareOnLan: Boolean = false,
+    val lanAddress: String = "",
+    val lanPort: Int = 10818,
+    val lanUsername: String = "",
+    val lanPassword: String = "",
+    val lanAddresses: List<String> = emptyList(),
+    val lanEndpoint: String? = null,
+    val lanHealth: String? = null
 ) {
     companion object {
         const val DEFAULT_PORT = 10808
@@ -199,6 +208,9 @@ fun ApplicationSettingsSheet(
     onSubscriptionDeleteClick: (String) -> Unit = {},
     onSocksProxySettingsSaved: (String, String, Int) -> Unit = { _, _, _ -> },
     onSocksProxyPasswordRegenerated: () -> Unit = {},
+    onLanSharingChanged: (Boolean) -> Unit = {},
+    onLanAddressSelected: (String) -> Unit = {},
+    onLanCredentialsRegenerated: () -> Unit = {},
     /**
      * Clears the note that the first-run walkthrough has been shown.
      *
@@ -317,7 +329,10 @@ fun ApplicationSettingsSheet(
                         isConnectionActive = isConnectionActive,
                         onBack = { route = SharedSettingsRoute.Connection },
                         onProxySettingsSaved = onSocksProxySettingsSaved,
-                        onProxyPasswordRegenerated = onSocksProxyPasswordRegenerated
+                        onProxyPasswordRegenerated = onSocksProxyPasswordRegenerated,
+                        onLanSharingChanged = onLanSharingChanged,
+                        onLanAddressSelected = onLanAddressSelected,
+                        onLanCredentialsRegenerated = onLanCredentialsRegenerated
                     )
                 }
 
@@ -512,10 +527,14 @@ private fun SharedConnectionSettingsContent(
                 )
             }
 
-            // Editing the local proxy credentials/port is plumbing: admin-only.
-            if (socksProxySettings != null && AdminState.configuratorVisible) {
+            // LAN sharing is a user-facing connection feature. The old local
+            // proxy editor remains on the same page, but hiding the whole route
+            // behind the configurator gate would make sharing impossible to use.
+            if (socksProxySettings != null &&
+                (AdminState.configuratorVisible || socksProxySettings.lanSharingSupported)
+            ) {
                 SharedNavigationRow(
-                    title = "SOCKS5 Proxy",
+                    title = if (socksProxySettings.lanSharingSupported) "SOCKS5 and LAN sharing" else "SOCKS5 Proxy",
                     value = "${socksProxySettings.host}:${socksProxySettings.port}",
                     icon = PkIcons.Public,
                     onClick = onSocksProxyClick
@@ -642,7 +661,10 @@ private fun SharedSocksProxySettingsContent(
     isConnectionActive: Boolean,
     onBack: () -> Unit,
     onProxySettingsSaved: (String, String, Int) -> Unit,
-    onProxyPasswordRegenerated: () -> Unit
+    onProxyPasswordRegenerated: () -> Unit,
+    onLanSharingChanged: (Boolean) -> Unit,
+    onLanAddressSelected: (String) -> Unit,
+    onLanCredentialsRegenerated: () -> Unit
 ) {
     var editedHost by remember(settings.host) { mutableStateOf(settings.host) }
     var editedPort by remember(settings.port) { mutableStateOf(settings.port.toString()) }
@@ -668,8 +690,8 @@ private fun SharedSocksProxySettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SharedDetailHeader(
-            title = "SOCKS5 Proxy",
-            subtitle = settings.host,
+            title = if (settings.lanSharingSupported) "Local network sharing" else "SOCKS5 Proxy",
+            subtitle = settings.lanEndpoint ?: settings.lanAddress.ifBlank { settings.host },
             onBack = onBack
         )
 
@@ -679,8 +701,65 @@ private fun SharedSocksProxySettingsContent(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SharedSectionLabel("Endpoint")
+            if (settings.lanSharingSupported) {
+                SharedSectionLabel("Local network sharing")
+                SharedSelectableSettingsCard(
+                    selected = settings.shareOnLan,
+                    icon = PkIcons.Public,
+                    title = "Share VPN over SOCKS5",
+                    subtitle = settings.lanHealth
+                        ?: "Off by default. Access is limited to one selected private interface and generated credentials.",
+                    enabled = settings.lanAddresses.isNotEmpty(),
+                    onClick = { onLanSharingChanged(!settings.shareOnLan) }
+                )
+
+                if (settings.lanAddresses.isEmpty()) {
+                    Text(
+                        "Connect this computer to a private LAN before enabling sharing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalPkPalette.current.textDim
+                    )
+                } else {
+                    Text(
+                        "Choose the private interface that client devices can reach:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalPkPalette.current.textDim
+                    )
+                    settings.lanAddresses.forEach { address ->
+                        SharedSelectableSettingsCard(
+                            selected = address == settings.lanAddress,
+                            icon = PkIcons.Public,
+                            title = address,
+                            subtitle = if (address == settings.lanAddress) "Selected interface" else "Use this interface",
+                            enabled = true,
+                            onClick = { onLanAddressSelected(address) }
+                        )
+                    }
+                }
+
+                if (settings.lanUsername.isNotBlank() && settings.lanPassword.isNotBlank()) {
+                    SharedInfoRow("Endpoint", settings.lanEndpoint ?: "${settings.lanAddress}:${settings.lanPort}")
+                    SharedInfoRow("Username", settings.lanUsername)
+                    SharedInfoRow("Password", settings.lanPassword)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onLanCredentialsRegenerated) {
+                            Text("Regenerate LAN credentials")
+                        }
+                    }
+                }
+
+                Text(
+                    "Devices using these credentials send traffic through this VPN. Share them only with trusted devices. " +
+                        "On Windows the firewall rule is limited to Private networks and LocalSubnet and is removed when sharing stops.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LocalPkPalette.current.textDim
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+
+            if (AdminState.configuratorVisible) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SharedSectionLabel("Internal proxy endpoint")
 
                 SharedSocksProxyTextField(
                     value = editedHost,
@@ -721,10 +800,10 @@ private fun SharedSocksProxySettingsContent(
                         imeAction = ImeAction.Next
                     )
                 )
-            }
+                }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SharedSectionLabel("Credentials")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SharedSectionLabel("Internal proxy credentials")
 
                 SharedSocksProxyTextField(
                     value = editedUsername,
@@ -758,30 +837,31 @@ private fun SharedSocksProxySettingsContent(
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
                 )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onProxyPasswordRegenerated) {
-                    Text("Regenerate password")
                 }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    enabled = canSave,
-                    onClick = {
-                        onProxySettingsSaved(
-                            editedUsername,
-                            editedPassword,
-                            parsedPort ?: settings.port
-                        )
-                    }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Check, contentDescription = null)
+                    TextButton(onClick = onProxyPasswordRegenerated) {
+                        Text("Regenerate password")
+                    }
                     Spacer(Modifier.width(8.dp))
-                    Text("Save")
+                    Button(
+                        enabled = canSave,
+                        onClick = {
+                            onProxySettingsSaved(
+                                editedUsername,
+                                editedPassword,
+                                parsedPort ?: settings.port
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Check, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save")
+                    }
                 }
             }
         }
