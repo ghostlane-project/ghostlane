@@ -90,7 +90,7 @@ Joining a room over mobile data now waits as long as a slow carrier needs, inste
 giving up after five seconds.
 ```
 
-### Reply to App Review (one message, both items)
+### Reply to App Review (one message, both items) - FINAL
 
 ```
 Thank you for the review. Both items are addressed below.
@@ -100,14 +100,15 @@ other platform. Our release notes are generated for every platform at once by ou
 open-source build process, and that text was pasted by mistake; the App Store text is
 now written separately, for this app only.
 
-Guideline 3.1.1. Three facts we would like on record.
+Guideline 3.1.1. Three facts, and an offer.
 
 1. The screen in the attached screenshot is the app's room board. It shows a server
 list the tester imported, the rooms that list contains with how many of each room's
-eight seats are free, and a button to take one. There is no price, no balance, no
+eight seats are free, and a button to take a seat. There is no price, no balance, no
 quota, no account and no purchase anywhere on it, because the app has none of those
-things. "Encrypted list" is not a product: it is the name the app gives a list whose
-import link hides the provider's host, and it is what the tester imported.
+things. "Encrypted list" there is not a product: it is the name the app gives a list
+whose import link hides the provider's host. That was our test link, and we have
+replaced it in the review notes with a plain one, so the room and its host are visible.
 
 2. The app has no account, no sign-in, no entitlement and no purchase path. It reads a
 plain list of server addresses and credentials in the standard VLESS, Hysteria2 and
@@ -116,17 +117,17 @@ list names. It cannot tell whether a list was paid for, given away or typed by h
 and it behaves identically in each case. There is nothing in it for an In-App Purchase
 to unlock.
 
-3. Our reading of the guidelines is 3.1.3(f): a free, stand-alone app. Some of our
-users also use a paid service on a website; it is bought and managed entirely there,
-the app never opens, mentions or links it, and there is no call to action for any
-purchase inside the app. The app is equally a client for any other provider's servers,
-and it is the only client on the App Store for olcRTC, an open-source transport that
-carries traffic inside a WebRTC media session.
+3. Our reading is Guideline 3.1.3(f): a free, stand-alone app. Some of our users also
+use a paid service on a website; it is bought and managed entirely there, and the app
+never opens, mentions or links it. The app is equally a client for any other provider's
+servers, and the rooms in the screenshot are olcRTC, an open-source transport that
+carries traffic inside a WebRTC media session; this app is its only implementation on
+iOS.
 
 If review holds that 3.1.3(b) applies, we would be grateful to know which item in the
 app is understood to be unlocked, since an In-App Purchase has to unlock something. We
-are glad to provide a screen recording of import, connect and status, or any other
-material that would help.
+are glad to supply an ordinary VLESS, Hysteria2 and XHTTP test list as well, and a
+screen recording of import, connect and status.
 ```
 
 ## Checklist before resubmitting
