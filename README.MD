@@ -49,6 +49,7 @@ separately and pinned to each other.
 | Getting help | [SUPPORT.md](SUPPORT.md) |
 | Community standards | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 | Funding, and who holds the money | [FUNDING.md](FUNDING.md) |
+| Licences of what ships inside | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
 
 Every release is gated on a suite that moves real traffic through real relays,
 on every supported provider, and the report of that run is attached to the
