@@ -153,3 +153,60 @@ Board, with the same three facts, the open-source links, and the recording. The 
 structural exits remain what they were: publish the client under its own name with its
 own URLs and let the website be one provider among others, which the rename has now
 started, or sell gigabyte packs through StoreKit for 3.1.3(b) parity.
+
+## The App Review Information note, tightened
+
+What we send today opens with two sentences that say the same thing twice, and its
+first step hands review an `olcrtc://crypt1/...` link. That link is why their screenshot
+says "Encrypted list": the app labels a list that way when the import link hides the
+provider's host. A hidden source above a catalogue of countries is the impression we
+are trying not to give.
+
+Two changes: drop the duplicate opening, and give the plain form of the same room with
+a label, `olcrtc://PROVIDER?TRANSPORT@ROOM#KEY$LABEL` (see `internal/link/link.go` in
+the engine). The app then shows the label and the host instead of "Encrypted list".
+
+Text to paste:
+
+```
+This is a free, stand-alone client for standard VPN protocols. The room link and the
+server list below are free test configurations issued for review; nothing was bought to
+create them, and the app has no account, no sign-in, no purchase path and no In-App
+Purchase.
+
+This version renames the app from "ProofKit VPN" to "Ghostlane": same bundle, same
+functionality, same developer. It is an independent open-source client
+(github.com/romanpodpriatov/ghostlane).
+
+Ghostlane's distinguishing feature is olcRTC: a transport that carries the device's
+traffic inside a WebRTC media session, an ordinary video call to a public meeting
+service, so that on networks which drop every VPN protocol by signature, what remains on
+the wire is a call the network already permits. We maintain the transport engine and
+publish it at github.com/romanpodpriatov/olcrtc. This app is its only implementation on
+iOS.
+
+TO SEE THAT PART (two minutes)
+
+1. Tap + in the top right, choose "Paste link or URI", and paste this olcRTC room link:
+
+<PLAIN olcrtc:// LINK WITH A LABEL>
+
+   One entry appears, an olcRTC room. Its occupancy bar is live: it shows how many of
+   the room's seats are free and moves as they are taken. Select it and tap START. The
+   app first shows its own disclosure ("How the VPN connection works"), then iOS asks to
+   add the VPN configuration.
+
+2. The standard protocols (Reality, Hysteria2, XHTTP), which the app supports so that a
+   user does not need a second app when the ordinary transports stop working: paste this
+   server list the same way, then pick any entry.
+
+<TEST LIST URL>
+
+Traffic is routed through Apple's NEPacketTunnelProvider. The app collects no data. The
+camera is used only to scan a server-list QR code, and only when the user taps that
+button.
+```
+
+If the plain link cannot be produced in time, keep the encrypted one and add this line
+under step 1: *"The app labels this room 'Encrypted list' because the link hides the
+provider's host. It is a label, not a product, and nothing was bought to create it."*
