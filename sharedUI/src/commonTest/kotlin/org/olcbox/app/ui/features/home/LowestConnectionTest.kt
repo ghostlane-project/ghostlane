@@ -62,6 +62,18 @@ class LowestConnectionTest {
         task.cancelAndJoin()
     }
 
+    @Test fun displayedMeasurementOrderIsReusedWithoutHiddenProbes() = runTest {
+        val repo = repository(listOf(entry("first"), entry("winner"), entry("third")))
+        val vpn = Vpn().apply { probe = { error("Connect must not measure twice") } }
+        val task = launch {
+            LowestConnection(vpn, repo) {}.run(listOf("winner", "third", "first"))
+        }
+        runCurrent()
+        assertEquals("winner", repo.getActiveLocationId())
+        assertEquals(1, vpn.starts)
+        task.cancelAndJoin()
+    }
+
     @Test fun terminalFailureStopsOldTunnelAndRetriesAfterCooldown() = runTest {
         val repo = repository(listOf(entry("slow"), entry("fast")))
         val vpn = Vpn()

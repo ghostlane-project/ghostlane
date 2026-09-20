@@ -85,6 +85,7 @@ class HomeScreenModelImportLinkTest {
             assertTrue(vm.state.value.isVpnLoading)
             vm.ToggleVpn()
             assertEquals(0, vpn.starts)
+            assertEquals(1, vpn.stops)
             assertEquals(false, vm.state.value.isVpnLoading)
         } finally { vm.viewModelScope.cancel() }
     }
@@ -114,6 +115,31 @@ class HomeScreenModelImportLinkTest {
             refreshed.await()
             assertTrue(vm.stalePingIds.isEmpty())
             assertEquals(17, (vm.pingsState as org.olcbox.app.ui.features.locations.PingsState.Success).pings[id])
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
+    }
+
+    @Test fun cancellingAListMeasurementStillCompletesItsRequest() = runTest {
+        repository.importText(realityLink)
+        val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            error("Address measurements must not query room occupancy")
+        })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(
+            repository, org.olcbox.app.net.OlcrtcStatusClient(client)
+        )
+        try {
+            val entered = CompletableDeferred<Unit>()
+            val finished = CompletableDeferred<Pair<Int, Int>>()
+            vm.refreshPings(
+                performPing = { entered.complete(Unit); awaitCancellation() },
+                canPing = { true },
+                onComplete = { online, total -> finished.complete(online to total) }
+            )
+            entered.await()
+            vm.cancelPings()
+            assertEquals(0 to 1, withTimeout(5_000) { finished.await() })
         } finally {
             vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
             client.close()
@@ -196,11 +222,12 @@ private class IdleVpnManager : VpnManager {
     var measure: suspend () -> Long? = { null }
     var probe: suspend () -> Long? = { null }
     var starts = 0
+    var stops = 0
     override suspend fun measureCurrentChannel(): Long? = measure()
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
     override fun startVpn() { starts++ }
-    override fun stopVpn() {}
+    override fun stopVpn() { stops++ }
     override fun canPing(locationConfig: LocationConfig) = true
     override suspend fun ping(locationConfig: LocationConfig): Long? = probe()
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? = null
