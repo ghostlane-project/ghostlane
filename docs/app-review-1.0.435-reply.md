@@ -47,8 +47,20 @@ Until we do, the candidates are, in order:
    (`LocationsDatasource.kt:1466`); ProofKit's own lists send no such header, so the
    review list cannot produce it.
 
-**Ask the reviewer's screenshot from App Store Connect before sending anything that
-describes it.** The reply below says nothing about what it shows.
+**We have the reviewer's screenshot now (iPad, 19:15 on 18 September).** It shows the
+room board of 1.0.435: the header, `NOT CONNECTED / Telemost · VP8`, a server list
+group headed **"Encrypted list"**, five olcRTC rooms (US, IT, KR, SE, FR) each with its
+free seats out of eight, and the button to take a seat. There is no price, no balance,
+no quota, no account and no purchase anywhere on it.
+
+Two things follow:
+- Nothing on that screen can be fixed, because nothing on it claims a purchase. The
+  citation rests on the app showing a catalogue of country exits at all, plus the
+  listing's link to the pay-per-GB site.
+- **"Encrypted list" is the app's own label** for a list whose import link hides the
+  provider's host (`LocationSelection.kt:690`, `pkSubscriptionIsSecret`). So the tester
+  imported an encrypted link. A hidden source next to a catalogue of countries invites
+  exactly the reading we got. Give review a plain, readable test list instead.
 
 ## Changed on our side
 
@@ -90,20 +102,19 @@ now written separately, for this app only.
 
 Guideline 3.1.1. Three facts we would like on record.
 
-1. The app has no account, no sign-in, no balance, no entitlement and no purchase
-path of any kind. It imports a plain list of server addresses and credentials in the
-standard VLESS, Hysteria2 and XHTTP link formats that every client of these protocols
-reads, and it connects to what the list names. It cannot tell whether a list was paid
-for, given away or typed by hand, and it behaves identically in each case. There is
-nothing in the app for an In-App Purchase to unlock.
+1. The screen in the attached screenshot is the app's room board. It shows a server
+list the tester imported, the rooms that list contains with how many of each room's
+eight seats are free, and a button to take one. There is no price, no balance, no
+quota, no account and no purchase anywhere on it, because the app has none of those
+things. "Encrypted list" is not a product: it is the name the app gives a list whose
+import link hides the provider's host, and it is what the tester imported.
 
-2. About usage figures, in case the screenshot shows one. Some server lists report an
-allowance about themselves in the standard "subscription-userinfo" field of their HTTP
-response, and every client of these protocols displays what the list reports. It is not
-a purchase record and it is not ours: the app has no way to know what, if anything, was
-paid, and the lists we issue for review send no such field at all. In the build we are
-submitting, that row is labelled "Traffic" rather than "Plan" so it cannot be read as a
-purchased plan.
+2. The app has no account, no sign-in, no entitlement and no purchase path. It reads a
+plain list of server addresses and credentials in the standard VLESS, Hysteria2 and
+XHTTP link formats that every client of these protocols reads, and connects to what the
+list names. It cannot tell whether a list was paid for, given away or typed by hand,
+and it behaves identically in each case. There is nothing in it for an In-App Purchase
+to unlock.
 
 3. Our reading of the guidelines is 3.1.3(f): a free, stand-alone app. Some of our
 users also use a paid service on a website; it is bought and managed entirely there,
@@ -126,7 +137,8 @@ material that would help.
    shows no usage bar; two of its frames state that there is no account and nothing to
    buy. Keep `docs/screenshots/` in mind only as a reminder that the old ProofKit set is
    stale.
-3. **App Review Information**, first line: "This is a client for standard VPN
+3. **App Review Information**: replace the encrypted import link with a plain, readable
+   list URL, and put this first: "This is a client for standard VPN
    protocols. The server list below is a free test configuration issued for review. The
    app has no account, no purchase path and no In-App Purchase."
 4. **Listing URLs** (do this after the submission closes, not during review): Marketing
