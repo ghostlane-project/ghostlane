@@ -34,6 +34,33 @@ up for, and nothing to buy here.
   <img src="docs/screenshots/04-settings.PNG" alt="Settings" width="200">
 </p>
 
+## The project
+
+Ghostlane is open source and actively maintained. It is developed together with
+**[olcRTC](https://github.com/romanpodpriatov/olcrtc)**, the transport engine
+this application is built around; the two repositories are one project, released
+separately and pinned to each other.
+
+| | |
+| --- | --- |
+| How the project is run, and by whom | [GOVERNANCE.md](GOVERNANCE.md), [MAINTAINERS.md](MAINTAINERS.md) |
+| How to contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Reporting a vulnerability | [SECURITY.md](SECURITY.md) |
+| Getting help | [SUPPORT.md](SUPPORT.md) |
+| Community standards | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
+| Funding, and who holds the money | [FUNDING.md](FUNDING.md) |
+
+Every release is gated on a suite that moves real traffic through real relays,
+on every supported provider, and the report of that run is attached to the
+release.
+
+**Publishing and funding are separate things.** The mobile applications are
+published on the App Store and Google Play by Globvent Inc., which holds those
+developer accounts; that is its only role here. Project funding, if the
+application to Open Source Collective is accepted, is held by Open Source
+Collective as fiscal host, is spent in public, and is neither received nor
+controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
+
 ## Protocols
 
 | Protocol | Engine |
@@ -116,14 +143,19 @@ MIT requires and as it should.
 
 ## Support
 
-Support options are not publicly listed. Contact the author if needed.
+Bug reports, questions and feature requests go to the issue tracker;
+[SUPPORT.md](SUPPORT.md) says what makes a report useful and what must never be
+pasted into a public issue. Security problems go through the private channel in
+[SECURITY.md](SECURITY.md), never an issue.
 
-> **The author sells nothing.** Not the app, not access, not configurations,
-> not server lists, not support. Donations only, and only voluntary.
+> **Nothing here is for sale.** Not the app, not access, not configurations,
+> not server lists, not support. The project accepts voluntary funding only,
+> and spends it in the open: see [FUNDING.md](FUNDING.md).
 
-> **Автор ничего не продаёт.**
-> Не продаются приложение, доступ, конфигурации, списки серверов или услуги
-> поддержки. Возможен только добровольный донат.
+> **Здесь ничего не продаётся.**
+> Ни приложение, ни доступ, ни конфигурации, ни списки серверов, ни поддержка.
+> Проект принимает только добровольное финансирование и тратит его открыто:
+> см. [FUNDING.md](FUNDING.md).
 
 ## Legal Notice
 This software is intended for development, testing and research purposes only.

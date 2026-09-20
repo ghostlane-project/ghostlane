@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste a server list, a subscription URL or a token. They
+        are credentials, and this page is public. Describe the entry instead.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: From the bottom of the main screen, for example 1.0.437
+      placeholder: 1.0.437
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Android, iOS, macOS, Windows, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Protocol in use
+      options:
+        - olcRTC (a room)
+        - VLESS + Reality
+        - VLESS over TLS
+        - Hysteria2
+        - XHTTP
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: when
+    attributes:
+      label: Did it work before?
+      description: If it did, which version was the last good one?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics
+      description: |
+        The app can export diagnostics. Remove anything private before pasting.
+      render: text
