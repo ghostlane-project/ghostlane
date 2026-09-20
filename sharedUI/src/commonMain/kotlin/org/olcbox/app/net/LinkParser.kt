@@ -50,7 +50,9 @@ object LinkParser {
                 host = p.query["host"] ?: p.query["sni"].orEmpty(),
                 mode = p.query["mode"] ?: "auto",
             )
-            "grpc" -> TransportSpec.Grpc(p.query["serviceName"].orEmpty())
+            "grpc" -> TransportSpec.Grpc(
+                p.query["serviceName"] ?: p.query["servicename"].orEmpty()
+            )
             "tcp", "raw" -> TransportSpec.Tcp
             // Unknown transports cannot be dialled as TCP: that looks like a
             // valid imported profile but never speaks the server's protocol.

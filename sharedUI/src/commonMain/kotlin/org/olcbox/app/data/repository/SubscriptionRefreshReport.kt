@@ -52,26 +52,36 @@ data class SubscriptionRefreshReport(
     val hasFailures: Boolean get() = failures.isNotEmpty()
 
     /** Message for refreshing one server list. */
-    fun singleMessage(): String = when {
-        failures.isNotEmpty() -> failures.first().message()
+    fun singleMessage(): String {
+        val skipped = skippedSuffix()
+        return when {
+        failures.isNotEmpty() -> failures.first().message() + skipped
         skippedUnsupportedCount > 0 ->
-            "Server list updated; $skippedUnsupportedCount unsupported profiles skipped"
+            "Server list updated$skipped"
         updatedCount > 0 -> "Server list updated"
         else -> "Server list unchanged"
+        }
     }
 
     /** Message for refreshing everything at once. */
-    fun bulkMessage(): String = when {
+    fun bulkMessage(): String {
+        val skipped = skippedSuffix()
+        return when {
         failures.isNotEmpty() && updatedCount == 0 ->
-            if (failures.size == 1) failures.first().message()
-            else "${failures.size} server lists failed: ${failures.first().message()}"
+            (if (failures.size == 1) failures.first().message()
+            else "${failures.size} server lists failed: ${failures.first().message()}") + skipped
         failures.isNotEmpty() ->
-            "Updated $updatedCount, ${failures.size} failed: ${failures.first().message()}"
+            "Updated $updatedCount, ${failures.size} failed: ${failures.first().message()}$skipped"
         skippedUnsupportedCount > 0 ->
-            "Server lists updated: $updatedCount; $skippedUnsupportedCount unsupported profiles skipped"
+            "Server lists updated: $updatedCount$skipped"
         updatedCount > 0 -> "Server lists updated: $updatedCount"
         else -> "No server lists to update"
+        }
     }
+
+    private fun skippedSuffix(): String =
+        if (skippedUnsupportedCount == 0) ""
+        else "; ${unsupportedProfileCount(skippedUnsupportedCount)} skipped"
 
     companion object {
         val EMPTY = SubscriptionRefreshReport()

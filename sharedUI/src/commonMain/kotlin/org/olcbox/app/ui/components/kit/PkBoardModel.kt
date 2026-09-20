@@ -32,6 +32,7 @@ fun wireShape(config: LocationConfig?): String {
         TransportKind.Olcrtc -> "a ${config.providerName()} media session"
         TransportKind.Hysteria2 -> "obfuscated QUIC over UDP"
         TransportKind.Xhttp -> "ordinary HTTP requests"
+        TransportKind.Grpc -> "HTTP/2 gRPC requests"
         TransportKind.Reality -> "a TLS handshake to a real website"
         TransportKind.Tls -> "ordinary HTTPS"
     }

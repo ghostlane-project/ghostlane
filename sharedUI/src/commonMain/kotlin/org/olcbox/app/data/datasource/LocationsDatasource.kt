@@ -35,6 +35,7 @@ import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.repository.LocationsRepository
+import org.olcbox.app.data.repository.ImportReport
 import org.olcbox.app.net.HttpPartnerLinkResolver
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.PartnerLinkResolver
@@ -200,11 +201,11 @@ class LocationsRepositoryImpl(
         return json.encodeToString(LocationBundleV4.serializer(), getBundle())
     }
 
-    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): Boolean {
+    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): ImportReport {
         val resolved = resolveParsedImport(
             text = text,
             subscriptionProxy = subscriptionProxy
-        ) ?: return false
+        ) ?: return ImportReport(imported = false)
 
         mutationMutex.withLock {
             val merged = mergeImportedBundle(
@@ -214,7 +215,10 @@ class LocationsRepositoryImpl(
             )
             saveBundleUnlocked(merged)
         }
-        return true
+        return ImportReport(
+            imported = true,
+            skippedUnsupportedCount = unsupportedTransportCount(resolved.source.content)
+        )
     }
 
     override suspend fun refreshSubscriptions(

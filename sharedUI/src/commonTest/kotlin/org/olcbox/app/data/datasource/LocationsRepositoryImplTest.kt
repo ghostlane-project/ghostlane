@@ -33,7 +33,7 @@ class LocationsRepositoryImplTest {
             if (cancel) throw kotlinx.coroutines.CancellationException("settings changed")
             respond("olcrtc://wbstream?vp8channel@first#${"c".repeat(64)}${'$'}First")
         }), nowEpochMs = { now })
-        assertTrue(repo.importText("https://example.test/list"))
+        assertTrue(repo.importText("https://example.test/list").imported)
         val before = repo.getBundle()
         now += 86_400_000L
         cancel = true
@@ -50,7 +50,7 @@ class LocationsRepositoryImplTest {
             requests++
             respond(body, headers = headersOf("profile-update-interval", "24"))
         }), nowEpochMs = { now })
-        assertTrue(repo.importText("https://example.test/list"))
+        assertTrue(repo.importText("https://example.test/list").imported)
         val selected = repo.getActiveLocationId()
         repo.saveSubscriptionSettings(org.olcbox.app.data.model.SubscriptionSettings(updateIntervalHours = 1))
         now += 3_600_000L
@@ -638,7 +638,7 @@ class LocationsRepositoryImplTest {
         ).importText("http://example.test/sub.txt")
 
         val bundle = source.stored
-        assertTrue(imported)
+        assertTrue(imported.imported)
         assertNotNull(bundle)
         assertEquals(2, userAgents.size)
         assertEquals(CurrentAppInfo.userAgent, userAgents[0])
@@ -789,7 +789,7 @@ class LocationsRepositoryImplTest {
 
         val ok = repo.importText("olcrtc://crypt1/$lineBlob")
 
-        assertTrue(ok)
+        assertTrue(ok.imported)
         val imported = source.stored
         assertNotNull(imported)
         val loc = imported.locations.map { it.location }.first { it.id == "12345" }
@@ -809,7 +809,7 @@ class LocationsRepositoryImplTest {
 
         val ok = repo.importText("olcrtc://telemost?vp8channel@99999#feedfacefeedface\$FI")
 
-        assertTrue(ok)
+        assertTrue(ok.imported)
         val loc = source.stored!!.locations.map { it.location }.first { it.id == "99999" }
         assertEquals("feedfacefeedface", loc.key)
     }
@@ -962,7 +962,7 @@ class LocationsRepositoryImplTest {
 
         assertEquals(1, report.updatedCount)
         assertEquals(1, report.skippedUnsupportedCount)
-        assertTrue(report.singleMessage().contains("1 unsupported profiles skipped"))
+        assertTrue(report.singleMessage().contains("1 unsupported profile skipped"))
         assertEquals(1, source.stored!!.locations.size)
     }
 
@@ -1080,7 +1080,7 @@ class LocationsRepositoryImplTest {
             partnerLinkResolver = resolver,
         ).importText(happLink)
 
-        assertTrue(imported)
+        assertTrue(imported.imported)
         assertEquals(happLink, resolver.asked)
         assertNotNull(source.stored)
         assertEquals(1, source.stored!!.locations.size)
@@ -1096,7 +1096,7 @@ class LocationsRepositoryImplTest {
             partnerLinkResolver = resolver,
         ).importText(happLink)
 
-        assertFalse(imported)
+        assertFalse(imported.imported)
         assertNull(source.stored)
     }
 
@@ -1111,7 +1111,7 @@ class LocationsRepositoryImplTest {
             partnerLinkResolver = resolver,
         ).importText(input)
 
-        assertTrue(imported)
+        assertTrue(imported.imported)
         assertNull(resolver.asked)
     }
 
@@ -1139,7 +1139,7 @@ class LocationsRepositoryImplTest {
             cryptCodec = CryptCodec(CryptCodec.decodeMaster(cryptKeyB64)!!)
         ).importText(link)
 
-        assertTrue(ok)
+        assertTrue(ok.imported)
         val entry = source.stored!!.locations.single()
         assertEquals(cryptUrl, entry.subscriptionUrl)
         assertEquals(link, entry.subscriptionOriginLink)
@@ -1160,7 +1160,7 @@ class LocationsRepositoryImplTest {
             partnerLinkResolver = resolver
         ).importText(happLink)
 
-        assertTrue(ok)
+        assertTrue(ok.imported)
         assertEquals(happLink, source.stored!!.locations.single().subscriptionOriginLink)
     }
 
@@ -1174,7 +1174,7 @@ class LocationsRepositoryImplTest {
             httpClient = HttpClient(engine)
         ).importText("https://example.test/sub/plain")
 
-        assertTrue(ok)
+        assertTrue(ok.imported)
         assertNull(source.stored!!.locations.single().subscriptionOriginLink)
     }
 

@@ -8,6 +8,7 @@ enum class TransportKind {
     Reality,
     Hysteria2,
     Xhttp,
+    Grpc,
     /** VLESS over TLS without Reality keys. */
     Tls,
     Olcrtc;
@@ -17,6 +18,7 @@ enum class TransportKind {
         Reality -> "Reality"
         Hysteria2 -> "Hysteria2"
         Xhttp -> "XHTTP"
+        Grpc -> "gRPC"
         Tls -> "TLS"
         Olcrtc -> "olcRTC"
     }
@@ -30,6 +32,7 @@ fun LocationConfig.transportKind(): TransportKind = when (kind) {
             is OutboundSpec.Vless ->
                 when {
                     spec.transport is TransportSpec.Xhttp -> TransportKind.Xhttp
+                    spec.transport is TransportSpec.Grpc -> TransportKind.Grpc
                     spec.publicKey.isNotBlank() -> TransportKind.Reality
                     else -> TransportKind.Tls
                 }
@@ -47,6 +50,7 @@ object TransportSelector {
     private val DEFAULT_ORDER = listOf(
         TransportKind.Reality,
         TransportKind.Hysteria2,
+        TransportKind.Grpc,
         TransportKind.Xhttp,
         TransportKind.Tls
     )
