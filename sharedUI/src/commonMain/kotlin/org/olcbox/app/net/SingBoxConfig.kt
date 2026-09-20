@@ -610,6 +610,10 @@ object SingBoxConfig {
                 put("server", spec.host); put("server_port", spec.port)
                 put("uuid", spec.uuid); put("packet_encoding", "xudp")
                 if (spec.flow != null) put("flow", spec.flow)
+                if (spec.transport is TransportSpec.Grpc) putJsonObject("transport") {
+                    put("type", "grpc")
+                    put("service_name", spec.transport.serviceName)
+                }
                 putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
                     putJsonObject("utls") { put("enabled", true); put("fingerprint", spec.fingerprint) }

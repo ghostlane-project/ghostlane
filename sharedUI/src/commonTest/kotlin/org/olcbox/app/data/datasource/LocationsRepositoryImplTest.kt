@@ -947,6 +947,26 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
+    fun refreshReportsUnsupportedTransportRowsInsteadOfSilentlyDroppingThem() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subscribedSource(url)
+        val uuid = "55555555-5555-5555-5555-555555555555"
+        val engine = MockEngine {
+            respond(
+                "vless://$uuid@tcp.example:443?type=tcp&sni=tcp.example#TCP\n" +
+                    "vless://$uuid@ws.example:443?type=ws&sni=ws.example#WS"
+            )
+        }
+
+        val report = repoRespondingWith(source, engine).refreshSubscription(url)
+
+        assertEquals(1, report.updatedCount)
+        assertEquals(1, report.skippedUnsupportedCount)
+        assertTrue(report.singleMessage().contains("1 unsupported profiles skipped"))
+        assertEquals(1, source.stored!!.locations.size)
+    }
+
+    @Test
     fun blankUrlRefreshIsANoOpReport() = runTest {
         val source = subscribedSource("https://example.test/alpha")
         val engine = MockEngine { respond("unused") }

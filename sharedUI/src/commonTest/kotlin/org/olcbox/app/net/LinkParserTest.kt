@@ -33,6 +33,27 @@ class LinkParserTest {
         assertNull(s.flow) // xhttp is incompatible with flow
     }
 
+    @Test fun parsesVlessGrpcAndDropsTcpOnlyFlow() {
+        val link = "vless://33333333-3333-3333-3333-333333333333@grpc.example:2053" +
+            "?type=grpc&serviceName=rutube&security=reality&pbk=PBK&flow=xtls-rprx-vision#KZ"
+        val spec = LinkParser.parse(link)
+        assertIs<OutboundSpec.Vless>(spec)
+        assertEquals(TransportSpec.Grpc("rutube"), spec.transport)
+        assertNull(spec.flow)
+    }
+
+    @Test fun emptyTransportMeansTcpButUnknownTransportIsReported() {
+        val prefix = "vless://44444444-4444-4444-4444-444444444444@host:443"
+        val empty = LinkParser.parse("$prefix?type=&sni=host")
+        assertIs<OutboundSpec.Vless>(empty)
+        assertEquals(TransportSpec.Tcp, empty.transport)
+
+        val unknown = "$prefix?type=ws&sni=host"
+        assertNull(LinkParser.parse(unknown))
+        assertEquals("ws", LinkParser.unsupportedVlessTransport(unknown))
+        assertNull(LinkParser.unsupportedVlessTransport("vless://broken"))
+    }
+
     @Test fun parsesHysteria2() {
         val link = "hysteria2://PASSWORD@1.2.3.4:443?sni=h.example&obfs=salamander&obfs-password=OBFS&insecure=1#RU"
         val s = LinkParser.parse(link)

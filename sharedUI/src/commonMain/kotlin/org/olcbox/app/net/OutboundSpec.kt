@@ -7,6 +7,7 @@ enum class LocationKind { Olcrtc, Vless, Hysteria2 }
 
 sealed interface TransportSpec {
     data object Tcp : TransportSpec
+    data class Grpc(val serviceName: String) : TransportSpec
     data class Xhttp(val path: String, val host: String, val mode: String) : TransportSpec
 }
 

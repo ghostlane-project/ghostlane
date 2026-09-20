@@ -45,13 +45,17 @@ data class SubscriptionRefreshFailure(
  */
 data class SubscriptionRefreshReport(
     val updatedCount: Int = 0,
-    val failures: List<SubscriptionRefreshFailure> = emptyList()
+    val failures: List<SubscriptionRefreshFailure> = emptyList(),
+    /** Profiles intentionally omitted because their VLESS transport is unsupported. */
+    val skippedUnsupportedCount: Int = 0
 ) {
     val hasFailures: Boolean get() = failures.isNotEmpty()
 
     /** Message for refreshing one server list. */
     fun singleMessage(): String = when {
         failures.isNotEmpty() -> failures.first().message()
+        skippedUnsupportedCount > 0 ->
+            "Server list updated; $skippedUnsupportedCount unsupported profiles skipped"
         updatedCount > 0 -> "Server list updated"
         else -> "Server list unchanged"
     }
@@ -63,6 +67,8 @@ data class SubscriptionRefreshReport(
             else "${failures.size} server lists failed: ${failures.first().message()}"
         failures.isNotEmpty() ->
             "Updated $updatedCount, ${failures.size} failed: ${failures.first().message()}"
+        skippedUnsupportedCount > 0 ->
+            "Server lists updated: $updatedCount; $skippedUnsupportedCount unsupported profiles skipped"
         updatedCount > 0 -> "Server lists updated: $updatedCount"
         else -> "No server lists to update"
     }

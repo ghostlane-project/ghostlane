@@ -266,6 +266,7 @@ class LocationsRepositoryImpl(
         val activeBefore = bundle.activeLocationId
         var activeAfter = activeBefore
         var successfulRefreshes = 0
+        var skippedUnsupported = 0
         val failures = mutableListOf<SubscriptionRefreshFailure>()
 
         fun preservePreviousEntries(entries: List<LocationEntry>) {
@@ -300,6 +301,7 @@ class LocationsRepositoryImpl(
                 return@forEach
             }
             val source = resolved.source
+            skippedUnsupported += unsupportedTransportCount(source.content)
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
@@ -360,7 +362,11 @@ class LocationsRepositoryImpl(
         }
 
         if (successfulRefreshes == 0) {
-            return SubscriptionRefreshReport(updatedCount = 0, failures = failures)
+            return SubscriptionRefreshReport(
+                updatedCount = 0,
+                failures = failures,
+                skippedUnsupportedCount = skippedUnsupported
+            )
         }
 
         saveBundleUnlocked(
@@ -369,7 +375,11 @@ class LocationsRepositoryImpl(
                 locations = refreshedLocations
             )
         )
-        return SubscriptionRefreshReport(updatedCount = successfulRefreshes, failures = failures)
+        return SubscriptionRefreshReport(
+            updatedCount = successfulRefreshes,
+            failures = failures,
+            skippedUnsupportedCount = skippedUnsupported
+        )
     }
 
     override suspend fun refreshDueSubscriptions(
@@ -888,6 +898,15 @@ class LocationsRepositoryImpl(
             activeLocationId = entries.firstOrNull()?.storageId,
             locations = entries
         )
+    }
+
+    private fun unsupportedTransportCount(text: String): Int {
+        fun count(lines: String): Int = lines.lineSequence().count {
+            LinkParser.unsupportedVlessTransport(it.normalizedImportText()) != null
+        }
+        val direct = count(text)
+        if (direct > 0) return direct
+        return SubscriptionBodyCodec.decodeBase64(text)?.let(::count) ?: 0
     }
 
     private fun parseImport(
