@@ -161,7 +161,7 @@ pasted into a public issue. Security problems go through the private channel in
 ## Legal Notice
 This software is intended for development, testing and research purposes only.
 
-The author does not provide any guarantees regarding:
+The project does not provide any guarantees regarding:
 - availability of network access
 - compatibility with specific services
 - compliance with any external restrictions
@@ -170,7 +170,7 @@ Users are solely responsible for how they use this software and must comply with
 
 ## Usage Restrictions
 This software is not intended to be used for bypassing access restrictions or violating applicable laws.
-The author does not support or encourage such use.
+The project does not support or encourage such use.
 
 ## Features
 - One tap to connect, with the session's elapsed time and traffic on screen.
