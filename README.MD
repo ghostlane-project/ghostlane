@@ -77,6 +77,12 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 One subscription usually carries several. The app groups them by provider,
 filters by protocol, and remembers the exit last used.
 
+Hysteria2 rides QUIC, and a carrier that throttles or drops UDP leaves it
+connected and carrying nothing. On iOS the app asks the tunnel twice whether a
+few hundred bytes reach a well-known endpoint, and on two failures moves to the
+same exit over a transport that rides TCP — once per connect, never to another
+exit, and it says so in the log.
+
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ — the matrix below says how.
 
