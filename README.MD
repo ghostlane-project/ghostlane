@@ -239,6 +239,12 @@ The project does not support or encourage such use.
 | Windows | TUN, proxy | supervised sing-box TUN + Wintun; OS proxy settings otherwise | as macOS |
 | Linux | TUN | `hev-socks5-tunnel` + policy routes | as macOS |
 
+The desktop apps can also lend the tunnel to another device on the same local
+network — a phone, a TV, a laptop that must not have a client installed — as an
+authenticated SOCKS5 listener on one private address. It is off by default, the
+network it was enabled on is pinned by its gateway, and what it costs is in
+`docs/lan-sharing.md`.
+
 iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB. sing-box
 owning the tun in front of a second Go engine buffers every connection twice and
 serves it with twice the goroutines; a speed test killed the extension outright.
