@@ -162,6 +162,19 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # WB Stream on cellular); and the release gate (internal/gate), which the app's
 # gate needs in the pinned engine. No API change.
 #
+# 7142c4a04b8b -> 1afdb706d5f9 (olcrtc#40, ghostlane#51): a location can name
+# several rooms and the engine walks them. A server whose rooms live about a day
+# advertises the next one in the subscription under the location's line; the
+# supervisor now takes a list, advances when the room it is in ends, re-reads
+# the list at every hop - so the host can grow it while a session is live - and
+# reports every opened session to the host, which is how the iOS extension
+# learns a handover happened while the app is suspended. New API:
+# MobileRuntime.addFailoverRoom, clearFailoverRooms and setSessionListener.
+# From the same wave, without an API change: a room is given up only while
+# there is another one to try, a session ends on a graceful close instead of
+# waiting for liveness to notice, and it takes a run of refusals - not one - to
+# call an exit IPv6-less.
+#
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
 # (scripts/olcrtc-pin.sh: the 12-hex tail must exist in romanpodpriatov/olcrtc
@@ -180,7 +193,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260920182049-7142c4a04b8b}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260921001051-1afdb706d5f9}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -235,7 +248,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260920182049-7142c4a04b8b}"
 # 26 → 27: the engine pin above (7142c4a04b8b): the release gate's whole wave -
 # transport-cc to Jitsi, the relay window, the datachannel batching, the
 # seichannel window, the WB publish ceiling and the reconnect rewrite; same API.
-CORES_BUILD="${CORES_BUILD:-27}"
+# 27 -> 28: the engine pin above (1afdb706d5f9), whose API grew the failover
+# room list and the session listener; the extension's RoomKeeper calls both.
+CORES_BUILD="${CORES_BUILD:-28}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
