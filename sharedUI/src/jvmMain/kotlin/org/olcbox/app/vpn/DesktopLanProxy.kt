@@ -35,6 +35,11 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
         val available = privateAddresses()
         val host = normalized.lanAddress.takeIf { it in available }
             ?: error("The selected private network interface is no longer available")
+        val currentNetworkId = networkIdentity(host)
+            ?: error("The selected LAN gateway could not be identified")
+        require(normalized.lanNetworkId.isNotBlank() && normalized.lanNetworkId == currentNetworkId) {
+            "This is a different local network; select the LAN interface again before sharing"
+        }
         requirePortFree(host, normalized.lanPort)
         val ownershipPort = allocateLoopbackPort()
         val ownershipUsername = DesktopSocksProxySettings.randomToken(16)
@@ -87,6 +92,10 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
 
     fun isRunning(): Boolean = core.isRunning()
 
+    fun cleanupStaleFirewallRules() {
+        if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
+    }
+
     private fun addWindowsFirewallRule(host: String, port: Int) {
         val rule = "Ghostlane-LAN-${java.util.UUID.randomUUID()}"
         val program = DesktopNativeAssets.resolveSingBoxBinary().toAbsolutePath().normalize().toString()
@@ -136,7 +145,8 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
     }
 
     companion object {
-        fun privateAddresses(): List<String> = NetworkInterface.getNetworkInterfaces().toList()
+        fun privateAddresses(): List<String> = runCatching {
+            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
             .filter { it.isUp && !it.isLoopback && it.hardwareAddress != null }
             .filterNot { isVirtualAdapter("${it.name} ${it.displayName}") }
             .flatMap { it.inetAddresses.toList() }
@@ -145,6 +155,30 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
             .map { it.hostAddress }
             .distinct()
             .sortedBy(::ipv4SortKey)
+        }.getOrDefault(emptyList())
+
+        /** Default-gateway address and link-layer identity for the selected interface. */
+        fun networkIdentity(address: String): String? = runCatching {
+            val command = when (DesktopPaths.os) {
+                DesktopOs.Windows -> listOf(
+                    "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                    "\$ErrorActionPreference='Stop'; \$ip=Get-NetIPAddress -AddressFamily IPv4 " +
+                        "-IPAddress '${address.replace("'", "''")}' | Select-Object -First 1; " +
+                        "\$r=Get-NetRoute -AddressFamily IPv4 -InterfaceIndex \$ip.InterfaceIndex " +
+                        "-DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1; " +
+                        "\$n=Get-NetNeighbor -InterfaceIndex \$ip.InterfaceIndex -IPAddress \$r.NextHop " +
+                        "-ErrorAction SilentlyContinue | Select-Object -First 1; " +
+                        "Write-Output (\$r.NextHop + '|' + \$n.LinkLayerAddress)"
+                )
+                DesktopOs.Linux -> listOf("sh", "-c", "gw=\$(ip route show default | awk '/dev/ {print \$3; exit}'); mac=\$(ip neigh show \"\$gw\" | awk '{print \$5; exit}'); printf '%s|%s' \"\$gw\" \"\$mac\"")
+                DesktopOs.MacOS -> listOf("sh", "-c", "gw=\$(route -n get default | awk '/gateway:/ {print \$2; exit}'); mac=\$(arp -n \"\$gw\" | awk 'NR==1 {print \$4}'); printf '%s|%s' \"\$gw\" \"\$mac\"")
+                DesktopOs.Other -> return null
+            }
+            val process = ProcessBuilder(command).redirectErrorStream(true).start()
+            check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0)
+            process.inputStream.bufferedReader().use { it.readText() }.trim()
+                .lowercase().takeIf { it.contains('|') && !it.endsWith('|') }
+        }.getOrNull()
 
         internal fun isVirtualAdapter(name: String): Boolean = name.contains(
             Regex(

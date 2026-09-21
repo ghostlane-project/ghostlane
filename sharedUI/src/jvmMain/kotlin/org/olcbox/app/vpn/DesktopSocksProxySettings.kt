@@ -12,6 +12,8 @@ data class DesktopSocksProxySettings(
     val password: String = "",
     val shareOnLan: Boolean = false,
     val lanAddress: String = "",
+    /** Gateway identity captured when the user explicitly trusted this LAN. */
+    val lanNetworkId: String = "",
     val lanPort: Int = DEFAULT_LAN_PORT,
     val lanUsername: String = "",
     val lanPassword: String = ""
@@ -26,6 +28,7 @@ data class DesktopSocksProxySettings(
             username = username.take(MAX_CREDENTIAL_LENGTH),
             password = password.take(MAX_CREDENTIAL_LENGTH),
             lanAddress = lanAddress.trim(),
+            lanNetworkId = lanNetworkId.trim(),
             lanPort = sanitizePort(lanPort).let { if (it == sanitizePort(port)) alternatePort(it) else it },
             lanUsername = lanUsername.take(MAX_CREDENTIAL_LENGTH),
             lanPassword = lanPassword.take(MAX_CREDENTIAL_LENGTH)

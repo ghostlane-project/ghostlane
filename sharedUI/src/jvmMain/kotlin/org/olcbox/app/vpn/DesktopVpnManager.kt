@@ -91,7 +91,9 @@ class DesktopVpnManager private constructor(
     val lanProxyEndpoint: StateFlow<String?> = _lanProxyEndpoint.asStateFlow()
     private val _lanProxyHealth = MutableStateFlow<String?>(null)
     val lanProxyHealth: StateFlow<String?> = _lanProxyHealth.asStateFlow()
-    private val _lanAddresses = MutableStateFlow(DesktopLanProxy.privateAddresses())
+    private val _lanAddresses = MutableStateFlow(
+        runCatching { DesktopLanProxy.privateAddresses() }.getOrDefault(emptyList())
+    )
     val lanAddresses: StateFlow<List<String>> = _lanAddresses.asStateFlow()
     val lanSecurityNotice: String? = when (DesktopPaths.os) {
         DesktopOs.Windows ->
@@ -279,8 +281,19 @@ class DesktopVpnManager private constructor(
     }
 
     fun refreshLanAddresses() {
-        _lanAddresses.value = DesktopLanProxy.privateAddresses()
+        _lanAddresses.value = runCatching { DesktopLanProxy.privateAddresses() }.getOrDefault(emptyList())
     }
+
+    fun withTrustedLanAddress(settings: DesktopSocksProxySettings, address: String): DesktopSocksProxySettings =
+        settings.copy(
+            lanAddress = address,
+            lanNetworkId = DesktopLanProxy.networkIdentity(address).orEmpty()
+        ).normalized()
+
+    fun isTrustedLanNetwork(settings: DesktopSocksProxySettings): Boolean =
+        settings.lanAddress in _lanAddresses.value &&
+            settings.lanNetworkId.isNotBlank() &&
+            settings.lanNetworkId == DesktopLanProxy.networkIdentity(settings.lanAddress)
 
     /** Apply LAN-only changes without tearing down and rebuilding the VPN tunnel. */
     fun applyLanSharingSettings(settings: DesktopSocksProxySettings) {
@@ -303,6 +316,8 @@ class DesktopVpnManager private constructor(
 
     init {
         Runtime.getRuntime().addShutdownHook(lanShutdownHook)
+        runCatching { lanProxy.cleanupStaleFirewallRules() }
+            .onFailure { addLog("LAN sharing: stale firewall cleanup failed: ${it.message}") }
         // A tunnel outlives the process that asked for it: the daemon keeps the
         // tun after the app is killed, so the app has to ask what is true rather
         // than assume it starts from idle. Assuming idle is the iOS bug that

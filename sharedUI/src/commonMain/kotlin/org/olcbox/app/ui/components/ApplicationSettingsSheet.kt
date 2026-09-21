@@ -758,7 +758,7 @@ private fun SharedSocksProxySettingsContent(
 
                 Text(
                     buildString {
-                        append("Devices using these credentials send traffic through this VPN. Share them only with trusted devices.")
+                        append("SOCKS5 sends its username, password, requested addresses, and traffic without local-network encryption. Use it only on a trusted private LAN and share credentials only with trusted devices.")
                         settings.lanSecurityNotice?.let { append(' ').append(it) }
                     },
                     style = MaterialTheme.typography.bodySmall,

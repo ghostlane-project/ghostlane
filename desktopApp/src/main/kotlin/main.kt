@@ -296,7 +296,10 @@ fun main(args: Array<String>) = application {
         ) {
             safeProxySettings = safeProxySettings.withGeneratedLanCredentials()
         }
-        if (safeProxySettings.shareOnLan && safeProxySettings.lanAddress !in availableLanAddresses) {
+        if (safeProxySettings.shareOnLan && (
+                safeProxySettings.lanAddress !in availableLanAddresses ||
+                    !dependencies.vpnManager.isTrustedLanNetwork(safeProxySettings)
+            )) {
             safeProxySettings = safeProxySettings.copy(
                 lanAddress = "",
                 shareOnLan = false
@@ -642,7 +645,9 @@ fun main(args: Array<String>) = application {
                             }
                         },
                         onLanAddressSelected = { address ->
-                            val settings = socksProxySettings.copy(lanAddress = address).normalized()
+                            val settings = dependencies.vpnManager.withTrustedLanAddress(
+                                socksProxySettings, address
+                            )
                             dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
                         },
