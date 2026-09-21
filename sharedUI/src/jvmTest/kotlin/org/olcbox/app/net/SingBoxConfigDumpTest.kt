@@ -37,6 +37,15 @@ class SingBoxConfigDumpTest {
         dump("vless-reality", SingBoxConfig.build(spec))
     }
 
+    @Test fun dumpVlessGrpcReality() {
+        val link = "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:2053" +
+            "?security=reality&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+            "&sni=rutube.ru&type=grpc&serviceName=media%2Fsync#KZ-grpc"
+        val spec = LinkParser.parse(link)
+        assertNotNull(spec)
+        dump("grpc-reality", SingBoxConfig.build(spec))
+    }
+
     // xhttp is NOT a sing-box transport — it's handled by Xray-core (see
     // XrayConfigDumpTest). sing-box covers reality (tcp) + hy2 + olcrtc-socks.
 

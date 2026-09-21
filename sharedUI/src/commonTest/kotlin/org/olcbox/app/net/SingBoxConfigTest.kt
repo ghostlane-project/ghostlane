@@ -290,6 +290,17 @@ class SingBoxConfigTest {
         "u", "1.2.3.4", 443, "sni.x", "PBK", "sid", "chrome",
         "xtls-rprx-vision", TransportSpec.Tcp, "DE"
     )
+
+    @Test fun vlessGrpcEmitsItsServiceName() {
+        val spec = vless().copy(flow = null, transport = TransportSpec.Grpc("rutube"))
+        val outbound = Json.parseToJsonElement(SingBoxConfig.build(spec))
+            .jsonObject["outbounds"]!!.jsonArray
+            .first { it.jsonObject["tag"]?.jsonPrimitive?.content == "out" }
+            .jsonObject
+        val transport = outbound["transport"]!!.jsonObject
+        assertEquals("grpc", transport["type"]!!.jsonPrimitive.content)
+        assertEquals("rutube", transport["service_name"]!!.jsonPrimitive.content)
+    }
     private fun hy2() = OutboundSpec.Hysteria2("PW", "1.2.3.4", 443, "h.x", null, false, "RU")
 
     /**

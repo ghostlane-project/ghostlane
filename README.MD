@@ -69,6 +69,7 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 | --- | --- |
 | olcRTC — a tunnel inside a WebRTC video call | our own engine fork |
 | VLESS + Reality | sing-box |
+| VLESS gRPC + Reality | sing-box |
 | VLESS over TLS, incl. behind a CDN | sing-box |
 | Hysteria2, with Salamander obfuscation | sing-box |
 | XHTTP | Xray — sing-box has no xhttp transport |
