@@ -65,26 +65,8 @@ internal object DesktopNativeAssets {
         )
     }
 
-    fun resolveWindowsTun2SocksBinary(): Path {
-        val fileName = windowsTun2SocksFileName()
-        val binary = resolveBinary(
-            fileName = fileName,
-            resourceName = "native/$fileName",
-            candidates = windowsTun2SocksSourceCandidates(fileName)
-        )
-        copyRuntimeAsset("wintun.dll")
-        return binary
-    }
-
     /**
      * The bundled core binaries carry `.exe` on Windows and nothing elsewhere.
-     *
-     * Everything else here is already platform-named — [windowsTun2SocksFileName]
-     * has always been `tun2socks-windows-amd64.exe` — and these two were the
-     * exception. Whether Windows will execute an extension-less PE depends on how
-     * `CreateProcess` is reached and is not worth depending on when the extension
-     * costs nothing; [makeExecutable] is a no-op there, so the name is the only
-     * thing making the file runnable.
      */
     fun singBoxFileName(): String = coreFileName("sing-box")
 
@@ -99,6 +81,11 @@ internal object DesktopNativeAssets {
      */
     fun resolveSingBoxBinary(): Path =
         resolveExternalCore(singBoxFileName(), "OLCBOX_SINGBOX_BINARY")
+
+    /** Stage Wintun only for the mode that loads it, never for System Proxy. */
+    fun ensureWintunRuntime() {
+        if (DesktopPaths.os == DesktopOs.Windows) copyRuntimeAsset("wintun.dll")
+    }
 
     /**
      * Resolve the bundled `xray` core binary (used for xhttp locations). Honors the
@@ -126,8 +113,17 @@ internal object DesktopNativeAssets {
 
         val resource = javaClass.classLoader.getResourceAsStream(resourceName)
         if (resource != null) {
-            resource.use {
-                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            // Windows locks an executable while it runs. A second sing-box
+            // instance (TUN front or latency probe) must reuse identical bytes,
+            // not overwrite the backend's running executable.
+            val staged = Files.createTempFile(target.parent, "native-", ".tmp")
+            try {
+                resource.use { Files.copy(it, staged, StandardCopyOption.REPLACE_EXISTING) }
+                if (!Files.exists(target) || Files.mismatch(staged, target) != -1L) {
+                    Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                Files.deleteIfExists(staged)
             }
             makeExecutable(target)
             return target
@@ -146,13 +142,6 @@ internal object DesktopNativeAssets {
         return when (DesktopPaths.os) {
             DesktopOs.Linux -> "hev-socks5-tunnel-linux-${desktopArch()}"
             else -> error("hev-socks5-tunnel desktop binary is only used for TUN mode")
-        }
-    }
-
-    fun windowsTun2SocksFileName(): String {
-        return when (DesktopPaths.os) {
-            DesktopOs.Windows -> "tun2socks-windows-amd64.exe"
-            else -> error("tun2socks desktop binary is only used for Windows TUN mode")
         }
     }
 
@@ -204,31 +193,41 @@ internal object DesktopNativeAssets {
         }.distinct()
     }
 
-    private fun windowsTun2SocksSourceCandidates(fileName: String): List<Path> {
-        val explicitBinary = System.getenv("TUN2SOCKS_BINARY")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        return listOfNotNull(explicitBinary) + desktopNativeResourceCandidates(fileName)
-    }
-
     private fun copyRuntimeAsset(fileName: String): Path {
         val target = DesktopPaths.appDataDir().resolve("bin").resolve(fileName)
         Files.createDirectories(target.parent)
         val resourceName = "native/$fileName"
         val resource = javaClass.classLoader.getResourceAsStream(resourceName)
         if (resource != null) {
-            resource.use {
-                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            copyIfChanged(target) { staged ->
+                resource.use { Files.copy(it, staged, StandardCopyOption.REPLACE_EXISTING) }
             }
             return target
         }
 
         desktopNativeResourceCandidates(fileName)
             .firstOrNull { it.exists() }
-            ?.let {
-                Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING)
+            ?.let { source ->
+                copyIfChanged(target) { staged ->
+                    Files.copy(source, staged, StandardCopyOption.REPLACE_EXISTING)
+                }
                 return target
             }
 
         error("Bundled runtime asset is missing: $resourceName")
+    }
+
+    /** Avoid replacing DLLs that a running Windows core still has mapped. */
+    private inline fun copyIfChanged(target: Path, writeStaged: (Path) -> Unit) {
+        val staged = Files.createTempFile(target.parent, "native-", ".tmp")
+        try {
+            writeStaged(staged)
+            if (!Files.exists(target) || Files.mismatch(staged, target) != -1L) {
+                Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(staged)
+        }
     }
 
     private fun makeExecutable(path: Path) {

@@ -165,7 +165,8 @@ object SingBoxConfig {
      * hostname, that query enters the tun like any other, and answering it needs
      * the tunnel being redialled; those names go to the system resolver instead.
      *
-     * [verifyPort] is a second socks inbound, for `TunnelVerifier`. Verifying
+     * [verifyPort] is a second socks inbound for `TunnelVerifier`; desktop callers
+     * can protect it with the verification credentials. Verifying
      * through the core's own port would prove the core works and say nothing
      * about the tun in front of it — which is the half that is new here, so it is
      * the half a green light has to be about.
@@ -176,7 +177,9 @@ object SingBoxConfig {
      */
     fun buildDesktopTun(
         corePort: Int,
-        verifyPort: Int,
+        verifyPort: Int?,
+        verifyUsername: String = "",
+        verifyPassword: String = "",
         username: String = "",
         password: String = "",
         excludeAddresses: List<String> = emptyList(),
@@ -194,8 +197,15 @@ object SingBoxConfig {
         bindInterface: String? = null,
         /** Where the fake-address mapping persists; the daemon's own directory. */
         cacheFilePath: String? = null,
+        /** Desktop core processes must escape the TUN when they redial their carrier. */
+        bypassProcessPaths: List<String> = emptyList(),
+        /** A per-start name avoids colliding with a Wintun adapter still closing. */
+        interfaceName: String? = null,
     ): String {
         val bypass = routing as? Routing.BypassRussia
+        require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
+            "verification proxy credentials must be supplied as a pair"
+        }
         require(bypass == null || !bindInterface.isNullOrBlank()) {
             "a direct outbound inside the tun's own process needs an interface to bind to"
         }
@@ -242,6 +252,7 @@ object SingBoxConfig {
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("type", "tun"); put("tag", "tun-in")
+                    if (!interfaceName.isNullOrBlank()) put("interface_name", interfaceName)
                     putJsonArray("address") { add(address); add(address6) }
                     put("mtu", mtu)
                     put("auto_route", true)
@@ -252,9 +263,17 @@ object SingBoxConfig {
                         }
                     }
                 }
-                addJsonObject {
+                if (verifyPort != null) addJsonObject {
                     put("type", "socks"); put("tag", "verify-in")
                     put("listen", "127.0.0.1"); put("listen_port", verifyPort)
+                    if (verifyUsername.isNotBlank()) {
+                        putJsonArray("users") {
+                            addJsonObject {
+                                put("username", verifyUsername)
+                                put("password", verifyPassword)
+                            }
+                        }
+                    }
                 }
             }
             putJsonArray("outbounds") {
@@ -275,6 +294,7 @@ object SingBoxConfig {
                 }
             }
             putJsonObject("route") {
+                if (bypassProcessPaths.isNotEmpty()) put("auto_detect_interface", true)
                 if (bypass != null) putRuleSetDeclarations(bypass)
                 // Required since 1.12 as soon as a `dns` section exists: without
                 // it sing-box refuses to start, naming a deprecation and an
@@ -284,6 +304,11 @@ object SingBoxConfig {
                 // both correct and inert here.
                 put("default_domain_resolver", "dns-direct")
                 putJsonArray("rules") {
+                    if (bypassProcessPaths.isNotEmpty()) addJsonObject {
+                        putJsonArray("inbound") { add("tun-in") }
+                        putJsonArray("process_path") { bypassProcessPaths.forEach { add(it) } }
+                        put("outbound", "direct")
+                    }
                     if (answersDns) {
                         addJsonObject { put("action", "sniff") }
                         // Without this the `dns` block above is dead weight for the

@@ -75,6 +75,8 @@ internal class DesktopCoreProcess(
 
     fun isRunning(): Boolean = process?.isAlive == true
 
+    internal fun runningProcess(): Process? = process?.takeIf { it.isAlive }
+
     /** Exit code once the core has finished; null while it is still running. */
     fun exitCodeOrNull(): Int? = process?.let { if (it.isAlive) null else it.exitValue() }
 
