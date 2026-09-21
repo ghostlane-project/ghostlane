@@ -486,13 +486,13 @@ class HomeScreenViewModel(
         }
         viewModelScope.launch {
             try {
-                val importReport = withContext(Dispatchers.IO) {
+                val imported = withContext(Dispatchers.IO) {
                     locationsRepository.importText(
                         text = rawText,
                         subscriptionProxy = vpnManager.subscriptionFetchProxy()
                     )
                 }
-                if (!importReport.imported) {
+                if (!imported) {
                     // A partner link that did not resolve is not a malformed config
                     // — the user's next move is their provider's bot, not another paste.
                     onError(
@@ -505,7 +505,6 @@ class HomeScreenViewModel(
                     return@launch
                 }
                 loadCurrentConfigNow()
-                importReport.skippedMessage()?.let { _autoRefreshNotice.emit(it) }
                 onComplete()
             } catch (e: Exception) {
                 val message = e.message ?: "Import failed"

@@ -25,7 +25,7 @@ interface LocationsRepository {
      * Kept as the counterpart of [importText], and covered by its round-trip test.
      */
     suspend fun exportBundle(): String
-    suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): ImportReport
+    suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): Boolean
     suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy? = null
     ): SubscriptionRefreshReport
@@ -84,18 +84,6 @@ interface LocationsRepository {
     /** Null replays it — see "replay first run" in settings. */
     suspend fun setOnboardingSeen(atMillis: Long?)
 }
-
-data class ImportReport(
-    val imported: Boolean,
-    val skippedUnsupportedCount: Int = 0
-) {
-    fun skippedMessage(): String? = skippedUnsupportedCount.takeIf { it > 0 }?.let {
-        "${unsupportedProfileCount(it)} skipped during import"
-    }
-}
-
-internal fun unsupportedProfileCount(count: Int): String =
-    "$count unsupported ${if (count == 1) "profile" else "profiles"}"
 
 data class SubscriptionFetchProxy(
     val host: String,

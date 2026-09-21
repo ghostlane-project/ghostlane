@@ -42,16 +42,15 @@ class LinkParserTest {
         assertNull(spec.flow)
     }
 
-    @Test fun emptyTransportMeansTcpButUnknownTransportIsReported() {
+    @Test fun emptyAndUnknownTransportsRemainReadableAsTcp() {
         val prefix = "vless://44444444-4444-4444-4444-444444444444@host:443"
         val empty = LinkParser.parse("$prefix?type=&sni=host")
         assertIs<OutboundSpec.Vless>(empty)
         assertEquals(TransportSpec.Tcp, empty.transport)
 
         val unknown = "$prefix?type=ws&sni=host"
-        assertNull(LinkParser.parse(unknown))
-        assertEquals("ws", LinkParser.unsupportedVlessTransport(unknown))
-        assertNull(LinkParser.unsupportedVlessTransport("vless://broken"))
+        val preserved = assertIs<OutboundSpec.Vless>(LinkParser.parse(unknown))
+        assertEquals(TransportSpec.Tcp, preserved.transport)
     }
 
     @Test fun parsesHysteria2() {

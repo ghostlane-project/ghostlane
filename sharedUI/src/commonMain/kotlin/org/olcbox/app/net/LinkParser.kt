@@ -1,8 +1,6 @@
 package org.olcbox.app.net
 
 object LinkParser {
-    private val supportedVlessTransports = setOf("tcp", "raw", "xhttp", "grpc")
-
     fun parse(line: String): OutboundSpec? {
         val t = line.trim()
         return when {
@@ -54,9 +52,10 @@ object LinkParser {
                 p.query["serviceName"] ?: p.query["servicename"].orEmpty()
             )
             "tcp", "raw" -> TransportSpec.Tcp
-            // Unknown transports cannot be dialled as TCP: that looks like a
-            // valid imported profile but never speaks the server's protocol.
-            else -> return null
+            // Keep older unsupported rows readable and stored. They remain
+            // visible instead of disappearing during normalization after an
+            // application update; transport support is added explicitly above.
+            else -> TransportSpec.Tcp
         }
         return OutboundSpec.Vless(
             uuid = p.userinfo,
@@ -70,15 +69,6 @@ object LinkParser {
             transport = transport,
             tag = p.tag.ifBlank { p.host },
         )
-    }
-
-    /** Returns the unknown VLESS transport name without treating malformed links as skips. */
-    fun unsupportedVlessTransport(line: String): String? {
-        val text = line.trim()
-        if (!text.startsWith("vless://")) return null
-        val parts = splitLink(text, "vless://") ?: return null
-        val type = parts.query["type"]?.trim().orEmpty().ifEmpty { "tcp" }.lowercase()
-        return type.takeUnless { it in supportedVlessTransports }
     }
 
     private fun parseHy2(s: String, scheme: String): OutboundSpec.Hysteria2? {

@@ -35,7 +35,6 @@ import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.repository.LocationsRepository
-import org.olcbox.app.data.repository.ImportReport
 import org.olcbox.app.net.HttpPartnerLinkResolver
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.PartnerLinkResolver
@@ -201,11 +200,11 @@ class LocationsRepositoryImpl(
         return json.encodeToString(LocationBundleV4.serializer(), getBundle())
     }
 
-    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): ImportReport {
+    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): Boolean {
         val resolved = resolveParsedImport(
             text = text,
             subscriptionProxy = subscriptionProxy
-        ) ?: return ImportReport(imported = false)
+        ) ?: return false
 
         mutationMutex.withLock {
             val merged = mergeImportedBundle(
@@ -215,10 +214,7 @@ class LocationsRepositoryImpl(
             )
             saveBundleUnlocked(merged)
         }
-        return ImportReport(
-            imported = true,
-            skippedUnsupportedCount = unsupportedTransportCount(resolved.source.content)
-        )
+        return true
     }
 
     override suspend fun refreshSubscriptions(
@@ -270,7 +266,6 @@ class LocationsRepositoryImpl(
         val activeBefore = bundle.activeLocationId
         var activeAfter = activeBefore
         var successfulRefreshes = 0
-        var skippedUnsupported = 0
         val failures = mutableListOf<SubscriptionRefreshFailure>()
 
         fun preservePreviousEntries(entries: List<LocationEntry>) {
@@ -305,7 +300,6 @@ class LocationsRepositoryImpl(
                 return@forEach
             }
             val source = resolved.source
-            skippedUnsupported += unsupportedTransportCount(source.content)
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
@@ -366,11 +360,7 @@ class LocationsRepositoryImpl(
         }
 
         if (successfulRefreshes == 0) {
-            return SubscriptionRefreshReport(
-                updatedCount = 0,
-                failures = failures,
-                skippedUnsupportedCount = skippedUnsupported
-            )
+            return SubscriptionRefreshReport(updatedCount = 0, failures = failures)
         }
 
         saveBundleUnlocked(
@@ -379,11 +369,7 @@ class LocationsRepositoryImpl(
                 locations = refreshedLocations
             )
         )
-        return SubscriptionRefreshReport(
-            updatedCount = successfulRefreshes,
-            failures = failures,
-            skippedUnsupportedCount = skippedUnsupported
-        )
+        return SubscriptionRefreshReport(updatedCount = successfulRefreshes, failures = failures)
     }
 
     override suspend fun refreshDueSubscriptions(
@@ -902,15 +888,6 @@ class LocationsRepositoryImpl(
             activeLocationId = entries.firstOrNull()?.storageId,
             locations = entries
         )
-    }
-
-    private fun unsupportedTransportCount(text: String): Int {
-        fun count(lines: String): Int = lines.lineSequence().count {
-            LinkParser.unsupportedVlessTransport(it.normalizedImportText()) != null
-        }
-        val direct = count(text)
-        if (direct > 0) return direct
-        return SubscriptionBodyCodec.decodeBase64(text)?.let(::count) ?: 0
     }
 
     private fun parseImport(

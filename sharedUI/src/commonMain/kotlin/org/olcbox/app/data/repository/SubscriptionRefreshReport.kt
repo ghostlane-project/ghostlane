@@ -45,43 +45,27 @@ data class SubscriptionRefreshFailure(
  */
 data class SubscriptionRefreshReport(
     val updatedCount: Int = 0,
-    val failures: List<SubscriptionRefreshFailure> = emptyList(),
-    /** Profiles intentionally omitted because their VLESS transport is unsupported. */
-    val skippedUnsupportedCount: Int = 0
+    val failures: List<SubscriptionRefreshFailure> = emptyList()
 ) {
     val hasFailures: Boolean get() = failures.isNotEmpty()
 
     /** Message for refreshing one server list. */
-    fun singleMessage(): String {
-        val skipped = skippedSuffix()
-        return when {
-        failures.isNotEmpty() -> failures.first().message() + skipped
-        skippedUnsupportedCount > 0 ->
-            "Server list updated$skipped"
+    fun singleMessage(): String = when {
+        failures.isNotEmpty() -> failures.first().message()
         updatedCount > 0 -> "Server list updated"
         else -> "Server list unchanged"
-        }
     }
 
     /** Message for refreshing everything at once. */
-    fun bulkMessage(): String {
-        val skipped = skippedSuffix()
-        return when {
+    fun bulkMessage(): String = when {
         failures.isNotEmpty() && updatedCount == 0 ->
-            (if (failures.size == 1) failures.first().message()
-            else "${failures.size} server lists failed: ${failures.first().message()}") + skipped
+            if (failures.size == 1) failures.first().message()
+            else "${failures.size} server lists failed: ${failures.first().message()}"
         failures.isNotEmpty() ->
-            "Updated $updatedCount, ${failures.size} failed: ${failures.first().message()}$skipped"
-        skippedUnsupportedCount > 0 ->
-            "Server lists updated: $updatedCount$skipped"
+            "Updated $updatedCount, ${failures.size} failed: ${failures.first().message()}"
         updatedCount > 0 -> "Server lists updated: $updatedCount"
         else -> "No server lists to update"
-        }
     }
-
-    private fun skippedSuffix(): String =
-        if (skippedUnsupportedCount == 0) ""
-        else "; ${unsupportedProfileCount(skippedUnsupportedCount)} skipped"
 
     companion object {
         val EMPTY = SubscriptionRefreshReport()

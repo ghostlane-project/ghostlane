@@ -32,8 +32,7 @@ class TransportParsingRegressionTest {
         assertFalse("flow" in outbound)
     }
 
-    @Test fun unknownTransportIsRejectedAndPercentEscapesAreDecodedOnce() {
-        assertNull(LinkParser.parse("$base&type=unsupported"))
+    @Test fun percentEscapesAreDecodedOnce() {
         val spec = assertIs<OutboundSpec.Vless>(
             LinkParser.parse("$base&type=xhttp&path=%2Fencoded%252Fpart")
         )
