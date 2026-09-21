@@ -50,6 +50,39 @@ class TunnelVerifierProxyTest {
     private fun probeUrl(server: HttpServer) =
         "http://127.0.0.1:${server.address.port}/cdn-cgi/trace"
 
+    /**
+     * The system-tunnel probe: no proxy, because on iOS the tunnel is the
+     * system's and our own request already rides it. This is the detector for
+     * a tunnel that reports itself up and carries nothing (ghostlane#27), so
+     * what matters is that it answers from a live endpoint and says nothing
+     * when there is none.
+     */
+    @Test
+    fun theSystemTunnelProbeAnswersWithoutAProxy() {
+        val target = traceServer("ip=203.0.113.9\nloc=NL\n")
+
+        val exit = runBlocking {
+            TunnelVerifier.verifySystemTunnel(probeUrls = listOf(probeUrl(target)))
+        }
+
+        assertEquals("203.0.113.9", exit?.ip)
+        assertEquals("NL", exit?.country)
+    }
+
+    @Test
+    fun theSystemTunnelProbeReportsNothingWhenNoEndpointAnswers() {
+        val dead = ServerSocket(0, 0, InetAddress.getLoopbackAddress()).also { it.close() }
+
+        val exit = runBlocking {
+            TunnelVerifier.verifySystemTunnel(
+                timeoutMs = 1_000,
+                probeUrls = listOf("http://127.0.0.1:${dead.localPort}/cdn-cgi/trace")
+            )
+        }
+
+        assertNull(exit)
+    }
+
     @Test
     fun probeTravelsThroughAnAuthenticatedProxy() {
         val target = traceServer("ip=2a09:bac5:42f3:174b::252:63\nloc=JP\n")

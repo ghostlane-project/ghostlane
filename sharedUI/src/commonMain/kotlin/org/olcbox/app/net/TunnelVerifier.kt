@@ -1,5 +1,6 @@
 package org.olcbox.app.net
 
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import org.olcbox.app.data.datasource.createProxyHttpClient
@@ -119,20 +120,7 @@ object TunnelVerifier {
             // description alone does nothing. olcRTC's local proxy is the one that
             // demands a login, so without this a working olcRTC tunnel would fail
             // its own verification and be reported as dead.
-            withProxyAuthentication(proxy) {
-                var exit: TunnelExit? = null
-                for (url in probeUrls) {
-                    exit = try {
-                        parseTrace(client.get(url).bodyAsText())
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (exit != null) break
-                }
-                exit
-            }
+            withProxyAuthentication(proxy) { firstAnswer(client, probeUrls) }
         } catch (e: CancellationException) {
             // A superseded connect must stay cancelled, not be reported as a dead
             // tunnel — CancellationException is an Exception and would be swallowed
@@ -143,6 +131,54 @@ object TunnelVerifier {
         } finally {
             client.close()
         }
+    }
+
+    /**
+     * The same probe with no proxy in front of it, for a platform where the
+     * tunnel belongs to the system: our own request already rides it, and
+     * there is no local listener to point at.
+     *
+     * This is how a tunnel that the system calls up but that carries nothing
+     * is caught — an iOS Hysteria2 session on a carrier that kills UDP keeps
+     * its NEVPN status and moves no bytes (ghostlane#27).
+     */
+    suspend fun verifySystemTunnel(
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        probeUrls: List<String> = DEFAULT_PROBE_URLS
+    ): TunnelExit? {
+        val client = createProxyHttpClient(
+            subscriptionProxy = null,
+            connectTimeoutMs = timeoutMs,
+            requestTimeoutMs = timeoutMs,
+            socketTimeoutMs = timeoutMs
+        )
+        return try {
+            firstAnswer(client, probeUrls)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } finally {
+            client.close()
+        }
+    }
+
+    /**
+     * The first URL that answers with a trace wins, so one unreachable
+     * endpoint cannot condemn a working tunnel.
+     */
+    private suspend fun firstAnswer(client: HttpClient, probeUrls: List<String>): TunnelExit? {
+        for (url in probeUrls) {
+            val exit = try {
+                parseTrace(client.get(url).bodyAsText())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (exit != null) return exit
+        }
+        return null
     }
 
 }
