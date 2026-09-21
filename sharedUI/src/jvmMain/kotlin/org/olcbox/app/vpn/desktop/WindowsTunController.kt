@@ -29,6 +29,18 @@ internal class WindowsTunController(
         ${'$'}route.InterfaceAlias
     """.trimIndent()).trim().also { require(it.isNotBlank()) { "No physical interface" } }
 
+    /** sing-box auto-route must own either a default route or both split defaults. */
+    suspend fun ownsDefaultRoutes(interfaceName: String): Boolean = runCatching {
+        runPowerShell("""
+            ${'$'}ErrorActionPreference = 'Stop'
+            ${'$'}routes = @(Get-NetRoute -AddressFamily IPv4 -InterfaceAlias ${interfaceName.powershellLiteral()} |
+              Where-Object { ${'$'}_.DestinationPrefix -in @('0.0.0.0/0', '0.0.0.0/1', '128.0.0.0/1') } |
+              Select-Object -ExpandProperty DestinationPrefix)
+            if (${'$'}routes -contains '0.0.0.0/0' -or
+                ((${ '$' }routes -contains '0.0.0.0/1') -and (${'$'}routes -contains '128.0.0.0/1'))) { 'true' } else { 'false' }
+        """.trimIndent()).trim().equals("true", ignoreCase = true)
+    }.getOrDefault(false)
+
     private suspend fun isAdministrator(): Boolean {
         val isAdmin = runPowerShell(
             """

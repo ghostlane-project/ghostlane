@@ -230,7 +230,7 @@ The project does not support or encourage such use.
 | Android | TUN, proxy | `VpnService` + `hev-socks5-tunnel` | sing-box and Xray as packaged native binaries, olcRTC bound in-process |
 | iOS | System VPN | sing-box's own tun for Reality and Hysteria2; `hev-socks5-tunnel` in front of Xray and olcRTC | all three in one `Cores.xcframework` inside the extension |
 | macOS | TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
-| Windows | TUN, proxy | `tun2socks` + Wintun; OS proxy settings otherwise | as macOS |
+| Windows | TUN, proxy | supervised sing-box TUN + Wintun; OS proxy settings otherwise | as macOS |
 | Linux | TUN | `hev-socks5-tunnel` + policy routes | as macOS |
 
 iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB. sing-box

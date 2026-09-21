@@ -181,6 +181,7 @@ class DesktopVpnManager private constructor(
     @Volatile private var channelProbe: org.olcbox.app.net.ChannelLatency.Session? = null
     private var connectedLocation: LocationConfig? = null
     @Volatile private var channelProxy: SubscriptionFetchProxy? = null
+    @Volatile private var windowsTunVerifyProxy: SubscriptionFetchProxy? = null
 
     override fun canPing(locationConfig: LocationConfig): Boolean {
         val config = locationConfig.normalized()
@@ -457,7 +458,7 @@ class DesktopVpnManager private constructor(
             // Through the front when there is one: it has no auth, and a green
             // light has to be about the chain the traffic actually takes.
             val directToOlcrtc = isOlcrtc && !verifiedThroughTun && frontPort == null
-            channelProxy = if (desktopMode == DesktopMode.WindowsTun) null else {
+            channelProxy = if (desktopMode == DesktopMode.WindowsTun) windowsTunVerifyProxy else {
                 SubscriptionFetchProxy(
                     socksSettings.host,
                     tunVerifyPort ?: (frontPort ?: effectiveSocksPort),
@@ -527,13 +528,17 @@ class DesktopVpnManager private constructor(
         socksSettings: DesktopSocksProxySettings
     ) {
         val physicalInterface = windowsTunController.physicalInterface()
+        DesktopNativeAssets.ensureWintunRuntime()
         val childProcesses = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
         // ProcessHandle.Info.command() may be empty on Windows. Exact process
         // paths are useful when present; known resolved binaries are the safe
         // fallback for the process bypass rule.
         val resolvedPaths = buildList {
             add(DesktopNativeAssets.resolveSingBoxBinary().toString())
-            add(DesktopNativeAssets.resolveXrayBinary().toString())
+            val parsed = location.rawLink?.let(LinkParser::parse)
+            if (parsed is org.olcbox.app.net.OutboundSpec.Vless &&
+                parsed.transport is org.olcbox.app.net.TransportSpec.Xhttp
+            ) add(DesktopNativeAssets.resolveXrayBinary().toString())
             if (isOlcrtc) addAll(DesktopNativeAssets.resolveOlcRtcBinaryCandidates().map(Path::toString))
         }
         val bypassPaths = (
@@ -542,11 +547,14 @@ class DesktopVpnManager private constructor(
         require(bypassPaths.isNotEmpty()) { "No VPN core to route outside the TUN" }
 
         val carrier = windowsCarrierRoute(location)
-        val verifyPort = allocateVerifyPort(socksPort)
-        val verifyUsername = UUID.randomUUID().toString()
-        val verifyPassword = UUID.randomUUID().toString()
         var ready = false
+        val overallDeadline = System.currentTimeMillis() + WINDOWS_TUN_TOTAL_TIMEOUT_MS
         for (attempt in 0 until WINDOWS_TUN_START_ATTEMPTS) {
+            if (System.currentTimeMillis() >= overallDeadline) break
+            val verifyPort = allocateVerifyPort(socksPort)
+            val verifyUsername = UUID.randomUUID().toString()
+            val verifyPassword = UUID.randomUUID().toString()
+            val interfaceName = windowsTunInterfaceName(windowsTunSessionId, requestGeneration, attempt)
             windowsTunCore.start(
                 org.olcbox.app.net.SingBoxConfig.buildDesktopTun(
                     corePort = socksPort,
@@ -562,16 +570,20 @@ class DesktopVpnManager private constructor(
                     bindInterface = physicalInterface,
                     bypassProcessPaths = bypassPaths,
                     cacheFilePath = DesktopPaths.appDataDir().resolve("windows-tun-cache.db").toString(),
-                    interfaceName = windowsTunInterfaceName(
-                        windowsTunSessionId, requestGeneration, attempt
-                    )
+                    interfaceName = interfaceName
                 )
             )
             windowsTunExit = awaitWindowsTunTraffic(
-                requestGeneration, verifyPort, verifyUsername, verifyPassword
+                requestGeneration, verifyPort, verifyUsername, verifyPassword,
+                interfaceName, overallDeadline
             )
             ready = windowsTunExit != null && windowsTunCore.isRunning()
-            if (ready) break
+            if (ready) {
+                windowsTunVerifyProxy = SubscriptionFetchProxy(
+                    "127.0.0.1", verifyPort, verifyUsername, verifyPassword
+                )
+                break
+            }
             windowsTunCore.stopNow()
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
             if (attempt + 1 < WINDOWS_TUN_START_ATTEMPTS) {
@@ -590,18 +602,21 @@ class DesktopVpnManager private constructor(
         requestGeneration: Long,
         verifyPort: Int,
         verifyUsername: String,
-        verifyPassword: String
+        verifyPassword: String,
+        interfaceName: String,
+        overallDeadline: Long
     ): org.olcbox.app.net.TunnelExit? {
-        val deadline = System.currentTimeMillis() + WINDOWS_TUN_READY_TIMEOUT_MS
+        val deadline = minOf(overallDeadline, System.currentTimeMillis() + WINDOWS_TUN_READY_TIMEOUT_MS)
         while (System.currentTimeMillis() < deadline && windowsTunCore.isRunning()) {
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
-            org.olcbox.app.net.TunnelVerifier.verify(
+            val exit = org.olcbox.app.net.TunnelVerifier.verify(
                 socksHost = "127.0.0.1",
                 socksPort = verifyPort,
                 username = verifyUsername,
                 password = verifyPassword,
                 timeoutMs = WINDOWS_TUN_PROBE_TIMEOUT_MS
-            )?.let { return it }
+            )
+            if (exit != null && windowsTunController.ownsDefaultRoutes(interfaceName)) return exit
             delay(WINDOWS_TUN_RETRY_DELAY_MS)
         }
         return null
@@ -921,6 +936,7 @@ class DesktopVpnManager private constructor(
                 runCatching {
                     windowsTunCore.stopNow()
                     windowsTunExit = null
+                    windowsTunVerifyProxy = null
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }
@@ -1371,6 +1387,7 @@ class DesktopVpnManager private constructor(
         const val MAX_LOG_ENTRIES = 5_000
         const val CORE_SOCKS_READY_TIMEOUT_MS = 10_000L
         const val WINDOWS_TUN_READY_TIMEOUT_MS = 45_000L
+        const val WINDOWS_TUN_TOTAL_TIMEOUT_MS = 60_000L
         const val WINDOWS_TUN_START_ATTEMPTS = 3
         const val WINDOWS_TUN_RETRY_DELAY_MS = 1_200L
         const val WINDOWS_TUN_PROBE_TIMEOUT_MS = 5_000L
