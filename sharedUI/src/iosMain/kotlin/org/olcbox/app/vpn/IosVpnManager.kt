@@ -18,16 +18,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.olcbox.app.crypt.PlatformCrypto
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeCallback
 import org.olcbox.app.ios.IosBridgeResult
+import org.olcbox.app.ios.IosOlcRtcRoomsUpdate
 import org.olcbox.app.ios.IosLogWriter
 import org.olcbox.app.ios.IosPacketTunnelBridge
 import org.olcbox.app.ios.IosPacketTunnelStartRequest
@@ -103,6 +106,17 @@ class IosVpnManager(
 
     init {
         startSystemStateSync()
+        // The room list of an olcRTC location can change while its tunnel is
+        // up - a subscription refresh brought the next room - and the process
+        // that outlives this one is the extension. Hand the list over as it
+        // changes, so the engine knows the standby before the room it is in is
+        // retired. The extension re-reads the list itself after a handover;
+        // this is the copy that arrives while the app is still awake.
+        scope.launch {
+            locationsRepository.changes
+                .drop(1)
+                .collect { pushRoomsToRunningTunnel() }
+        }
         olcRtcBridge.setLogWriter(object : IosLogWriter {
             override fun writeLog(message: String) {
                 message
@@ -314,24 +328,26 @@ class IosVpnManager(
      * mechanism to reason about and the device's traffic goes through it.
      */
     private suspend fun startActiveLocation(requestedGeneration: Long, isRestart: Boolean) {
-        val location = locationsRepository.getActiveLocation()?.location?.normalized()
-        if (location == null) {
+        val entry = locationsRepository.getActiveLocation()
+        val location = entry?.location?.normalized()
+        if (entry == null || location == null) {
             setStatus(VpnStatus.Error("No active location"))
             addLog("Add a location before connecting")
             return
         }
-        startPacketTunnel(location, requestedGeneration, isRestart)
+        startPacketTunnel(location, entry.subscriptionUrl, requestedGeneration, isRestart)
     }
 
     private suspend fun startPacketTunnel(
         location: LocationConfig,
+        subscriptionUrl: String?,
         requestedGeneration: Long,
         isRestart: Boolean
     ) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
         val request = try {
-            packetTunnelRequest(location)
+            packetTunnelRequest(location, subscriptionUrl)
         } catch (e: CancellationException) {
             throw e
         } catch (e: IllegalArgumentException) {
@@ -389,7 +405,8 @@ class IosVpnManager(
      */
 
     private suspend fun packetTunnelRequest(
-        location: LocationConfig
+        location: LocationConfig,
+        subscriptionUrl: String?
     ): IosPacketTunnelStartRequest? {
         val routing = routing()
         val ruleSets = ruleSetsFor(routing)
@@ -429,7 +446,12 @@ class IosVpnManager(
                     routing = routing
                 ),
                 xrayConfig = null,
-                olcrtc = location.startRequest(locationsRepository.getDeviceIdentity(), settings, directRules),
+                olcrtc = location.startRequest(
+                    locationsRepository.getDeviceIdentity(),
+                    settings,
+                    directRules,
+                    subscriptionUrl
+                ),
                 ruleSets = ruleSets
             )
         }
@@ -539,6 +561,41 @@ class IosVpnManager(
         val result = block(request)
         if (result.success && result.valueMillis >= 0L) result.valueMillis else null
     }
+
+    /**
+     * The current room list of the location the tunnel was built from, to the
+     * extension. Only that location, matched by key: a list that changed
+     * because the user picked another location is a restart, not an update.
+     */
+    private suspend fun pushRoomsToRunningTunnel() {
+        if (_status.value !is VpnStatus.Connected) return
+        val running = activeConfig ?: return
+        if (running.kind != LocationKind.Olcrtc) return
+        val current = locationsRepository.getActiveLocation()?.location?.normalized() ?: return
+        if (current.kind != LocationKind.Olcrtc || current.key != running.key) return
+        if (current.failoverRooms() == running.failoverRooms()) return
+        packetTunnelBridge.updateOlcRtcRooms(
+            IosOlcRtcRoomsUpdate(primaryRoom = current.id, failoverRooms = current.failoverRoomIds)
+        )
+        activeConfig = current
+        // Digests, not ids and not a bare count: a handover only works when the
+        // standby the server advertised is in here, and this log is the one the
+        // user exports - a room id is the address of a meeting.
+        addLog(
+            "olcRTC room list handed to the tunnel (${current.failoverRooms().size} rooms: " +
+                current.failoverRooms().joinToString { roomDigest(it) } + ")"
+        )
+    }
+
+    /**
+     * The first eight hex digits of a room id's SHA-256: enough to see a
+     * standby appear and to match what the extension logs, never the room
+     * itself. The same digest as RoomDigest in the extension.
+     */
+    private fun roomDigest(room: String): String =
+        PlatformCrypto.sha256(room.encodeToByteArray())
+            .take(4)
+            .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
     private fun stopOlcRtc(): IosBridgeResult {
         return runCatching {
@@ -762,7 +819,8 @@ class IosVpnManager(
     private fun LocationConfig.startRequest(
         deviceId: String,
         settings: ApplicationSocksProxySettings,
-        directRules: String = OlcrtcDirectRules.NONE
+        directRules: String = OlcrtcDirectRules.NONE,
+        subscriptionUrl: String? = null
     ): IosOlcRtcStartRequest {
         val config = normalized()
         return IosOlcRtcStartRequest(
@@ -776,7 +834,9 @@ class IosVpnManager(
             socksPass = settings.password,
             vp8Fps = config.vp8Fps,
             vp8BatchSize = config.vp8Batch,
-            directRules = directRules
+            directRules = directRules,
+            failoverRooms = config.failoverRoomIds,
+            subscriptionUrl = subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() }
         )
     }
 

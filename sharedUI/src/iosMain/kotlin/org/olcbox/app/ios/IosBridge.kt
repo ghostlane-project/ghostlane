@@ -17,7 +17,20 @@ data class IosOlcRtcStartRequest(
      * resolves a matching name on the network's resolver; there is no router
      * in front of it on this platform since hev took the tun (1.0.428).
      */
-    val directRules: String = ""
+    val directRules: String = "",
+    /**
+     * The other rooms of the location's failover group (`##rooms`), the
+     * primary excluded; the engine hops to them when the room it is in ends.
+     */
+    val failoverRooms: List<String> = emptyList(),
+    /**
+     * Where the room list came from, when it came from a subscription. The
+     * extension re-reads it through the tunnel after every room handover,
+     * because the app that owns the list is suspended for most of the
+     * tunnel's life. A server-list URL is a credential: it goes into the App
+     * Group beside the key, and nowhere else.
+     */
+    val subscriptionUrl: String? = null
 )
 
 data class IosOlcRtcCheckRequest(
@@ -100,6 +113,16 @@ data class IosPacketTunnelStartRequest(
 )
 
 /**
+ * The room list of the running olcRTC location as the app knows it now, handed
+ * to a live extension when a subscription refresh changed it, so the engine
+ * learns the next room before the one it is in is retired.
+ */
+data class IosOlcRtcRoomsUpdate(
+    val primaryRoom: String,
+    val failoverRooms: List<String>
+)
+
+/**
  * Starting and stopping the packet tunnel extension, which only the app can ask
  * the system to launch. Every transport goes through it, olcRTC included.
  */
@@ -116,6 +139,13 @@ interface IosPacketTunnelBridge {
     fun start(request: IosPacketTunnelStartRequest, callback: IosBridgeCallback)
     fun stop()
     fun isRunning(): Boolean
+
+    /**
+     * Hands a running olcRTC tunnel the current room list. Best effort: with
+     * nothing running, or a tunnel on another transport, the message goes
+     * nowhere, and the extension re-reads the list itself in any case.
+     */
+    fun updateOlcRtcRooms(update: IosOlcRtcRoomsUpdate)
 
     /**
      * Epoch milliseconds at which the system says the running tunnel was

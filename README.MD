@@ -202,6 +202,11 @@ The project does not support or encourage such use.
   web links — read from the server list's own headers.
 - olcRTC rooms carry their occupancy on the board, and say out loud when one is
   full or its key is no longer good rather than failing at connect.
+- olcRTC on a server that moves its clients between rooms: the next room is read
+  off the server list's `##rooms` header, handed to the engine while the session
+  is live, and re-read through the tunnel after every handover - on iOS by the
+  tunnel extension itself, since the app is asleep by then
+  (docs/ios-room-failover.md).
 - Latency where it can honestly be measured: through the tunnel for the
   connection you are on; for a server you are not connected to, ICMP first and a
   TCP connect to the port the link names where ICMP is filtered. An olcRTC room
