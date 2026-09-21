@@ -32,14 +32,25 @@ class LogScrubber(private val salt: Long) {
         // XHTTP paths and subscription identifiers visible after the host tag.
         out = URL.replace(out) { match ->
             val scheme = match.groupValues[1]
-            val host = match.groupValues[2]
-            val port = match.groupValues[3]
-            val suffix = match.groupValues[4]
+            val credentials = match.groupValues[2]
+            val host = match.groupValues[3]
+            val port = match.groupValues[4]
+            val suffix = match.groupValues[5]
+            // The verdicts the bare rules below would reach: our own host reads as
+            // ours, and an address literal is tagged only when it is public. A
+            // loopback or LAN endpoint keeps its path as well, because it names a
+            // local listener and the path is what says which one.
+            val shown = when {
+                OUR_HOST.matches(host) -> "<host>"
+                IPV4.matches(host) -> tagIfPublicV4(host)
+                else -> tag(host.lowercase())
+            }
             buildString {
                 append(scheme)
-                append(tag(host.lowercase()))
+                if (credentials.isNotEmpty()) append("<credentials>@")
+                append(shown)
                 if (port.isNotEmpty()) append(':').append(port)
-                if (suffix.isNotEmpty()) append("/<path>")
+                if (suffix.isNotEmpty()) append(if (shown == host) suffix else "/<path>")
             }
         }
         out = OUR_HOST.replace(out, "<host>")
@@ -77,7 +88,6 @@ class LogScrubber(private val salt: Long) {
         val lastLabel = value.substringAfterLast('.')
         if (lastLabel.firstOrNull()?.isUpperCase() == true && lastLabel.any(Char::isLowerCase)) return false
         val before = match.range.first.takeIf { it > 0 }?.let { source[it - 1] }
-        val after = (match.range.last + 1).takeIf { it < source.length }?.let(source::get)
 
         // Stack symbols such as route.(*Router).Start are whitespace-delimited
         // tokens containing parentheses. They look domain-shaped in the middle
@@ -86,7 +96,10 @@ class LogScrubber(private val salt: Long) {
         val tokenEnd = source.indexOfAny(charArrayOf(' ', '\t', '\n', '\r'), match.range.last + 1)
             .let { if (it < 0) source.length else it }
         val token = source.substring(tokenStart, tokenEnd)
-        val urlHost = "://" in token
+        // Only the authority of a URL is a host. What follows it in the same token
+        // is a path, and `proxy.pac` after a local endpoint is a file name.
+        val urlHost = "://" in token && (before == '@' ||
+            match.range.first >= 3 && source.startsWith("://", match.range.first - 3))
         return '(' !in token && ')' !in token &&
             (urlHost || '/' !in token && '\\' !in token)
     }
@@ -152,7 +165,7 @@ class LogScrubber(private val salt: Long) {
         private val OUR_HOST = Regex("""\b(?:[a-zA-Z0-9-]+\.)*proofkit\.org\b""")
 
         private val URL = Regex(
-            """\b([a-zA-Z][a-zA-Z0-9+.-]*://)""" +
+            """\b([a-zA-Z][a-zA-Z0-9+.-]*://)(?:([^\s/@]+)@)?""" +
                 """((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+""" +
                 """[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?)""" +
                 """(?::(\d+))?([/?#][^\s]*)?"""

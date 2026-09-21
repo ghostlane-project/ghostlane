@@ -781,22 +781,23 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     /// of the file is the least useful part of it: the reason is at the top of
     /// the crash, and that is what gets kept.
     private static func lastRunStderr(container: URL) -> String? {
-        guard let text = boundedLogHead(
-            url: container.appendingPathComponent("engine.log.old"), maxBytes: 524_288
-        ) else { return nil }
-
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let url = container.appendingPathComponent("engine.log.old")
         let markers = ["panic:", "fatal error:", "signal SIG", "runtime: out of memory"]
-        let crash = lines.firstIndex { line in markers.contains { line.contains($0) } }
 
+        // The crash is the last thing a run writes, so in a file that detailed
+        // logging has grown to megabytes it is nowhere near the start. Look for
+        // it through the whole file, a chunk at a time, and read from there.
         let kept: [String]
         let title: String
-        if let crash {
-            kept = Array(lines[crash...].prefix(120))
+        if let crash = firstOffset(of: markers, in: url),
+           let text = boundedLogLines(url: url, fromLineAt: crash, maxBytes: 131_072) {
+            kept = Array(text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).prefix(120))
             title = "--- engine stderr, the run that ended: IT CRASHED ---"
-        } else {
-            kept = Array(lines.suffix(40))
+        } else if let tail = boundedLogTail(url: url, lines: 40, maxBytes: 65_536) {
+            kept = tail.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             title = "--- engine stderr, the run that ended: no crash recorded ---"
+        } else {
+            return nil
         }
         let body = kept.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         return body.isEmpty ? nil : title + "\n" + body.joined(separator: "\n")
@@ -835,13 +836,18 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         if let died = Self.deadRunTrace(container: container, name: "network-diagnostics-crash.log") {
             both.append(died)
         }
-        var ordinaryLogs = [
-            "network-diagnostics-prev.log", "network-diagnostics.log", "olcrtc.log",
+        let ordinaryLogs = [
+            "network-diagnostics-prev.log", "network-diagnostics.log", "olcrtc.log", "engine.log",
         ]
-        if includeDetailedLogs { ordinaryLogs.append("engine.log") }
         both += ordinaryLogs.compactMap { name -> String? in
             let url = container.appendingPathComponent(name)
-            if name == "engine.log" { return Self.boundedLogTail(url: url, lines: 400) }
+            // engine.log is the cores' stderr. At the default level it holds the
+            // warnings that explain a failed dial, and an export without them
+            // cannot say why XHTTP did not connect; with detailed logs on it is
+            // the file that grows. Either way only its tail is read.
+            if name == "engine.log" {
+                return Self.boundedLogTail(url: url, lines: includeDetailedLogs ? 400 : 120)
+            }
             return try? String(contentsOf: url, encoding: .utf8)
         }
 
@@ -901,12 +907,42 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         return both.joined(separator: "\n")
     }
 
-    private static func boundedLogHead(url: URL, maxBytes: Int) -> String? {
+    /// Where the first of `markers` begins in a file of any size, read a chunk
+    /// at a time so a detailed log is never held whole. nil when none is there.
+    private static func firstOffset(of markers: [String], in url: URL) -> UInt64? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { handle.closeFile() }
-        let data = handle.readData(ofLength: maxBytes)
+        let needles = markers.map { Data($0.utf8) }
+        // A marker cut in two by a chunk boundary is found in the next window.
+        let overlap = (needles.map(\.count).max() ?? 1) - 1
+        var carried = Data()
+        var base: UInt64 = 0
+        while true {
+            let chunk = handle.readData(ofLength: 65_536)
+            if chunk.isEmpty { return nil }
+            let window = Data(carried + chunk)
+            if let hit = needles.compactMap({ window.range(of: $0)?.lowerBound }).min() {
+                return base + UInt64(hit - window.startIndex)
+            }
+            let keep = min(overlap, window.count)
+            carried = Data(window.suffix(keep))
+            base += UInt64(window.count - keep)
+        }
+    }
+
+    /// The file from the start of the line that holds `offset`, up to `maxBytes`.
+    private static func boundedLogLines(url: URL, fromLineAt offset: UInt64, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { handle.closeFile() }
+        // Far enough back to reach the start of any line a core writes.
+        let lead = min(offset, 4_096)
+        handle.seek(toFileOffset: offset - lead)
+        let data = handle.readData(ofLength: maxBytes + Int(lead))
         guard !data.isEmpty else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        let marker = data.startIndex + Int(lead)
+        let lineStart = data[data.startIndex..<min(marker, data.endIndex)]
+            .lastIndex(of: 0x0A).map { $0 + 1 } ?? data.startIndex
+        return String(decoding: data[lineStart...], as: UTF8.self)
     }
 
     private static func boundedLogTail(url: URL, lines: Int, maxBytes: UInt64 = 524_288) -> String? {

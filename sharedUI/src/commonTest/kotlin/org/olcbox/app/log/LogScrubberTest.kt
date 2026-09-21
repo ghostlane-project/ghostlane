@@ -127,6 +127,44 @@ class LogScrubberTest {
         assertTrue(out.contains("/<path>"), out)
     }
 
+    @Test fun localEndpointsInsideUrlsSurviveVerbatim() {
+        // The URL rule has to agree with the bare-address rule: a loopback or LAN
+        // endpoint names nothing about the user, and the port and path beside it
+        // are what say which listener the line is about.
+        for (line in listOf(
+            "verify through socks5://127.0.0.1:10810",
+            "PAC served at http://127.0.0.1:10809/proxy.pac",
+            "router page http://192.168.1.1/status",
+        )) {
+            assertEquals(line, s.scrub(line), "a local URL must not be tagged")
+        }
+    }
+
+    @Test fun aPublicAddressInsideAUrlReadsLikeTheBareOne() {
+        val bare = s.scrub("dial 203.0.113.7").substringAfter("dial ")
+        assertEquals("GET http://$bare:8080/<path>", s.scrub("GET http://203.0.113.7:8080/sub/token"))
+    }
+
+    @Test fun credentialsInAUrlNeverReachAnExport() {
+        val out = s.scrub("upstream socks5://user:secret@relay.example.net:1080 refused")
+        assertFalse(out.contains("secret"), out)
+        assertFalse(out.contains("relay.example.net"), out)
+        assertTrue(out.startsWith("upstream socks5://<credentials>@node#"), out)
+        assertTrue(out.endsWith(":1080 refused"), out)
+        // A local upstream keeps its address, and still loses the password.
+        assertEquals(
+            "upstream socks5://<credentials>@127.0.0.1:1080",
+            s.scrub("upstream socks5://user:secret@127.0.0.1:1080")
+        )
+    }
+
+    @Test fun ourOwnHostInsideAUrlStillReadsAsOurs() {
+        assertEquals(
+            "GET https://<host>/<path>",
+            s.scrub("GET https://api.proofkit.org/private/subscription-token")
+        )
+    }
+
     @Test fun aDifferentSaltGivesADifferentTag() {
         // Otherwise a tag is a confirmation oracle: guess the address, compute the tag.
         val line = "dial 95.179.246.109"
