@@ -15,8 +15,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
@@ -104,6 +107,8 @@ class IosVpnManager(
      * choice they have just made (#27).
      */
     private var udpFailoverArmed = false
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    override val notices: SharedFlow<String> = _notices.asSharedFlow()
     private val timeSource = TimeSource.Monotonic
     private var lastReadyMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var lastStopMark: TimeSource.Monotonic.ValueTimeMark? = null
@@ -651,9 +656,10 @@ class IosVpnManager(
         // it afresh for whatever the user connects to next; the transport it
         // lands on now rides TCP, so this check does not run for it.
         udpFailoverArmed = false
-        addLog(
-            "hy2 carried nothing for ${silence}s (udp likely blocked); " +
-                "switching to ${alternative.location.transportKind().label()}"
+        val transport = alternative.location.transportKind().label()
+        addLog("hy2 carried nothing for ${silence}s (udp likely blocked); switching to $transport")
+        _notices.emit(
+            "Hysteria2 is not carrying traffic on this network — switched to $transport"
         )
         locationsRepository.setActiveLocationId(alternative.storageId)
         startVpn()

@@ -1,5 +1,7 @@
 package org.olcbox.app.vpn
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
@@ -20,6 +22,17 @@ interface VpnManager {
     val logs: StateFlow<List<String>>
     val status: StateFlow<VpnStatus>
     val isConnected: StateFlow<Boolean>
+
+    /**
+     * Things the tunnel did on its own that the person should be told about,
+     * as one-off sentences ready for the screen.
+     *
+     * Today there is one: a Hysteria2 session moved to a TCP transport because
+     * the carrier was killing its UDP (#27). The log records it too, but a
+     * change the app makes to the user's own choice has to be visible without
+     * opening the log. Empty where a platform has nothing to say.
+     */
+    val notices: SharedFlow<String> get() = MutableSharedFlow()
 
     /**
      * When the current session came up, in epoch milliseconds, or null when

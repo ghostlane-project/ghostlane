@@ -257,6 +257,13 @@ class HomeScreenViewModel(
         }
 
         viewModelScope.launch {
+            // What the tunnel did on its own, in the same place the app's other
+            // one-off messages appear. Today: a Hysteria2 session that the
+            // carrier's UDP blocking silenced, moved to a TCP transport (#27).
+            vpnManager.notices.collect { _autoRefreshNotice.emit(it) }
+        }
+
+        viewModelScope.launch {
             // The tunnel just came up: pull the server lists through it, so
             // the session begins with the rooms the server has now rather than
             // the ones stored when the app last ran. Where a list is reachable
