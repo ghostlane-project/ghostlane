@@ -45,6 +45,9 @@ concurrency:
 
 env:
   OLCBOX_VERSION_MAJOR_MINOR: "1.0"
+  # The public TestFlight link. A release has no iOS asset to download, and the
+  # App Store trails by however long App Review takes, so the notes point here.
+  TESTFLIGHT_PUBLIC_URL: "https://testflight.apple.com/join/sU7aTHQv"
   # The engine is not named here. It is OLCRTC_VERSION in scripts/cores-pins.sh,
   # which release_version resolves to a full commit (scripts/olcrtc-pin.sh); the
   # gate tests that commit and every build job checks it out. Android and the
@@ -1726,6 +1729,7 @@ jobs:
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
             echo "- Android APKs: universal and \`armeabi-v7a\`"
             echo "- Android App Bundle: the \`play\` flavor, as uploaded to Google Play (no self-updater)"
+            echo "- iOS: this build goes to TestFlight, ${TESTFLIGHT_PUBLIC_URL} - days before the App Store, which waits on App Review"
             echo "- Workflow: \`.github/workflows/release.yml\`"
             echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo

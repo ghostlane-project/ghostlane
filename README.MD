@@ -134,7 +134,7 @@ Shipping on every platform.
 
 | Platform | Where it comes from |
 | --- | --- |
-| iOS | The App Store, as [Ghostlane](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) (listed under its former name until the rename is approved) |
+| iOS | [TestFlight](https://testflight.apple.com/join/sU7aTHQv) gets every release the day it is cut. The App Store, as [Ghostlane](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) (listed under its former name until the rename is approved), follows after App Review, so it can be a few versions behind |
 | Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now |
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
