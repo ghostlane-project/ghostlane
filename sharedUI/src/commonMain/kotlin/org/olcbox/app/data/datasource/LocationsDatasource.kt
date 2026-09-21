@@ -1223,7 +1223,8 @@ class LocationsRepositoryImpl(
                     metadata?.name,
                     parsed.mimo,
                     parsed.location.name
-                )
+                ),
+                failoverRoomIds = parseFailoverRooms(fields["rooms"])
             ).normalized()
             val base = location.storageSlug().ifBlank { "location_${index + 1}" }
             val storageId = uniqueStorageId("imported_$base", usedStorageIds)
@@ -1351,6 +1352,18 @@ class LocationsRepositoryImpl(
             .toMap()
 
         return transport to options
+    }
+
+    /**
+     * The `##rooms:` header under a location line: extra room ids, comma or
+     * whitespace separated, that share the line's key, carrier and transport.
+     * A client that does not know the header ignores it and keeps the primary.
+     */
+    private fun parseFailoverRooms(value: String?): List<String> {
+        if (value.isNullOrBlank()) return emptyList()
+        return value.split(',', ' ', '\t')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
     }
 
     private fun parseSubscriptionField(value: String): Pair<String, String>? {

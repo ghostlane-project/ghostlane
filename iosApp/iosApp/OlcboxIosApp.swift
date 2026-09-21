@@ -388,6 +388,19 @@ final class PacketTunnelController: ObservableObject {
         log.info("stopVPNTunnel requested")
     }
 
+    /// A message to the running extension, dropped when nothing is running:
+    /// the extension re-reads what it needs itself, this only saves it a wait.
+    func send(_ message: Data) {
+        guard let session = manager?.connection as? NETunnelProviderSession,
+              session.status == .connected || session.status == .reasserting
+        else { return }
+        do {
+            try session.sendProviderMessage(message) { _ in }
+        } catch {
+            log.error("provider message failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// Waits for the system to let go of the previous tunnel.
     ///
     /// `stopVPNTunnel()` only queues the request, and a start issued while the
@@ -696,7 +709,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     /// decodes on the other side.
     private static func olcrtcParameters(_ request: IosOlcRtcStartRequest?) -> String? {
         guard let request else { return nil }
-        let fields: [String: Any] = [
+        var fields: [String: Any] = [
             "carrierName": request.carrierName,
             "transportName": request.transportName,
             "roomId": request.roomId,
@@ -709,12 +722,29 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             "vp8BatchSize": Int(request.vp8BatchSize),
             "directRules": request.directRules
         ]
+        // The failover group and where it came from; see RoomKeeper in the
+        // extension. Left out when empty, as the fields the extension decodes
+        // as optional.
+        if !request.failoverRooms.isEmpty { fields["failoverRooms"] = request.failoverRooms }
+        if let url = request.subscriptionUrl, !url.isEmpty { fields["subscriptionUrl"] = url }
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
     func stop() {
         Task { @MainActor in Self.controller.stop() }
+    }
+
+    /// The room list, to a running tunnel. The shape `PacketTunnelProvider`
+    /// reads in `handleAppMessage`.
+    func updateOlcRtcRooms(update: IosOlcRtcRoomsUpdate) {
+        let fields: [String: Any] = [
+            "type": "olcrtc-rooms",
+            "primaryRoom": update.primaryRoom,
+            "failoverRooms": update.failoverRooms,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
+        Task { @MainActor in Self.controller.send(data) }
     }
 
     /// What the system says, not what we asked for. See `systemConnected`.

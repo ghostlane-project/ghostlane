@@ -33,7 +33,15 @@ data class LocationConfig(
     @SerialName("kind")
     val kind: LocationKind = LocationKind.Olcrtc,
     @SerialName("raw_link")
-    val rawLink: String? = null
+    val rawLink: String? = null,
+    /**
+     * The other rooms that, with [id], form one failover group sharing this
+     * location's key, carrier and transport: the `##rooms` header of a
+     * subscription whose server moves its clients between short-lived rooms.
+     * The engine hops to them when the room it is in ends.
+     */
+    @SerialName("failover_rooms")
+    val failoverRoomIds: List<String> = emptyList()
 ) {
     fun normalized(): LocationConfig {
         val provider = normalizeProvider(bypassProvider)
@@ -45,9 +53,19 @@ data class LocationConfig(
             bypassProvider = provider,
             transport = normalizedTransport,
             vp8Fps = sanitizeVp8Fps(vp8Fps),
-            vp8Batch = sanitizeVp8Batch(vp8Batch)
+            vp8Batch = sanitizeVp8Batch(vp8Batch),
+            failoverRoomIds = failoverRoomIds
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it != id.trim() }
+                .distinct()
         )
     }
+
+    /** The rooms in the order the engine walks them: the primary, then the extras. */
+    fun failoverRooms(): List<String> = (listOf(id) + failoverRoomIds)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
 
     fun isComplete(): Boolean = when (kind) {
         LocationKind.Olcrtc -> id.isNotBlank() && key.isNotBlank()
@@ -428,6 +446,14 @@ data class LocationEntry(
     @SerialName("subscription_origin_link")
     val subscriptionOriginLink: String? = null,
     val endpoint: LocationEndpointConfig? = null,
+    /**
+     * The other rooms of this location's failover group, from the
+     * subscription's `##rooms` header. Persisted: a list that lived only in
+     * the parse was dropped on the first save, and the one room the client
+     * then knew was the one the server was about to retire.
+     */
+    @SerialName("failover_rooms")
+    val failoverRooms: List<String> = emptyList(),
     @SerialName("auth_provider")
     val authProvider: String? = null,
     @SerialName("carrier")
@@ -495,7 +521,8 @@ data class LocationEntry(
                     ?: legacyVp8BatchCamel
                     ?: LocationConfig.DEFAULT_VP8_BATCH,
                 kind = kind,
-                rawLink = rawLink
+                rawLink = rawLink,
+                failoverRoomIds = failoverRooms
             ).normalized()
         }
 
@@ -513,6 +540,7 @@ data class LocationEntry(
                 roomId = config.id,
                 key = config.key
             ),
+            failoverRooms = config.failoverRoomIds,
             authProvider = config.bypassProvider,
             transport = LocationTransportConfig.from(config),
             metadata = metadata
@@ -541,6 +569,7 @@ data class LocationEntry(
                     roomId = config.id,
                     key = config.key
                 ),
+                failoverRooms = config.failoverRoomIds,
                 authProvider = config.bypassProvider,
                 transport = LocationTransportConfig.from(config),
                 metadata = metadata,

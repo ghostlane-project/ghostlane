@@ -449,13 +449,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler()
     }
 
-    /// The app can talk to a running tunnel through this; wired when there is
-    /// something worth saying.
+    /// The app can talk to a running tunnel through this. One message so far:
+    /// the room list of the olcRTC location, when a subscription refresh in the
+    /// app changed it (see RoomKeeper). Anything else is answered with nothing.
     override func handleAppMessage(
         _ messageData: Data,
         completionHandler: ((Data?) -> Void)?
     ) {
-        completionHandler?(nil)
+        guard let message = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
+              message["type"] as? String == "olcrtc-rooms",
+              let primary = message["primaryRoom"] as? String, !primary.isEmpty
+        else {
+            completionHandler?(nil)
+            return
+        }
+        let extras = message["failoverRooms"] as? [String] ?? []
+        RoomKeeper.shared.apply(primary: primary, extras: extras, source: "app")
+        completionHandler?(Data("ok".utf8))
     }
 }
 

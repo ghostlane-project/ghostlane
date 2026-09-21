@@ -31,6 +31,16 @@ enum OlcrtcEngine {
         /// The engine's direct rules under Bypass Russia, empty under Global.
         /// Optional so a file written by an app without the field still decodes.
         let directRules: String?
+        /// The other rooms of the location's failover group (`##rooms`), the
+        /// primary excluded; the engine hops to them when the room it is in
+        /// ends. Optional for the same reason as `directRules`.
+        ///
+        /// ai-generated: this field, `subscriptionUrl`, and the room handling
+        /// in `launch`, `applyRooms` and `relaunch` (see RoomKeeper).
+        let failoverRooms: [String]?
+        /// Where the room list came from, when it came from a subscription:
+        /// RoomKeeper re-reads it through the tunnel after every handover.
+        let subscriptionUrl: String?
     }
 
     private static let log = Logger(subsystem: "org.proofkit.app", category: "olcrtc")
@@ -74,6 +84,11 @@ enum OlcrtcEngine {
             .appendingPathComponent("olcrtc.log")
     )
 
+    /// What `start` was last given, for `relaunch`. Written by the provider's
+    /// start, read on RoomKeeper's queue; the lock is for that handoff.
+    private static let currentLock = NSLock()
+    nonisolated(unsafe) private static var current: (parameters: Parameters, resolvers: [String])?
+
     /// How long to wait for the engine to answer before calling it a failure.
     ///
     /// Was eight seconds, inherited from the in-app path. A trace of a failed
@@ -105,10 +120,61 @@ enum OlcrtcEngine {
         // to the attempt it is reporting on.
         logWriter.reset()
         MobileSetLogWriter(logWriter)
+        currentLock.lock()
+        current = (parameters, resolvers)
+        currentLock.unlock()
+        // The app's list, joined with what this process last learned for the
+        // same key: the app may have slept through several handovers.
+        let rooms = RoomKeeper.initialRooms(for: parameters)
+        // Before the launch, so the first session the engine reports is seen.
+        RoomKeeper.shared.begin(parameters: parameters, rooms: rooms)
+        do {
+            try launch(parameters, resolvers: resolvers, rooms: rooms)
+        } catch {
+            RoomKeeper.shared.stop()
+            throw error
+        }
+        RoomKeeper.shared.armed()
+    }
+
+    /// Starts the engine again over `rooms`, with everything else as `start`
+    /// was given. For RoomKeeper, when a generation has ended.
+    static func relaunch(rooms: RoomList.Parsed) throws {
+        currentLock.lock()
+        let current = current
+        currentLock.unlock()
+        guard let current else { throw failure(nil, "olcRTC was never started") }
+        try launch(current.parameters, resolvers: current.resolvers, rooms: rooms)
+    }
+
+    /// Hands the running engine a room list. It is read at the engine's next
+    /// hop; the live session is not touched.
+    static func applyRooms(_ rooms: RoomList.Parsed) throws {
+        try runtime.setRoom(rooms.primary)
+        runtime.clearFailoverRooms()
+        for room in rooms.extras {
+            try runtime.addFailoverRoom(room)
+        }
+    }
+
+    /// Whether a generation is starting, running or stopping.
+    static var isRunning: Bool { runtime.isRunning() }
+
+    /// A line in olcrtc.log beside the engine's own, for what happens to it
+    /// from this side: room lists, restarts.
+    static func note(_ line: String) {
+        logWriter.writeLog(line)
+    }
+
+    private static func launch(_ parameters: Parameters, resolvers: [String], rooms: RoomList.Parsed) throws {
         runtime.setDebug(verbose)
         // Before anything dials: inside the extension the default route is our
         // own tun, so an unprotected socket loops straight back into it.
         runtime.setProtector(protector)
+        // Each session the engine opens - the first, and every one after a hop
+        // or a reconnect - is reported to the keeper, which refreshes the room
+        // list through it.
+        runtime.setSessionListener(RoomKeeper.shared)
         try runtime.setTransport(parameters.transportName)
         // The network's own resolvers first, a public operator behind them; the
         // engine adds that operator's IPv6 twin and the other operators after.
@@ -127,7 +193,10 @@ enum OlcrtcEngine {
         // outside this process is meant to reach it.
         try runtime.setSocksListenHost("127.0.0.1")
         try runtime.setProvider(parameters.carrierName)
-        try runtime.setRoom(parameters.roomId)
+        // The primary and the failover extras. The engine walks them under its
+        // supervisor when the room it is in ends, and re-reads the list at
+        // every hop, so RoomKeeper can grow it while a session is live.
+        try applyRooms(rooms)
         runtime.setDeviceID(parameters.clientId)
         try runtime.setKey(parameters.keyHex)
         try runtime.setSocksPort(parameters.socksPort)
@@ -157,6 +226,9 @@ enum OlcrtcEngine {
     }
 
     static func stop() {
+        // The keeper first, or its watchdog would read the stop below as an
+        // engine that died and start it again.
+        RoomKeeper.shared.stop()
         // Unconditional teardown runs on every tunnel stop, including tunnels
         // that never involved olcRTC at all.
         if runtime.isRunning() {

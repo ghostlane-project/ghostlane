@@ -2,6 +2,7 @@ package org.olcbox.app.ui.features.home
 
 import org.olcbox.app.net.ImportLink
 import org.olcbox.app.net.isPartnerLink
+import org.olcbox.app.net.LocationKind
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.map
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationConfig
@@ -255,6 +257,21 @@ class HomeScreenViewModel(
         }
 
         viewModelScope.launch {
+            // The tunnel just came up: pull the server lists through it, so
+            // the session begins with the rooms the server has now rather than
+            // the ones stored when the app last ran. Where a list is reachable
+            // only through the tunnel, this is the first chance to read it.
+            var wasConnected = false
+            vpnManager.status.collect { status ->
+                val nowConnected = status is VpnStatus.Connected
+                if (nowConnected && !wasConnected) {
+                    viewModelScope.launch { refreshSubscriptionsThroughTheTunnel() }
+                }
+                wasConnected = nowConnected
+            }
+        }
+
+        viewModelScope.launch {
             vpnManager.status.collect { status ->
                 _state.update {
                     val next = it.applying(status)
@@ -364,6 +381,7 @@ class HomeScreenViewModel(
             try {
                 if (_state.value.isVpnConnected || vpnManager.status.value is VpnStatus.Connected) {
                     cancelAutomaticSelection()
+                    refreshSubscriptionsBeforeStop()
                     vpnManager.stopVpn()
                 } else {
                     val active = locationsRepository.getActiveLocation()
@@ -632,6 +650,47 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * Refreshes every subscription over the live tunnel, when auto-update is
+     * on. A failure is not surfaced: the user did not ask, and the scheduled
+     * pass reports the reason next time. Together with the periodic pass and
+     * the extension's own reads after a room handover (iOS), this is what
+     * keeps a client on a rotating server holding a live room.
+     */
+    private suspend fun refreshSubscriptionsThroughTheTunnel() {
+        if (!_subscriptionSettings.value.autoUpdate) return
+        runCatching {
+            withContext(Dispatchers.IO) {
+                locationsRepository.refreshSubscriptions(
+                    subscriptionProxy = vpnManager.subscriptionFetchProxy()
+                )
+            }
+        }
+        loadCurrentConfigNow()
+    }
+
+    /**
+     * One more pull through the still-live tunnel before it is torn down, so
+     * the stored lists are current for the next start. Only where the wait
+     * buys something - an olcRTC location whose server advertised standby
+     * rooms - and bounded: Stop must never hang on a tunnel that is already
+     * dying, and everyone else stops at once.
+     */
+    private suspend fun refreshSubscriptionsBeforeStop() {
+        if (!_subscriptionSettings.value.autoUpdate) return
+        val active = locationsRepository.getActiveLocation()?.location ?: return
+        if (active.kind != LocationKind.Olcrtc || active.failoverRoomIds.isEmpty()) return
+        withTimeoutOrNull(PRE_DISCONNECT_REFRESH_TIMEOUT_MS) {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    locationsRepository.refreshSubscriptions(
+                        subscriptionProxy = vpnManager.subscriptionFetchProxy()
+                    )
+                }
+            }
+        }
+    }
+
     private fun buildLogsExport(logs: List<String>): String {
         return buildString {
             appendLine("Ghostlane application logs")
@@ -729,3 +788,4 @@ data class HomeScreenState(
  * a one-hour setting mean one hour.
  */
 private const val SUBSCRIPTION_AUTO_REFRESH_POLL_MS = 5L * 60L * 1_000L
+private const val PRE_DISCONNECT_REFRESH_TIMEOUT_MS = 3_000L
