@@ -122,6 +122,15 @@ jobs:
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug --stacktrace
 
+      # Instrumented tests still exercise resource loading on a device, while
+      # this cheap archive check protects every normal PR build as well.
+      - name: Verify packaged Compose file resources
+        working-directory: olcbox
+        run: |
+          apk=$(find androidApp/build/outputs/apk/github/debug -maxdepth 1 -type f -name '*.apk' | sort | head -n 1)
+          test -n "$apk"
+          python3 tools/check-android-compose-assets.py "$apk"
+
       - name: Download pinned sing-box
         run: |
           url="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"

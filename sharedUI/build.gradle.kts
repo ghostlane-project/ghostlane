@@ -268,6 +268,13 @@ kotlin {
         compileSdk = 37
         minSdk = 23
 
+        // AGP's Kotlin Multiplatform library plugin does not package Compose
+        // resources unless Android resource processing is enabled explicitly.
+        // RuleSets and XrayGeodata load their bundled files through Res.readBytes;
+        // without this switch an installed APK crashes on connect with
+        // MissingResourceException even though the JVM resource tests pass.
+        androidResources.enable = true
+
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
