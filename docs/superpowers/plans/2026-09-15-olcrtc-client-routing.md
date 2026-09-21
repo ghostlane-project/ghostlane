@@ -423,7 +423,7 @@ object OlcrtcDirectRules {
 - Modify: `scripts/cores-pins.sh` (`OLCRTC_VERSION`, `CORES_BUILD` 23 → 24 with a paragraph), `.github/workflows/ios-frameworks.yml` (`OLCRTC_VERSION`)
 - Modify: `docs/ios-one-go-runtime.md` (the Bypass Russia decision), `docs/testflight-notes.md`, create `docs/release-notes/pending.md`
 
-- [ ] **Step 1: Check the pseudo-version resolves** — `GOFLAGS=-mod=mod go mod download -json github.com/romanpodpriatov/olcrtc@<pseudo>` prints a `Version` without error (the engine must be pushed first).
+- [ ] **Step 1: Check the pseudo-version resolves** — `GOFLAGS=-mod=mod go mod download -json github.com/ghostlane-project/olcrtc@<pseudo>` prints a `Version` without error (the engine must be pushed first).
 - [ ] **Step 2: Edit pins and docs; commit** — `git commit -m "build(cores): engine with direct rules (olcbox#28), cores b24"`; push `main`.
 - [ ] **Step 3: Cores** — `POST /repos/romanpodpriatov/olcbox/actions/workflows/ios-frameworks.yml/dispatches {"ref":"main","inputs":{"publish":"true"}}`; poll the run to success (~10 min); confirm the tag `ios-cores-…-rtc<12hex>-b24`.
 - [ ] **Step 4: Release** — `POST …/workflows/release.yml/dispatches {"ref":"main","inputs":{"platforms":"all","play_track":"internal"}}`; poll (~40 min); delete `docs/release-notes/pending.md` after dispatch.

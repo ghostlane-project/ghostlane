@@ -9,7 +9,7 @@ these carry obligations the MIT licence does not.
 
 | Component | Licence | How it is used |
 | --- | --- | --- |
-| [olcRTC](https://github.com/romanpodpriatov/olcrtc) | Apache-2.0 | The tunnel engine. Linked into every platform; maintained by this project. |
+| [olcRTC](https://github.com/ghostlane-project/olcrtc) | Apache-2.0 | The tunnel engine. Linked into every platform; maintained by this project. |
 | [sing-box](https://github.com/SagerNet/sing-box) | **GPL-3.0-or-later** | Reality, TLS and Hysteria2. A separate binary on desktop; its `libbox` library is linked into the mobile builds. |
 | [Xray-core](https://github.com/XTLS/Xray-core) | **MPL-2.0** | XHTTP, through [libXray](https://github.com/XTLS/libXray) (MIT). A separate binary on desktop; linked into the mobile builds. |
 | [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 on Apple platforms. |

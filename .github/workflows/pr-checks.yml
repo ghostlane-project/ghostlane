@@ -106,7 +106,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ steps.pin.outputs.olcrtc_sha }}
           path: olcrtc
           submodules: recursive

@@ -168,7 +168,7 @@ jobs:
       - name: Checkout olcrtc at the gated revision
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.resolve.outputs.engine_sha }}
           path: olcrtc
           submodules: recursive
@@ -239,7 +239,7 @@ jobs:
       - name: Checkout olcrtc at the gated revision
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.resolve.outputs.engine_sha }}
           path: olcrtc
           submodules: recursive
@@ -379,7 +379,7 @@ jobs:
         if: needs.resolve.outputs.skip != 'true'
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.resolve.outputs.engine_sha }}
           path: olcrtc
 

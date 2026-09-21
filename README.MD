@@ -9,7 +9,7 @@ a WebRTC media session to a public meeting service and moves traffic inside it,
 so what stays on the wire is a call the network already carries. Its relays hold
 a fixed number of slots, and the app shows how full each room is before you join
 one. We maintain the engine at
-[romanpodpriatov/olcrtc](https://github.com/romanpodpriatov/olcrtc), forked from
+[ghostlane-project/olcrtc](https://github.com/ghostlane-project/olcrtc), forked from
 [openlibrecommunity/olcrtc](https://github.com/openlibrecommunity/olcrtc) and
 carrying our own UDP wire, multi-key support and metering.
 
@@ -37,7 +37,7 @@ up for, and nothing to buy here.
 ## The project
 
 Ghostlane is open source and actively maintained. It is developed together with
-**[olcRTC](https://github.com/romanpodpriatov/olcrtc)**, the transport engine
+**[olcRTC](https://github.com/ghostlane-project/olcrtc)**, the transport engine
 this application is built around; the two repositories are one project, released
 separately and pinned to each other.
 

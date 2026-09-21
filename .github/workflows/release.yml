@@ -63,7 +63,7 @@ env:
   # ProofKit fork versionCode = PATCH_BASE + github.run_number (RUN_NUMBER_BASE 0,
   # since run numbers reset to 1 on this fork). PATCH_BASE is set ABOVE upstream's
   # current nightly (1.0.112) so our builds always read as the NEWEST version — the
-  # in-app updater (repointed to romanpodpriatov/ghostlane) then never offers users an
+  # in-app updater (repointed to ghostlane-project/ghostlane) then never offers users an
   # upstream build, and 1.0.2xx > any 1.0.1xx. Monotonic, so Android updates install.
   OLCBOX_RELEASE_RUN_NUMBER_BASE: "0"
   # 300, not 200, since 2026-09-09: the App Store already carries 1.0.301 from a
@@ -316,7 +316,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
@@ -483,7 +483,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
@@ -690,7 +690,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
@@ -835,7 +835,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive
@@ -1267,7 +1267,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive

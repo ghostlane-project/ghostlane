@@ -12,7 +12,7 @@ on:
       website:
         description: 'Contact website for the listing (empty = leave as is)'
         type: string
-        default: 'https://github.com/romanpodpriatov/ghostlane'
+        default: 'https://github.com/ghostlane-project/ghostlane'
       dry_run:
         description: 'Print the copy that would be sent and send nothing'
         type: boolean

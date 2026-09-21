@@ -47,7 +47,7 @@ set -euo pipefail
 # — and the fix is the ordinary fork shape: require the declared path, replace it
 # with the fork. It works precisely *because* the fork kept the upstream path.
 OLCRTC_MODULE="github.com/openlibrecommunity/olcrtc"
-OLCRTC_FORK="${OLCRTC_FORK:-github.com/romanpodpriatov/olcrtc}"
+OLCRTC_FORK="${OLCRTC_FORK:-github.com/ghostlane-project/olcrtc}"
 # Pinned rather than @latest: gobind generates code against the seq package of
 # its own version, so the tool and the module dependency below must be the same
 # version or the generated bindings compile against the wrong API.

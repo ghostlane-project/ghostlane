@@ -2,7 +2,7 @@
 
 ## Something is broken
 
-Open an issue: <https://github.com/romanpodpriatov/ghostlane/issues>
+Open an issue: <https://github.com/ghostlane-project/ghostlane/issues>
 
 What makes a report useful, roughly in order of how much it helps:
 
@@ -18,7 +18,7 @@ issue. They are credentials. Describe the entry instead, or redact the link.
 
 ## Something is wrong in the engine
 
-The tunnel itself lives in <https://github.com/romanpodpriatov/olcrtc/issues>.
+The tunnel itself lives in <https://github.com/ghostlane-project/olcrtc/issues>.
 If you are not sure which side a problem is on, file it against the app and it
 will be moved.
 

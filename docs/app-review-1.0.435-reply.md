@@ -177,13 +177,13 @@ Purchase.
 
 This version renames the app from "ProofKit VPN" to "Ghostlane": same bundle, same
 functionality, same developer. It is an independent open-source client
-(github.com/romanpodpriatov/ghostlane).
+(github.com/ghostlane-project/ghostlane).
 
 Ghostlane's distinguishing feature is olcRTC: a transport that carries the device's
 traffic inside a WebRTC media session, an ordinary video call to a public meeting
 service, so that on networks which drop every VPN protocol by signature, what remains on
 the wire is a call the network already permits. We maintain the transport engine and
-publish it at github.com/romanpodpriatov/olcrtc. This app is its only implementation on
+publish it at github.com/ghostlane-project/olcrtc. This app is its only implementation on
 iOS.
 
 TO SEE THAT PART (two minutes)

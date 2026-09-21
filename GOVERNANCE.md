@@ -8,10 +8,10 @@ wish to be run.
 
 Two repositories, one project:
 
-- **[ghostlane](https://github.com/romanpodpriatov/ghostlane)** is the
+- **[ghostlane](https://github.com/ghostlane-project/ghostlane)** is the
   application people install: Android, iOS, macOS, Windows and Linux from one
   Kotlin Multiplatform codebase.
-- **[olcrtc](https://github.com/romanpodpriatov/olcrtc)** is the transport
+- **[olcrtc](https://github.com/ghostlane-project/olcrtc)** is the transport
   engine the application is built around: a tunnel that travels inside a WebRTC
   media session. It is a Go library and command-line program, useful on its own,
   and it is maintained here because Ghostlane depends on it.

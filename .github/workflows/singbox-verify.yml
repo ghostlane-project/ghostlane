@@ -85,7 +85,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: proofkit
           path: olcrtc
           submodules: recursive
@@ -168,7 +168,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: proofkit
           path: olcrtc
           submodules: recursive
@@ -375,7 +375,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: proofkit
           path: olcrtc
           submodules: recursive

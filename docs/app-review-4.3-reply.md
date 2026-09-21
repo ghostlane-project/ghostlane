@@ -87,7 +87,7 @@ relay on the other side, negotiation of a room and a slot within it, and a clien
 able to hold a live media session open while a packet tunnel rides inside it. We
 maintain the transport engine ourselves and publish it:
 
-  github.com/romanpodpriatov/olcrtc
+  github.com/ghostlane-project/olcrtc
 
 This app is its only implementation on iOS, and to our knowledge the only
 implementation of olcRTC on the App Store in any form.

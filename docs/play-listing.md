@@ -215,7 +215,7 @@ that speaks the protocols above will work.
 
 OPEN SOURCE
 
-github.com/romanpodpriatov/ghostlane
+github.com/ghostlane-project/ghostlane
 ```
 
 > Two things stay out of this text. **No purchase pointer** ("the app can open
@@ -232,8 +232,8 @@ github.com/romanpodpriatov/ghostlane
 > review.
 
 **Contact details** — support email; website
-`https://github.com/romanpodpriatov/ghostlane`; privacy policy
-`https://github.com/romanpodpriatov/ghostlane/blob/main/docs/privacy.md` (App content →
+`https://github.com/ghostlane-project/ghostlane`; privacy policy
+`https://github.com/ghostlane-project/ghostlane/blob/main/docs/privacy.md` (App content →
 Privacy policy, by hand: the API does not carry it). Changed 2026-09-18 with the
 rename, for the same reason as on the App Store: the client's listing describes
 the client. `.github/workflows/play-listing.yml` pushes name, descriptions, icon and
@@ -341,7 +341,7 @@ VLESS with Reality and VLESS over TLS use TLS 1.3; XHTTP runs over TLS; Hysteria
 runs over QUIC with TLS 1.3; olcRTC carries the tunnel inside a WebRTC session
 protected by DTLS-SRTP, with an additional authenticated cipher on the tunnel
 stream itself. The engines are sing-box, Xray-core and our own olcRTC engine
-(github.com/romanpodpriatov/olcrtc), all open source.
+(github.com/ghostlane-project/olcrtc), all open source.
 
 **Does your app collect or transmit personal and sensitive user data?** → No.
 No account, no sign-in, no analytics, no advertising identifier, no crash
@@ -358,7 +358,7 @@ routed for any purpose other than the exit the user selected.
 through the exit you picked, using Android's own VpnService. Apps you choose can
 stay outside the tunnel."
 
-**Privacy policy URL** → `https://github.com/romanpodpriatov/ghostlane/blob/main/docs/privacy.md`
+**Privacy policy URL** → `https://github.com/ghostlane-project/ghostlane/blob/main/docs/privacy.md`
 (the same page the App Store listing uses; the Play listing's privacy URL field
 must say the same).
 

@@ -225,7 +225,7 @@ the same way. Nothing else to rotate.
 
 - [ ] **Step 2: Do it**
 
-Create the partner, grant, key and rooms as the runbook says; set the six secrets (`gh secret set NAME --repo romanpodpriatov/olcbox` / `--repo romanpodpriatov/olcrtc`, values from a file, never from the shell history).
+Create the partner, grant, key and rooms as the runbook says; set the six secrets (`gh secret set NAME --repo romanpodpriatov/olcbox` / `--repo ghostlane-project/olcrtc`, values from a file, never from the shell history).
 
 - [ ] **Step 3: Commit the runbook**
 
@@ -382,7 +382,7 @@ so Android and the gate check out the 12-hex revision iOS is pinned to. Keep `OL
         if: ${{ inputs.gate != 'skip' }}
         uses: actions/checkout@v7
         with:
-          repository: romanpodpriatov/olcrtc
+          repository: ghostlane-project/olcrtc
           ref: ${{ needs.release_version.outputs.olcrtc_ref }}
           path: olcrtc
           submodules: recursive

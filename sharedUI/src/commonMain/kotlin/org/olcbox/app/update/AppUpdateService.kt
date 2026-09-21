@@ -35,7 +35,7 @@ data class ReleaseMirror(
         // the reverted, no-UDP engine) and pulls users off the ProofKit build.
         val GitHub = ReleaseMirror(
             name = "GitHub",
-            repositoryUrl = "https://github.com/romanpodpriatov/ghostlane"
+            repositoryUrl = "https://github.com/ghostlane-project/ghostlane"
         )
     }
 }

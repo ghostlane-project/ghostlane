@@ -54,7 +54,7 @@ PIN_REV = "0123456789ab"
 PIN_VERSION = f"v0.0.0-{PIN_TIME}-{PIN_REV}"
 PIN_SHA = "0123456789abcdef0123456789abcdef01234567"
 PIN_DATE = "2026-01-02T03:04:05Z"
-ENGINE = "/repos/romanpodpriatov/olcrtc"
+ENGINE = "/repos/ghostlane-project/olcrtc"
 
 
 def pin_routes(date=PIN_DATE, sha=PIN_SHA, gate=True):
@@ -660,9 +660,9 @@ class Scrub(unittest.TestCase):
 
 
 # Issues of the engine's known list, as its report names them.
-ISSUE9 = "https://github.com/romanpodpriatov/olcrtc/issues/9"
-ISSUE11 = "https://github.com/romanpodpriatov/olcrtc/issues/11"
-ISSUE15 = "https://github.com/romanpodpriatov/olcrtc/issues/15"
+ISSUE9 = "https://github.com/ghostlane-project/olcrtc/issues/9"
+ISSUE11 = "https://github.com/ghostlane-project/olcrtc/issues/11"
+ISSUE15 = "https://github.com/ghostlane-project/olcrtc/issues/15"
 
 
 def cell(provider, client, transport, scenario, status="pass", known=None):

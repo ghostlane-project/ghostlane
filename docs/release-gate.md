@@ -48,7 +48,7 @@ The target is **local**: the suite builds `cmd/olcrtc` and starts it as the
 server for each provider and transport pair, then points the client at it
 through the real relay. The load scenarios (S0 to S7), their thresholds and the
 report format belong to the engine. See `docs/gate.md` in
-`romanpodpriatov/olcrtc`, and `internal/gate/thresholds.go` for the numbers.
+`ghostlane-project/olcrtc`, and `internal/gate/thresholds.go` for the numbers.
 
 ## When it runs
 
@@ -98,7 +98,7 @@ The last step of `Verdict` lists every reason that applies:
   still runs and shows in the report with its issue, as `fail (known: #9)`,
   and counts in `failed_known`, not against the gate. A cell that did not run
   is never known. See "Known failures" in `docs/gate.md` in
-  `romanpodpriatov/olcrtc`.
+  `ghostlane-project/olcrtc`.
 - A planned cell did not run. The engine writes its report when the test
   binary exits, so a `go test -timeout` or a crash loses it. The leg's plan
   still names the lost cells, and the merge fails each of them as `did not run:
@@ -203,14 +203,14 @@ Rules:
 
 Set them from standard input, never on a command line:
 
-    gh secret set GATE_TELEMOST_ROOMS --repo romanpodpriatov/ghostlane
-    gh secret set GATE_WBSTREAM_ROOMS --repo romanpodpriatov/ghostlane
-    gh secret set GATE_WBSTREAM_TOKEN --repo romanpodpriatov/ghostlane
-    gh secret set GATE_JITSI_HOSTS    --repo romanpodpriatov/ghostlane   # optional
+    gh secret set GATE_TELEMOST_ROOMS --repo ghostlane-project/ghostlane
+    gh secret set GATE_WBSTREAM_ROOMS --repo ghostlane-project/ghostlane
+    gh secret set GATE_WBSTREAM_TOKEN --repo ghostlane-project/ghostlane
+    gh secret set GATE_JITSI_HOSTS    --repo ghostlane-project/ghostlane   # optional
 
 ### Disjoint from the engine repository
 
-The engine's own CI (`romanpodpriatov/olcrtc`) runs the same suite with its own
+The engine's own CI (`ghostlane-project/olcrtc`) runs the same suite with its own
 `GATE_*` secrets. A concurrency group cannot span two repositories, so the two
 sets of pools must not share a room.
 

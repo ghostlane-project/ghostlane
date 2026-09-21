@@ -186,7 +186,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 #
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
-# (scripts/olcrtc-pin.sh: the 12-hex tail must exist in romanpodpriatov/olcrtc
+# (scripts/olcrtc-pin.sh: the 12-hex tail must exist in ghostlane-project/olcrtc
 # and the time in the pseudo-version must be that commit's), the gate tests that
 # commit, and then Windows, macOS, Linux, Android and the iOS app's OlcRtcMobile
 # check it out while the extension's Cores fetch it through the module proxy.

@@ -37,7 +37,7 @@ person to attempt a submission does not rediscover the same six things.
   sent, and until it is, the `false` is a false declaration on a customs
   question. The template is in `app-store-listing.md` and needs only a real
   contact name, email and telephone. The claim it makes — that the corresponding
-  source is public — holds: `romanpodpriatov/ghostlane` and `romanpodpriatov/olcrtc`
+  source is public — holds: `ghostlane-project/ghostlane` and `ghostlane-project/olcrtc`
   both answer to an unauthenticated request, and they must stay that way.
 - **The signing identity.** Guideline 5.4 requires VPN apps to come from an
   organisation account, which Team `3QJG3J7L66` (Globvent inc) is.

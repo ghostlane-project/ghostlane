@@ -66,4 +66,4 @@ The app collects nothing. See [privacy.md](privacy.md).
 ## Source
 
 Everything the app does is in this repository. The olcRTC engine is at
-[romanpodpriatov/olcrtc](https://github.com/romanpodpriatov/olcrtc).
+[ghostlane-project/olcrtc](https://github.com/ghostlane-project/olcrtc).

@@ -10,8 +10,8 @@ important work in the queue.
 
 Use GitHub's private vulnerability reporting on the repository the flaw is in:
 
-- application: <https://github.com/romanpodpriatov/ghostlane/security/advisories/new>
-- engine: <https://github.com/romanpodpriatov/olcrtc/security/advisories/new>
+- application: <https://github.com/ghostlane-project/ghostlane/security/advisories/new>
+- engine: <https://github.com/ghostlane-project/olcrtc/security/advisories/new>
 
 That channel is private between you and the maintainers, supports attachments,
 and turns into a published advisory with credit once a fix ships.

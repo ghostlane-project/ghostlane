@@ -7,11 +7,11 @@ and what would happen to money given to it.
 
 ## One project, two repositories
 
-**[Ghostlane](https://github.com/romanpodpriatov/ghostlane)** is the
+**[Ghostlane](https://github.com/ghostlane-project/ghostlane)** is the
 application people install. Kotlin Multiplatform and Compose, one codebase for
 Android, iOS, macOS, Windows and Linux. MIT.
 
-**[olcRTC](https://github.com/romanpodpriatov/olcrtc)** is the transport engine
+**[olcRTC](https://github.com/ghostlane-project/olcrtc)** is the transport engine
 the application is built around: an encrypted tunnel that travels inside a
 WebRTC media session, so that on a network which recognises and drops tunnels by
 their shape, what remains on the wire is an ordinary video call. It is a Go
@@ -44,9 +44,9 @@ and `LICENSE`.
 ## Who runs it
 
 One maintainer today, named in
-[MAINTAINERS.md](https://github.com/romanpodpriatov/ghostlane/blob/main/MAINTAINERS.md),
+[MAINTAINERS.md](https://github.com/ghostlane-project/ghostlane/blob/main/MAINTAINERS.md),
 with contributors credited in the history and the release notes.
-[GOVERNANCE.md](https://github.com/romanpodpriatov/ghostlane/blob/main/GOVERNANCE.md)
+[GOVERNANCE.md](https://github.com/ghostlane-project/ghostlane/blob/main/GOVERNANCE.md)
 describes how decisions are made, how disagreements end, and how a contributor
 becomes a maintainer.
 
@@ -58,7 +58,7 @@ project is not a company and has no bank account.
 
 What funds pay for, and the rules the maintainers hold themselves to when they
 are the ones being paid, are in
-[FUNDING.md](https://github.com/romanpodpriatov/ghostlane/blob/main/FUNDING.md).
+[FUNDING.md](https://github.com/ghostlane-project/ghostlane/blob/main/FUNDING.md).
 In short: development, infrastructure, testing, security, documentation, and
 compensation for actual work that exists and can be inspected.
 

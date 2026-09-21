@@ -17,7 +17,7 @@ DEST="${1:?usage: fetch-hev-ios.sh <destination-dir>}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hev-pins.sh"
 TAG="${HEV_RELEASE_TAG:-${HEV_TAG}}"
 ASSET="HevSocks5Tunnel-ios.zip"
-URL="https://github.com/romanpodpriatov/ghostlane/releases/download/${TAG}/${ASSET}"
+URL="https://github.com/ghostlane-project/ghostlane/releases/download/${TAG}/${ASSET}"
 CACHE="${HEV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/olcbox/hev}/${TAG}"
 STAMP="${DEST}/HevSocks5Tunnel.xcframework.tag"
 
