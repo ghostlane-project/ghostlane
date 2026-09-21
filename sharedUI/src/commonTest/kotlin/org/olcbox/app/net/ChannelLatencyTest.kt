@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.HttpMethod
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -29,24 +30,34 @@ class ChannelLatencyTest {
         try {
             assertNotNull(session.measure())
             assertNotNull(session.measure())
-            assertEquals(2, requests)
+            assertEquals(3, requests) // one warm-up, then two displayed samples
         } finally { session.close() }
     } }
 
     @Test fun aResponseTravelsThroughTheRequestedProbeUrl() = runTest { withContext(Dispatchers.Default) {
         val client = HttpClient(MockEngine { request ->
             assertEquals(ChannelLatency.URL, request.url.toString())
+            assertEquals(HttpMethod.Head, request.method)
             assertEquals("no-cache, no-store", request.headers["Cache-Control"])
             respond("", HttpStatusCode.NoContent)
         })
         assertNotNull(ChannelLatency.measure(client))
     } }
 
-    @Test fun successfulStatusAloneDoesNotProveTheExpectedProbeAnswered() = runTest { withContext(Dispatchers.Default) {
+    @Test fun oneShotProxyStyleMeasurementWarmsBeforeTiming() = runTest { withContext(Dispatchers.Default) {
+        var requests = 0
+        val client = HttpClient(MockEngine { requests++; respond("", HttpStatusCode.NoContent) })
+        assertNotNull(ChannelLatency.measure(client, warmUp = true))
+        assertEquals(2, requests)
+    } }
+
+    @Test fun onlyTheExpectedNoContentResponseCountsAsLatency() = runTest { withContext(Dispatchers.Default) {
         for (status in listOf(HttpStatusCode.OK, HttpStatusCode.Found, HttpStatusCode.ServiceUnavailable)) {
             val client = HttpClient(MockEngine { respond("", status) }) { followRedirects = false }
             assertNull(ChannelLatency.measure(client), "Unexpected HTTP ${status.value}")
         }
+        val ok = HttpClient(MockEngine { respond("", HttpStatusCode.NoContent) })
+        assertNotNull(ChannelLatency.measure(ok))
     } }
 
     @Test fun cancellationIsNotReportedAsADeadTunnel() = runTest { withContext(Dispatchers.Default) {

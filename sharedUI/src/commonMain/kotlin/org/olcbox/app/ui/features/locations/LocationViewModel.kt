@@ -14,6 +14,7 @@ import org.olcbox.app.net.OlcrtcStatusClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -232,6 +233,8 @@ class LocationViewModel(
          * the one carrying it, and that is a question about state, not kind.
          */
         canPing: (LocationConfig) -> Boolean = { it.isPingable() },
+        /** A short caller-owned budget for pre-connect ranking; null keeps the board refresh budget. */
+        overallDeadlineMs: Long? = null,
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (String) -> Unit = {}
     ) {
@@ -266,11 +269,15 @@ class LocationViewModel(
         var onlineForThisRequest = 0
         val totalForThisRequest = pingableLocations.size
         val jobsToStart = mutableListOf<Job>()
+        var deadlineJob: Job? = null
 
         pingableLocations.forEach { location ->
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+                var ping: Int? = null
+                var completedNormally = false
+                var errorMessage: String? = null
                 try {
-                    val ping = try {
+                    ping = try {
                         pingSemaphore.withPermit {
                             checkLocationPing(location, performPing, canPing)?.toInt()
                         }
@@ -279,38 +286,29 @@ class LocationViewModel(
                     } catch (_: Exception) {
                         null
                     }
-
-                    val updatedPings = currentPingsSnapshot().toMutableMap()
-                    updatedPings[location.storageId] = ping
+                    completedNormally = true
                     // Do not cancel measure-on-start during connection setup. Its
                     // answer is still useful, just historical after a path change.
                     stalePingIds = if (requestEpoch == pingEpoch) stalePingIds - location.storageId
                         else stalePingIds + location.storageId
 
-                    activePingJobs.remove(location.storageId)
-
-                    if (ping != null) {
-                        onlineForThisRequest++
-                    }
-
-                    completedForThisRequest++
-
-                    emitPingState(updatedPings.toMap())
-
-                    if (completedForThisRequest == totalForThisRequest) {
-                        onComplete(onlineForThisRequest, totalForThisRequest)
-                    }
                 } catch (e: CancellationException) {
-                    activePingJobs.remove(location.storageId)
-                    emitPingState()
                     throw e
                 } catch (e: Exception) {
-                    activePingJobs.remove(location.storageId)
-
-                    val message = e.message ?: "HTTP ping failed"
-                    onError(message)
-
-                    emitPingState()
+                    completedNormally = true
+                    errorMessage = e.message ?: "HTTP ping failed"
+                } finally {
+                    activePingJobs.remove(location.storageId, currentCoroutineContext()[Job])
+                    val updatedPings = currentPingsSnapshot().toMutableMap()
+                    if (completedNormally) updatedPings[location.storageId] = ping
+                    if (ping != null) onlineForThisRequest++
+                    completedForThisRequest++
+                    errorMessage?.let(onError)
+                    emitPingState(updatedPings)
+                    if (completedForThisRequest == totalForThisRequest) {
+                        deadlineJob?.cancel()
+                        onComplete(onlineForThisRequest, totalForThisRequest)
+                    }
                 }
             }
 
@@ -319,7 +317,18 @@ class LocationViewModel(
         }
 
         emitPingState(previousPings)
+        deadlineJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val batches = (totalForThisRequest + LOCATION_PING_PARALLELISM - 1) /
+                LOCATION_PING_PARALLELISM
+            val requestDeadline = overallDeadlineMs ?: maxOf(
+                LOCATION_PING_MINIMUM_DEADLINE_MS,
+                batches * LOCATION_PING_TIMEOUT_MS + LOCATION_PING_DEADLINE_GRACE_MS
+            )
+            delay(requestDeadline)
+            jobsToStart.filter(Job::isActive).forEach { it.cancel() }
+        }
         jobsToStart.forEach { it.start() }
+        deadlineJob.start()
     }
 
     private fun currentPingsSnapshot(): Map<String, Int?> {
@@ -340,6 +349,21 @@ class LocationViewModel(
                 state.lastPings.orEmpty()
             }
         }
+    }
+
+    /** A stable copy used to connect in the same order the board just rendered. */
+    fun pingSnapshot(locationIds: Collection<String>): Map<String, Int?> {
+        val wanted = locationIds.toSet()
+        return currentPingsSnapshot().filterKeys { it in wanted }
+    }
+
+    /** Cancel an in-flight Connect measurement without discarding completed values. */
+    fun cancelPings(locationIds: Collection<String>? = null) {
+        pingEpoch++
+        val wanted = locationIds?.toSet()
+        val ids = activePingJobs.keys.filter { wanted == null || it in wanted }
+        ids.forEach { id -> activePingJobs.remove(id)?.cancel() }
+        emitPingState()
     }
 
     private fun emitPingState(
@@ -563,6 +587,8 @@ class LocationViewModel(
         const val LOCATION_PING_TIMEOUT_MS = 12_000L
         const val LOCATION_PING_RETRY_DELAY_MS = 0L
         const val LOCATION_PING_PARALLELISM = 4
+        const val LOCATION_PING_MINIMUM_DEADLINE_MS = 30_000L
+        const val LOCATION_PING_DEADLINE_GRACE_MS = 2_000L
     }
 
     private data class ProviderDraft(

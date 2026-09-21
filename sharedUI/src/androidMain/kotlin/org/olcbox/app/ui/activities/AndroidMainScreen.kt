@@ -278,6 +278,8 @@ fun AndroidMainScreen(
                 }
                 null -> Unit
             }
+        } else if (pendingVpnAction.value is PendingVpnPermissionAction.Toggle) {
+            viewModel.cancelPendingLowest()
         }
         pendingVpnAction.value = null
     }

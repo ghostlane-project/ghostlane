@@ -26,11 +26,13 @@ internal class DesktopCoreProcess(
     private val onOutput: (String) -> Unit = {},
 ) {
     @Volatile private var process: Process? = null
-    private val workDir: Path = Files.createTempDirectory("olcbox-$label")
+    private var workDir: Path? = null
 
     @Synchronized
     fun start(configJson: String) {
         stop()
+        val workDir = Files.createTempDirectory("olcbox-$label")
+        this.workDir = workDir
         val config = workDir.resolve("config.json")
         Files.writeString(config, configJson)
         val started = ProcessBuilder(argv(binaryPath().toString(), config))
@@ -56,21 +58,33 @@ internal class DesktopCoreProcess(
 
     @Synchronized
     fun stop() {
-        val p = process ?: return
+        val p = process
         process = null
-        p.toHandle().descendants().forEach { it.destroy() }
-        p.destroy()
-        if (!p.waitFor(STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            p.toHandle().descendants().forEach { it.destroyForcibly() }
-            p.destroyForcibly()
-            p.waitFor(KILL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (p != null) {
+            p.toHandle().descendants().forEach { it.destroy() }
+            p.destroy()
+            if (!p.waitFor(STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                p.toHandle().descendants().forEach { it.destroyForcibly() }
+                p.destroyForcibly()
+                p.waitFor(KILL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            }
         }
+        workDir?.let(::deleteRecursively)
+        workDir = null
     }
 
     fun isRunning(): Boolean = process?.isAlive == true
 
     /** Exit code once the core has finished; null while it is still running. */
     fun exitCodeOrNull(): Int? = process?.let { if (it.isAlive) null else it.exitValue() }
+
+    private fun deleteRecursively(root: Path) {
+        runCatching {
+            Files.walk(root).use { paths ->
+                paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
+        }
+    }
 
     private companion object {
         const val STOP_TIMEOUT_MS = 3_000L

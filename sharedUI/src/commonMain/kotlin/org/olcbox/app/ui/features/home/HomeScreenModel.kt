@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -18,9 +21,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
@@ -69,9 +69,11 @@ class HomeScreenViewModel(
     val traffic get() = vpnManager.traffic
 
     private var selectionJob: Job? = null
+    private var pendingLowestCandidates: List<String>? = null
 
     /** Manual choice/stop wins over a pending rank or failover cooldown. */
     fun cancelAutomaticSelection() {
+        pendingLowestCandidates = null
         selectionJob?.cancel()
         selectionJob = null
         if (vpnManager.status.value is VpnStatus.Disconnected || vpnManager.status.value is VpnStatus.Error) {
@@ -79,14 +81,14 @@ class HomeScreenViewModel(
         }
     }
 
-    private fun startLowest() {
+    private fun startLowest(preferredLocationIds: List<String>? = null) {
         cancelAutomaticSelection()
         _state.update { it.copy(isVpnLoading = true, failure = null) }
         selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 LowestConnection(vpnManager, locationsRepository) {
                     loadCurrentConfigNow()
-                }.run()
+                }.run(preferredLocationIds)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -100,6 +102,23 @@ class HomeScreenViewModel(
             }
         }
         selectionJob?.start()
+    }
+
+    /** Connect in the order already measured and displayed by the home screen. */
+    fun connectLowest(preferredLocationIds: List<String>? = null) = startLowest(preferredLocationIds)
+
+    /** Keep the measured order while the platform obtains VPN permission. */
+    fun queueLowestAfterPermission(preferredLocationIds: List<String>) {
+        pendingLowestCandidates = preferredLocationIds
+        _state.update { it.copy(isVpnLoading = true, failure = null) }
+    }
+
+    /** Android calls this when its system permission sheet is declined. */
+    fun cancelPendingLowest() {
+        if (pendingLowestCandidates != null) {
+            pendingLowestCandidates = null
+            _state.update { it.copy(isVpnLoading = false) }
+        }
     }
 
     /**
@@ -145,11 +164,12 @@ class HomeScreenViewModel(
     private val _subscriptionSettingsLoaded = MutableStateFlow(false)
     val subscriptionSettingsLoaded = _subscriptionSettingsLoaded.asStateFlow()
 
-    fun updateSubscriptionSettings(settings: SubscriptionSettings) {
+    fun updateSubscriptionSettings(settings: SubscriptionSettings, onComplete: () -> Unit = {}) {
         val normalized = settings.normalized()
         viewModelScope.launch {
             locationsRepository.saveSubscriptionSettings(normalized)
             _subscriptionSettings.value = normalized
+            onComplete()
         }
     }
 
@@ -207,7 +227,7 @@ class HomeScreenViewModel(
     init {
         viewModelScope.launch {
             subscriptionSettings.collect { settings ->
-                if (!settings.autoSelectLowest) cancelAutomaticSelection()
+                if (!settings.hasAnyLowest()) cancelAutomaticSelection()
             }
         }
         loadCurrentConfig()
@@ -238,11 +258,13 @@ class HomeScreenViewModel(
             vpnManager.status.collect { status ->
                 _state.update {
                     val next = it.applying(status)
-                    // Ranking/cooldown happen with the old tunnel fully stopped.
-                    // Keep Stop available instead of presenting a second Connect.
+                    // Between failover attempts the old tunnel is deliberately
+                    // down. Keep Cancel visible until the selection job ends.
                     if (selectionJob?.isActive == true && status is VpnStatus.Disconnected) {
                         next.copy(isVpnLoading = true)
-                    } else next
+                    } else {
+                        next
+                    }
                 }
                 if (status !is VpnStatus.Connected) {
                     measurementEpoch++
@@ -319,7 +341,13 @@ class HomeScreenViewModel(
 
     fun ToggleVpn() {
         val status = vpnManager.status.value
-        if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) || _state.value.isVpnLoading ||
+        pendingLowestCandidates?.let { ranked ->
+            pendingLowestCandidates = null
+            startLowest(ranked)
+            return
+        }
+        if ((selectionJob?.isActive == true && status !is VpnStatus.Connected) ||
+            _state.value.isVpnLoading ||
             status is VpnStatus.Connecting ||
             status is VpnStatus.Reconnecting
         ) {
@@ -356,8 +384,8 @@ class HomeScreenViewModel(
                         _state.update { it.copy(isVpnLoading = false, failure = why) }
                         return@launch
                     }
-                    if (locationsRepository.getSubscriptionSettings().autoSelectLowest &&
-                        !active.subscriptionUrl.isNullOrBlank()) {
+                    if (locationsRepository.getSubscriptionSettings()
+                            .lowestEnabledFor(active.subscriptionUrl)) {
                         startLowest()
                     } else {
                         vpnManager.startVpn()

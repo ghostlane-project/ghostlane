@@ -30,7 +30,7 @@ internal class LowestConnection(
     private val repository: LocationsRepository,
     private val onSelected: suspend () -> Unit
 ) {
-    suspend fun run() {
+    suspend fun run(preferredLocationIds: List<String>? = null) {
         val selected = repository.getActiveLocation() ?: return
         val subscription = selected.subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return
         val candidates = repository.getAllLocations().filter {
@@ -43,12 +43,23 @@ internal class LowestConnection(
         // iOS. Wait for the old tunnel to stop before ranking any destination.
         if (!stopAndWait()) return
         var expectedId = selected.storageId
-        val ranked = rank(candidates, selected.storageId)
+        val ranked = if (preferredLocationIds == null) {
+            rank(candidates, selected.storageId)
+        } else {
+            // The Connect flow has already measured every visible candidate and
+            // rendered those results. Reusing that exact order avoids a second,
+            // hidden probe pass whose winner could disagree with the list.
+            val order = preferredLocationIds.withIndex().associate { it.value to it.index }
+            candidates.sortedWith(
+                compareBy<LocationEntry> { order[it.storageId] ?: Int.MAX_VALUE }
+                    .thenBy { if (it.storageId == selected.storageId) 0 else 1 }
+            )
+        }
         var attempts = 0
         for (candidate in ranked) {
             currentCoroutineContext().ensureActive()
             if (repository.getActiveLocationId() != expectedId) return
-            if (!repository.getSubscriptionSettings().autoSelectLowest) return
+            if (!repository.getSubscriptionSettings().lowestEnabledFor(subscription)) return
             val fresh = repository.getAllLocations().firstOrNull { it.storageId == candidate.storageId }
             // Never resurrect a deleted/replaced entry from the ranking snapshot.
             if (fresh == null || fresh.subscriptionUrl?.trim() != subscription ||
@@ -58,7 +69,7 @@ internal class LowestConnection(
                 delay(RETRY_DELAY_MS)
                 currentCoroutineContext().ensureActive()
                 if (repository.getActiveLocationId() != expectedId) return
-                if (!repository.getSubscriptionSettings().autoSelectLowest) return
+                if (!repository.getSubscriptionSettings().lowestEnabledFor(subscription)) return
             }
             currentCoroutineContext().ensureActive()
             // A VPN started from system settings during our wait wins too.

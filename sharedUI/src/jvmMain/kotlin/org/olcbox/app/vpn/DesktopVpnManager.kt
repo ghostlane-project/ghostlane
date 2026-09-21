@@ -22,9 +22,9 @@ import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.DesktopChannelProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
-import org.olcbox.app.net.PathLatency
 import org.olcbox.app.net.Routing
 import org.olcbox.app.vpn.desktop.TunnelDaemonProtocol
 import org.olcbox.app.data.repository.LocationsRepository
@@ -167,7 +167,8 @@ class DesktopVpnManager private constructor(
     /**
      * olcRTC is addressed by a room on somebody else's SFU and has no host to
      * reach, so its own prober is the only measurement. Everything else names a
-     * server in its link, and [PathLatency] can measure the route to it.
+     * server in its link, and [DesktopChannelProbe] can measure real HTTP
+     * through an isolated instance of that outbound.
      *
      * Until this existed the base implementation answered for olcRTC alone, and
      * a subscription of Reality and Hysteria2 met "Nothing here can be measured"
@@ -208,8 +209,8 @@ class DesktopVpnManager private constructor(
         }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
-            val (host, port) = serverEndpoint(config) ?: return null
-            return withContext(Dispatchers.IO) { PathLatency.measure(host, port) }
+            val spec = config.rawLink?.let(LinkParser::parse) ?: return null
+            return DesktopChannelProbe.measure(spec)
         }
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
