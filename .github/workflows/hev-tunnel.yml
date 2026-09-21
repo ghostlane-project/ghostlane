@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 40
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Pins match scripts/hev-pins.sh
         run: |
@@ -48,7 +48,7 @@ jobs:
 
       - name: Cache built framework
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: dist/frameworks
           key: hev-socks5-tunnel-${{ env.HEV_COMMIT }}-b${{ env.HEV_BUILD }}-${{ hashFiles('scripts/build-hev-ios.sh', 'scripts/hev-pins.sh') }}
@@ -82,7 +82,7 @@ jobs:
           zip -qry ../HevSocks5Tunnel-ios.zip HevSocks5Tunnel.xcframework
           ls -la ../
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hev-socks5-tunnel
           path: dist/*.zip

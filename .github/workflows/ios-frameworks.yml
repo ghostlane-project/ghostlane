@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The pins above have to be a copy — a job-level cache key cannot be
       # computed from a sourced shell file — so the copy is checked instead of
@@ -75,7 +75,7 @@ jobs:
 
       - name: Cache built framework
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: dist/frameworks
           # cores-pins.sh is in the hash because the tag now carries a build
@@ -105,7 +105,7 @@ jobs:
           zip -qry ../Cores-ios.zip Cores.xcframework
           ls -la ../
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios-cores
           path: dist/*.zip
