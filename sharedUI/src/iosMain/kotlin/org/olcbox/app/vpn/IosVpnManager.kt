@@ -402,7 +402,7 @@ class IosVpnManager(
             lastReadyMark = timeSource.markNow()
             startWatchdog()
             if (location.kind == LocationKind.Hysteria2 && udpFailoverArmed) {
-                scope.launch { checkHysteria2Carries(requestedGeneration) }
+                scope.launch { checkHysteria2Carries(location, requestedGeneration) }
             }
         } else {
             val message = result.message ?: "packet tunnel start failed"
@@ -634,7 +634,7 @@ class IosVpnManager(
      *
      * ai-generated: the whole function.
      */
-    private suspend fun checkHysteria2Carries(requestedGeneration: Long) {
+    private suspend fun checkHysteria2Carries(connected: LocationConfig, requestedGeneration: Long) {
         val started = timeSource.markNow()
         repeat(UDP_PROBE_ATTEMPTS) {
             if (requestedGeneration != generation || !desiredConnected) return
@@ -643,7 +643,11 @@ class IosVpnManager(
         if (requestedGeneration != generation || !desiredConnected || !udpFailoverArmed) return
 
         val silence = started.elapsedNow().inWholeSeconds
+        // The entry this tunnel was built from, not merely whatever is active
+        // now: a selection that moved without a restart would otherwise have
+        // us look for an alternative to a location that is not carrying this.
         val failed = locationsRepository.getActiveLocation()
+            ?.takeIf { it.location.normalized() == connected }
         val alternative = failed?.let {
             UdpBlockedFailover.tcpAlternative(it, locationsRepository.getAllLocations())
         }
