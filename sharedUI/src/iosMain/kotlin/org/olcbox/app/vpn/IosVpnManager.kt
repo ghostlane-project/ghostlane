@@ -38,6 +38,9 @@ import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.TunnelVerifier
+import org.olcbox.app.net.UdpBlockedFailover
+import org.olcbox.app.net.transportKind
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.OlcrtcDirectRules
@@ -92,6 +95,15 @@ class IosVpnManager(
     private var watchdogJob: Job? = null
     private var reconnectJob: Job? = null
     private var reconnectAttempt = 0
+    /**
+     * Whether a Hysteria2 tunnel that turns out to carry nothing may still be
+     * replaced by the same exit over TCP this time round.
+     *
+     * Armed by a deliberate start and spent by the switch it causes, so the
+     * app moves the user at most once per connect and never argues with a
+     * choice they have just made (#27).
+     */
+    private var udpFailoverArmed = false
     private val timeSource = TimeSource.Monotonic
     private var lastReadyMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var lastStopMark: TimeSource.Monotonic.ValueTimeMark? = null
@@ -137,6 +149,7 @@ class IosVpnManager(
     override fun startVpn() {
         desiredConnected = true
         reconnectAttempt = 0
+        udpFailoverArmed = true
         reconnectJob?.cancel()
         val requestedGeneration = ++generation
         operationJob = scope.launch {
@@ -162,6 +175,7 @@ class IosVpnManager(
 
     override fun stopVpn() {
         desiredConnected = false
+        udpFailoverArmed = false
         activeConfig = null
         lastStopMark = timeSource.markNow()
         watchdogJob?.cancel()
@@ -382,6 +396,9 @@ class IosVpnManager(
             reconnectAttempt = 0
             lastReadyMark = timeSource.markNow()
             startWatchdog()
+            if (location.kind == LocationKind.Hysteria2 && udpFailoverArmed) {
+                scope.launch { checkHysteria2Carries(requestedGeneration) }
+            }
         } else {
             val message = result.message ?: "packet tunnel start failed"
             setStatus(VpnStatus.Error(message))
@@ -596,6 +613,51 @@ class IosVpnManager(
         PlatformCrypto.sha256(room.encodeToByteArray())
             .take(4)
             .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+    /**
+     * Whether a Hysteria2 tunnel the system has brought up is carrying
+     * anything, and what to do when it is not.
+     *
+     * A carrier that kills QUIC leaves everything looking right: NEVPN says
+     * connected, the extension is alive, and its UDP sessions wait for packets
+     * that never come (#27). The probe is the honest question — do a few
+     * hundred bytes reach either of two well-known endpoints — and on iOS it
+     * needs no proxy, because our own request already rides the system tunnel.
+     *
+     * Two failures is the verdict: one endpoint can be slow or blocked without
+     * the tunnel being dead.
+     *
+     * ai-generated: the whole function.
+     */
+    private suspend fun checkHysteria2Carries(requestedGeneration: Long) {
+        val started = timeSource.markNow()
+        repeat(UDP_PROBE_ATTEMPTS) {
+            if (requestedGeneration != generation || !desiredConnected) return
+            if (TunnelVerifier.verifySystemTunnel(timeoutMs = UDP_PROBE_TIMEOUT_MS) != null) return
+        }
+        if (requestedGeneration != generation || !desiredConnected || !udpFailoverArmed) return
+
+        val silence = started.elapsedNow().inWholeSeconds
+        val failed = locationsRepository.getActiveLocation()
+        val alternative = failed?.let {
+            UdpBlockedFailover.tcpAlternative(it, locationsRepository.getAllLocations())
+        }
+        if (failed == null || alternative == null) {
+            addLog("hy2 carried nothing for ${silence}s (udp likely blocked); no TCP transport for this exit")
+            return
+        }
+        // Spent before the switch, so a second verdict in this session cannot
+        // move the user again. The restart goes through startVpn(), which arms
+        // it afresh for whatever the user connects to next; the transport it
+        // lands on now rides TCP, so this check does not run for it.
+        udpFailoverArmed = false
+        addLog(
+            "hy2 carried nothing for ${silence}s (udp likely blocked); " +
+                "switching to ${alternative.location.transportKind().label()}"
+        )
+        locationsRepository.setActiveLocationId(alternative.storageId)
+        startVpn()
+    }
 
     private fun stopOlcRtc(): IosBridgeResult {
         return runCatching {
@@ -912,3 +974,9 @@ class IosVpnManager(
         const val CREDENTIAL_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
     }
 }
+
+/** How many times a Hysteria2 tunnel is asked to carry something before it is called dead. */
+private const val UDP_PROBE_ATTEMPTS = 2
+
+/** The budget for one of those attempts. Two of them is the whole verdict. */
+private const val UDP_PROBE_TIMEOUT_MS = 8_000L
