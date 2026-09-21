@@ -31,6 +31,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Apple compilation bills a macOS runner at ten times the rate, so it does
+  # not run on every push — but the shared Kotlin is where an Apple-only break
+  # hides, and the one that got through (a JVM-only MutableMap.remove overload,
+  # #44) left main unbuildable for iOS and macOS until someone asked by hand.
+  # So: automatic exactly where it can tell us something.
+  #
+  # ai-generated: the whole job.
+  scope:
+    if: github.event_name != 'workflow_dispatch'
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      shared_kotlin: ${{ steps.paths.outputs.shared_kotlin }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: paths
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base=$(git rev-parse HEAD~1 2>/dev/null || true)
+          fi
+          if [ -z "$base" ]; then
+            echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$base" HEAD || true)
+          if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$'; then
+            echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
+            echo 'Apple compilation runs: this change touches the shared Kotlin.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'shared_kotlin=false' >> "$GITHUB_OUTPUT"
+            echo 'Apple compilation skipped: nothing under the shared Kotlin changed.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   checks:
     if: github.event_name != 'workflow_dispatch'
     name: Gradle checks
@@ -187,8 +225,13 @@ jobs:
           for f in scripts/olcrtc-pin.sh scripts/gate-*.sh; do bash -n "$f"; done
 
   apple-compile:
-    # Manual only: Apple compilation should not bill a macOS runner on each push.
-    if: github.event_name == 'workflow_dispatch' && inputs.apple_compile
+    # On a change to the shared Kotlin, and on request. Anything else would
+    # bill a macOS runner at ten times the rate to compile what has not moved.
+    needs: scope
+    if: >-
+      always() &&
+      ((github.event_name == 'workflow_dispatch' && inputs.apple_compile) ||
+       needs.scope.outputs.shared_kotlin == 'true')
     name: Apple Kotlin compilation
     runs-on: macos-latest
     timeout-minutes: 25
