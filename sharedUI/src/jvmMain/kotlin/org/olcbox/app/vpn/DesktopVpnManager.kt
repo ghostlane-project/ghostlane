@@ -388,19 +388,27 @@ class DesktopVpnManager private constructor(
             // by policy and by metric, and a direct socket from the core would
             // enter them; they stay global until they have a way out.
             val routingSettings = locationsRepository.getRoutingSettings()
-            val routingMode = routingSettings.mode
             val verboseLogs = routingSettings.verboseDebugLogs
-            val bypassApplies = routingMode == RoutingMode.BypassRussia &&
+            // Only a regional bypass needs rule-set routing. Global retains
+            // the existing desktop core and tunnel configuration.
+            val rulesRequested = routingSettings.mode.region != null
+            val rulesApply = rulesRequested &&
                 (desktopMode == DesktopMode.SystemProxy || desktopMode == DesktopMode.MacTun)
-            if (routingMode == RoutingMode.BypassRussia && !bypassApplies) {
+            if (rulesRequested && !rulesApply) {
                 addLog("Routing: $desktopMode keeps everything through the tunnel for now")
-            } else if (bypassApplies) {
-                addLog("Routing: ${routingMode.hubSummary()}")
+            } else if (rulesApply) {
+                addLog("Routing: ${routingSettings.mode.hubSummary()}")
             }
             // In the proxy the rules live in the core; in the macOS tunnel they
             // live in the daemon, and the core stays as it was.
-            val coreRouting: Routing = if (bypassApplies && desktopMode == DesktopMode.SystemProxy) {
-                Routing.BypassRussia(installRuleSets().toString(), DirectDns.System)
+            val coreRouting: Routing = if (rulesApply && desktopMode == DesktopMode.SystemProxy) {
+                val routing = Routing.Rules(
+                    DesktopPaths.appDataDir().resolve("rulesets").toString(),
+                    DirectDns.System,
+                    requireNotNull(routingSettings.mode.region)
+                )
+                installRuleSets(routing)
+                routing
             } else {
                 Routing.Global
             }
@@ -444,7 +452,7 @@ class DesktopVpnManager private constructor(
                     socksPort = socksSettings.port,
                     requestGeneration = requestGeneration
                 )
-                if (coreRouting is Routing.BypassRussia) {
+                if (coreRouting is Routing.Rules) {
                     frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
                 }
             } else {
@@ -464,19 +472,30 @@ class DesktopVpnManager private constructor(
                     isOlcrtc,
                     socksSettings
                 )
-                DesktopMode.MacTun -> startMacTun(
-                    corePort = effectiveSocksPort,
-                    isOlcrtc = isOlcrtc,
-                    socksSettings = socksSettings,
-                    location = location,
-                    routing = if (bypassApplies) {
-                        Routing.BypassRussia(TunnelDaemonProtocol.RULES_DIR, DirectDns.System)
+                DesktopMode.MacTun -> {
+                    val daemonRouting = if (rulesApply) {
+                        Routing.Rules(
+                            TunnelDaemonProtocol.RULES_DIR,
+                            DirectDns.System,
+                            requireNotNull(routingSettings.mode.region)
+                        )
                     } else {
                         Routing.Global
-                    },
-                    verboseLogs = verboseLogs,
-                    ruleFiles = if (bypassApplies) daemonRuleFiles() else emptyMap()
-                )
+                    }
+                    startMacTun(
+                        corePort = effectiveSocksPort,
+                        isOlcrtc = isOlcrtc,
+                        socksSettings = socksSettings,
+                        location = location,
+                        routing = daemonRouting,
+                        verboseLogs = verboseLogs,
+                        ruleFiles = if (daemonRouting is Routing.Rules) {
+                            daemonRuleFiles(daemonRouting)
+                        } else {
+                            emptyMap()
+                        }
+                    )
+                }
                 DesktopMode.SystemProxy ->
                     startSystemProxy(
                         // The cores and the front listen without authentication;
@@ -814,7 +833,7 @@ class DesktopVpnManager private constructor(
         // Which processes must be alive once the port answers. A port that
         // answers proves nothing about who answers.
         val alive: () -> Boolean
-        if (xhttp != null && routing is Routing.BypassRussia) {
+        if (xhttp != null && routing is Routing.Rules) {
             // Xray does not route; sing-box does, so it goes in front.
             val xrayPort = allocateVerifyPort(port)
             xrayCore.start(
@@ -873,7 +892,7 @@ class DesktopVpnManager private constructor(
      */
     private suspend fun startOlcRtcFront(
         socksSettings: DesktopSocksProxySettings,
-        routing: Routing.BypassRussia,
+        routing: Routing.Rules,
         verboseLogs: Boolean
     ): Int {
         stopDesktopCores()
@@ -905,18 +924,17 @@ class DesktopVpnManager private constructor(
      * proxy's core. Rewritten on every start: 59 KB, and the alternative is
      * a version check that can be wrong.
      */
-    private suspend fun installRuleSets(): Path {
-        val dir = DesktopPaths.appDataDir().resolve("rulesets")
+    private suspend fun installRuleSets(routing: Routing.Rules) {
+        val dir = Path.of(routing.ruleSetDir)
         Files.createDirectories(dir)
-        for (file in org.olcbox.app.net.RuleSets.all) {
+        for (file in org.olcbox.app.net.RuleSets.selected(routing)) {
             Files.write(dir.resolve(file.name), org.olcbox.app.net.RuleSets.bytes(file))
         }
-        return dir
     }
 
     /** The same files for the macOS daemon, which writes them itself, root-owned. */
-    private suspend fun daemonRuleFiles(): Map<String, String> =
-        org.olcbox.app.net.RuleSets.all.associate {
+    private suspend fun daemonRuleFiles(routing: Routing.Rules): Map<String, String> =
+        org.olcbox.app.net.RuleSets.selected(routing).associate {
             it.name to java.util.Base64.getEncoder().encodeToString(org.olcbox.app.net.RuleSets.bytes(it))
         }
 

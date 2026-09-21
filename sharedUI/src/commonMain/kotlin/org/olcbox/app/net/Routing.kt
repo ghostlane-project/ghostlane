@@ -1,8 +1,8 @@
 package org.olcbox.app.net
 
 /**
- * What sing-box does with a connection: everything through the tunnel, or the
- * split this app calls Bypass Russia.
+ * What sing-box does with a connection: everything through the tunnel, or a
+ * regional split where matching destinations use the physical network.
  *
  * A builder-level model, deliberately separate from the persisted setting
  * ([org.olcbox.app.data.model.RoutingMode]): the setting is one word, this is
@@ -13,15 +13,33 @@ sealed interface Routing {
     /** Everything through the tunnel: the shape every builder emitted before routing existed. */
     data object Global : Routing
 
+    sealed interface RuleBased : Routing {
+        val ruleSetDir: String
+        val directDns: DirectDns
+        val region: String
+    }
+
+    /** The original iOS routing shape, kept stable for its Xray and olcRTC paths. */
+    data class BypassRussia(
+        override val ruleSetDir: String,
+        override val directDns: DirectDns
+    ) : RuleBased {
+        override val region: String = "ru"
+    }
+
     /**
-     * Russian destinations and the local network go straight out; everything
-     * else rides the tunnel, name resolution included.
+     * Destinations for [region] and the local network go straight out;
+     * everything else rides the tunnel, name resolution included.
      *
      * [ruleSetDir] holds the files in [RuleSets]. Absolute where the app knows
      * the path (Android); relative to the core's working directory where only
      * the extension does (iOS, [RuleSets.IOS_RELATIVE_DIR]).
      */
-    data class BypassRussia(val ruleSetDir: String, val directDns: DirectDns) : Routing
+    data class Rules(
+        override val ruleSetDir: String,
+        override val directDns: DirectDns,
+        override val region: String
+    ) : RuleBased
 }
 
 /**

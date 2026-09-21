@@ -547,7 +547,9 @@ class IosVpnManager(
      */
     private fun routing(mode: RoutingMode): Routing =
         when (mode) {
-            RoutingMode.Global -> Routing.Global
+            RoutingMode.Global,
+            RoutingMode.BypassIran,
+            RoutingMode.BypassChina -> Routing.Global
             RoutingMode.BypassRussia -> {
                 addLog("Routing: ${mode.hubSummary()}")
                 Routing.BypassRussia(RuleSets.IOS_RELATIVE_DIR, DirectDns.Placeholder)

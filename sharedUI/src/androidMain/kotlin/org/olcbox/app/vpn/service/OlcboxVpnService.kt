@@ -707,7 +707,7 @@ class OlcboxVpnService : VpnService() {
         return if (location.kind == LocationKind.Olcrtc) {
             activeCorePort = null
             val started = startMobile(location, upstream, requestedGeneration, setErrorOnFailure)
-            if (started && routing is Routing.BypassRussia) startFront(routing, setErrorOnFailure) else started
+            if (started && routing is Routing.Rules) startFront(routing, setErrorOnFailure) else started
         } else {
             startCore(location, setErrorOnFailure, routing)
         }
@@ -719,7 +719,7 @@ class OlcboxVpnService : VpnService() {
      * the promised endpoint is olcRTC's own port, and a front there would be a
      * second port nobody was told about.
      */
-    private suspend fun startFront(routing: Routing.BypassRussia, setErrorOnFailure: Boolean): Boolean {
+    private suspend fun startFront(routing: Routing.Rules, setErrorOnFailure: Boolean): Boolean {
         if (connectionMode != AndroidConnectionMode.Tun) {
             addLog("Routing: proxy mode keeps olcRTC global")
             return true
@@ -803,7 +803,7 @@ class OlcboxVpnService : VpnService() {
             // Which processes must be alive once the port answers. A port that
             // answers proves nothing about who answers.
             val alive: () -> Boolean
-            val fronted = routing is Routing.BypassRussia && connectionMode == AndroidConnectionMode.Tun
+            val fronted = routing is Routing.Rules && connectionMode == AndroidConnectionMode.Tun
             if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
                 if (fronted) {
                     // Xray does not route; sing-box does, so it goes in front.
@@ -826,7 +826,7 @@ class OlcboxVpnService : VpnService() {
                     diagnose = { singBoxCore.diagnostics() + "\n" + xrayCore.diagnostics() }
                     alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
                 } else {
-                    if (routing is Routing.BypassRussia) addLog("Routing: proxy mode keeps xhttp global")
+                    if (routing is Routing.Rules) addLog("Routing: proxy mode keeps xhttp global")
                     xrayCore.start(
                         XrayConfig.buildXhttp(spec, socksPort = port, verboseLogs = verboseDebugLogs)
                     )
@@ -1733,20 +1733,28 @@ class OlcboxVpnService : VpnService() {
      * network's resolvers for direct names. Files are rewritten on every start —
      * 59 KB, and the alternative is a version check that can be wrong.
      */
-    private suspend fun routingFor(upstream: Network?): Routing = when (routingMode) {
-        RoutingMode.Global -> Routing.Global
-        RoutingMode.BypassRussia -> {
-            val dir = File(filesDir, RULE_SETS_DIR).apply { mkdirs() }
-            for (file in RuleSets.all) File(dir, file.name).writeBytes(RuleSets.bytes(file))
-            addLog("Routing: ${routingMode.hubSummary()}")
-            Routing.BypassRussia(
-                ruleSetDir = dir.absolutePath,
-                directDns = DirectDns.Servers(upstreamDnsAddresses(upstream))
-            )
-        }
+    private suspend fun routingFor(upstream: Network?): Routing {
+        // Android itself blocks IPv6 at the VpnService boundary.
+        // Do not insert an extra sing-box front for a plain Global connection:
+        // it changes the olcRTC data path even though no domain/IP rules exist.
+        if (routingMode == RoutingMode.Global) return Routing.Global
+
+        val dir = File(filesDir, RULE_SETS_DIR).apply { mkdirs() }
+        val routing = Routing.Rules(
+            ruleSetDir = dir.absolutePath,
+            // Use the resolver supplied by the active physical network. This
+            // preserves captive portals, private DNS and carrier-specific RU
+            // answers. DirectDns.Servers supplies the public fallback only
+            // when Android reports no usable resolver.
+            directDns = DirectDns.Servers(upstreamDnsAddresses(upstream)),
+            region = requireNotNull(routingMode.region)
+        )
+        for (file in RuleSets.selected(routing)) File(dir, file.name).writeBytes(RuleSets.bytes(file))
+        addLog("Routing: ${routingMode.hubSummary()}")
+        return routing
     }
 
-    /** The network's resolvers as the system lists them, for the direct DNS server. */
+    /** The active physical network's resolvers, before the VPN replaces DNS. */
     private fun upstreamDnsAddresses(network: Network?): List<String> =
         network?.let { connectivityManager.getLinkProperties(it)?.dnsServers }
             ?.mapNotNull { it.hostAddress }

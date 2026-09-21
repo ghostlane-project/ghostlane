@@ -757,6 +757,61 @@ class SingBoxConfigTest {
         }
     }
 
+    @Test fun iranAndChinaReuseTheExistingBypassDnsRouteAndOutboundShapes() {
+        for ((region, selected) in listOf(
+            "ir" to RuleSets.regional("ir"),
+            "cn" to RuleSets.regional("cn")
+        )) {
+            val routing = Routing.Rules("/data/rules", DirectDns.Servers(listOf("10.20.30.40")), region)
+            val configs = mapOf(
+                "android-core" to SingBoxConfig.build(vless(), routing = routing),
+                "xhttp-front" to SingBoxConfig.buildSocksChain(10808, routing = routing),
+                "olcrtc-front" to SingBoxConfig.buildSocksChain(10808, username = "u", password = "p", routing = routing)
+            )
+            for ((shape, config) in configs) {
+                val doc = obj(config)
+                val dns = doc["dns"]!!.jsonObject
+                assertNull(dns["strategy"], "$region/$shape")
+                assertNull(dns["independent_cache"], "$region/$shape")
+                assertEquals("udp", str(dnsServers(config)[0], "type"), "$region/$shape")
+                assertEquals("out", str(dnsServers(config)[0], "detour"), "$region/$shape")
+                assertEquals("10.20.30.40", str(dnsServers(config)[1], "server"), "$region/$shape")
+                val dnsRules = dns["rules"]!!.jsonArray.map { it.jsonObject }
+                assertEquals(1, dnsRules.size, "$region/$shape")
+                assertEquals(selected.filter { it.name.startsWith("geosite-") }.map { it.tag },
+                    strings(dnsRules.single(), "rule_set"), "$region/$shape")
+                val route = doc["route"]!!.jsonObject
+                assertEquals(selected.map { it.tag },
+                    route["rule_set"]!!.jsonArray.map { str(it.jsonObject, "tag") }, "$region/$shape")
+                val rules = routeRules(config)
+                assertEquals(4, rules.size, "$region/$shape")
+                assertEquals(true, rules[2]["ip_is_private"]!!.jsonPrimitive.content.toBoolean(), "$region/$shape")
+                assertEquals(selected.map { it.tag }, strings(rules[3], "rule_set"), "$region/$shape")
+                assertEquals("direct", str(rules[3], "outbound"), "$region/$shape")
+                assertEquals("out", str(route, "final"), "$region/$shape")
+                assertEquals(listOf("out", "direct"),
+                    doc["outbounds"]!!.jsonArray.map { str(it.jsonObject, "tag") }, "$region/$shape")
+            }
+
+            val desktop = obj(SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                routing = routing,
+                bindInterface = "en0"
+            ))
+            val desktopDns = desktop["dns"]!!.jsonObject
+            assertNull(desktopDns["strategy"], "$region/desktop")
+            assertNull(desktopDns["independent_cache"], "$region/desktop")
+            assertEquals(selected.map { it.tag }, desktop["route"]!!.jsonObject["rule_set"]!!.jsonArray
+                .map { str(it.jsonObject, "tag") }, "$region/desktop")
+            val desktopRules = desktop["route"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(listOf("sniff", "hijack-dns"), desktopRules.take(2).map { str(it, "action") })
+            assertEquals(selected.map { it.tag }, strings(desktopRules[3], "rule_set"))
+            assertEquals("reject", str(desktopRules.last(), "action"))
+            assertEquals(6, desktopRules.last()["ip_version"]!!.jsonPrimitive.content.toInt())
+        }
+    }
+
     @Test fun detailedLoggingIsExplicitAndCoversEveryCoreShape() {
         val detailed = mapOf(
             "socks" to SingBoxConfig.build(vless(), verboseLogs = true),

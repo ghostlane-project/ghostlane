@@ -183,6 +183,8 @@ fun ApplicationSettingsSheet(
     /** What leaves through the tunnel. See [RoutingSettings]. */
     routingSettings: RoutingSettings = RoutingSettings(),
     onRoutingSettingsChanged: (RoutingSettings) -> Unit = {},
+    routingModes: List<RoutingMode> = RoutingMode.entries,
+    compactRouting: Boolean = true,
     /**
      * Why the choice cannot be made on this platform, when it cannot. Shown
      * under the cards, which are then not selectable. Null where it applies.
@@ -317,12 +319,24 @@ fun ApplicationSettingsSheet(
                     onBack = { route = SharedSettingsRoute.Connection }
                 )
 
-                SharedSettingsRoute.Routing -> SharedRoutingSettingsContent(
-                    settings = routingSettings,
-                    unavailableReason = routingUnavailableReason,
-                    onChanged = onRoutingSettingsChanged,
-                    onBack = { route = SharedSettingsRoute.Hub }
-                )
+                SharedSettingsRoute.Routing -> if (compactRouting) {
+                    RoutingSettingsScreen(
+                        settings = routingSettings,
+                        enabled = routingUnavailableReason == null,
+                        availableModes = routingModes,
+                        unavailableReason = routingUnavailableReason,
+                        onChanged = onRoutingSettingsChanged,
+                        onBack = { route = SharedSettingsRoute.Hub }
+                    )
+                } else {
+                    SharedRoutingSettingsContent(
+                        settings = routingSettings,
+                        availableModes = routingModes,
+                        unavailableReason = routingUnavailableReason,
+                        onChanged = onRoutingSettingsChanged,
+                        onBack = { route = SharedSettingsRoute.Hub }
+                    )
+                }
 
                 SharedSettingsRoute.SocksProxy -> if (socksProxySettings != null) {
                     SharedSocksProxySettingsContent(
@@ -609,6 +623,7 @@ private fun SharedConnectionModeSettingsContent(
 @Composable
 private fun SharedRoutingSettingsContent(
     settings: RoutingSettings,
+    availableModes: List<RoutingMode>,
     unavailableReason: String?,
     onChanged: (RoutingSettings) -> Unit,
     onBack: () -> Unit
@@ -628,7 +643,7 @@ private fun SharedRoutingSettingsContent(
         Spacer(Modifier.height(20.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            RoutingMode.entries.forEach { mode ->
+            availableModes.forEach { mode ->
                 SharedSelectableSettingsCard(
                     selected = settings.mode == mode,
                     icon = if (mode == RoutingMode.Global) PkIcons.Public else PkIcons.SwapVert,
@@ -642,8 +657,6 @@ private fun SharedRoutingSettingsContent(
 
         Spacer(Modifier.height(16.dp))
 
-        // What "Russia" means here, because a list has edges and the person
-        // choosing this deserves to know where they are.
         Text(
             text = unavailableReason
                 ?: "Russian destinations are matched by lists bundled with the app: " +
