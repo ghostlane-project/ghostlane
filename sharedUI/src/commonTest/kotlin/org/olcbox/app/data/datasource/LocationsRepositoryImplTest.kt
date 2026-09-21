@@ -1277,6 +1277,50 @@ class LocationsRepositoryImplTest {
         assertEquals("olcrtc://crypt1/blob", entry.normalized().subscriptionOriginLink)
     }
 
+    @Test
+    fun importsTheRoomsHeaderAndKeepsItInTheStoredEntry() = runTest {
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(source)
+        val key = "a".repeat(64)
+        val input = """
+            olcrtc://telemost?vp8channel@11115586048655#$key${'$'}Israel
+            ##name: IL-1
+            ##rooms: 81055221156696, 52664279650262 11115586048655
+        """.trimIndent()
+
+        assertTrue(repo.importText(input))
+
+        val entry = repo.getAllLocations().single()
+        assertEquals(listOf("81055221156696", "52664279650262"), entry.location.failoverRoomIds)
+        assertEquals(
+            listOf("11115586048655", "81055221156696", "52664279650262"),
+            entry.location.failoverRooms()
+        )
+        // The stored shape carries them too. A list that lived only in the
+        // parse was dropped on save, and the one room the client then knew was
+        // the one the server was about to retire.
+        assertEquals(
+            listOf("81055221156696", "52664279650262"),
+            source.stored?.locations?.single()?.failoverRooms
+        )
+    }
+
+    @Test
+    fun refreshReplacesTheFailoverRoomsWithWhatTheServerAdvertisesNow() = runTest {
+        val key = "c".repeat(64)
+        var body = "olcrtc://telemost?vp8channel@R1#$key${'$'}Room\n##rooms: R2"
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(source, HttpClient(MockEngine { respond(body) }))
+        assertTrue(repo.importText("https://example.test/sub"))
+        assertEquals(listOf("R1", "R2"), repo.getActiveLocation()?.location?.failoverRooms())
+
+        // The server retired R1 and now serves R2 with R3 on standby.
+        body = "olcrtc://telemost?vp8channel@R2#$key${'$'}Room\n##rooms: R3"
+        repo.refreshSubscriptions()
+
+        assertEquals(listOf("R2", "R3"), repo.getActiveLocation()?.location?.failoverRooms())
+    }
+
     private class FakeLocationsDataSource(
         var stored: LocationBundleV4? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),

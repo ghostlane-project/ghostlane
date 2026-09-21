@@ -42,4 +42,37 @@ class JvmLocationsDataSourceImplTest {
 
         assertEquals("install-test", source.loadDeviceIdentity())
     }
+
+    @Test
+    fun keepsFailoverRoomsAcrossASaveAndLoad() = runTest {
+        val dir = Files.createTempDirectory("olcbox-failover-rooms-test")
+        val source = JvmLocationsDataSourceImpl(dir)
+        val bundle = LocationBundleV4(
+            activeLocationId = "desk",
+            locations = listOf(
+                LocationEntry.from(
+                    "desk",
+                    LocationConfig(
+                        name = "Desktop",
+                        id = "11115586048655",
+                        key = "a".repeat(64),
+                        bypassProvider = LocationConfig.PROVIDER_TELEMOST,
+                        failoverRoomIds = listOf("81055221156696")
+                    )
+                )
+            )
+        )
+
+        source.saveLocationBundle(bundle)
+
+        // The standby has to survive storage: it is the only room the client
+        // can move to when the server retires the primary.
+        val loaded = source.loadLocationBundle()
+        assertNotNull(loaded)
+        assertEquals(listOf("81055221156696"), loaded.locations.first().location.failoverRoomIds)
+        assertEquals(
+            listOf("11115586048655", "81055221156696"),
+            loaded.locations.first().location.failoverRooms()
+        )
+    }
 }
