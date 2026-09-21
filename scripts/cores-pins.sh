@@ -175,7 +175,14 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # waiting for liveness to notice, and it takes a run of refusals - not one - to
 # call an exit IPv6-less.
 #
-# 1afdb706d5f9 -> b1dfbacc8df0: a client that stops tells the server instead of leaving it to liveness (#23); a Jitsi client addresses the server rather than the whole room, which is what was filling every other client's buffer on the bridge (#25); a detached session's peers are closed together and a room that moves during a reconnect is no longer dropped (#31); and under Bypass a CONNECT to an address the rules do not cover no longer waits out the sniff window before anything is dialed, which every SSH, SMTP, IMAP and database connection was paying (ghostlane#35). Same API.
+# 1afdb706d5f9 -> b1dfbacc8df0: a client that stops tells the server instead
+# of leaving it to liveness (#23); a Jitsi client addresses the server
+# rather than the whole room, which is what was filling every other client's
+# buffer on the bridge (#25); a detached session's peers are closed together
+# and a room that moves during a reconnect is no longer dropped (#31); and
+# under Bypass a CONNECT to an address the rules do not cover no longer
+# waits out the sniff window before anything is dialed, which every SSH,
+# SMTP, IMAP and database connection was paying (ghostlane#35). Same API.
 #
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
@@ -252,7 +259,10 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260921104921-b1dfbacc8df0}"
 # seichannel window, the WB publish ceiling and the reconnect rewrite; same API.
 # 27 -> 28: the engine pin above (1afdb706d5f9), whose API grew the failover
 # room list and the session listener; the extension's RoomKeeper calls both.
-# 28 -> 29: the engine pin above (b1dfbacc8df0); a client that stops tells the server instead of leaving it to liveness (#23); a Jitsi client addresses the server rather than the whole room, which is what was filling every other client's buffer on the bridge (#25); a detached session's peers are closed together and a room that moves during a reconnect is no longer dropped (#31); and under Bypass a CONNECT to an address the rules do not cover no longer waits out the sniff window before anything is dialed, which every SSH, SMTP, IMAP and database connection was paying (ghostlane#35). Same API.
+# 28 -> 29: the engine pin above (b1dfbacc8df0): a stop that tells the peer,
+# a Jitsi client that addresses the server rather than the room, a teardown
+# that closes its peers together and keeps the reconnect it was asked for,
+# and a Bypass sniff that no longer delays a silent connection; same API.
 CORES_BUILD="${CORES_BUILD:-29}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
