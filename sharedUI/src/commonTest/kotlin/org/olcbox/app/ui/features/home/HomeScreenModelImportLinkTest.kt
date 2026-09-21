@@ -146,6 +146,29 @@ class HomeScreenModelImportLinkTest {
         }
     }
 
+    @Test fun preconnectMeasurementCompletesAtItsCallerBudget() = runTest {
+        repository.importText(realityLink)
+        val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            error("Address measurements must not query room occupancy")
+        })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(
+            repository, org.olcbox.app.net.OlcrtcStatusClient(client)
+        )
+        try {
+            val finished = CompletableDeferred<Pair<Int, Int>>()
+            vm.refreshPings(
+                performPing = { awaitCancellation() },
+                canPing = { true },
+                overallDeadlineMs = 50,
+                onComplete = { online, total -> finished.complete(online to total) }
+            )
+            assertEquals(0 to 1, withTimeout(5_000) { finished.await() })
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
+    }
+
     @Test fun migrationDiscardsAnInflightSampleEvenWhenTheConnectionClockIsUnchanged() = runTest {
         val vpn = IdleVpnManager()
         val vm = viewModel(vpn)

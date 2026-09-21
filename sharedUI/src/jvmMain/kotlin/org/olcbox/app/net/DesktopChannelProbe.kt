@@ -14,11 +14,14 @@ internal object DesktopChannelProbe {
     suspend fun measure(spec: OutboundSpec): Long? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(15_000L) {
-                val port = ProbePorts.reserve()
+                var port: Int? = null
                 val usesXray = spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp
-                val singBox = if (usesXray) null else DesktopSingBoxController()
-                val xray = if (usesXray) DesktopXrayController() else null
+                var singBox: DesktopSingBoxController? = null
+                var xray: DesktopXrayController? = null
                 try {
+                    port = ProbePorts.reserve()
+                    singBox = if (usesXray) null else DesktopSingBoxController()
+                    xray = if (usesXray) DesktopXrayController() else null
                     if (usesXray) xray!!.start(XrayConfig.buildXhttp(spec, socksPort = port))
                     else singBox!!.start(SingBoxConfig.build(spec, socksPort = port))
                     val alive = { if (usesXray) xray!!.isRunning() else singBox!!.isRunning() }
@@ -42,7 +45,7 @@ internal object DesktopChannelProbe {
                     withContext(NonCancellable) {
                         singBox?.stop()
                         xray?.stop()
-                        ProbePorts.release(port)
+                        port?.let(ProbePorts::release)
                     }
                 }
             }

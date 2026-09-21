@@ -277,6 +277,7 @@ fun HomeScreen(
 
     fun refreshHttpPings(
         targetLocationIds: List<String>? = null,
+        overallDeadlineMs: Long? = null,
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> }
     ) {
         // The control is always there; the measurement is not always possible.
@@ -306,6 +307,7 @@ fun HomeScreen(
             targetLocationIds = targetLocationIds,
             performPing = { config -> viewModel.performPingFor(config) },
             canPing = { config -> viewModel.canPing(config) },
+            overallDeadlineMs = overallDeadlineMs,
             onComplete = onComplete,
         )
     }
@@ -383,11 +385,15 @@ fun HomeScreen(
     val selectedId = locationViewModel.selectedLocationId
     val selectedItem = locations.firstOrNull { it.storageId == selectedId }
     val selectedConfig = selectedItem?.config
-    val knownSubscriptionUrls = locations.mapNotNull {
-        it.subscriptionUrl?.trim()?.takeIf(String::isNotEmpty)
-    }.toSet()
-    val lowestSubscriptionUrls = knownSubscriptionUrls.filterTo(mutableSetOf()) {
-        subscriptionSettings.lowestEnabledFor(it)
+    val knownSubscriptionUrls = remember(locations) {
+        locations.mapNotNull {
+            it.subscriptionUrl?.trim()?.takeIf(String::isNotEmpty)
+        }.toSet()
+    }
+    val lowestSubscriptionUrls = remember(knownSubscriptionUrls, subscriptionSettings) {
+        knownSubscriptionUrls.filterTo(mutableSetOf()) {
+            subscriptionSettings.lowestEnabledFor(it)
+        }
     }
     val model = rememberBoardModel(
         locations = locations,
@@ -405,11 +411,10 @@ fun HomeScreen(
     }
     val selectedSlots = if (lowestActive) null else selectedId?.let { locationViewModel.olcrtcSlots[it] }
 
-    fun startSelectedConnection() {
-        val selectedSubscription = selectedItem?.subscriptionUrl?.trim()
+    fun startLowestConnection(subscriptionUrl: String) {
         val groupIds = locations.filter {
-            !selectedSubscription.isNullOrEmpty() &&
-                it.subscriptionUrl?.trim() == selectedSubscription
+            it.subscriptionUrl?.trim() == subscriptionUrl.trim() &&
+                it.config?.let(viewModel::canPing) == true
         }.map { it.storageId }
 
         // The busy action is Cancel. Invalidate the completion callback before
@@ -420,17 +425,12 @@ fun HomeScreen(
             onToggleClick()
             return
         }
-        if (state.isVpnConnected || !lowestActive || groupIds.isEmpty()) {
-            onToggleClick()
-            return
-        }
-
         val request = ++lowestMeasureRequest
         // A manual Measure may still be running. Start one complete, coherent
         // snapshot for Connect instead of waiting for only the rows it missed.
         locationViewModel.cancelPings(groupIds)
         viewModel.startVpnContinuation()
-        refreshHttpPings(groupIds) { _, _ ->
+        refreshHttpPings(groupIds, overallDeadlineMs = LOWEST_CONNECT_BUDGET_MS) { _, _ ->
             if (request != lowestMeasureRequest) return@refreshHttpPings
             val pings = locationViewModel.pingSnapshot(groupIds)
             val providerOrder = groupIds.withIndex().associate { it.value to it.index }
@@ -446,6 +446,15 @@ fun HomeScreen(
                 onToggleClick()
             }
         }
+    }
+
+    fun startSelectedConnection() {
+        val selectedSubscription = selectedItem?.subscriptionUrl?.trim()
+        if (!lowestActive || selectedSubscription.isNullOrEmpty()) {
+            onToggleClick()
+            return
+        }
+        startLowestConnection(selectedSubscription)
     }
 
     if (showVpnDisclosure) {
@@ -596,12 +605,12 @@ fun HomeScreen(
                     val selectId = if (alreadyInList) selectedId else fallbackId
                     locationViewModel.selectLocation(selectId ?: fallbackId) {
                         viewModel.loadCurrentConfig()
-                        viewModel.restartVpnIfRunning()
                         if (wasConnected) {
                             scope.launch {
                                 snackbarHostState.showSnackbar("Reconnecting through Lowest")
                             }
                         }
+                        startLowestConnection(subscriptionUrl)
                     }
                 }
             },
@@ -721,6 +730,7 @@ fun HomeScreen(
  * reviewer's eye lands.
  */
 private const val HEADER_TAG = "OLCRTC CORE"
+private const val LOWEST_CONNECT_BUDGET_MS = 6_000L
 
 /** What the status strip's first line says. */
 internal fun statusLabel(

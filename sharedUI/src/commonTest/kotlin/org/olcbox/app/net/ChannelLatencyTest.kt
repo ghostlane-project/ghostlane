@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.HttpMethod
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,6 +37,7 @@ class ChannelLatencyTest {
     @Test fun aResponseTravelsThroughTheRequestedProbeUrl() = runTest { withContext(Dispatchers.Default) {
         val client = HttpClient(MockEngine { request ->
             assertEquals(ChannelLatency.URL, request.url.toString())
+            assertEquals(HttpMethod.Head, request.method)
             assertEquals("no-cache, no-store", request.headers["Cache-Control"])
             respond("", HttpStatusCode.NoContent)
         })

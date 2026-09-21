@@ -233,6 +233,8 @@ class LocationViewModel(
          * the one carrying it, and that is a question about state, not kind.
          */
         canPing: (LocationConfig) -> Boolean = { it.isPingable() },
+        /** A short caller-owned budget for pre-connect ranking; null keeps the board refresh budget. */
+        overallDeadlineMs: Long? = null,
         onComplete: (onlineCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (String) -> Unit = {}
     ) {
@@ -318,7 +320,7 @@ class LocationViewModel(
         deadlineJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val batches = (totalForThisRequest + LOCATION_PING_PARALLELISM - 1) /
                 LOCATION_PING_PARALLELISM
-            val requestDeadline = maxOf(
+            val requestDeadline = overallDeadlineMs ?: maxOf(
                 LOCATION_PING_MINIMUM_DEADLINE_MS,
                 batches * LOCATION_PING_TIMEOUT_MS + LOCATION_PING_DEADLINE_GRACE_MS
             )

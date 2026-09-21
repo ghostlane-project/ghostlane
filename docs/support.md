@@ -27,9 +27,10 @@ connect, try another one from the same list before changing servers.
 
 ## Automatic server choice
 
-In the server-list settings, **Lowest at connect** ranks the list's servers by
-reachability before connecting and starts with the fastest. It is off by
-default. It never joins an olcRTC room just to rank it, and it moves to the next
+The **Lowest latency** row at the top of a measurable server list makes that
+choice local to the list. Connect gives the probes a six-second budget, displays
+and sorts the answers that arrived, then starts with the fastest available
+server. It never joins an olcRTC room just to rank it, and it moves to the next
 server only after a connection fails outright.
 
 ## Latency

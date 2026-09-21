@@ -1,9 +1,10 @@
 # Lowest at connect
 
-An opt-in `auto_select_lowest` flag in the existing subscription settings enables
-app-side selection. Manual remains the default. The coordinator reads the selected
-subscription, ranks its eligible entries using existing address probes while the
-VPN is disconnected, then starts exactly one ordinary platform connection.
+The **Lowest latency** row at the top of each measurable subscription enables
+app-side selection for that list. Manual remains the default. Connect gives the
+list probes a six-second budget, shows and sorts every answer received in that
+window, then starts exactly one ordinary platform connection. The same flow is
+used when switching an already connected tunnel to Lowest.
 
 There are no changes to Xray/sing-box configuration, native bridges or core
 selection. TCP Reality still uses sing-box on iOS. No observatory, balancer,
@@ -11,8 +12,8 @@ per-member SOCKS listeners, new dependency or server component is added.
 
 ## Selection and failure
 
-- Up to 32 native entries are probed, at most three concurrently, within an
-  overall six-second ranking budget. Remaining/failed probes are unknown, not
+- Eligible entries are probed four at a time within an overall six-second
+  pre-connect budget. Remaining/failed probes are unknown, not
   proof of an unusable VPN. The selected entry wins among unknowns and ties;
   other ties retain provider order. Aliases of a connection are deduplicated.
 - These are the platform's existing ICMP/TCP address checks, not throughput or

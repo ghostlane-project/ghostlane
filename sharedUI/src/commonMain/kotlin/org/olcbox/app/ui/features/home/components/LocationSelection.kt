@@ -409,7 +409,7 @@ fun RoomBoard(
                             val selectedServer = group.locations
                                 .firstOrNull { it.storageId == selectedLocationId }
                                 ?.let { locationDisplayParts(it).second }
-                            PkRoomCard(
+                            if (measurable.isNotEmpty()) PkRoomCard(
                                 title = "Lowest latency",
                                 tag = "AUTO",
                                 emoji = "⚡",
@@ -431,7 +431,7 @@ fun RoomBoard(
                                 wire = if (lowestSelected && isConnected && !selectedServer.isNullOrBlank()) {
                                     "CONNECTED VIA $selectedServer"
                                 } else {
-                                    "MEASURE THIS SERVER LIST AND CONNECT TO ITS FASTEST AVAILABLE SERVER"
+                                    "FASTEST AVAILABLE SERVER IN THIS LIST"
                                 },
                                 onClick = { onLowestSelected(groupUrl, first.storageId) },
                                 onMeasure = if (measurable.isNotEmpty()) ({ onMeasure(ids) }) else null
