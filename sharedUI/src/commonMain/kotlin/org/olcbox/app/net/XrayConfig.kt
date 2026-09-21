@@ -80,6 +80,7 @@ object XrayConfig {
         directDns: DirectDns = DirectDns.Placeholder,
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
+        verboseLogs: Boolean = false,
     ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
             ?: error("XrayConfig.buildXhttp requires an xhttp transport")
@@ -96,7 +97,7 @@ object XrayConfig {
         val serverByName = resolvesNames && !isIpLiteral(spec.host)
         val hasDirect = bypass != null || serverByName
         val obj = buildJsonObject {
-            putJsonObject("log") { put("loglevel", "warning") }
+            putJsonObject("log") { put("loglevel", if (verboseLogs) "debug" else "warning") }
             if (resolvesNames) putDns(direct, bypass?.let { geodata }, spec.host.takeIf { serverByName })
             putJsonArray("inbounds") {
                 addJsonObject {

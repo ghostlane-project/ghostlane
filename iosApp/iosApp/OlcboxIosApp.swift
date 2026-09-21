@@ -513,13 +513,24 @@ final class PacketTunnelController: ObservableObject {
     /// Trimmed hard on purpose: this goes on a phone screen under a status pill,
     /// not into a log viewer, and the lines that matter are always the last ones.
     private static func engineLogTail(lines: Int = 4) -> String? {
-        guard let log = shared("olcrtc.log") ?? shared("engine.log") else { return nil }
+        guard let log = shared("olcrtc.log") ?? boundedSharedTail("engine.log") else { return nil }
         let tail = log
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .suffix(lines)
         return tail.isEmpty ? nil : tail.joined(separator: "\n")
+    }
+
+    private static func boundedSharedTail(_ name: String, maxBytes: UInt64 = 65_536) -> String? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.org.proofkit.app"
+        ), let handle = try? FileHandle(forReadingFrom: container.appendingPathComponent(name))
+        else { return nil }
+        defer { handle.closeFile() }
+        let size = handle.seekToEndOfFile()
+        handle.seek(toFileOffset: size > maxBytes ? size - maxBytes : 0)
+        return String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
     }
 
     /// Last line of the extension's memory trace. See MemoryWatch.
@@ -770,8 +781,8 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     /// of the file is the least useful part of it: the reason is at the top of
     /// the crash, and that is what gets kept.
     private static func lastRunStderr(container: URL) -> String? {
-        guard let text = try? String(
-            contentsOf: container.appendingPathComponent("engine.log.old"), encoding: .utf8
+        guard let text = boundedLogHead(
+            url: container.appendingPathComponent("engine.log.old"), maxBytes: 524_288
         ) else { return nil }
 
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -807,7 +818,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             + text + "--- end of the run that died ---"
     }
 
-    func engineLog() -> String {
+    func engineLog(includeDetailedLogs: Bool) -> String {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: Self.appGroupId
         ) else { return "" }
@@ -824,12 +835,14 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         if let died = Self.deadRunTrace(container: container, name: "network-diagnostics-crash.log") {
             both.append(died)
         }
-        both += [
-            "network-diagnostics-prev.log", "network-diagnostics.log", "olcrtc.log", "engine.log",
-        ].compactMap { name -> String? in
-            try? String(
-                contentsOf: container.appendingPathComponent(name), encoding: .utf8
-            )
+        var ordinaryLogs = [
+            "network-diagnostics-prev.log", "network-diagnostics.log", "olcrtc.log",
+        ]
+        if includeDetailedLogs { ordinaryLogs.append("engine.log") }
+        both += ordinaryLogs.compactMap { name -> String? in
+            let url = container.appendingPathComponent(name)
+            if name == "engine.log" { return Self.boundedLogTail(url: url, lines: 400) }
+            return try? String(contentsOf: url, encoding: .utf8)
         }
 
         // First, ahead of everything: why the last run ended, when it said so.
@@ -875,18 +888,36 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             }
         }
 
-        #if DEBUG
-        // Debug builds also carry sing-box's own log (SingBoxDebugLog in the
-        // extension): the last few hundred lines, where the connection being
-        // asked about is.
-        if let singBox = try? String(
-            contentsOf: container.appendingPathComponent("libbox/work/sing-box.log"), encoding: .utf8
-        ) {
-            let tail = singBox.split(separator: "\n", omittingEmptySubsequences: false).suffix(400)
-            both.append("--- sing-box (debug build) ---\n" + tail.joined(separator: "\n"))
+        // When detailed diagnostics were enabled, the extension also carries
+        // sing-box's own log. Export only its bounded tail; Kotlin scrubs every
+        // destination before the support bundle leaves the app.
+        if includeDetailedLogs {
+            if let tail = Self.boundedLogTail(
+                url: container.appendingPathComponent("libbox/work/sing-box.log"), lines: 400
+            ) {
+                both.append("--- sing-box (detailed diagnostics) ---\n" + tail)
+            }
         }
-        #endif
         return both.joined(separator: "\n")
+    }
+
+    private static func boundedLogHead(url: URL, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { handle.closeFile() }
+        let data = handle.readData(ofLength: maxBytes)
+        guard !data.isEmpty else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func boundedLogTail(url: URL, lines: Int, maxBytes: UInt64 = 524_288) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { handle.closeFile() }
+        let size = handle.seekToEndOfFile()
+        handle.seek(toFileOffset: size > maxBytes ? size - maxBytes : 0)
+        let data = handle.readDataToEndOfFile()
+        let text = String(decoding: data, as: UTF8.self)
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
+            .suffix(lines).joined(separator: "\n")
     }
 }
 

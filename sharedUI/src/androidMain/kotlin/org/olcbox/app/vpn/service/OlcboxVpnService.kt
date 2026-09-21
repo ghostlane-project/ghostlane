@@ -156,6 +156,7 @@ class OlcboxVpnService : VpnService() {
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
+    private var verboseDebugLogs = false
 
     /**
      * Whether sing-box is standing in front of olcRTC. Both then have to be
@@ -485,7 +486,9 @@ class OlcboxVpnService : VpnService() {
                         return@withLock
                     }
                     OlcboxVpnState.activeLocation = location.normalized()
-                    routingMode = repository.getRoutingSettings().mode
+                    val routingSettings = repository.getRoutingSettings()
+                    routingMode = routingSettings.mode
+                    verboseDebugLogs = routingSettings.verboseDebugLogs
 
                     if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
                         reconnectTransport(location, requestedGeneration)
@@ -736,7 +739,8 @@ class OlcboxVpnService : VpnService() {
                     socksPort = port,
                     username = socksUsername,
                     password = socksPassword,
-                    routing = routing
+                    routing = routing,
+                    verboseLogs = verboseDebugLogs
                 )
             )
             activeCorePort = port
@@ -801,22 +805,42 @@ class OlcboxVpnService : VpnService() {
             if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
                 if (fronted) {
                     // Xray does not route; sing-box does, so it goes in front.
-                    xrayCore.start(XrayConfig.buildXhttp(spec, socksPort = XRAY_BEHIND_FRONT_PORT))
+                    xrayCore.start(
+                        XrayConfig.buildXhttp(
+                            spec,
+                            socksPort = XRAY_BEHIND_FRONT_PORT,
+                            verboseLogs = verboseDebugLogs
+                        )
+                    )
                     singBoxCore.start(
-                        SingBoxConfig.buildSocksChain(XRAY_BEHIND_FRONT_PORT, socksPort = port, routing = routing)
+                        SingBoxConfig.buildSocksChain(
+                            XRAY_BEHIND_FRONT_PORT,
+                            socksPort = port,
+                            routing = routing,
+                            verboseLogs = verboseDebugLogs
+                        )
                     )
                     label = "sing-box front + Xray/xhttp"
                     diagnose = { singBoxCore.diagnostics() + "\n" + xrayCore.diagnostics() }
                     alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
                 } else {
                     if (routing is Routing.BypassRussia) addLog("Routing: proxy mode keeps xhttp global")
-                    xrayCore.start(XrayConfig.buildXhttp(spec, socksPort = port))
+                    xrayCore.start(
+                        XrayConfig.buildXhttp(spec, socksPort = port, verboseLogs = verboseDebugLogs)
+                    )
                     label = "Xray/xhttp"
                     diagnose = xrayCore::diagnostics
                     alive = xrayCore::isRunning
                 }
             } else {
-                singBoxCore.start(SingBoxConfig.build(spec, socksPort = port, routing = routing))
+                singBoxCore.start(
+                    SingBoxConfig.build(
+                        spec,
+                        socksPort = port,
+                        routing = routing,
+                        verboseLogs = verboseDebugLogs
+                    )
+                )
                 label = "sing-box/${location.kind}"
                 diagnose = singBoxCore::diagnostics
                 alive = singBoxCore::isRunning

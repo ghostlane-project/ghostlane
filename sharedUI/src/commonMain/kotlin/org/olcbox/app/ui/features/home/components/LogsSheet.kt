@@ -1,6 +1,7 @@
 package org.olcbox.app.ui.features.home.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,16 +18,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.olcbox.app.ui.components.kit.PkBottomSheet
 import org.olcbox.app.ui.components.kit.PkCardSunken
+import org.olcbox.app.ui.components.kit.PkSwitch
 import org.olcbox.app.ui.theme.LocalPkPalette
 
 @Composable
 fun LogsSheet(
     logs: List<String>,
+    verboseDebugLogs: Boolean,
+    onVerboseDebugLogsChanged: (Boolean) -> Unit,
     onSaveClick: () -> Unit,
     onShareClick: () -> Unit,
     onDismiss: () -> Unit
@@ -37,6 +42,27 @@ fun LogsSheet(
         onDismiss = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            PkCardSunken(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onVerboseDebugLogsChanged(!verboseDebugLogs) }
+                        .padding(13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Detailed debug logs", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Record DNS, routing and connection decisions. Changing this reconnects an active tunnel.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LocalPkPalette.current.textMuted
+                        )
+                    }
+                    PkSwitch(checked = verboseDebugLogs)
+                }
+            }
+
             PkCardSunken(modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 420.dp)) {
                 LogLines(
                     logs = logs,

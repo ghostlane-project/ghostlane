@@ -1,12 +1,15 @@
 package org.olcbox.app.crypt
 
 import java.security.MessageDigest
+import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 actual object PlatformCrypto {
+    actual fun randomBytes(size: Int): ByteArray = ByteArray(size).also(SecureRandom()::nextBytes)
+
     actual fun sha256(data: ByteArray): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(data)
 

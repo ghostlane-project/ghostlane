@@ -190,6 +190,10 @@ class SingBoxConfigDumpTest {
         assertNotNull(reality)
         dumpWithSocksTwin("ios-tun-reality", SingBoxConfig.buildTun(reality))
         dumpWithSocksTwin(
+            "ios-tun-reality-debug",
+            SingBoxConfig.buildTun(reality, verboseLogs = true, logOutput = "sing-box.log")
+        )
+        dumpWithSocksTwin(
             "ios-tun-socks-lossy",
             SingBoxConfig.buildTunSocks(10810, username = "u", password = "p", upstreamUdpIsLossy = true)
         )

@@ -698,7 +698,7 @@ class HomeScreenViewModel(
         }
     }
 
-    private fun buildLogsExport(logs: List<String>): String {
+    private suspend fun buildLogsExport(logs: List<String>): String {
         return buildString {
             appendLine("Ghostlane application logs")
             appendLine("Entries: ${logs.size}")

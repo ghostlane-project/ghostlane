@@ -175,7 +175,7 @@ interface IosPacketTunnelBridge {
      * share: when a connect fails, what came *before* the last line is usually
      * where the answer is.
      */
-    fun engineLog(): String
+    fun engineLog(includeDetailedLogs: Boolean): String
 
     /**
      * Round trip to [host] by ICMP echo, in milliseconds, or -1.

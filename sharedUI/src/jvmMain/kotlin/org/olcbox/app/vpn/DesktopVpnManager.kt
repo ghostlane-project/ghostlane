@@ -260,6 +260,14 @@ class DesktopVpnManager private constructor(
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         channelProxy.takeIf { status.value is VpnStatus.Connected }
 
+    override suspend fun diagnosticsLog(): String = if (DesktopPaths.os == DesktopOs.MacOS) {
+        kotlinx.coroutines.withTimeoutOrNull(DIAGNOSTICS_TIMEOUT_MS) {
+            macOsTunController.diagnostics()
+        } ?: "tunnel daemon diagnostics timed out"
+    } else {
+        ""
+    }
+
 
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
         val settings = DesktopSocksProxySettings(
@@ -379,7 +387,9 @@ class DesktopVpnManager private constructor(
             // them to the physical interface. The Linux and Windows tunnels route
             // by policy and by metric, and a direct socket from the core would
             // enter them; they stay global until they have a way out.
-            val routingMode = locationsRepository.getRoutingSettings().mode
+            val routingSettings = locationsRepository.getRoutingSettings()
+            val routingMode = routingSettings.mode
+            val verboseLogs = routingSettings.verboseDebugLogs
             val bypassApplies = routingMode == RoutingMode.BypassRussia &&
                 (desktopMode == DesktopMode.SystemProxy || desktopMode == DesktopMode.MacTun)
             if (routingMode == RoutingMode.BypassRussia && !bypassApplies) {
@@ -435,10 +445,10 @@ class DesktopVpnManager private constructor(
                     requestGeneration = requestGeneration
                 )
                 if (coreRouting is Routing.BypassRussia) {
-                    frontPort = startOlcRtcFront(socksSettings, coreRouting)
+                    frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
                 }
             } else {
-                startDesktopCore(location, effectiveSocksPort, coreRouting)
+                startDesktopCore(location, effectiveSocksPort, coreRouting, verboseLogs)
             }
 
             if (requestGeneration != generation) {
@@ -464,6 +474,7 @@ class DesktopVpnManager private constructor(
                     } else {
                         Routing.Global
                     },
+                    verboseLogs = verboseLogs,
                     ruleFiles = if (bypassApplies) daemonRuleFiles() else emptyMap()
                 )
                 DesktopMode.SystemProxy ->
@@ -748,6 +759,7 @@ class DesktopVpnManager private constructor(
         socksSettings: DesktopSocksProxySettings,
         location: LocationConfig,
         routing: Routing,
+        verboseLogs: Boolean,
         ruleFiles: Map<String, String>
     ) {
         val verifyPort = allocateVerifyPort(corePort)
@@ -762,6 +774,7 @@ class DesktopVpnManager private constructor(
             // reliable path. The native transports carry UDP themselves.
             upstreamUdpIsLossy = isOlcrtc,
             routing = routing,
+            verboseLogs = verboseLogs,
             ruleFiles = ruleFiles
         )
         macTunVerifyPort = verifyPort
@@ -787,7 +800,12 @@ class DesktopVpnManager private constructor(
     }
 
     /** Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port. */
-    private suspend fun startDesktopCore(location: LocationConfig, port: Int, routing: Routing) {
+    private suspend fun startDesktopCore(
+        location: LocationConfig,
+        port: Int,
+        routing: Routing,
+        verboseLogs: Boolean
+    ) {
         val raw = location.rawLink ?: error("core location has no link")
         val spec = org.olcbox.app.net.LinkParser.parse(raw) ?: error("unparseable core link")
         stopDesktopCores()
@@ -799,18 +817,42 @@ class DesktopVpnManager private constructor(
         if (xhttp != null && routing is Routing.BypassRussia) {
             // Xray does not route; sing-box does, so it goes in front.
             val xrayPort = allocateVerifyPort(port)
-            xrayCore.start(org.olcbox.app.net.XrayConfig.buildXhttp(xhttp, socksPort = xrayPort))
+            xrayCore.start(
+                org.olcbox.app.net.XrayConfig.buildXhttp(
+                    xhttp,
+                    socksPort = xrayPort,
+                    verboseLogs = verboseLogs
+                )
+            )
             singBoxCore.start(
-                org.olcbox.app.net.SingBoxConfig.buildSocksChain(xrayPort, socksPort = port, routing = routing)
+                org.olcbox.app.net.SingBoxConfig.buildSocksChain(
+                    xrayPort,
+                    socksPort = port,
+                    routing = routing,
+                    verboseLogs = verboseLogs
+                )
             )
             addLog("Xray/xhttp core on 127.0.0.1:$xrayPort behind a sing-box front on 127.0.0.1:$port")
             alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
         } else if (xhttp != null) {
-            xrayCore.start(org.olcbox.app.net.XrayConfig.buildXhttp(xhttp, socksPort = port))
+            xrayCore.start(
+                org.olcbox.app.net.XrayConfig.buildXhttp(
+                    xhttp,
+                    socksPort = port,
+                    verboseLogs = verboseLogs
+                )
+            )
             addLog("Xray/xhttp core starting on 127.0.0.1:$port")
             alive = xrayCore::isRunning
         } else {
-            singBoxCore.start(org.olcbox.app.net.SingBoxConfig.build(spec, socksPort = port, routing = routing))
+            singBoxCore.start(
+                org.olcbox.app.net.SingBoxConfig.build(
+                    spec,
+                    socksPort = port,
+                    routing = routing,
+                    verboseLogs = verboseLogs
+                )
+            )
             addLog("sing-box core (${location.kind}) starting on 127.0.0.1:$port")
             alive = singBoxCore::isRunning
         }
@@ -831,7 +873,8 @@ class DesktopVpnManager private constructor(
      */
     private suspend fun startOlcRtcFront(
         socksSettings: DesktopSocksProxySettings,
-        routing: Routing.BypassRussia
+        routing: Routing.BypassRussia,
+        verboseLogs: Boolean
     ): Int {
         stopDesktopCores()
         val port = allocateCorePort()
@@ -841,7 +884,8 @@ class DesktopVpnManager private constructor(
                 socksPort = port,
                 username = socksSettings.username,
                 password = socksSettings.password,
-                routing = routing
+                routing = routing,
+                verboseLogs = verboseLogs
             )
         )
         addLog("sing-box front for olcRTC starting on 127.0.0.1:$port")
@@ -1507,6 +1551,7 @@ class DesktopVpnManager private constructor(
     }
 
     private companion object {
+        const val DIAGNOSTICS_TIMEOUT_MS = 2_000L
         const val MAX_LOG_ENTRIES = 5_000
         const val CORE_SOCKS_READY_TIMEOUT_MS = 10_000L
         const val WINDOWS_TUN_READY_TIMEOUT_MS = 45_000L

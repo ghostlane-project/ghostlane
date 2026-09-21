@@ -130,6 +130,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
+        // Clear the previous detailed log before every transport path. XHTTP
+        // and olcRTC return through the hev branch below and used to skip the
+        // reset, leaving a stale Reality session in the next export.
+        SingBoxDebugLog.reset(workingPath: container.appendingPathComponent("libbox/work").path)
+
         // Before any core is loaded, so the first sample is the extension with
         // nothing in it and the climb afterwards is attributable. The record
         // outlives the process; that is the whole point of it. See MemoryWatch.
@@ -325,14 +330,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // resolver goes, because only this process could read it. A Global
             // config carries no placeholder and passes through untouched.
             let substituted = DirectResolver.substitute(in: config, resolvers: resolvers)
-            #if DEBUG
-            // Debug builds keep sing-box's own log in the working directory for
-            // the app's log export: it is the only account of what a rule did.
-            SingBoxDebugLog.reset(workingPath: container.appendingPathComponent("libbox/work").path)
-            let config = SingBoxDebugLog.enable(in: substituted)
-            #else
             let config = substituted
-            #endif
             // Deliberately not `server.start()`: that binds the gRPC command
             // socket for an app that talks to us through handleAppMessage
             // instead. Starting the engine is a separate call, and this is it.

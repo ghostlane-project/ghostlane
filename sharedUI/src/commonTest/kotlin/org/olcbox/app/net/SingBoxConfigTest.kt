@@ -756,4 +756,35 @@ class SingBoxConfigTest {
             assertEquals("warn", str(obj(json)["log"]!!.jsonObject, "level"), name)
         }
     }
+
+    @Test fun detailedLoggingIsExplicitAndCoversEveryCoreShape() {
+        val detailed = mapOf(
+            "socks" to SingBoxConfig.build(vless(), verboseLogs = true),
+            "socks-chain" to SingBoxConfig.buildSocksChain(10808, verboseLogs = true),
+            "tun" to SingBoxConfig.buildTun(vless(), verboseLogs = true),
+            "tun-socks" to SingBoxConfig.buildTunSocks(10810, verboseLogs = true),
+            "desktop-tun" to SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                verboseLogs = true
+            )
+        )
+        for ((name, json) in detailed) {
+            assertEquals("debug", str(obj(json)["log"]!!.jsonObject, "level"), name)
+        }
+        assertEquals("warn", str(obj(SingBoxConfig.build(vless()))["log"]!!.jsonObject, "level"))
+    }
+
+    @Test fun iosDebugOutputIsWrittenOnlyWhenDetailedLoggingIsEnabled() {
+        val quiet = obj(SingBoxConfig.buildTun(vless(), logOutput = "sing-box.log"))["log"]!!.jsonObject
+        assertEquals("warn", str(quiet, "level"))
+        assertNull(quiet["output"])
+
+        val detailed = obj(
+            SingBoxConfig.buildTun(vless(), verboseLogs = true, logOutput = "sing-box.log")
+        )["log"]!!.jsonObject
+        assertEquals("debug", str(detailed, "level"))
+        assertEquals("sing-box.log", str(detailed, "output"))
+        assertEquals(true, detailed["timestamp"]!!.jsonPrimitive.content.toBoolean())
+    }
 }
