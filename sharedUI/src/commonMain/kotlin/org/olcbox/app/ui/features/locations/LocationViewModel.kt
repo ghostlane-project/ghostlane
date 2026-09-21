@@ -298,7 +298,15 @@ class LocationViewModel(
                     completedNormally = true
                     errorMessage = e.message ?: "HTTP ping failed"
                 } finally {
-                    activePingJobs.remove(location.storageId, currentCoroutineContext()[Job])
+                    // By identity, so a job that was cancelled and replaced
+                    // cannot evict its replacement. Written out rather than
+                    // remove(key, value), which is a JVM-only overload: on the
+                    // Apple targets that call does not exist and the whole
+                    // module fails to compile.
+                    val mine = currentCoroutineContext()[Job]
+                    if (activePingJobs[location.storageId] === mine) {
+                        activePingJobs.remove(location.storageId)
+                    }
                     val updatedPings = currentPingsSnapshot().toMutableMap()
                     if (completedNormally) updatedPings[location.storageId] = ping
                     if (ping != null) onlineForThisRequest++
