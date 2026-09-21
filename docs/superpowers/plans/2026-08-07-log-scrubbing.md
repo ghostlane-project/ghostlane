@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Never build or test locally.** This dev box has no JDK and must not get one. Verification is `pr-checks.yml` on GitHub runners: `:sharedUI:jvmTest`, `:desktopApp:compileKotlin`, `:androidApp:assembleDebug`. Apple targets compile in `release.yml`.
-- Push to the **`proofkit`** remote (`git@github.com:romanpodpriatov/olcbox.git`), never to `origin` — that is upstream `alananisimov/olcbox`.
+- Push to the **`proofkit`** remote (`git@github.com:ghostlane-project/ghostlane.git`), never to `origin` — that is upstream `alananisimov/olcbox`.
 - `commonMain` may not gain dependencies. The tag hash is hand-rolled for exactly this reason.
 - The scrubber runs **inside `addLog`**, never on a line before a parser sees it. `handleRtcLine` (`IosVpnManager.kt:481`), `OlcboxVpnService.kt:1284-1316` and `DesktopVpnManager.kt:796` match raw engine text to decide transport state.
 - A scrubber that mangles ordinary text is worse than no scrubber. Timestamps (`15:28:17`), versions (`1.0.270`), local addresses and ports must come through untouched.
@@ -448,10 +448,10 @@ git push proofkit feat/log-scrubbing
 - [ ] **Step 2: Open the PR and let `pr-checks` run**
 
 ```bash
-gh pr create --repo romanpodpriatov/olcbox --base main --head feat/log-scrubbing \
+gh pr create --repo ghostlane-project/ghostlane --base main --head feat/log-scrubbing \
   --title "Logs that explain the failure without naming the infrastructure" \
   --body "Spec: docs/superpowers/specs/2026-08-07-log-scrubbing-design.md"
-gh pr checks --repo romanpodpriatov/olcbox --watch
+gh pr checks --repo ghostlane-project/ghostlane --watch
 ```
 
 Expected: `:sharedUI:jvmTest` green (LogScrubberTest + SingBoxConfigTest),
@@ -473,7 +473,7 @@ The two likely ones, and what they mean:
 - [ ] **Step 4: Merge and release**
 
 ```bash
-gh pr merge --repo romanpodpriatov/olcbox --squash --delete-branch
+gh pr merge --repo ghostlane-project/ghostlane --squash --delete-branch
 ```
 
 Then let the release build run and confirm the Apple targets compiled.

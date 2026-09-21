@@ -88,7 +88,7 @@ echo "== wrapper module: Go ${go_have}, sing-box v${SINGBOX_VERSION} + libXray $
 # 1.26.3 is libXray's own floor, stated here rather than left to `go get` to
 # raise, so the toolchain requirement is visible before anything downloads.
 cat > go.mod <<EOF
-module github.com/romanpodpriatov/olcbox-cores
+module github.com/ghostlane-project/olcbox-cores
 
 go 1.26.3
 EOF
@@ -245,7 +245,7 @@ gomobile bind -v \
   github.com/sagernet/sing-box/experimental/libbox \
   github.com/xtls/libxray \
   "${OLCRTC_MODULE}/mobile" \
-  github.com/romanpodpriatov/olcbox-cores
+  github.com/ghostlane-project/olcbox-cores
 
 echo "== slices produced =="
 ls -1 "$OUT/Cores.xcframework"

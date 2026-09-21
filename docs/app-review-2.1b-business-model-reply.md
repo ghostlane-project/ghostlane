@@ -114,7 +114,7 @@ None. Nothing is locked. Every feature, olcRTC included, is available to every u
 
 We are not requesting an exception under 3.1.3(b). We understand the app to be a free stand-alone companion to a paid web-based service under Guideline 3.1.3(f), like a VoIP or cloud-storage client: the service is bought and managed entirely on the web, the app contains no purchasing and no call to action, and it is also useful without our service at all. If you read it differently, please tell us which guideline you have in mind.
 
-The app is open source: github.com/romanpodpriatov/olcbox. The server list in App Review Information is a free test configuration issued for review; nothing was bought to create it. We are glad to provide a screen recording of import, connect and status, or anything else that helps.
+The app is open source: github.com/ghostlane-project/ghostlane. The server list in App Review Information is a free test configuration issued for review; nothing was bought to create it. We are glad to provide a screen recording of import, connect and status, or anything else that helps.
 ```
 
 ## Before sending

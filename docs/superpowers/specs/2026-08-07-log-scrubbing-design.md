@@ -179,6 +179,6 @@ design and must not get one.
 
 ## Rollout
 
-A branch on `romanpodpriatov/olcbox`, PR to `main` for `pr-checks`, then the ordinary
+A branch on `ghostlane-project/ghostlane`, PR to `main` for `pr-checks`, then the ordinary
 release build. No migration, no server change, nothing to coordinate with the
 coordinator.

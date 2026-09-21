@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-15-release-gate-design.md` §5, §8 (app side), §9, §10. **Depends on Plan A** (`docs/superpowers/plans/2026-09-15-release-gate-engine.md`) being merged on the engine's `proofkit` branch: the `gate` job runs `internal/gate` and `cmd/gate-report` from there.
 
-**Repositories:** platform `/opt/proofkit` (GitHub `romanpodpriatov/proofkit-dvpn`; code under `proofkit-dvpn/`, workflow at `.github/workflows/ci.yml`, deploys to both APPs on push to `main`), app `/root/olcbox-fork` (GitHub `romanpodpriatov/olcbox`, push to remote `proofkit`, branch `main`). Commit style and attribution lines as in Plan A.
+**Repositories:** platform `/opt/proofkit` (GitHub `romanpodpriatov/proofkit-dvpn`; code under `proofkit-dvpn/`, workflow at `.github/workflows/ci.yml`, deploys to both APPs on push to `main`), app `/root/olcbox-fork` (GitHub `ghostlane-project/ghostlane`, push to remote `proofkit`, branch `main`). Commit style and attribution lines as in Plan A.
 
 ## Global Constraints
 
@@ -225,7 +225,7 @@ the same way. Nothing else to rotate.
 
 - [ ] **Step 2: Do it**
 
-Create the partner, grant, key and rooms as the runbook says; set the six secrets (`gh secret set NAME --repo romanpodpriatov/olcbox` / `--repo ghostlane-project/olcrtc`, values from a file, never from the shell history).
+Create the partner, grant, key and rooms as the runbook says; set the six secrets (`gh secret set NAME --repo ghostlane-project/ghostlane` / `--repo ghostlane-project/olcrtc`, values from a file, never from the shell history).
 
 - [ ] **Step 3: Commit the runbook**
 

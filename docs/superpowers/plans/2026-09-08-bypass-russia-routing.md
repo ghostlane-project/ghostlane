@@ -1900,7 +1900,7 @@ Write `project_bypass_russia_routing.md` (type project): what shipped, the desig
 
 ```bash
 cd /root/olcbox-fork && git push proofkit feat/bypass-russia
-sleep 60 && curl -s "https://api.github.com/repos/romanpodpriatov/olcbox/actions/runs?branch=feat/bypass-russia&per_page=3" | python3 -c 'import sys,json; [print(r["name"], r["status"], r["conclusion"], r["html_url"]) for r in json.load(sys.stdin)["workflow_runs"]]'
+sleep 60 && curl -s "https://api.github.com/repos/ghostlane-project/ghostlane/actions/runs?branch=feat/bypass-russia&per_page=3" | python3 -c 'import sys,json; [print(r["name"], r["status"], r["conclusion"], r["html_url"]) for r in json.load(sys.stdin)["workflow_runs"]]'
 ```
 
 Expected: "PR Checks" `completed success`. It compiles `androidApp:assembleDebug` (the Android edits of Tasks 6 and 8) and runs `sing-box check` (Task 3). On failure, read the job log through the API and fix on the branch.

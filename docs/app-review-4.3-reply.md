@@ -117,7 +117,7 @@ log scrubbing so that exported diagnostics cannot leak a user's destinations.
 
 Everything above is checkable against the source:
 
-  github.com/romanpodpriatov/olcbox
+  github.com/ghostlane-project/ghostlane
 
 WHY IT ALSO SPEAKS THE STANDARD PROTOCOLS
 

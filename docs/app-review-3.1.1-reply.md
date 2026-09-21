@@ -61,7 +61,7 @@ review. It is not a purchase and was not bought.
 
 VERIFIABLE
 
-The app is open source: github.com/romanpodpriatov/olcbox — every claim above can
+The app is open source: github.com/ghostlane-project/ghostlane — every claim above can
 be checked against the code, including the absence of any purchase path.
 
 We are not requesting an exception under 3.1.3(b). There is no paid content in

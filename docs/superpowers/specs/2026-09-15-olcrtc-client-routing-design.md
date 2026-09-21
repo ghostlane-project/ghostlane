@@ -2,7 +2,7 @@
 
 **Status:** approved design (olcbox#28, option 3), implemented alongside this document
 **Date:** 2026-09-15
-**Repositories:** engine `ghostlane-project/olcrtc` (branch `proofkit`), app `romanpodpriatov/olcbox`
+**Repositories:** engine `ghostlane-project/olcrtc` (branch `proofkit`), app `ghostlane-project/ghostlane`
 
 ## Problem
 

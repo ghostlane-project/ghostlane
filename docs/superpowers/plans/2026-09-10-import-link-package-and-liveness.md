@@ -8,7 +8,7 @@
 
 **Tech Stack:** Kotlin Multiplatform + Compose (olcbox), Swift (iOS host, typechecked on Linux with shims), Go 1.26 (olcrtc), Rust (telegram-bot), nginx + static HTML (site), GitHub Actions (release.yml `all`, ios-frameworks.yml).
 
-**Spec:** the discussion in session `session_01CEfgqJHWsowYtu4VT8PSw5` (2026-09-10), issues romanpodpriatov/olcbox#15 and #19.
+**Spec:** the discussion in session `session_01CEfgqJHWsowYtu4VT8PSw5` (2026-09-10), issues ghostlane-project/ghostlane#15 and #19.
 
 ## Global Constraints
 
@@ -52,7 +52,7 @@ be pushed to a throwaway branch to get the Android build checked."
 git push proofkit main
 ```
 
-- [ ] **Step 3: Verify** the run appears for the main push: `GET /repos/romanpodpriatov/olcbox/actions/workflows/pr-checks.yml/runs?branch=main&per_page=1` shows a run for HEAD and it completes green.
+- [ ] **Step 3: Verify** the run appears for the main push: `GET /repos/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml/runs?branch=main&per_page=1` shows a run for HEAD and it completes green.
 
 ---
 
@@ -590,7 +590,7 @@ location = /.well-known/apple-app-site-association {
 ```
 (`assetlinks.json` has an extension and is served by `location /` as JSON already.)
 
-- [ ] **Step 4: Page** — `frontend/add/index.html`, self-contained, `<meta name="robots" content="noindex">`, the site's dark tokens inline. Script: `const p = decodeURIComponent(location.hash.slice(1) || new URLSearchParams(location.search).get('url') || '')`; if empty show "This link carries nothing to add"; else: primary button "Open in ProofKit" → `location.href = 'proofkit://add?url=' + encodeURIComponent(p)`; secondary "Copy link" (`navigator.clipboard.writeText(p)`); download row: App Store (when announced; until then TestFlight public link if the user has one), Android APK (`https://github.com/romanpodpriatov/olcbox/releases/latest`), macOS/Windows/Linux (same releases page). No fetch, no analytics on this page, the payload never leaves the browser.
+- [ ] **Step 4: Page** — `frontend/add/index.html`, self-contained, `<meta name="robots" content="noindex">`, the site's dark tokens inline. Script: `const p = decodeURIComponent(location.hash.slice(1) || new URLSearchParams(location.search).get('url') || '')`; if empty show "This link carries nothing to add"; else: primary button "Open in ProofKit" → `location.href = 'proofkit://add?url=' + encodeURIComponent(p)`; secondary "Copy link" (`navigator.clipboard.writeText(p)`); download row: App Store (when announced; until then TestFlight public link if the user has one), Android APK (`https://github.com/ghostlane-project/ghostlane/releases/latest`), macOS/Windows/Linux (same releases page). No fetch, no analytics on this page, the payload never leaves the browser.
 
 - [ ] **Step 5: Verify after CI deploys** (push to `main` deploys both APPs):
 

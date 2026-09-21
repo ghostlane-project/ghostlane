@@ -1,0 +1,32 @@
+#Gradle
+org.gradle.jvmargs=-Xmx4G
+org.gradle.caching=true
+org.gradle.configuration-cache=true
+org.gradle.daemon=true
+org.gradle.parallel=true
+
+#Kotlin
+kotlin.daemon.jvmargs=-Xmx4G
+kotlin.native.binary.gc=cms
+kotlin.incremental.wasm=true
+org.jetbrains.compose.experimental.macos.enabled=true
+compose.desktop.packaging.checkJdkVendor=false
+org.gradle.java.installations.auto-detect=true
+org.gradle.java.installations.auto-download=false
+olcbox.version=1.0.0
+
+#Android
+android.useAndroidX=true
+android.r8.failOnMissingKotlinMetadata=false
+kotlin.metadata.ignore.unsupported=true
+
+# AGP 9.0+ performance and cleanup
+android.generateSyncIssueWhenLibraryConstraintsAreEnabled=false
+
+# The Kotlin/Native Xcode check warns on every sync that `macosArm64` is not
+# linked to an application target in iosApp.xcodeproj. It never will be: the
+# macOS build is Compose Desktop on the JVM, and that Xcode project exists for
+# iOS alone. The warning is correct about the fact and wrong about it mattering,
+# and it reads like a build error to anyone opening the project for the first
+# time.
+kotlin.apple.xcodeCompatibility.nowarn=true
