@@ -45,16 +45,29 @@ class OlcrtcDirectRulesTest {
      * websocket), `bk.salutejazz.ru` (room creation/preconnect REST) and
      * the TURN hosts `s-t.salutejazz.ru`/`a-t.salutejazz.ru`.
      *
-     * None of the five is listed by name anywhere in the bundle, and
-     * neither is any Telemost or WB Stream host: `domain:ru`
-     * (geosite-tld-ru, asserted by [carriesThePrivateRangesAndTheBareTld])
-     * is a root-domain match, so it already covers every name under the
-     * `.ru` apex — these five included, the same single-apex-suffix shape
-     * both existing carriers ride on. There is nothing to add for
-     * SaluteJazz that was not already true for the other two; this test
-     * pins that coverage so a bundle regen that ever dropped the apex rule
-     * would be caught here, for hosts the app depends on, rather than
-     * disappearing as one line among twelve thousand.
+     * This proves the iOS path only. `OlcrtcDirectRules`/[XrayGeodata]'s
+     * bundle — v2fly's `geosite-tld-ru.txt`, fetched and pinned by
+     * `tools/xray-geodata.sh` / [XrayGeodataTest] — already carries a bare
+     * `domain:ru` root-domain rule (asserted by
+     * [carriesThePrivateRangesAndTheBareTld]), which covers every `.ru`
+     * name, these five included: the same shape Telemost's and WB
+     * Stream's `.ru` hosts ride on, neither of which is listed by name
+     * either. Nothing needed adding here.
+     *
+     * Android/Desktop do not go through this bundle at all: their Bypass
+     * Russia front routes olcRTC with [RuleSets]' sing-box `.srs` files —
+     * a *separate* artifact, SagerNet's build rather than v2fly's, fetched
+     * and pinned independently (`scripts/rule-sets.lock`, `RuleSetsTest`).
+     * That test only checks the `.srs` bytes hash to the pinned value; no
+     * in-repo test decodes or asserts on their content, so nothing here
+     * covers that path. Decompiling the pinned `geosite-tld-ru.srs`
+     * (sha256 `ba979268…`, matching `scripts/rule-sets.lock`) out of band
+     * with sing-box v1.13.14's `srs.Read` on 2026-09-22 showed
+     * `"domain_suffix":[...,".ru",...]`, so the same five hosts are DIRECT
+     * there too today — but that was a one-off check outside this repo,
+     * not a standing guarantee: a future regeneration of that `.srs` file
+     * that silently dropped `.ru` would only be caught if its hash
+     * changed, not by any assertion on what it means.
      */
     @Test fun salutejazzHostsResolveDirect() = runTest {
         val hosts = listOf(
