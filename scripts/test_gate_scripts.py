@@ -263,14 +263,16 @@ class Resolve(unittest.TestCase):
             return self.box.run("gate-resolve.sh", env=self.box.env(
                 gh.url, GITHUB_REF_NAME="main", GITHUB_SHA="1234567" + "0" * 33, **env))
 
-    def test_a_scheduled_run_is_three_legs_against_the_pin(self):
+    def test_a_scheduled_run_is_a_leg_per_provider_against_the_pin(self):
         r = self.resolve(pin_routes(), GATE_EVENT="schedule")
         self.assertEqual(0, r.returncode, r.stderr)
         out = outputs(r.stdout)
         self.assertEqual("scheduled", out["mode"])
         self.assertEqual(PIN_SHA, out["engine_sha"])
-        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "wbstream"}]},
+        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "wbstream"},
+                                      {"provider": "salutejazz"}]},
                          json.loads(out["legs"]))
+        self.assertEqual("jitsi,telemost,wbstream,salutejazz", out["providers"])
         self.assertEqual("false", out["skip"])
         self.assertEqual("false", out["limited"])
         self.assertEqual("warn", out["severity"])
@@ -289,7 +291,7 @@ class Resolve(unittest.TestCase):
         out = outputs(r.stdout)
         self.assertEqual("release", out["mode"])
         self.assertEqual("v1.0.999", out["current_tag"])
-        self.assertEqual(3, len(json.loads(out["legs"])["include"]))
+        self.assertEqual(4, len(json.loads(out["legs"])["include"]))
 
     def test_a_release_for_another_engine_than_the_pin_is_refused(self):
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_CALL_MODE="release",
@@ -323,6 +325,13 @@ class Resolve(unittest.TestCase):
         self.assertEqual(["jitsi", "wbstream"], [leg["provider"] for leg in json.loads(out["legs"])["include"]])
         self.assertEqual("true", out["limited"])
         self.assertEqual("vp8channel", out["transports"])
+
+    def test_a_manual_run_can_gate_salutejazz_alone(self):
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS=" salutejazz ")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual({"include": [{"provider": "salutejazz"}]}, json.loads(out["legs"]))
+        self.assertEqual("true", out["limited"])
 
     def test_a_manual_run_refuses_an_unknown_provider_or_none(self):
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS="zoom")
@@ -399,6 +408,16 @@ class Check(unittest.TestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("GATE_JITSI_HOSTS, entry 1: not a bare host name", r.stderr)
         self.assertNotIn("ab.io", r.stdout + r.stderr)
+
+    def test_the_salutejazz_leg_needs_no_secret(self):
+        # The suite makes a fresh room per pair through Sber's anonymous
+        # create call: there is nothing to check, and another leg's secrets
+        # in the env change nothing and are never printed.
+        for secrets in ({}, dict(GATE_TELEMOST_ROOMS=TELEMOST_URL, GATE_WBSTREAM_TOKEN=WB_TOKEN)):
+            r = self.check("salutejazz", **secrets)
+            self.assertEqual(0, r.returncode, r.stderr)
+            self.assertIn("needs no secret", r.stderr)
+            self.assert_no_value(r)
 
     def test_a_leg_with_what_it_needs_passes(self):
         r = self.check("wbstream", GATE_WBSTREAM_ROOMS=f"{WB_ROOM}\n{WB_SPARE}", GATE_WBSTREAM_TOKEN=WB_TOKEN)
@@ -522,6 +541,19 @@ class Run(unittest.TestCase):
         r = self.gate_run("run", "cli", "gate-artifacts/jitsi/cli", GATE_PROVIDER="jitsi")
         self.assertEqual(1, r.returncode)
         self.assertIn("must be absolute", r.stderr)
+
+    def test_the_salutejazz_leg_runs_with_no_room_or_token_and_an_unknown_provider_is_refused(self):
+        d = self.leg / "salutejazz" / "mobile"
+        r = self.gate_run("run", "mobile", str(d), GATE_PROVIDER="salutejazz")
+        self.assertEqual(0, r.returncode, r.stderr)
+        (call,) = self.box.go_calls()
+        self.assertIn("-olcrtc.gate-providers=salutejazz", call["argv"])
+        self.assertIn("-olcrtc.gate-clients=mobile", call["argv"])
+        self.assertFalse([k for k in call["env"] if k.startswith("OLCRTC_GATE_") and
+                          ("ROOMS" in k or "TOKEN" in k or "HOSTS" in k)], call["env"])
+        r = self.gate_run("plan", "cli", str(self.leg / "zoom" / "cli"), GATE_PROVIDER="zoom")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GATE_PROVIDER must be", r.stderr)
 
     def test_a_red_run_is_a_red_step(self):
         r = self.gate_run("run", "cli", str(self.leg / "jitsi" / "cli"), GATE_PROVIDER="jitsi", STUB_GO_EXIT="1")
@@ -1086,6 +1118,23 @@ class Wiring(unittest.TestCase):
         # What is uploaded is what was scrubbed: the same root.
         self.assertIn("GATE_ARTIFACTS: ${{ github.workspace }}/gate-artifacts\n", self.read("gate.yml"))
         self.assertIn('gate-scrub.py "$GATE_ARTIFACTS"', self.step("gate.yml", "Scrub the leg's artifacts"))
+
+    def test_every_provider_is_named_wherever_providers_are_listed(self):
+        # One list, gate-resolve.sh's: a provider added there and missing from
+        # a list a person or a script reads is a leg that fails or a doc that
+        # lies. (salutejazz joined as the fourth.)
+        resolve = (HERE / "gate-resolve.sh").read_text()
+        providers = re.search(r"^readonly PROVIDERS=\(([^)]*)\)$", resolve, re.M).group(1).split()
+        self.assertEqual(["jitsi", "telemost", "wbstream", "salutejazz"], providers)
+        run = (HERE / "gate-run.sh").read_text()
+        accepted = re.search(r"^ +([a-z| ]+)\) ;;\n +\*\) die \"GATE_PROVIDER must be", run, re.M).group(1)
+        self.assertEqual(providers, [p.strip() for p in accepted.split("|")])
+        described = re.search(r"description: Providers, comma-separated \(([^)]*)\)", self.read("gate.yml")).group(1)
+        self.assertEqual(providers, [p.strip() for p in described.split(",")])
+        doc = (REPO / "docs" / "release-gate.md").read_text()
+        for p in providers:
+            self.assertIn(f"`{p}`", doc, p)
+            self.assertIn(p, resolve.split("check() {", 1)[1], f"gate-resolve.sh check has no arm for {p}")
 
     def test_gate_leaves_the_engine_names_to_gate_run_sh(self):
         self.assertNotRegex(self.read("gate.yml"), self.ENGINE_NAMES)

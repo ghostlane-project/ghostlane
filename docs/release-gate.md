@@ -22,7 +22,7 @@ hand.
 | --- | --- | --- |
 | `resolve` | Resolves the engine revision to a full commit, checks that it carries `internal/gate` and `cmd/gate-report`, and decides the mode and the legs | none |
 | `unit` (x2) | `go test -race ./...` of the engine, default build and lean build | none |
-| `suite` (x3) | One leg per provider: `jitsi`, `telemost`, `wbstream` | that provider's own |
+| `suite` (x4) | One leg per provider: `jitsi`, `telemost`, `wbstream`, `salutejazz` | that provider's own (`salutejazz` has none) |
 | `verdict` | Merges the legs, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
 
 Each suite leg runs the same steps:
@@ -42,7 +42,10 @@ Each suite leg runs the same steps:
    uploaded.
 
 The two flavours of a leg run one after the other in the same room. That is why
-one room per provider is enough.
+one room per provider is enough. The `salutejazz` leg has no pool: the suite
+makes a fresh room per pair through Sber's anonymous create call, the one the
+engine's `salutejazz` auth provider makes, so it needs no secret and leaves its
+rooms behind (Sber has no delete).
 
 The target is **local**: the suite builds `cmd/olcrtc` and starts it as the
 server for each provider and transport pair, then points the client at it
@@ -61,7 +64,8 @@ report format belong to the engine. See `docs/gate.md` in
 
 `transports` is passed to every chosen provider. Pick transports each of them
 carries: Telemost has `vp8channel` and `videochannel`; WB Stream has
-`vp8channel`, `videochannel` and `seichannel`; Jitsi has all four. Otherwise the
+`vp8channel`, `videochannel` and `seichannel`; SaluteJazz has `datachannel`
+alone (Sber admits a guest to data channels only); Jitsi has all four. Otherwise the
 engine refuses the plan. `videochannel` runs only when named here: the default
 plan leaves it out because it moves about 7.5 KiB/s, too little for the 5 MB
 transfers of S0, and the phone build does not link it.
@@ -82,7 +86,7 @@ transfers of S0, and the phone build does not link it.
     each flavour's plan, report and scrubbed logs, and the memory samples. It
     is kept for 14 days and is never a release asset. `Verdict` downloads
     every leg's artifact merged into one directory, so a run with one leg
-    lays out like a run with three.
+    lays out like a run with four.
 
 A cell is `platform/provider/transport/client/scenario`, for example
 `engine-linux/telemost/vp8channel/mobile/S2`. Nothing in a cell name, a report
@@ -166,6 +170,11 @@ would have hit.
 | `GATE_WBSTREAM_ROOMS` | wbstream | yes | WB Stream room ids. A room link works too: the engine keeps its last path segment. The gate joins the **first** |
 | `GATE_WBSTREAM_TOKEN` | wbstream | yes | A WB Stream account access token. WB refuses a guest as the first participant of an idle room (`403 guests cannot create rooms`), so the suite's server signs in with it. The client stays a guest, as the app is |
 | `GATE_JITSI_HOSTS` | jitsi | no | Bare Jitsi host names, for example `meet.example.org`: no scheme, no port, no path. When set, they replace the engine's `docs/jitsi.instances.yaml` |
+
+The `salutejazz` leg has no secret. Its rooms are made at run time, so no mask
+can know them in advance: the engine's own scrubber withholds each room, its
+code and its password in every log and report the suite writes, as it does the
+per-pair keys, before `gate-scrub.py` runs.
 
 Rules:
 

@@ -36,7 +36,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/gate-api.sh
 . "${here}/gate-api.sh"
 
-readonly PROVIDERS=(jitsi telemost wbstream)
+readonly PROVIDERS=(jitsi telemost wbstream salutejazz)
 # Masks shorter than this shred every log line they match (gate-mask.sh).
 readonly MIN=6
 readonly MIN_TOKEN=16
@@ -144,7 +144,7 @@ resolve() {
     for p in "${picked[@]}"; do
       case " ${PROVIDERS[*]} " in
         *" ${p} "*) ;;
-        *) die "unknown provider '${p}' (jitsi, telemost, wbstream)" ;;
+        *) die "unknown provider '${p}' (jitsi, telemost, wbstream, salutejazz)" ;;
       esac
     done
     for p in "${PROVIDERS[@]}"; do
@@ -294,7 +294,13 @@ check() {
       check_list wbstream GATE_WBSTREAM_ROOMS required room || bad=1
       check_token wbstream GATE_WBSTREAM_TOKEN || bad=1
       ;;
-    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream>" ;;
+    salutejazz)
+      # The suite makes a fresh room per pair through Sber's anonymous create
+      # call: no pool, no token, nothing here to check.
+      echo "the salutejazz leg needs no secret: the suite makes its own rooms" >&2
+      return 0
+      ;;
+    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream|salutejazz>" ;;
   esac
   [ "${bad}" -eq 0 ] || exit 1
   echo "the ${provider} leg's secrets are in place" >&2

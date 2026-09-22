@@ -47,7 +47,7 @@
 #   gate-run.sh compare <warn|fail> <prev> <cur>
 #   gate-run.sh merge <gate-merge-reports.py merge arguments>
 #
-# plan and run read GATE_PROVIDER (jitsi, telemost or wbstream), GATE_TRANSPORTS
+# plan and run read GATE_PROVIDER (jitsi, telemost, wbstream or salutejazz), GATE_TRANSPORTS
 # (optional), GATE_ENGINE_SHA, GATE_ENGINE_VERSION and GATE_APP_VERSION, and the
 # leg's secrets under the repository's names: GATE_TELEMOST_ROOMS,
 # GATE_WBSTREAM_ROOMS, GATE_WBSTREAM_TOKEN, GATE_JITSI_HOSTS. Nothing here
@@ -129,8 +129,8 @@ go_timeout() {
 # suite_flags <client> <dir>: the flags every run of one leg's flavour shares.
 suite_flags() {
   case "${GATE_PROVIDER:-}" in
-    jitsi | telemost | wbstream) ;;
-    *) die "GATE_PROVIDER must be jitsi, telemost or wbstream" ;;
+    jitsi | telemost | wbstream | salutejazz) ;;
+    *) die "GATE_PROVIDER must be jitsi, telemost, wbstream or salutejazz" ;;
   esac
   suite=(-olcrtc.gate -olcrtc.gate-target=local
     "-olcrtc.gate-providers=${GATE_PROVIDER}"

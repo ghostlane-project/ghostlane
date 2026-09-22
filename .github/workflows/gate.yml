@@ -71,7 +71,7 @@ on:
         type: string
         default: ''
       providers:
-        description: Providers, comma-separated (jitsi, telemost, wbstream); empty = all three, fewer = a limited run
+        description: Providers, comma-separated (jitsi, telemost, wbstream, salutejazz); empty = all four, fewer = a limited run
         type: string
         default: ''
       transports:
