@@ -49,17 +49,33 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # A pull request is compared with its base, and a push with the tip the
+      # branch had before it: against HEAD~1, a push of nine commits whose last
+      # was a pin change skipped this job for the shared Kotlin in the other
+      # eight (2026-09-22). A new branch's before is all zeros and a force
+      # push's may be a commit the clone never fetched; both fall back to
+      # HEAD~1, and a commit with no parent runs Apple.
       - id: paths
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
         run: |
           set -euo pipefail
-          base="${{ github.event.pull_request.base.sha }}"
+          base="$PR_BASE"
+          if [ -z "$base" ] && [[ "$PUSH_BEFORE" =~ ^[0-9a-f]+$ ]] && [[ ! "$PUSH_BEFORE" =~ ^0+$ ]] \
+            && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            base="$PUSH_BEFORE"
+          fi
           if [ -z "$base" ]; then
-            base=$(git rev-parse HEAD~1 2>/dev/null || true)
+            # --verify: without it a missing HEAD~1 is printed back as the
+            # name "HEAD~1", and the diff below fails into a skip.
+            base=$(git rev-parse --verify --quiet HEAD~1 || true)
           fi
           if [ -z "$base" ]; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
           changed=$(git diff --name-only "$base" HEAD || true)
           if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$'; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"

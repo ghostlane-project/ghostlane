@@ -1167,5 +1167,98 @@ class Wiring(unittest.TestCase):
         self.assertIn("python3 scripts/test_gate_scripts.py", checks)
 
 
+class Scope(unittest.TestCase):
+    """pr-checks.yml's "What changed": what a push or a pull request is compared with.
+
+    The step's own script, cut out of the workflow, runs in a scratch
+    repository of three commits — README, then sharedUI/src/commonMain, then a
+    pin — so what is tested is the shell the runner executes, not a copy of it.
+    (2026-09-22: a nine-commit push whose last commit was a pin change skipped
+    the Apple compilation, because a push was compared with HEAD~1.)
+    """
+
+    ZERO = "0" * 40
+    ABSENT = "0123456789abcdef0123456789abcdef01234567"
+
+    @classmethod
+    def setUpClass(cls):
+        text = (REPO / ".github" / "workflows" / "pr-checks.yml").read_text()
+        cls.job = text.split("\n  scope:\n", 1)[1].split("\n  checks:\n", 1)[0]
+        rest = text[text.index("      - id: paths\n"):]
+        end = re.search(r"\n(?:      [-#] |  [A-Za-z0-9_-]+:\n)", rest)
+        cls.text = rest[:end.start()] if end else rest
+        lines = cls.text.split("        run: |\n", 1)[1].splitlines()
+        assert all(not line or line.startswith(" " * 10) for line in lines), cls.text
+        cls.script = "".join(line[10:] + "\n" for line in lines)
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_AUTHOR_NAME": "gate", "GIT_AUTHOR_EMAIL": "gate@example.invalid",
+                    "GIT_COMMITTER_NAME": "gate", "GIT_COMMITTER_EMAIL": "gate@example.invalid"}
+        self.git("init", "-q")
+        self.readme = self.commit("README.md")
+        self.kotlin = self.commit("sharedUI/src/commonMain/kotlin/Shared.kt")
+        self.pin = self.commit("scripts/cores-pins.sh")
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.repo, env=self.env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, path):
+        file = self.repo / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(f"{path}\n")
+        self.git("add", path)
+        self.git("commit", "-q", "-m", path)
+        return self.git("rev-parse", "HEAD")
+
+    def shared_kotlin(self, head, pr_base="", before=""):
+        """The step's shared_kotlin output with HEAD at `head`."""
+        self.git("checkout", "-q", "--detach", head)
+        output, summary = self.tmp / "output", self.tmp / "summary"
+        output.write_text("")
+        summary.write_text("")
+        (self.tmp / "paths.sh").write_text(self.script)
+        env = {**self.env, "PR_BASE": pr_base, "PUSH_BEFORE": before,
+               "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
+        # The runner's default shell for a run: block.
+        r = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(self.tmp / "paths.sh")],
+                           cwd=self.repo, env=env, capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stderr)
+        outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        return outputs["shared_kotlin"]
+
+    def test_the_step_reads_the_pushs_before_and_the_prs_base(self):
+        self.assertIn("          PR_BASE: ${{ github.event.pull_request.base.sha }}\n", self.text)
+        self.assertIn("          PUSH_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}\n", self.text)
+        self.assertNotIn("${{", self.script)
+        # before can be compared with only when the clone has the history.
+        self.assertIn("fetch-depth: 0", self.job)
+
+    def test_a_push_is_compared_with_the_tip_before_it_not_with_its_last_commit(self):
+        self.assertEqual("true", self.shared_kotlin(self.pin, before=self.readme))
+        self.assertEqual("false", self.shared_kotlin(self.pin, before=self.kotlin))
+
+    def test_a_new_branchs_zero_sha_falls_back_to_the_last_commit(self):
+        self.assertEqual("true", self.shared_kotlin(self.kotlin, before=self.ZERO))
+        self.assertEqual("false", self.shared_kotlin(self.pin, before=self.ZERO))
+
+    def test_a_before_the_clone_does_not_have_falls_back_to_the_last_commit(self):
+        # A force push's old tip is not fetched by fetch-depth: 0.
+        self.assertEqual("true", self.shared_kotlin(self.kotlin, before=self.ABSENT))
+        self.assertEqual("false", self.shared_kotlin(self.pin, before=self.ABSENT))
+
+    def test_a_first_commit_with_nothing_to_compare_with_runs_apple(self):
+        self.assertEqual("true", self.shared_kotlin(self.readme, before=self.ZERO))
+
+    def test_a_pull_request_is_compared_with_its_base_whatever_before_says(self):
+        self.assertEqual("false", self.shared_kotlin(self.pin, pr_base=self.kotlin, before=self.readme))
+        self.assertEqual("true", self.shared_kotlin(self.pin, pr_base=self.readme, before=self.kotlin))
+
+
 if __name__ == "__main__":
     unittest.main()
