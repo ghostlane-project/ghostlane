@@ -71,7 +71,7 @@ class LocationsRepositoryImplTest {
     fun exportsAndImportsBundleV5WithActiveLocation() = runTest {
         val first = LocationEntry.from(
             "amsterdam",
-            LocationConfig("Amsterdam", "room-a", "key-a", LocationConfig.PROVIDER_JAZZ)
+            LocationConfig("Amsterdam", "room-a", "key-a", LocationConfig.PROVIDER_SALUTEJAZZ)
         )
         val second = LocationEntry.from(
             "berlin",
@@ -118,6 +118,9 @@ class LocationsRepositoryImplTest {
         assertEquals("legacy_b", bundle.activeLocationId)
         assertEquals(listOf("legacy_a", "legacy_b"), bundle.locations.map { it.storageId })
         assertEquals(LocationConfig.PROVIDER_WB_STREAM, bundle.locations[1].location.bypassProvider)
+        // "jazz" is SaluteJazz under upstream's old name: a location stored
+        // under it lands on the carrier the engine runs today.
+        assertEquals(LocationConfig.PROVIDER_SALUTEJAZZ, bundle.locations[0].location.bypassProvider)
         assertEquals(bundle, source.stored)
     }
 
@@ -325,7 +328,7 @@ class LocationsRepositoryImplTest {
         assertNotNull(imported)
         assertEquals(listOf("RU-1", "DE-Backup"), imported.locations.map { it.location.name })
         assertEquals(
-            listOf(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.PROVIDER_JAZZ),
+            listOf(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.PROVIDER_SALUTEJAZZ),
             imported.locations.map { it.location.bypassProvider }
         )
         assertEquals("imported_ru-1", imported.activeLocationId)
@@ -523,10 +526,6 @@ class LocationsRepositoryImplTest {
                 LocationConfig.TRANSPORT_VP8CHANNEL,
                 LocationConfig.TRANSPORT_SEICHANNEL
             ),
-            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ)
-        )
-        assertEquals(
-            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_JAZZ),
             LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_WB_STREAM)
         )
         assertEquals(

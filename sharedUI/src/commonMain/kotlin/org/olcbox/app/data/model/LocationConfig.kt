@@ -116,18 +116,17 @@ data class LocationConfig(
     }
 
     companion object {
-        const val PROVIDER_JAZZ = "jazz"
         const val PROVIDER_TELEMOST = "telemost"
         const val PROVIDER_WB_STREAM = "wbstream"
         const val PROVIDER_JITSI = "jitsi"
         /**
          * The third carrier (Sber SaluteJazz, LiveKit-as-JSON over pion),
-         * merged into the engine 2026-09-22. Its own token, not an alias of
-         * [PROVIDER_JAZZ]: that one is the app's own bypassProvider value
-         * forwarded verbatim as the engine's `auth.provider` (see
-         * OlcRtcCommand.desktopProviderArg, IosVpnManager.carrierName,
-         * OlcboxVpnService.setProvider), and the engine's third instance
-         * answers to `salutejazz`, not `jazz`.
+         * merged into the engine 2026-09-22. This value is forwarded verbatim
+         * as the engine's `auth.provider` (see OlcRtcCommand.desktopProviderArg,
+         * IosVpnManager.carrierName, OlcboxVpnService.setProvider), and the
+         * engine answers to `salutejazz` alone. `jazz` is the same service
+         * under upstream olcrtc's older name, gone from the engine since May
+         * 2026 and kept by olcbox's picker: [normalizeProvider] maps it here.
          */
         const val PROVIDER_SALUTEJAZZ = "salutejazz"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
@@ -141,7 +140,6 @@ data class LocationConfig(
         const val DEFAULT_VP8_BATCH = 64
 
         val supportedBypassProviders = listOf(
-            PROVIDER_JAZZ,
             PROVIDER_TELEMOST,
             PROVIDER_WB_STREAM,
             PROVIDER_JITSI,
@@ -166,11 +164,10 @@ data class LocationConfig(
 
         fun normalizeProvider(value: String): String {
             return when (value.trim().lowercase()) {
-                PROVIDER_JAZZ, "sberjazz", "sber_jazz" -> PROVIDER_JAZZ
                 PROVIDER_TELEMOST, "yandex", "yandex_telemost" -> PROVIDER_TELEMOST
                 PROVIDER_WB_STREAM, "wbstream", "wb-stream", "wildberries" -> PROVIDER_WB_STREAM
                 PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
-                PROVIDER_SALUTEJAZZ -> PROVIDER_SALUTEJAZZ
+                PROVIDER_SALUTEJAZZ, "jazz", "sberjazz", "sber_jazz" -> PROVIDER_SALUTEJAZZ
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -200,7 +197,6 @@ data class LocationConfig(
 
         fun providerDisplayName(provider: String): String {
             return when (normalizeProvider(provider)) {
-                PROVIDER_JAZZ -> "Jazz"
                 PROVIDER_TELEMOST -> "Telemost"
                 PROVIDER_WB_STREAM -> "WB Stream"
                 PROVIDER_JITSI -> "Jitsi"
