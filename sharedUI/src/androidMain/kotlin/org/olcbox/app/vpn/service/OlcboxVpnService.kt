@@ -63,6 +63,7 @@ import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.HevTunnelConfig
+import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
@@ -986,6 +987,10 @@ class OlcboxVpnService : VpnService() {
         olcrtc.setDNS(upstreamDnsList(upstream))
         olcrtc.setSocksListenHost(socksListenHost)
         olcrtc.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
+        // Off on a Jitsi room, which has no datagram lane (OlcRtcUdpRelay). Set on
+        // every start: the one Runtime keeps it across Starts, so a WB room after
+        // a Jitsi one would otherwise run with no UDP.
+        olcrtc.setUDP(OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport))
     }
 
     private fun startTun2socks(pfd: ParcelFileDescriptor): Boolean {
