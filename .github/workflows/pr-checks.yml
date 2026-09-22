@@ -1,6 +1,6 @@
 name: PR Checks
 
-# Pull requests, and every push to a branch that is not main.
+# Pull requests, and every push, main's and tags' included.
 #
 # On pull_request alone, work pushed to a branch was compiled by nothing until
 # somebody opened a PR — so a branch could sit for a day looking finished while
@@ -8,7 +8,8 @@ name: PR Checks
 # runner), and the expensive half stays where it is: `Build Ghostlane Releases`
 # is workflow_dispatch only, on purpose, because macOS minutes bill at 10x.
 #
-# main is excluded because a push there is a merge of something already checked.
+# main was excluded, as a merge of something already checked, until work
+# pushed straight to it went unbuilt (81d412a).
 on:
   workflow_dispatch:
     inputs:
@@ -52,19 +53,36 @@ jobs:
       # A pull request is compared with its base, and a push with the tip the
       # branch had before it: against HEAD~1, a push of nine commits whose last
       # was a pin change skipped this job for the shared Kotlin in the other
-      # eight (2026-09-22). A new branch's before is all zeros and a force
-      # push's may be a commit the clone never fetched; both fall back to
-      # HEAD~1, and a commit with no parent runs Apple.
+      # eight (2026-09-22). A new branch's before is all zeros (that same day a
+      # first push of six commits, the last only dropping a jar, skipped it
+      # too) and a force push's may be a commit the clone never fetched; both
+      # are compared with where HEAD leaves the default branch, which
+      # fetch-depth: 0 fetches as origin/<default>. A tag on a commit of the
+      # default branch has nothing past it and skips. The default branch
+      # itself, and a clone without it, fall back to HEAD~1, and a commit with
+      # no parent runs Apple.
+      #
+      # The price: one Kotlin change compiles on macOS up to three times, on
+      # the branch's push, on its pull request and on the fast-forward to
+      # main. Accepted, so that a branch nobody has opened a PR for is checked.
       - id: paths
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          PUSH_REF: ${{ github.event_name == 'push' && github.ref || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           base="$PR_BASE"
           if [ -z "$base" ] && [[ "$PUSH_BEFORE" =~ ^[0-9a-f]+$ ]] && [[ ! "$PUSH_BEFORE" =~ ^0+$ ]] \
             && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             base="$PUSH_BEFORE"
+          fi
+          default="refs/remotes/origin/${DEFAULT_BRANCH}"
+          if [ -z "$base" ] && [ "$PUSH_REF" != "refs/heads/${DEFAULT_BRANCH}" ] \
+            && git rev-parse --verify --quiet "$default" >/dev/null; then
+            # No common history prints nothing and fails: HEAD~1 then decides.
+            base=$(git merge-base HEAD "$default" || true)
           fi
           if [ -z "$base" ]; then
             # --verify: without it a missing HEAD~1 is printed back as the
