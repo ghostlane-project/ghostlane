@@ -92,6 +92,25 @@ class HevTunnelConfigTest {
         assertFalse(yaml.contains("password"), yaml)
     }
 
+    // The login is the user's to type; a quote left bare ends the scalar and
+    // hev refuses the whole file.
+    @Test
+    fun aQuoteInTheLoginIsDoubled() {
+        val socks5 = socks5Block(
+            HevTunnelConfig.yaml(
+                mtu = 1500,
+                ipv4 = "10.0.88.88",
+                socksAddress = "127.0.0.1",
+                socksPort = 10808,
+                corePort = null,
+                username = "o'neil",
+                password = "it's''"
+            )
+        )
+        assertTrue("  username: 'o''neil'" in socks5, socks5.toString())
+        assertTrue("  password: 'it''s'''''" in socks5, socks5.toString())
+    }
+
     @Test
     fun mapdnsAnswersTheResolverTheTunAnnounces() {
         for (corePort in listOf(null, 10810)) {

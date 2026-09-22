@@ -60,8 +60,8 @@ object HevTunnelConfig {
         // touched the server, so the transport reports ready, the tunnel is
         // established, and not one packet crosses.
         if (corePort == null) {
-            add("  username: '$username'")
-            add("  password: '$password'")
+            add("  username: '${yamlQuoted(username)}'")
+            add("  password: '${yamlQuoted(password)}'")
         }
         add("")
         add("mapdns:")
@@ -81,4 +81,11 @@ object HevTunnelConfig {
         add("  log-file: stderr")
         add("  log-level: warn")
     }.joinToString("\n")
+
+    /**
+     * Single-quoted YAML escapes a quote by doubling it, and nothing else. The
+     * login is the user's to edit, and one unescaped quote ends the scalar
+     * early: hev refuses the file and exits, and the tun carries nothing.
+     */
+    private fun yamlQuoted(value: String): String = value.replace("'", "''")
 }
