@@ -189,6 +189,11 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # through, so nothing beyond the pin and the provider enumeration moved. Same
 # API.
 #
+# 083cbfb0ae39 -> 3cf5f20df43d: the release gate carries salutejazz (its cells
+# are known failures under olcrtc#49 until the bulk-transfer stall through
+# Sber's TURN is fixed) and /stats reports the carrier link state, a server
+# change. The client side of the engine is 083cbfb0ae39's. Same API.
+#
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
 # (scripts/olcrtc-pin.sh: the 12-hex tail must exist in ghostlane-project/olcrtc
@@ -207,7 +212,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922141646-083cbfb0ae39}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922185727-3cf5f20df43d}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -270,7 +275,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922141646-083cbfb0ae39}"
 # and a Bypass sniff that no longer delays a silent connection; same API.
 # 29 -> 30: the engine pin above (083cbfb0ae39): the salutejazz carrier;
 # same API.
-CORES_BUILD="${CORES_BUILD:-30}"
+# 30 -> 31: the engine pin above (3cf5f20df43d): the gate's salutejazz cells
+# and the server's link state; the client side is 30's. Same API.
+CORES_BUILD="${CORES_BUILD:-31}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
