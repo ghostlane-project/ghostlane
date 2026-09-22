@@ -157,4 +157,12 @@ class XrayConfigRoutingTest {
         assertFalse(XrayConfig.isIpLiteral("1.2.3"))
         assertFalse(XrayConfig.isIpLiteral("999.1.1.1"))
     }
+
+    @Test fun detailedLoggingIsOptIn() {
+        assertEquals("warning", build()["log"]!!.jsonObject.str("loglevel"))
+        val detailed = Json.parseToJsonElement(
+            XrayConfig.buildXhttp(xhttp(), verboseLogs = true)
+        ).jsonObject
+        assertEquals("debug", detailed["log"]!!.jsonObject.str("loglevel"))
+    }
 }

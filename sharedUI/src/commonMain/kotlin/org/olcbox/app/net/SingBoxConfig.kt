@@ -42,7 +42,8 @@ object SingBoxConfig {
         outbound: OutboundSpec,
         socksPort: Int = SINGBOX_SOCKS_PORT,
         routing: Routing = Routing.Global,
-    ): String = render(socksPort, routing) { addOutbound(outbound) }
+        verboseLogs: Boolean = false,
+    ): String = render(socksPort, routing, verboseLogs) { addOutbound(outbound) }
 
     /// iOS addressing. Fixed rather than negotiated: the extension applies these
     /// same values to the system when it hands the core its descriptor, so the two
@@ -92,7 +93,11 @@ object SingBoxConfig {
         mtu: Int = TUN_MTU,
         routing: Routing = Routing.Global,
         directDns: DirectDns = DirectDns.Placeholder,
-    ): String = renderTun(address, mtu, resolveOverTcp = false, routing, directDns) { addOutbound(outbound) }
+        verboseLogs: Boolean = false,
+        logOutput: String? = null,
+    ): String = renderTun(address, mtu, resolveOverTcp = false, routing, directDns, verboseLogs, logOutput) {
+        addOutbound(outbound)
+    }
 
     /**
      * Config for a core that owns the tun and hands the traffic to another core
@@ -112,7 +117,11 @@ object SingBoxConfig {
         mtu: Int = TUN_MTU,
         routing: Routing = Routing.Global,
         directDns: DirectDns = DirectDns.Placeholder,
-    ): String = renderTun(address, mtu, resolveOverTcp = upstreamUdpIsLossy, routing, directDns) {
+        verboseLogs: Boolean = false,
+        logOutput: String? = null,
+    ): String = renderTun(
+        address, mtu, resolveOverTcp = upstreamUdpIsLossy, routing, directDns, verboseLogs, logOutput
+    ) {
         addSocksOutbound(socksPort, username, password)
     }
 
@@ -129,7 +138,10 @@ object SingBoxConfig {
         username: String = "",
         password: String = "",
         routing: Routing = Routing.Global,
-    ): String = render(socksPort, routing) { addSocksOutbound(upstreamPort, username, password) }
+        verboseLogs: Boolean = false,
+    ): String = render(socksPort, routing, verboseLogs) {
+        addSocksOutbound(upstreamPort, username, password)
+    }
 
     private fun JsonArrayBuilder.addSocksOutbound(port: Int, username: String, password: String) {
         addJsonObject {
@@ -189,6 +201,7 @@ object SingBoxConfig {
         address6: String = DESKTOP_TUN_ADDRESS6,
         mtu: Int = DESKTOP_TUN_MTU,
         routing: Routing = Routing.Global,
+        verboseLogs: Boolean = false,
         /**
          * The physical interface the `direct` outbound binds to under a bypass.
          * This sing-box owns the tun, so its own direct sockets would otherwise
@@ -215,7 +228,7 @@ object SingBoxConfig {
         // too, exactly as iOS does and for the same twenty seconds a lookup.
         val answersDns = upstreamUdpIsLossy || bypass != null
         val obj = buildJsonObject {
-            putJsonObject("log") { put("level", "warn") }
+            putJsonObject("log") { put("level", coreLogLevel(verboseLogs)) }
             putJsonObject("dns") {
                 putJsonArray("servers") {
                     // Order is the default. The first server answers anything no
@@ -403,12 +416,20 @@ object SingBoxConfig {
         resolveOverTcp: Boolean,
         routing: Routing,
         directDns: DirectDns,
+        verboseLogs: Boolean,
+        logOutput: String?,
         outbounds: JsonArrayBuilder.() -> Unit,
     ): String {
         val bypass = routing as? Routing.BypassRussia
         val direct = bypass?.directDns ?: directDns
         val obj = buildJsonObject {
-            putJsonObject("log") { put("level", "warn") }
+            putJsonObject("log") {
+                put("level", coreLogLevel(verboseLogs))
+                if (verboseLogs && !logOutput.isNullOrBlank()) {
+                    put("output", logOutput)
+                    put("timestamp", true)
+                }
+            }
             putIosDns(remoteOverTcp = resolveOverTcp, direct = direct, bypass = bypass)
             putJsonArray("inbounds") {
                 addJsonObject {
@@ -466,14 +487,19 @@ object SingBoxConfig {
     fun buildOlcrtcSocks(olcrtcPort: Int, socksPort: Int = SINGBOX_SOCKS_PORT): String =
         buildSocksChain(olcrtcPort, socksPort)
 
-    private fun render(socksPort: Int, routing: Routing, outbounds: JsonArrayBuilder.() -> Unit): String {
+    private fun render(
+        socksPort: Int,
+        routing: Routing,
+        verboseLogs: Boolean,
+        outbounds: JsonArrayBuilder.() -> Unit
+    ): String {
         val bypass = routing as? Routing.BypassRussia
         val obj = buildJsonObject {
             // Without this sing-box applies its own default, which is "info" — and
             // that names every connection the user makes, in a log we invite them to
             // export. This renderer is behind the plain socks path, so it is the one
             // most users are actually on.
-            putJsonObject("log") { put("level", "warn") }
+            putJsonObject("log") { put("level", coreLogLevel(verboseLogs)) }
             if (bypass != null) putBypassDns(bypass, remoteOverTcp = false)
             putJsonArray("inbounds") {
                 addJsonObject {
@@ -489,6 +515,8 @@ object SingBoxConfig {
         }
         return obj.toString()
     }
+
+    private fun coreLogLevel(verboseLogs: Boolean): String = if (verboseLogs) "debug" else "warn"
 
     private fun JsonArrayBuilder.addDirectOutbound() {
         addJsonObject { put("type", "direct"); put("tag", "direct") }

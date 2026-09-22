@@ -79,5 +79,5 @@ interface VpnManager {
      * wrongly exported nothing about itself. Empty where the tunnel runs
      * in-process and its lines already reach [logs].
      */
-    fun diagnosticsLog(): String = ""
+    suspend fun diagnosticsLog(): String = ""
 }

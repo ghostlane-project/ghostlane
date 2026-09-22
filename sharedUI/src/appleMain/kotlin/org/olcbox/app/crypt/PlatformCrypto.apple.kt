@@ -21,6 +21,8 @@ import platform.CoreCrypto.kCCHmacAlgSHA256
 import platform.CoreCrypto.kCCOptionPKCS7Padding
 import platform.CoreCrypto.kCCSuccess
 import platform.posix.size_tVar
+import platform.Security.SecRandomCopyBytes
+import platform.Security.kSecRandomDefault
 
 /**
  * Apple (iosArm64 / iosSimulatorArm64 / macosArm64) crypto via CommonCrypto.
@@ -29,6 +31,22 @@ import platform.posix.size_tVar
  */
 @OptIn(ExperimentalForeignApi::class)
 actual object PlatformCrypto {
+    actual fun randomBytes(size: Int): ByteArray {
+        require(size >= 0)
+        if (size == 0) return ByteArray(0)
+        return ByteArray(size).also { bytes ->
+            bytes.usePinned { pinned ->
+                check(
+                    SecRandomCopyBytes(
+                        kSecRandomDefault,
+                        size.convert(),
+                        pinned.addressOf(0)
+                    ) == 0
+                ) { "SecRandomCopyBytes failed" }
+            }
+        }
+    }
+
     actual fun sha256(data: ByteArray): ByteArray {
         val out = ByteArray(CC_SHA256_DIGEST_LENGTH)
         out.usePinned { op ->

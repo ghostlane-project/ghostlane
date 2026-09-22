@@ -28,6 +28,7 @@ internal class MacOsTunController(
         serverHost: String?,
         upstreamUdpIsLossy: Boolean,
         routing: Routing = Routing.Global,
+        verboseLogs: Boolean = false,
         /** The rule-set files [routing] names, file name → base64, for the daemon to write. */
         ruleFiles: Map<String, String> = emptyMap(),
     ) {
@@ -71,6 +72,7 @@ internal class MacOsTunController(
             directDnsDomains = listOfNotNull(serverHost?.takeIf { !it.isIpLiteral() }),
             upstreamUdpIsLossy = upstreamUdpIsLossy,
             routing = routing,
+            verboseLogs = verboseLogs,
             bindInterface = bindInterface,
             cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
         )
@@ -109,6 +111,12 @@ internal class MacOsTunController(
 
     suspend fun isRunning(): Boolean =
         (client.status() as? DaemonReply.Ok)?.state == DaemonReply.STATE_RUNNING
+
+    /** Bounded daemon tail returned over its existing local status protocol. */
+    suspend fun diagnostics(): String = when (val reply = client.status()) {
+        is DaemonReply.Ok -> reply.logTail
+        is DaemonReply.Failure -> reply.logTail.ifBlank { reply.message }
+    }
 
     internal companion object {
         private const val RESTART_ATTEMPTS = 10

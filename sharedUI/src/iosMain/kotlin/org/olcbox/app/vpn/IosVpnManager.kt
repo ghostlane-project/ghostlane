@@ -149,7 +149,9 @@ class IosVpnManager(
 
     override fun needsPermission(): Boolean = false
 
-    override fun diagnosticsLog(): String = packetTunnelBridge.engineLog()
+    override suspend fun diagnosticsLog(): String = packetTunnelBridge.engineLog(
+        includeDetailedLogs = locationsRepository.getRoutingSettings().verboseDebugLogs
+    )
 
     override fun startVpn() {
         desiredConnected = true
@@ -412,7 +414,9 @@ class IosVpnManager(
             // is what makes "share logs" worth asking anyone for: the last line
             // says a start timed out, and the lines above it say what it was
             // doing for those eight seconds.
-            packetTunnelBridge.engineLog()
+            packetTunnelBridge.engineLog(
+                includeDetailedLogs = locationsRepository.getRoutingSettings().verboseDebugLogs
+            )
                 .lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
@@ -430,7 +434,9 @@ class IosVpnManager(
         location: LocationConfig,
         subscriptionUrl: String?
     ): IosPacketTunnelStartRequest? {
-        val routing = routing()
+        val routingSettings = locationsRepository.getRoutingSettings()
+        val routing = routing(routingSettings.mode)
+        val verboseLogs = routingSettings.verboseDebugLogs
         val ruleSets = ruleSetsFor(routing)
         // olcRTC has no link to parse — a room and a key address it — so it is
         // read off the location rather than through LinkParser.
@@ -465,7 +471,9 @@ class IosVpnManager(
                     // not, so sing-box answers DNS itself and asks upstream
                     // over TCP.
                     upstreamUdpIsLossy = true,
-                    routing = routing
+                    routing = routing,
+                    verboseLogs = verboseLogs,
+                    logOutput = IOS_SING_BOX_LOG
                 ),
                 xrayConfig = null,
                 olcrtc = location.startRequest(
@@ -504,15 +512,26 @@ class IosVpnManager(
                 routing = routing,
                 geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
                 answersDns = true,
+                verboseLogs = verboseLogs,
             )
         } else {
             null
         }
         return IosPacketTunnelStartRequest(
             config = if (xrayConfig != null) {
-                SingBoxConfig.buildTunSocks(XrayConfig.XRAY_SOCKS_PORT, routing = routing)
+                SingBoxConfig.buildTunSocks(
+                    XrayConfig.XRAY_SOCKS_PORT,
+                    routing = routing,
+                    verboseLogs = verboseLogs,
+                    logOutput = IOS_SING_BOX_LOG
+                )
             } else {
-                SingBoxConfig.buildTun(spec, routing = routing)
+                SingBoxConfig.buildTun(
+                    spec,
+                    routing = routing,
+                    verboseLogs = verboseLogs,
+                    logOutput = IOS_SING_BOX_LOG
+                )
             },
             xrayConfig = xrayConfig,
             olcrtc = null,
@@ -526,8 +545,8 @@ class IosVpnManager(
      * placeholder where the direct resolver goes, because only the extension
      * can read the network's own before the tunnel replaces it.
      */
-    private suspend fun routing(): Routing =
-        when (val mode = locationsRepository.getRoutingSettings().mode) {
+    private fun routing(mode: RoutingMode): Routing =
+        when (mode) {
             RoutingMode.Global -> Routing.Global
             RoutingMode.BypassRussia -> {
                 addLog("Routing: ${mode.hubSummary()}")
@@ -953,6 +972,7 @@ class IosVpnManager(
     }
 
     private companion object {
+        const val IOS_SING_BOX_LOG = "sing-box.log"
         const val KEY_SOCKS_PORT = "ios_socks_port"
         const val KEY_SOCKS_USERNAME = "ios_socks_username"
         const val KEY_SOCKS_PASSWORD = "ios_socks_password"

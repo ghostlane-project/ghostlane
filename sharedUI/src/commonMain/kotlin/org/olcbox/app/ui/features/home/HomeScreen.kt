@@ -100,6 +100,7 @@ fun HomeScreen(
     val connectedSince by viewModel.connectedSince.collectAsState()
     val channelLatency by viewModel.channelLatency.collectAsState()
     val subscriptionSettings by viewModel.subscriptionSettings.collectAsState()
+    val routingSettings by viewModel.routingSettings.collectAsState()
     val subscriptionSettingsLoaded by viewModel.subscriptionSettingsLoaded.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -644,6 +645,10 @@ fun HomeScreen(
         val logs by viewModel.logs.collectAsState()
         LogsSheet(
             logs = logs,
+            verboseDebugLogs = routingSettings.verboseDebugLogs,
+            onVerboseDebugLogsChanged = { enabled ->
+                viewModel.updateRoutingSettings(routingSettings.copy(verboseDebugLogs = enabled))
+            },
             onSaveClick = {
                 onSaveLogsRequested(
                     { message -> scope.launch { snackbarHostState.showSnackbar(message) } },

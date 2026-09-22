@@ -42,6 +42,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME_INITIALIZED
 import org.olcbox.app.vpn.data.vpnPrefDataStore
 import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
+import java.io.File
 import java.security.SecureRandom
 
 class AndroidVpnManager(private val context: Context) : VpnManager {
@@ -52,9 +53,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     private val _splitTunnelSettings = MutableStateFlow(AndroidSplitTunnelSettings())
     private val _dynamicThemeEnabled = MutableStateFlow(true)
     private val _installedApps = MutableStateFlow<List<AndroidInstalledApp>>(emptyList())
-    private val deviceIdentityProvider = PersistentDeviceIdentityProvider(
-        LocationsDataSourceImpl(appContext)
-    )
+    private val locationsDataSource = LocationsDataSourceImpl(appContext)
+    private val deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
 
     override val logs: StateFlow<List<String>> = OlcboxVpnState.logs
     override val status: StateFlow<VpnStatus> = OlcboxVpnState.status
@@ -318,6 +318,26 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
+    override suspend fun diagnosticsLog(): String = withContext(Dispatchers.IO) { buildString {
+        val verbose = locationsDataSource.loadLocationBundle()?.routing?.verboseDebugLogs == true
+        // Android core stdout lives in app-private cache files. Include only a
+        // bounded tail in the ordinary scrubbed Export/Share path so no ADB is required.
+        // Warn-level output remains useful with the switch off; the larger tail
+        // is reserved for an explicitly requested detailed capture.
+        val maxLines = if (verbose) MAX_EXPORTED_CORE_LOG_LINES else MAX_EXPORTED_STANDARD_LOG_LINES
+        listOf("singbox", "xray").forEach { core ->
+            val log = File(File(appContext.cacheDir, "olcbox-$core"), "$core.log")
+            val lines = runCatching {
+                org.olcbox.app.net.AndroidCoreProcess.readLogTail(log, maxLines)
+            }.getOrElse { error -> listOf("could not read ${log.name}: ${error.message}") }
+            if (lines.isNotEmpty()) {
+                if (isNotEmpty()) appendLine()
+                appendLine("--- $core core ---")
+                lines.forEach(::appendLine)
+            }
+        }
+    }.trimEnd() }
+
 
     private suspend fun ensureProxySettings() {
         appContext.vpnPrefDataStore.edit { preferences ->
@@ -429,6 +449,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
+        const val MAX_EXPORTED_CORE_LOG_LINES = 2_000
+        const val MAX_EXPORTED_STANDARD_LOG_LINES = 200
         val random = SecureRandom()
     }
 }

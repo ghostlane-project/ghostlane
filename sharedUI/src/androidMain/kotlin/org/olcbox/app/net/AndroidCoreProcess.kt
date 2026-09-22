@@ -2,6 +2,7 @@ package org.olcbox.app.net
 
 import android.content.Context
 import java.io.File
+import java.util.ArrayDeque
 
 /**
  * Spawns and supervises a bundled core binary (sing-box / xray) on Android by
@@ -33,10 +34,11 @@ internal class AndroidCoreProcess(
         stop()
         val workDir = File(context.cacheDir, "olcbox-$label").apply { mkdirs() }
         val config = File(workDir, "config.json").apply { writeText(configJson) }
+        val log = File(workDir, "$label.log").apply { delete() }
         process = ProcessBuilder(argv(binaryPath().absolutePath, config.absolutePath))
             .directory(workDir)
             .redirectErrorStream(true)
-            .redirectOutput(File(workDir, "$label.log"))
+            .redirectOutput(log)
             .start()
     }
 
@@ -82,7 +84,7 @@ internal class AndroidCoreProcess(
         } ?: "was never started"
 
         val tail = try {
-            if (log.isFile) log.readLines().takeLast(maxLines) else emptyList()
+            readLogTail(log, maxLines)
         } catch (e: Exception) {
             listOf("(could not read ${log.name}: ${e.message})")
         }
@@ -94,5 +96,18 @@ internal class AndroidCoreProcess(
         }
     }
 
-    private companion object
+    companion object {
+        /** Reads arbitrarily large logs with memory bounded by [maxLines]. */
+        internal fun readLogTail(log: File, maxLines: Int): List<String> {
+            if (!log.isFile || maxLines <= 0) return emptyList()
+            val tail = ArrayDeque<String>(maxLines)
+            log.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (tail.size == maxLines) tail.removeFirst()
+                    tail.addLast(line)
+                }
+            }
+            return tail.toList()
+        }
+    }
 }
