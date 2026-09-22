@@ -36,7 +36,7 @@ class HevTunnelConfigTest {
             socks5:
               address: 127.0.0.1
               port: 10808
-              udp: 'tcp'
+              udp: 'udp'
               pipeline: false
               username: 'olcbox-user'
               password: 's3cret'
@@ -60,6 +60,16 @@ class HevTunnelConfigTest {
             """.trimIndent(),
             yaml(corePort = null)
         )
+    }
+
+    // Anything but 'udp' makes hev ask for its own FWD UDP command, which
+    // sing-box, Xray and olcRTC all refuse: the tun then carries no UDP.
+    @Test
+    fun udpIsRelayedByUdpAssociateToEveryServer() {
+        for (corePort in listOf(null, 10810)) {
+            val socks5 = socks5Block(yaml(corePort))
+            assertEquals(listOf("  udp: 'udp'"), socks5.filter { it.startsWith("  udp") }, socks5.toString())
+        }
     }
 
     // olcRTC refuses a client that offers no login when it was started with one.

@@ -41,7 +41,13 @@ object HevTunnelConfig {
         add("socks5:")
         add("  address: $socksAddress")
         add("  port: ${corePort ?: socksPort}")
-        add("  udp: 'tcp'")
+        // Standard SOCKS5 UDP ASSOCIATE, as iOS has always asked (HevTunnel.swift).
+        // hev's other mode, 'tcp', carries each flow inside a TCP connection
+        // opened with its own FWD UDP command (0x05), which only hev's own server
+        // speaks. sing-box, Xray and the olcRTC engine take CONNECT and UDP
+        // ASSOCIATE and refuse anything else, so under 'tcp' no app's UDP crossed
+        // the tun at all, whichever of them hev was feeding.
+        add("  udp: 'udp'")
         add("  pipeline: false")
         // Only olcRTC's local proxy asks for a login; the cores listen open — the
         // same rule OlcboxVpnService.verifyTunnel() already follows, stated there
