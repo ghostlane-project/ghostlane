@@ -183,6 +183,28 @@ class DesktopProxyModeTest {
         }
     }
 
+    // "connect" for olcRTC is building this yaml: `auth.provider` is the only
+    // thing that selects which named engine instance (telemost/wbstream/
+    // salutejazz) the binary connects as. No process is spawned here, so this
+    // is as close to the engine's own provider registry as a JVM test reaches.
+    @Test
+    fun olcRtcCommandSelectsSalutejazzEngineName() {
+        val command = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = LocationConfig(
+                name = "SJ",
+                id = "zzz999:pw123456",
+                key = "e".repeat(64),
+                bypassProvider = LocationConfig.PROVIDER_SALUTEJAZZ,
+                transport = LocationConfig.TRANSPORT_DATACHANNEL
+            ),
+            dnsServer = "192.168.43.1:53"
+        ).yaml()
+
+        assertContains(command, "provider: 'salutejazz'")
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_DATACHANNEL}'")
+    }
+
     /**
      * macOS sets the SOCKS proxy natively. A PAC was installed correctly and the
      * tunnel carried traffic when dialled directly, yet the browser still went out

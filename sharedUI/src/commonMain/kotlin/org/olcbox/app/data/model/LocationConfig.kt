@@ -120,6 +120,16 @@ data class LocationConfig(
         const val PROVIDER_TELEMOST = "telemost"
         const val PROVIDER_WB_STREAM = "wbstream"
         const val PROVIDER_JITSI = "jitsi"
+        /**
+         * The third carrier (Sber SaluteJazz, LiveKit-as-JSON over pion),
+         * merged into the engine 2026-09-22. Its own token, not an alias of
+         * [PROVIDER_JAZZ]: that one is the app's own bypassProvider value
+         * forwarded verbatim as the engine's `auth.provider` (see
+         * OlcRtcCommand.desktopProviderArg, IosVpnManager.carrierName,
+         * OlcboxVpnService.setProvider), and the engine's third instance
+         * answers to `salutejazz`, not `jazz`.
+         */
+        const val PROVIDER_SALUTEJAZZ = "salutejazz"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
@@ -134,7 +144,8 @@ data class LocationConfig(
             PROVIDER_JAZZ,
             PROVIDER_TELEMOST,
             PROVIDER_WB_STREAM,
-            PROVIDER_JITSI
+            PROVIDER_JITSI,
+            PROVIDER_SALUTEJAZZ
         )
 
         val supportedTransports = listOf(
@@ -157,6 +168,7 @@ data class LocationConfig(
                 PROVIDER_TELEMOST, "yandex", "yandex_telemost" -> PROVIDER_TELEMOST
                 PROVIDER_WB_STREAM, "wbstream", "wb-stream", "wildberries" -> PROVIDER_WB_STREAM
                 PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
+                PROVIDER_SALUTEJAZZ -> PROVIDER_SALUTEJAZZ
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -190,6 +202,7 @@ data class LocationConfig(
                 PROVIDER_TELEMOST -> "Telemost"
                 PROVIDER_WB_STREAM -> "WB Stream"
                 PROVIDER_JITSI -> "Jitsi"
+                PROVIDER_SALUTEJAZZ -> "SaluteJazz"
                 else -> "WB Stream"
             }
         }

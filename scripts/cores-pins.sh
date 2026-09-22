@@ -184,6 +184,11 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # waits out the sniff window before anything is dialed, which every SSH,
 # SMTP, IMAP and database connection was paying (ghostlane#35). Same API.
 #
+# b1dfbacc8df0 -> 083cbfb0ae39: a third carrier, salutejazz (Sber SaluteJazz,
+# LiveKit-as-JSON over pion) - the app passes the provider token straight
+# through, so nothing beyond the pin and the provider enumeration moved. Same
+# API.
+#
 # Since the release gate (docs/release-gate.md) this line is the engine of every
 # platform, not the Cores' alone. release_version resolves it to the full commit
 # (scripts/olcrtc-pin.sh: the 12-hex tail must exist in ghostlane-project/olcrtc
@@ -202,7 +207,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260921104921-b1dfbacc8df0}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922141646-083cbfb0ae39}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -263,7 +268,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260921104921-b1dfbacc8df0}"
 # a Jitsi client that addresses the server rather than the room, a teardown
 # that closes its peers together and keeps the reconnect it was asked for,
 # and a Bypass sniff that no longer delays a silent connection; same API.
-CORES_BUILD="${CORES_BUILD:-29}"
+# 29 -> 30: the engine pin above (083cbfb0ae39): the salutejazz carrier;
+# same API.
+CORES_BUILD="${CORES_BUILD:-30}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.

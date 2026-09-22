@@ -219,6 +219,28 @@ class LocationsRepositoryImplTest {
         assertNull(entry.metadata?.subscription)
     }
 
+    // The third carrier (Sber SaluteJazz, LiveKit-as-JSON over pion), merged
+    // into the engine 2026-09-22. The room is a `<code>:<password>` pair
+    // carried whole in the URI's room segment - unlike wbstream/telemost it
+    // has no separate splitting of its own, so the parser must not touch it.
+    @Test
+    fun importsSalutejazzOlcRtcUri() = runTest {
+        val source = FakeLocationsDataSource()
+        val key = "e".repeat(64)
+        val input = "olcrtc://salutejazz?datachannel@zzz999:pw123456#$key${'$'}DE"
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        val location = imported.locations.single().location
+        assertEquals(LocationConfig.PROVIDER_SALUTEJAZZ, location.bypassProvider)
+        assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, location.transport)
+        assertEquals("zzz999:pw123456", location.id)
+        assertEquals(key, location.key)
+        assertEquals("DE", location.name)
+    }
+
     // The engine carries a Jitsi room over DataChannel only, so the app runs
     // one over DataChannel whatever the link says - and used to say nothing
     // about it. A server set up for vp8channel then waited for a peer that
