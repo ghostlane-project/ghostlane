@@ -158,6 +158,8 @@ data class LocationConfig(
             return when (normalizeProvider(provider)) {
                 PROVIDER_TELEMOST -> listOf(TRANSPORT_VP8CHANNEL, TRANSPORT_SEICHANNEL)
                 PROVIDER_JITSI -> listOf(TRANSPORT_DATACHANNEL)
+                // SaluteJazz guests get data channels only, no media track.
+                PROVIDER_SALUTEJAZZ -> listOf(TRANSPORT_DATACHANNEL)
                 else -> supportedTransports
             }
         }

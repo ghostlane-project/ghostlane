@@ -203,6 +203,7 @@ class DesktopProxyModeTest {
 
         assertContains(command, "provider: 'salutejazz'")
         assertContains(command, "transport: '${LocationConfig.TRANSPORT_DATACHANNEL}'")
+        assertContains(command, "id: 'zzz999:pw123456'")
     }
 
     /**

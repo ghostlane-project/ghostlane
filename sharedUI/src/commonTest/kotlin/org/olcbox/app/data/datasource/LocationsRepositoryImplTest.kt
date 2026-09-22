@@ -227,7 +227,7 @@ class LocationsRepositoryImplTest {
     fun importsSalutejazzOlcRtcUri() = runTest {
         val source = FakeLocationsDataSource()
         val key = "e".repeat(64)
-        val input = "olcrtc://salutejazz?datachannel@zzz999:pw123456#$key${'$'}DE"
+        val input = "olcrtc://salutejazz?datachannel@zzz999:pw123456#$key${'$'}DE · olcRTC · SJ"
 
         LocationsRepositoryImpl(source).importText(input)
 
@@ -238,7 +238,7 @@ class LocationsRepositoryImplTest {
         assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, location.transport)
         assertEquals("zzz999:pw123456", location.id)
         assertEquals(key, location.key)
-        assertEquals("DE", location.name)
+        assertEquals("DE · olcRTC · SJ", location.name)
     }
 
     // The engine carries a Jitsi room over DataChannel only, so the app runs
@@ -536,6 +536,16 @@ class LocationsRepositoryImplTest {
         assertEquals(
             LocationConfig.TRANSPORT_DATACHANNEL,
             LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_VP8CHANNEL, LocationConfig.PROVIDER_JITSI)
+        )
+        // SaluteJazz guests get data channels only - no media track - so a
+        // link that asked for vp8/sei still lands the room on datachannel.
+        assertEquals(
+            listOf(LocationConfig.TRANSPORT_DATACHANNEL),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_SALUTEJAZZ)
+        )
+        assertEquals(
+            LocationConfig.TRANSPORT_DATACHANNEL,
+            LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_VP8CHANNEL, LocationConfig.PROVIDER_SALUTEJAZZ)
         )
     }
 
