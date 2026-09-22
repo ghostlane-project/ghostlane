@@ -74,6 +74,12 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 | Hysteria2, with Salamander obfuscation | sing-box |
 | XHTTP | Xray — sing-box has no xhttp transport |
 
+olcRTC rides four meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz
+and Jitsi. A server list says which one each room is on, and a provider that
+offers one exit over several of them shows up as a server per service.
+SaluteJazz admits a guest to a call's data channels only, so its rooms always
+run over `datachannel`.
+
 One subscription usually carries several. The app groups them by provider,
 filters by protocol, and remembers the exit last used.
 
