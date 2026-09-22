@@ -82,13 +82,14 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
     private var restartNotBefore = Date.distantPast
 
     /// The list a fresh start begins with: what the app wrote, joined with what
-    /// this process last learned for the same key. The app's copy can be older
-    /// than the extension's - the app was suspended through the handovers and
-    /// its file names rooms that have since been retired - and a start on a
-    /// dead room with no other room to try is what these rooms are for.
+    /// this process last learned for the same carrier and key. The app's copy
+    /// can be older than the extension's - the app was suspended through the
+    /// handovers and its file names rooms that have since been retired - and a
+    /// start on a dead room with no other room to try is what these rooms are
+    /// for.
     static func initialRooms(for parameters: OlcrtcEngine.Parameters) -> RoomList.Parsed {
         var extras = parameters.failoverRooms ?? []
-        if let remembered = RoomMemory.load(keyHex: parameters.keyHex) {
+        if let remembered = RoomMemory.load(carrier: parameters.carrierName, keyHex: parameters.keyHex) {
             extras += remembered.all
         }
         let unique = RoomList.Parsed(primary: parameters.roomId, extras: extras).all
@@ -221,9 +222,9 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
             scheduleRetry()
             return
         }
-        guard let parsed = RoomList.parse(body, keyHex: parameters.keyHex) else {
-            OlcrtcEngine.note("room list refresh: the subscription has no line with this location's key")
-            NetworkDiagnostics.record("olcrtc rooms refresh: key not in subscription")
+        guard let parsed = RoomList.parse(body, keyHex: parameters.keyHex, carrier: parameters.carrierName) else {
+            OlcrtcEngine.note("room list refresh: the subscription has no line with this location's carrier and key")
+            NetworkDiagnostics.record("olcrtc rooms refresh: carrier+key not in subscription")
             return
         }
         apply(parsed, source: "subscription")
@@ -256,7 +257,7 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
             return
         }
         rooms = next
-        RoomMemory.save(next, keyHex: parameters.keyHex)
+        RoomMemory.save(next, carrier: parameters.carrierName, keyHex: parameters.keyHex)
         // Digests, not a bare count: a handover only works when the standby
         // the server advertised is in here, and a count cannot tell "the
         // standby is missing" from "there is one". Not the ids either - see
@@ -318,6 +319,10 @@ enum RoomDigest {
 /// The last room list this process learned, kept in the App Group so the next
 /// start - possibly from an app whose copy is older - can begin with it.
 ///
+/// Keyed by carrier and key, as RoomList groups: one origin's Telemost, WB
+/// Stream and SaluteJazz locations share a key, and a list learned under one
+/// of them is no use to the others.
+///
 /// ai-generated: the whole type.
 enum RoomMemory {
     private static let file = FileManager.default
@@ -329,6 +334,10 @@ enum RoomMemory {
 
     private struct Record: Codable {
         let key: String
+        /// Required: a record written before it existed was keyed by the key
+        /// alone and may hold a sibling carrier's rooms, so it no longer
+        /// decodes and is left alone like an expired one.
+        let carrier: String
         let primary: String
         let extras: [String]
         let at: TimeInterval
@@ -340,18 +349,25 @@ enum RoomMemory {
         SHA256.hash(data: Data(keyHex.lowercased().utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func load(keyHex: String) -> RoomList.Parsed? {
+    static func load(carrier: String, keyHex: String) -> RoomList.Parsed? {
         guard let file, let data = try? Data(contentsOf: file),
               let record = try? JSONDecoder().decode(Record.self, from: data),
+              record.carrier == RoomList.normalizedCarrier(carrier),
               record.key == digest(keyHex),
               Date().timeIntervalSince1970 - record.at < maxAge
         else { return nil }
         return RoomList.Parsed(primary: record.primary, extras: record.extras)
     }
 
-    static func save(_ rooms: RoomList.Parsed, keyHex: String) {
+    static func save(_ rooms: RoomList.Parsed, carrier: String, keyHex: String) {
         guard let file else { return }
-        let record = Record(key: digest(keyHex), primary: rooms.primary, extras: rooms.extras, at: Date().timeIntervalSince1970)
+        let record = Record(
+            key: digest(keyHex),
+            carrier: RoomList.normalizedCarrier(carrier),
+            primary: rooms.primary,
+            extras: rooms.extras,
+            at: Date().timeIntervalSince1970
+        )
         if let data = try? JSONEncoder().encode(record) {
             try? data.write(to: file, options: .atomic)
         }

@@ -124,7 +124,8 @@ enum OlcrtcEngine {
         current = (parameters, resolvers)
         currentLock.unlock()
         // The app's list, joined with what this process last learned for the
-        // same key: the app may have slept through several handovers.
+        // same carrier and key: the app may have slept through several
+        // handovers.
         let rooms = RoomKeeper.initialRooms(for: parameters)
         // Before the launch, so the first session the engine reports is seen.
         RoomKeeper.shared.begin(parameters: parameters, rooms: rooms)
