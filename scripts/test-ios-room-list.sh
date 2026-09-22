@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Compiles RoomList.swift with its test and runs it. `xcrun` on a Mac; any
-# swift.org toolchain's swiftc elsewhere (SWIFTC=/path/to/swiftc).
+# Compiles RoomList.swift and RoomMemoryRecord.swift with their test and runs
+# it. `xcrun` on a Mac; any swift.org toolchain's swiftc elsewhere
+# (SWIFTC=/path/to/swiftc).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,6 +16,7 @@ fi
 $swiftc \
   -parse-as-library \
   "$root/iosApp/PacketTunnel/RoomList.swift" \
+  "$root/iosApp/PacketTunnel/RoomMemoryRecord.swift" \
   "$root/iosApp/Tests/RoomListTests.swift" \
   -o "$test_dir/room-list-tests"
 "$test_dir/room-list-tests"

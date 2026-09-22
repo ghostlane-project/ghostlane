@@ -115,6 +115,13 @@ enum RoomList {
         }
     }
 
+    /// Whether two names are one carrier as `normalizedCarrier` reads them. An
+    /// empty name is no carrier and matches nothing, itself included.
+    static func sameCarrier(_ lhs: String, _ rhs: String) -> Bool {
+        let carrier = normalizedCarrier(lhs)
+        return !carrier.isEmpty && carrier == normalizedCarrier(rhs)
+    }
+
     /// Comma or whitespace separated ids.
     static func splitRooms(_ value: String) -> [String] {
         value.split { $0 == "," || $0.isWhitespace }

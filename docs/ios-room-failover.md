@@ -39,8 +39,10 @@ Everyone else stops at once.
 **Kotlin, iOS** (`IosVpnManager`, `IosBridge`): the start request carries
 `failoverRooms` and the location's `subscriptionUrl`; while connected, a change
 to the stored list is sent to the extension as an `olcrtc-rooms` message
-(`updateOlcRtcRooms`). Only the running location, matched by key - a list that
-changed because the user picked another location is a restart.
+(`updateOlcRtcRooms`) that names its carrier. Only the running location,
+matched by carrier and key - a list that changed because the user picked
+another location is a restart, and picking a sibling carrier of the running
+origin changes the selection before that restart stops the tunnel.
 
 **Swift, app** (`SwiftPacketTunnelBridge`): the two new fields go into
 `olcrtc.json`; `PacketTunnelController.send` delivers the message to a running
@@ -52,7 +54,13 @@ changed because the user picked another location is a restart.
   installs `RoomKeeper` as the engine's session listener, and can `relaunch`
   over a new list.
 - `RoomList` reads a subscription body - plain or base64 - for the line whose
-  key is the running location's, and the rooms beside it. Foundation only;
+  carrier and key are the running location's, and the rooms beside it. The key
+  alone does not name a location: the platform writes one line per carrier for
+  an origin, all with the same key (Telemost, `· WB`, `· SJ`), and a room of
+  one carrier is a join that cannot work for an engine of another. Carrier
+  names are normalized with `LocationConfig.normalizeProvider`'s aliases, but
+  a name this file does not know is left out of every group rather than read
+  as WB Stream, Kotlin's fallback. Foundation only;
   `scripts/test-ios-room-list.sh` runs its test on any swift.org toolchain.
 - `RoomKeeper` is the part that replaces the sleeping app. After every session
   the engine opens beyond the first - a handover or a reconnect - it fetches the
@@ -65,9 +73,17 @@ changed because the user picked another location is a restart.
   over the rooms known now, with a 2-20 s backoff, indefinitely, since where the
   list lives behind the tunnel a restart is the only way back to one.
 - `RoomMemory` keeps the last list this process learned in the App Group
-  (`olcrtc-rooms.json`, the key as a digest). A start merges it into the app's
-  list: the app may have slept through several handovers and its file may name
-  only rooms since retired.
+  (`olcrtc-rooms.json`), under the carrier and the key as a digest. A start of
+  the same carrier and key merges it into the app's list: the app may have
+  slept through several handovers and its file may name only rooms since
+  retired. A record from the build that grouped by key alone has no carrier;
+  it is used only by a start whose list has a `##rooms` group - a rotating
+  server, one carrier per key, for which it may be the one live room - and
+  left alone by platform starts, where it may mix carriers. Which start a
+  record belongs to is `RoomMemoryRecord`, tested with `RoomList`.
+- `RoomKeeper` also takes the app's `olcrtc-rooms` message, and drops one whose
+  carrier is not the engine's, so a sibling carrier's list is neither applied
+  nor remembered even if the app's own check let it through.
 
 ## What the extension deliberately does not do
 

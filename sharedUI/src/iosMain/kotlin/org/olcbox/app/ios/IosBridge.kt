@@ -116,8 +116,14 @@ data class IosPacketTunnelStartRequest(
  * The room list of the running olcRTC location as the app knows it now, handed
  * to a live extension when a subscription refresh changed it, so the engine
  * learns the next room before the one it is in is retired.
+ *
+ * [carrierName] is the carrier the list is for, named as in
+ * [IosOlcRtcStartRequest]. The extension drops a list whose carrier is not the
+ * running engine's: one origin's Telemost, WB Stream and SaluteJazz locations
+ * share a key, and a room of one carrier is no room to an engine of another.
  */
 data class IosOlcRtcRoomsUpdate(
+    val carrierName: String,
     val primaryRoom: String,
     val failoverRooms: List<String>
 )

@@ -89,7 +89,11 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
     /// for.
     static func initialRooms(for parameters: OlcrtcEngine.Parameters) -> RoomList.Parsed {
         var extras = parameters.failoverRooms ?? []
-        if let remembered = RoomMemory.load(carrier: parameters.carrierName, keyHex: parameters.keyHex) {
+        if let remembered = RoomMemory.load(
+            carrier: parameters.carrierName,
+            keyHex: parameters.keyHex,
+            startHasRoomsGroup: !extras.isEmpty
+        ) {
             extras += remembered.all
         }
         let unique = RoomList.Parsed(primary: parameters.roomId, extras: extras).all
@@ -131,9 +135,21 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
 
     /// The app's copy of the list, sent while it is awake and a refresh changed
     /// it; the extension's own fetch is the same list a few minutes later.
-    func apply(primary: String, extras: [String], source: String) {
+    ///
+    /// Only for the carrier the engine runs. The app matches the location
+    /// before it sends, but a list for a sibling carrier - same origin, same
+    /// key - that got through would reach the engine as failover rooms it
+    /// cannot join and be saved in RoomMemory under this carrier, where the
+    /// next start would pick it up again. So this checks too, and a list for
+    /// another carrier is neither applied nor remembered.
+    func apply(primary: String, extras: [String], carrier: String, source: String) {
         queue.async { [self] in
-            guard running else { return }
+            guard running, let parameters else { return }
+            guard RoomList.sameCarrier(carrier, parameters.carrierName) else {
+                OlcrtcEngine.note("room list from the \(source) dropped: it is for \(carrier), the engine runs \(parameters.carrierName)")
+                NetworkDiagnostics.record("olcrtc rooms from the \(source) dropped: another carrier")
+                return
+            }
             apply(RoomList.Parsed(primary: primary, extras: extras), source: source)
         }
     }
@@ -321,27 +337,15 @@ enum RoomDigest {
 ///
 /// Keyed by carrier and key, as RoomList groups: one origin's Telemost, WB
 /// Stream and SaluteJazz locations share a key, and a list learned under one
-/// of them is no use to the others.
+/// of them is no use to the others. Which start a record belongs to is decided
+/// in RoomMemoryRecord, a file of its own so its test needs neither CryptoKit
+/// nor the App Group.
 ///
 /// ai-generated: the whole type.
 enum RoomMemory {
     private static let file = FileManager.default
         .containerURL(forSecurityApplicationGroupIdentifier: "group.org.proofkit.app")?
         .appendingPathComponent("olcrtc-rooms.json")
-    /// Rooms live about a day on the providers this is for; an older memory is
-    /// only dead rooms, and it is left alone.
-    private static let maxAge: TimeInterval = 24 * 60 * 60
-
-    private struct Record: Codable {
-        let key: String
-        /// Required: a record written before it existed was keyed by the key
-        /// alone and may hold a sibling carrier's rooms, so it no longer
-        /// decodes and is left alone like an expired one.
-        let carrier: String
-        let primary: String
-        let extras: [String]
-        let at: TimeInterval
-    }
 
     /// The key is stored as a digest: the file names rooms, which are not
     /// secret on their own, and it must not be a second copy of the key.
@@ -349,19 +353,24 @@ enum RoomMemory {
         SHA256.hash(data: Data(keyHex.lowercased().utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func load(carrier: String, keyHex: String) -> RoomList.Parsed? {
+    /// `startHasRoomsGroup`: the app's list for this start carries a `##rooms`
+    /// group - see RoomMemoryRecord.rooms for why a record from the key-only
+    /// build is kept for those starts alone.
+    static func load(carrier: String, keyHex: String, startHasRoomsGroup: Bool) -> RoomList.Parsed? {
         guard let file, let data = try? Data(contentsOf: file),
-              let record = try? JSONDecoder().decode(Record.self, from: data),
-              record.carrier == RoomList.normalizedCarrier(carrier),
-              record.key == digest(keyHex),
-              Date().timeIntervalSince1970 - record.at < maxAge
+              let record = try? JSONDecoder().decode(RoomMemoryRecord.self, from: data)
         else { return nil }
-        return RoomList.Parsed(primary: record.primary, extras: record.extras)
+        return record.rooms(
+            carrier: carrier,
+            keyDigest: digest(keyHex),
+            startHasRoomsGroup: startHasRoomsGroup,
+            now: Date().timeIntervalSince1970
+        )
     }
 
     static func save(_ rooms: RoomList.Parsed, carrier: String, keyHex: String) {
         guard let file else { return }
-        let record = Record(
+        let record = RoomMemoryRecord(
             key: digest(keyHex),
             carrier: RoomList.normalizedCarrier(carrier),
             primary: rooms.primary,

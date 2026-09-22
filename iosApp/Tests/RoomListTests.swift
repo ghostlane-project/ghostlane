@@ -1,8 +1,8 @@
 import Foundation
 
-/// Compiled with the production RoomList by scripts/test-ios-room-list.sh.
-/// No Cores framework, signing identity or device is needed; a swift.org toolchain
-/// on Linux runs it as well as Xcode does.
+/// Compiled with the production RoomList and RoomMemoryRecord by
+/// scripts/test-ios-room-list.sh. No Cores framework, signing identity or device
+/// is needed; a swift.org toolchain on Linux runs it as well as Xcode does.
 ///
 /// ai-generated: the whole file.
 @main
@@ -89,6 +89,50 @@ enum RoomListTests {
         check(RoomList.decodeBody("not a subscription at all") == "not a subscription at all", "prose passes through")
 
         check(RoomList.splitRooms(" a,b  c\t,d ") == ["a", "b", "c", "d"], "split on comma and whitespace")
+
+        // The carrier check the app's pushed list goes through.
+        check(RoomList.sameCarrier("wbstream", "WB-Stream"), "an alias is the same carrier")
+        check(!RoomList.sameCarrier("wbstream", "telemost"), "a sibling carrier is not")
+        check(!RoomList.sameCarrier("", ""), "no carrier matches nothing, itself included")
+
+        memory()
         print("ok")
+    }
+
+    /// RoomMemory's record: which start may begin with it.
+    static func memory() {
+        let digest = String(repeating: "d", count: 64)
+        let otherDigest = String(repeating: "e", count: 64)
+        let now: TimeInterval = 1_790_000_000
+        let saved = RoomMemoryRecord(key: digest, carrier: "telemost", primary: "T1", extras: ["T2"], at: now - 60)
+        let rooms = RoomList.Parsed(primary: "T1", extras: ["T2"])
+
+        check(saved.rooms(carrier: "telemost", keyDigest: digest, startHasRoomsGroup: false, now: now) == rooms, "same carrier and key")
+        check(saved.rooms(carrier: " Yandex ", keyDigest: digest, startHasRoomsGroup: false, now: now) == rooms, "an alias of the carrier")
+        let handWritten = RoomMemoryRecord(key: digest, carrier: "TELEMOST", primary: "T1", extras: ["T2"], at: now - 60)
+        check(handWritten.rooms(carrier: "telemost", keyDigest: digest, startHasRoomsGroup: false, now: now) == rooms, "the stored carrier's case")
+        // The bug this record's carrier is for: one origin's WB Stream start
+        // must not begin with the rooms its Telemost start learned.
+        check(saved.rooms(carrier: "wbstream", keyDigest: digest, startHasRoomsGroup: false, now: now) == nil, "a sibling carrier, same key")
+        check(saved.rooms(carrier: "wbstream", keyDigest: digest, startHasRoomsGroup: true, now: now) == nil, "a sibling carrier, with a ##rooms group too")
+        check(saved.rooms(carrier: "telemost", keyDigest: otherDigest, startHasRoomsGroup: false, now: now) == nil, "another key")
+        check(saved.rooms(carrier: "telemost", keyDigest: digest, startHasRoomsGroup: false, now: now - 60 + RoomMemoryRecord.maxAge) == nil, "expired")
+
+        // What the save writes is what the load reads.
+        let encoded = try? JSONEncoder().encode(saved)
+        check(encoded.flatMap { try? JSONDecoder().decode(RoomMemoryRecord.self, from: $0) } == saved, "a record survives the file")
+
+        // A record from the key-only build: the same fields, no carrier. It
+        // still decodes, and is the start's own only where the app's list has
+        // a ##rooms group - a rotating server, one carrier per key. The
+        // platform writes no ## headers and three carriers on one key.
+        let legacy = #"{"key":"\#(digest)","primary":"T1","extras":["wbroom1"],"at":\#(now - 60)}"#
+        let old = try? JSONDecoder().decode(RoomMemoryRecord.self, from: Data(legacy.utf8))
+        check(old != nil && old?.carrier == nil, "a record without a carrier decodes")
+        check(old?.rooms(carrier: "telemost", keyDigest: digest, startHasRoomsGroup: true, now: now)
+            == RoomList.Parsed(primary: "T1", extras: ["wbroom1"]), "old record, start with a ##rooms group: joined")
+        check(old?.rooms(carrier: "telemost", keyDigest: digest, startHasRoomsGroup: false, now: now) == nil,
+              "old record, start without one: left alone")
+        check(old?.rooms(carrier: "telemost", keyDigest: otherDigest, startHasRoomsGroup: true, now: now) == nil, "old record, another key")
     }
 }
