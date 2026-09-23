@@ -9,3 +9,7 @@ On Android, and on Linux in system-wide (TUN) mode, the tunnel carried no UDP at
 ### iPhone and iPad: each carrier keeps its own rooms
 
 A location that offers Telemost, WB Stream and SaluteJazz lists one room per carrier. After a network change the app could hand a WB Stream or SaluteJazz connection a Telemost room, which it cannot join, and reconnect slowly or not at all. Each carrier's line now keeps to its own rooms.
+
+### Every server a list offers stays in the app
+
+When a server list named two servers alike, as some providers name one location's Telemost and WB Stream lines, a refresh of the list could keep one and silently drop the other. Every line now stays.

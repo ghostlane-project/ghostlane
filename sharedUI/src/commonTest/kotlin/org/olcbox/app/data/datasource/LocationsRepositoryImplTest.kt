@@ -1352,6 +1352,37 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf("R2", "R3"), repo.getActiveLocation()?.location?.failoverRooms())
     }
 
+    // A partner's list names every carrier of one origin alike ("DE · VP8"). The
+    // first refresh after WB and SaluteJazz joined the Telemost line kept Telemost
+    // under its old id and named the WB line after it, "imported_de_vp8" again:
+    // normalized() keeps one entry per id, so WB vanished and SaluteJazz stayed.
+    @Test
+    fun refreshKeepsEveryCarrierOfAnOriginEvenWhenTheirNamesMatch() = runTest {
+        val key = "c".repeat(64)
+        val telemost = "olcrtc://telemost?vp8channel@T1#$key${'$'}DE · VP8"
+        var body = telemost
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(source, HttpClient(MockEngine { respond(body) }))
+        assertTrue(repo.importText("https://example.test/sub"))
+        assertEquals(1, source.stored?.locations?.size)
+
+        body = listOf(
+            telemost,
+            "olcrtc://wbstream?vp8channel@W1#$key${'$'}DE · VP8",
+            "olcrtc://salutejazz?datachannel@code:pass#$key${'$'}DE · VP8",
+        ).joinToString("\n")
+        repo.refreshSubscriptions()
+        repo.refreshSubscriptions()
+
+        val stored = source.stored?.locations.orEmpty()
+        assertEquals(
+            listOf("T1", "W1", "code:pass"),
+            stored.map { it.location.id },
+            "every carrier's line survives the refresh, each once"
+        )
+        assertEquals(stored.size, stored.map { it.storageId }.toSet().size, "no two lines share an id")
+    }
+
     private class FakeLocationsDataSource(
         var stored: LocationBundleV4? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),

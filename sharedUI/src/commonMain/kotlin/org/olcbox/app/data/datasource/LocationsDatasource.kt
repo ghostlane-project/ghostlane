@@ -315,10 +315,20 @@ class LocationsRepositoryImpl(
                 .groupBy { subscriptionSignature(it.location) }
                 .mapValues { (_, entries) -> entries.toMutableList() }
 
+            // Which previous entry each refreshed line inherits, decided for all of them
+            // first, and every inherited id taken before any new line is named. A new
+            // line's id comes from its name, and lines can share a name (a partner's
+            // list names one origin's carriers alike): named while an inherited id was
+            // still free, the new line got that very id, normalized() kept one entry per
+            // id, and the new carrier vanished beside the old one.
+            val reusedEntries = refreshed.map { entry ->
+                val reusedPool = reusedBySignature[subscriptionSignature(entry.location)]
+                if (reusedPool.isNullOrEmpty()) null else reusedPool.removeAt(0)
+            }
+            reusedEntries.forEach { reused -> reused?.let { usedStorageIds.add(it.storageId) } }
+
             val reassigned = refreshed.mapIndexed { index, entry ->
-                val signature = subscriptionSignature(entry.location)
-                val reusedPool = reusedBySignature[signature]
-                val reusedEntry = if (reusedPool.isNullOrEmpty()) null else reusedPool.removeAt(0)
+                val reusedEntry = reusedEntries[index]
                 val storageId = reusedEntry?.storageId ?: uniqueStorageId(
                     base = "imported_${entry.location.storageSlug().ifBlank { "location_${index + 1}" }}",
                     used = usedStorageIds
