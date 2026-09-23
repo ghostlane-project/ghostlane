@@ -1199,7 +1199,14 @@ class Scope(unittest.TestCase):
         self.repo.mkdir()
         self.env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
                     "GIT_AUTHOR_NAME": "gate", "GIT_AUTHOR_EMAIL": "gate@example.invalid",
-                    "GIT_COMMITTER_NAME": "gate", "GIT_COMMITTER_EMAIL": "gate@example.invalid"}
+                    "GIT_COMMITTER_NAME": "gate", "GIT_COMMITTER_EMAIL": "gate@example.invalid",
+                    # No background gc or maintenance: a detached one still writing a
+                    # pack (.tmp-*-pack-*.rev) when the cleanup's rmtree walks the repo
+                    # failed a test that had passed (PR #55's first run).
+                    "GIT_CONFIG_COUNT": "3",
+                    "GIT_CONFIG_KEY_0": "gc.auto", "GIT_CONFIG_VALUE_0": "0",
+                    "GIT_CONFIG_KEY_1": "gc.autoDetach", "GIT_CONFIG_VALUE_1": "false",
+                    "GIT_CONFIG_KEY_2": "maintenance.auto", "GIT_CONFIG_VALUE_2": "false"}
         self.git("init", "-q")
         self.readme = self.commit("README.md")
         self.kotlin = self.commit("sharedUI/src/commonMain/kotlin/Shared.kt")
