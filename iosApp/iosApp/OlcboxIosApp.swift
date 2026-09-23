@@ -747,10 +747,12 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     /// The room list, to a running tunnel. The shape `PacketTunnelProvider`
-    /// reads in `handleAppMessage`.
+    /// reads in `handleAppMessage`; the carrier lets the extension drop a list
+    /// that is not its engine's.
     func updateOlcRtcRooms(update: IosOlcRtcRoomsUpdate) {
         let fields: [String: Any] = [
             "type": "olcrtc-rooms",
+            "carrierName": update.carrierName,
             "primaryRoom": update.primaryRoom,
             "failoverRooms": update.failoverRooms,
         ]

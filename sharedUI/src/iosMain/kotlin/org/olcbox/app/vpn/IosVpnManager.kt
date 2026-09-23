@@ -605,18 +605,31 @@ class IosVpnManager(
 
     /**
      * The current room list of the location the tunnel was built from, to the
-     * extension. Only that location, matched by key: a list that changed
-     * because the user picked another location is a restart, not an update.
+     * extension. Only that location, matched by carrier and key: a list that
+     * changed because the user picked another location is a restart, not an
+     * update. The key alone is not enough - one origin's Telemost, WB Stream
+     * and SaluteJazz lines share it, and picking a sibling carrier while
+     * connected changes the selection before the restart stops this tunnel.
      */
     private suspend fun pushRoomsToRunningTunnel() {
         if (_status.value !is VpnStatus.Connected) return
         val running = activeConfig ?: return
         if (running.kind != LocationKind.Olcrtc) return
         val current = locationsRepository.getActiveLocation()?.location?.normalized() ?: return
-        if (current.kind != LocationKind.Olcrtc || current.key != running.key) return
+        // Both normalized, so the providers compare as canonical names.
+        if (current.kind != LocationKind.Olcrtc ||
+            current.key != running.key ||
+            current.bypassProvider != running.bypassProvider
+        ) {
+            return
+        }
         if (current.failoverRooms() == running.failoverRooms()) return
         packetTunnelBridge.updateOlcRtcRooms(
-            IosOlcRtcRoomsUpdate(primaryRoom = current.id, failoverRooms = current.failoverRoomIds)
+            IosOlcRtcRoomsUpdate(
+                carrierName = current.bypassProvider,
+                primaryRoom = current.id,
+                failoverRooms = current.failoverRoomIds
+            )
         )
         activeConfig = current
         // Digests, not ids and not a bare count: a handover only works when the
