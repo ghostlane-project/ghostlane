@@ -62,6 +62,8 @@ import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
+import org.olcbox.app.vpn.HevTunnelConfig
+import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
@@ -985,6 +987,10 @@ class OlcboxVpnService : VpnService() {
         olcrtc.setDNS(upstreamDnsList(upstream))
         olcrtc.setSocksListenHost(socksListenHost)
         olcrtc.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
+        // Off on a Jitsi room, which has no datagram lane (OlcRtcUdpRelay). Set on
+        // every start: the one Runtime keeps it across Starts, so a WB room after
+        // a Jitsi one would otherwise run with no UDP.
+        olcrtc.setUDP(OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport))
     }
 
     private fun startTun2socks(pfd: ParcelFileDescriptor): Boolean {
@@ -1029,7 +1035,7 @@ class OlcboxVpnService : VpnService() {
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_IPV4_ADDRESS, IPV4_PREFIX_LENGTH)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(MAPDNS_ADDRESS)
+                .addDnsServer(HevTunnelConfig.MAPDNS_ADDRESS)
                 .setBlocking(true)
 
             if (!applySplitTunneling(builder)) return null
@@ -1119,54 +1125,16 @@ class OlcboxVpnService : VpnService() {
 
     private fun writeTun2socksConfig(): File {
         val file = File(filesDir, TUN2SOCKS_CONFIG_FILE_NAME)
-
-        // Only olcRTC's local proxy asks for a login; the cores listen open — the
-        // same rule verifyTunnel() already follows, stated there in as many words.
-        //
-        // Sending credentials to a core makes hev offer username/password as its
-        // only SOCKS method, and a sing-box or Xray inbound is built with no `auth`
-        // at all, so it answers "no matching auth method" and closes. Nothing about
-        // that is visible from here: the core's SOCKS port opens before it has
-        // touched the server, so the transport reports ready, the tunnel is
-        // established, and not one packet crosses.
-        val socksAuth = if (activeCorePort != null) {
-            ""
-        } else {
-            "\n              username: '$socksUsername'" +
-                "\n              password: '$socksPassword'"
-        }
-
         file.writeText(
-            """
-            tunnel:
-              name: tun0
-              mtu: $TUN_MTU
-              multi-queue: false
-              ipv4: $TUN_IPV4_ADDRESS
-
-            socks5:
-              address: ${socksConnectHost()}
-              port: ${activeCorePort ?: socksListenPort}
-              udp: 'tcp'
-              pipeline: false$socksAuth
-
-            mapdns:
-              address: $MAPDNS_ADDRESS
-              port: 53
-              network: $MAPDNS_NETWORK
-              netmask: $MAPDNS_NETMASK
-              cache-size: 10000
-
-            misc:
-              task-stack-size: 24576
-              tcp-buffer-size: 4096
-              max-session-count: 1200
-              connect-timeout: 10000
-              tcp-read-write-timeout: 300000
-              udp-read-write-timeout: 60000
-              log-file: stderr
-              log-level: warn
-            """.trimIndent()
+            HevTunnelConfig.yaml(
+                mtu = TUN_MTU,
+                ipv4 = TUN_IPV4_ADDRESS,
+                socksAddress = socksConnectHost(),
+                socksPort = socksListenPort,
+                corePort = activeCorePort,
+                username = socksUsername,
+                password = socksPassword
+            )
         )
         return file
     }
@@ -2148,9 +2116,6 @@ class OlcboxVpnService : VpnService() {
         private const val FRONT_ALTERNATE_PORT = 10812
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
-        private const val MAPDNS_ADDRESS = "1.1.1.1"
-        private const val MAPDNS_NETWORK = "100.64.0.0"
-        private const val MAPDNS_NETMASK = "255.192.0.0"
         private const val NOTIFICATION_CHANNEL_ID = "olcbox_vpn"
         private const val NOTIFICATION_ID = 100
         private const val TAG = "OlcboxVpnService"
