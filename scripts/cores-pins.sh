@@ -212,7 +212,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922185727-3cf5f20df43d}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260923124229-7b78fd4a753c}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -277,7 +277,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260922185727-3cf5f20df43d}"
 # same API.
 # 30 -> 31: the engine pin above (3cf5f20df43d): the gate's salutejazz cells
 # and the server's link state; the client side is 30's. Same API.
-CORES_BUILD="${CORES_BUILD:-31}"
+CORES_BUILD="${CORES_BUILD:-32}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
