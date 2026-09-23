@@ -6,6 +6,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopProxyModeTest {
@@ -313,7 +314,10 @@ class DesktopProxyModeTest {
         assertContains(config, "ipv4: 10.0.88.88")
         assertContains(config, "address: 127.0.0.1")
         assertContains(config, "port: 10808")
-        assertContains(config, "udp: 'tcp'")
+        // UDP ASSOCIATE, what every server on the local SOCKS port speaks; hev's
+        // UDP-in-TCP ('tcp') is refused by all of them.
+        assertContains(config, "udp: 'udp'")
+        assertFalse(config.contains("udp: 'tcp'"))
         assertContains(config, "mapdns:")
         assertContains(config, "network: 100.64.0.0")
     }

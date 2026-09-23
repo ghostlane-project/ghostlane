@@ -223,7 +223,11 @@ internal class LinuxTunController(
                 appendLine("socks5:")
                 appendLine("  address: ${PacServer.LOCAL_SOCKS_HOST}")
                 appendLine("  port: $socksPort")
-                appendLine("  udp: 'tcp'")
+                // Standard UDP ASSOCIATE. 'tcp' is hev's own UDP-in-TCP command (0x05),
+                // which none of the servers on this port speaks: sing-box, Xray and the
+                // olcRTC engine refuse it, so every UDP flow died at its first packet
+                // (the Android fix, HevTunnelConfig, has the details).
+                appendLine("  udp: 'udp'")
                 appendLine("  pipeline: false")
                 appendLine()
                 appendLine("mapdns:")
