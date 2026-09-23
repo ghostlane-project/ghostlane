@@ -56,6 +56,9 @@ def _blend(colour: str, alpha: float) -> str:
 # The lane axis: 32° up and to the right, half-length LANE_HALF; the two edges
 # sit ±LANE_OFFSET from it. Dots along the axis at LANE_DOTS (position in units
 # of LANE_HALF, radius in favicon units, opacity).
+#
+# The desktop tray draws the same mark in code (LaneMarkPainter in
+# sharedUI/src/jvmMain/.../desktop/DesktopTrayIcon.kt): change the two together.
 LANE_ANGLE_DEG = 32.0
 LANE_HALF = 11.0
 LANE_OFFSET = 4.2

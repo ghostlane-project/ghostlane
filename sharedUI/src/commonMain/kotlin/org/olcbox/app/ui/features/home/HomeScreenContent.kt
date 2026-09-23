@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -40,6 +39,7 @@ import org.olcbox.app.ui.components.kit.PkIconButton
 import org.olcbox.app.ui.components.kit.PkStatusStrip
 import org.olcbox.app.ui.components.kit.PkVersionFooter
 import org.olcbox.app.ui.components.kit.pkScreenBackground
+import org.olcbox.app.ui.components.kit.pkTopBarsPadding
 import org.olcbox.app.ui.features.home.components.BoardFilterChips
 import org.olcbox.app.ui.features.home.components.BoardModel
 import org.olcbox.app.ui.features.home.components.RelayNotice
@@ -248,7 +248,7 @@ private fun HomeTopBands(
     callbacks: HomeCallbacks,
     twoPane: Boolean
 ) {
-    Column(modifier = Modifier.statusBarsPadding()) {
+    Column(modifier = Modifier.pkTopBarsPadding()) {
         PkHeaderRow(tag = chrome.tag, onBrandTap = callbacks.onBrandTap) {
             PkIconButton(
                 icon = PkIcons.History,

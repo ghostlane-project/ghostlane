@@ -44,6 +44,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,11 +62,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.ime
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.ui.components.PingButton
 import org.olcbox.app.ui.components.kit.PkSectionLabel
+import org.olcbox.app.ui.components.kit.LocalWindowTitleBarInset
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,6 +80,11 @@ fun LocationSettingsTopBar(
 ) {
     TopAppBar(
         title = { Text("Location settings") },
+        // Below a macOS window's transparent title bar, where the back arrow
+        // would otherwise sit under the traffic lights; zero on a phone.
+        windowInsets = TopAppBarDefaults.windowInsets.add(
+            WindowInsets(top = LocalWindowTitleBarInset.current)
+        ),
         navigationIcon = {
             IconButton(onClick = onBack) {
                 Icon(
