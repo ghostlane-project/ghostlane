@@ -58,6 +58,7 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
         defer { runningLock.unlock() }
         return runningFlag
     }
+    var isActive: Bool { running }
     private func setRunning(_ value: Bool) {
         runningLock.lock()
         runningFlag = value
@@ -80,6 +81,7 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
     private var watchdog: DispatchSourceTimer?
     private var restartAttempt = 0
     private var restartNotBefore = Date.distantPast
+    private var networkRecoveryGeneration = 0
 
     /// The list a fresh start begins with: what the app wrote, joined with what
     /// this process last learned for the same carrier and key. The app's copy
@@ -110,6 +112,7 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
             firstSessionRefreshes = false
             restartAttempt = 0
             restartNotBefore = .distantPast
+            networkRecoveryGeneration += 1
             lastRefresh = .distantPast
             cancelTimers()
             setRunning(true)
@@ -130,7 +133,40 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
     /// restart in flight on the queue cannot outlive the tunnel it belonged to.
     func stop() {
         setRunning(false)
-        queue.async { [self] in cancelTimers() }
+        queue.async { [self] in
+            networkRecoveryGeneration += 1
+            cancelTimers()
+        }
+    }
+
+    /// Reopen the WebRTC session on a new physical network without replacing
+    /// the TUN or losing the room list learned while the app was asleep.
+    /// This runs on the same queue as the watchdog, so the two cannot launch
+    /// competing engine generations. Repeated path events collapse to one.
+    func networkChanged() {
+        queue.async { [self] in
+            guard running else { return }
+            networkRecoveryGeneration += 1
+            let generation = networkRecoveryGeneration
+            queue.asyncAfter(deadline: .now() + 1) { [self] in
+                guard running, generation == networkRecoveryGeneration, let rooms else { return }
+                sessions = 0
+                firstSessionRefreshes = true
+                // The watchdog owns a failed launch after this attempt.
+                restartNotBefore = Date().addingTimeInterval(Self.restartBackoff[0])
+                NetworkDiagnostics.record("olcrtc network handover: reopening session, keeping tun")
+                do {
+                    // ResolverSnapshot was taken on the old network before
+                    // the TUN came up. Drop those addresses after a handover;
+                    // the engine's public resolver ring supplies fallbacks.
+                    try OlcrtcEngine.relaunch(rooms: rooms, resolversForNewPath: [])
+                    NetworkDiagnostics.record("olcrtc network handover: ready")
+                } catch {
+                    OlcrtcEngine.note("network handover failed: \(error.localizedDescription)")
+                    NetworkDiagnostics.record("olcrtc network handover failed; watchdog will retry")
+                }
+            }
+        }
     }
 
     /// The app's copy of the list, sent while it is awake and a refresh changed

@@ -23,10 +23,11 @@ struct PhysicalInterface: Equatable {
 
     var reachesInternet: Bool { routesIPv4 || routesIPv6 }
 
-    /// Candidates are already ordered with Wi-Fi before cellular. The first
-    /// with a route for this socket's family wins, so an IPv4 socket is never
-    /// pinned to a bearer that only carries IPv6 and vice versa — the split
-    /// that produced "no route to host" and "network is unreachable" together.
+    /// Wi-Fi has priority. Among cellular bearers, prefer pdp_ip0 when it
+    /// routes this family. On LTE iOS reported pdp_ip0 as its active path,
+    /// while a UDP connect probe also accepted pdp_ip1; every TCP dial pinned
+    /// to pdp_ip1 then failed with "no route to host". A UDP route probe does
+    /// not prove that a bearer carries ordinary internet traffic.
     ///
     /// A family nobody routes still gets an interface. Sockets of that family
     /// are not all bound for the internet: a dial to 127.0.0.1 is AF_INET on
@@ -34,9 +35,15 @@ struct PhysicalInterface: Equatable {
     /// loopback, so refusing it would refuse the tunnel. Whatever reaches out
     /// at all comes first, else the first candidate: a dial to the internet
     /// then fails fast with "no route" instead of hanging in our own tun.
-    static func choose(from candidates: [PhysicalInterface], family: Int32) -> PhysicalInterface? {
+    static func choose(from candidates: [PhysicalInterface], family: Int32, preferredName: String? = nil) -> PhysicalInterface? {
         guard family == AF_INET || family == AF_INET6 else { return nil }
-        return candidates.first(where: { $0.routes(family) })
+        if let preferredName,
+           let preferred = candidates.first(where: { $0.name == preferredName && $0.routes(family) }) {
+            return preferred
+        }
+        return candidates.first(where: { $0.name.hasPrefix("en") && $0.routes(family) })
+            ?? candidates.first(where: { $0.name == "pdp_ip0" && $0.routes(family) })
+            ?? candidates.first(where: { $0.routes(family) })
             ?? candidates.first(where: \.reachesInternet)
             ?? candidates.first
     }

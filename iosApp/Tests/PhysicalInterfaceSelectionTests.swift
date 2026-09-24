@@ -21,6 +21,16 @@ enum PhysicalInterfaceSelectionTests {
         precondition(PhysicalInterface.choose(from: [wifi] + observed, family: AF_INET6) == wifi)
         precondition(PhysicalInterface.choose(from: [offline] + observed, family: AF_INET) == cellular4)
 
+        // On LTE, both bearers passed the route probe but only pdp_ip0 was
+        // reported by iOS as the active cellular path. getifaddrs listed the
+        // broken pdp_ip1 first, leading to ENETUNREACH on every TCP dial.
+        let misleading4 = PhysicalInterface(name: "pdp_ip1", index: 5, routesIPv4: true, routesIPv6: false)
+        precondition(PhysicalInterface.choose(from: [misleading4, cellular4], family: AF_INET) == cellular4)
+        precondition(PhysicalInterface.choose(from: [wifi, misleading4, cellular4], family: AF_INET) == wifi)
+        precondition(PhysicalInterface.choose(from: [wifi, misleading4, cellular4], family: AF_INET, preferredName: "pdp_ip0") == cellular4)
+        precondition(PhysicalInterface.choose(from: [misleading4, cellular4], family: AF_INET, preferredName: "pdp_ip1") == misleading4)
+        precondition(PhysicalInterface.choose(from: [cellular6, cellular4], family: AF_INET, preferredName: "pdp_ip1") == cellular4)
+
         // A family nobody routes still gets an interface: a socket to 127.0.0.1
         // is AF_INET on an IPv6-only network too, and refusing it would refuse
         // the dial to our own SOCKS port. Prefer whatever reaches out at all,
@@ -32,6 +42,6 @@ enum PhysicalInterfaceSelectionTests {
         precondition(PhysicalInterface.choose(from: [offline], family: AF_INET) == offline)
         precondition(PhysicalInterface.choose(from: [], family: AF_INET6) == nil)
         precondition(PhysicalInterface.choose(from: [wifi], family: AF_UNIX) == nil)
-        print("PhysicalInterface selection: 11 checks passed")
+        print("PhysicalInterface selection: 16 checks passed")
     }
 }
