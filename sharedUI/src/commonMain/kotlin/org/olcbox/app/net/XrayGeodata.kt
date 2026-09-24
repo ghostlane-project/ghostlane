@@ -66,9 +66,6 @@ object XrayGeodata {
     /** Everything the Russian route rules match on. */
     val all: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU, GEOIP_RU)
 
-    /** The name lists, which is what a DNS rule can match. An IP list has no names. */
-    val domains: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU)
-
     /** Every list the app bundles, for the hash check and the packaging test. */
     val bundled: List<File> = all + listOf(GEOSITE_CATEGORY_IR, GEOIP_IR, GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_CN)
 
@@ -91,13 +88,21 @@ object XrayGeodata {
     /** The Russian lists: what [XrayConfig.buildXhttp] inlines on iOS. */
     suspend fun lists(): Lists = lists("ru")
 
+    /**
+     * A region's name rules and address rules. The file name says which a
+     * list holds: `geosite-` names (what a DNS rule can match), `geoip-`
+     * addresses.
+     */
     suspend fun lists(region: String): Lists {
         val files = regional(region)
         return Lists(
-            domains = files.filter { it.name.startsWith("geosite-") }.flatMap { parse(bytes(it).decodeToString()) },
-            cidrs = files.filter { it.name.startsWith("geoip-") }.flatMap { parse(bytes(it).decodeToString()) },
+            domains = files.filter { it.name.startsWith(NAMES) }.flatMap { parse(bytes(it).decodeToString()) },
+            cidrs = files.filter { it.name.startsWith(ADDRESSES) }.flatMap { parse(bytes(it).decodeToString()) },
         )
     }
+
+    const val NAMES = "geosite-"
+    const val ADDRESSES = "geoip-"
 
     /** One rule per line; blank lines and `#` comments are not rules. */
     fun parse(text: String): List<String> =

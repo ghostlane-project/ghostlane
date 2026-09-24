@@ -77,10 +77,19 @@ class XrayGeodataTest {
         )
     }
 
-    @Test fun namesAreASubsetOfAll() {
-        assertTrue(XrayGeodata.all.containsAll(XrayGeodata.domains))
-        assertTrue(XrayGeodata.GEOIP_RU !in XrayGeodata.domains, "an IP list has no names for a DNS rule to match")
-        assertEquals(XrayGeodata.all.size, XrayGeodata.all.map { it.name }.toSet().size)
+    @Test fun everyFileSaysWhetherItHoldsNamesOrAddresses() {
+        // lists() sorts a region's files by this prefix; a file with neither
+        // would silently fall out of both halves.
+        for (file in XrayGeodata.bundled) {
+            assertTrue(
+                file.name.startsWith(XrayGeodata.NAMES) || file.name.startsWith(XrayGeodata.ADDRESSES),
+                "${file.name} is neither a name list nor an address list"
+            )
+        }
+        assertEquals(XrayGeodata.bundled.size, XrayGeodata.bundled.map { it.name }.toSet().size)
+        for (region in listOf("ru", "ir", "cn")) {
+            assertTrue(XrayGeodata.bundled.containsAll(XrayGeodata.regional(region)), "$region: a file that is not bundled")
+        }
     }
 
     private fun ByteArray.toHex() = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
