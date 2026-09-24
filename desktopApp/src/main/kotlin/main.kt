@@ -39,6 +39,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
@@ -48,8 +49,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.awt.SwingWindow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -59,7 +62,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Tray
-import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.rememberTrayState
@@ -86,6 +90,9 @@ import org.olcbox.app.data.exporter.JvmLogExporter
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.JvmConfigImporter
 import org.olcbox.app.data.share.ConfigShareService
+import org.olcbox.app.desktop.DesktopWindowChrome
+import org.olcbox.app.desktop.rememberDesktopTrayIcon
+import org.olcbox.app.ui.components.kit.LocalWindowTitleBarInset
 import org.olcbox.app.ui.components.kit.PkBrand
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.components.ApplicationConnectionModeOption
@@ -158,7 +165,14 @@ private fun watchForImportLinks(args: Array<String>) {
     }
 }
 
-fun main(args: Array<String>) = application {
+fun main(args: Array<String>) {
+    // AWT reads these once, as it starts, and application {} is what starts it.
+    DesktopWindowChrome.installProcessProperties()
+    runDesktopApplication(args)
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+private fun runDesktopApplication(args: Array<String>) = application {
     remember { watchForImportLinks(args) }
     // Configure JNA to find native libraries in resources
     System.setProperty(
@@ -341,7 +355,9 @@ fun main(args: Array<String>) = application {
 
     Tray(
         state = trayState,
-        icon = painterResource("LinuxIcon.png"),
+        // Monochrome where the platform's other tray icons are (a template image in
+        // the macOS menu bar); the coloured tile where nothing says what is behind it.
+        icon = rememberDesktopTrayIcon(appIcon = painterResource("LinuxIcon.png")),
         tooltip = "Ghostlane",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })
@@ -364,10 +380,11 @@ fun main(args: Array<String>) = application {
         }
     )
 
-    Window(
+    val windowState = rememberWindowState(width = 430.dp, height = 780.dp)
+    SwingWindow(
         title = "Ghostlane",
         visible = isWindowVisible,
-        state = rememberWindowState(width = 430.dp, height = 780.dp),
+        state = windowState,
         onCloseRequest = {
             if (java.awt.SystemTray.isSupported()) {
                 isWindowVisible = false
@@ -376,6 +393,9 @@ fun main(args: Array<String>) = application {
                 exitApplication()
             }
         },
+        // Runs before the window has a native peer: AppKit takes the title bar's
+        // style from these client properties when AWT creates the NSWindow.
+        init = { window -> DesktopWindowChrome.prepare(window) },
     ) {
         window.minimumSize = Dimension(350, 600)
 
@@ -385,7 +405,7 @@ fun main(args: Array<String>) = application {
             }
         }
 
-        AppTheme {
+        DesktopAppTheme(windowState) {
             val logs by dependencies.homeViewModel.logs.collectAsState()
             val homeState by dependencies.homeViewModel.state.collectAsState()
             val subscriptionSettings by dependencies.homeViewModel.subscriptionSettings.collectAsState()
@@ -706,6 +726,26 @@ fun main(args: Array<String>) = application {
                 }
             }
         }
+    }
+}
+
+/**
+ * [AppTheme], plus the room the window's own title bar takes over the content —
+ * on macOS the app runs up under a transparent one, so every screen keeps its
+ * first row below it while its background carries on to the top edge.
+ */
+@Composable
+private fun DesktopAppTheme(
+    windowState: WindowState,
+    content: @Composable () -> Unit
+) {
+    AppTheme {
+        CompositionLocalProvider(
+            LocalWindowTitleBarInset provides DesktopWindowChrome.titleBarInset(
+                fullscreen = windowState.placement == WindowPlacement.Fullscreen
+            ),
+            content = content
+        )
     }
 }
 

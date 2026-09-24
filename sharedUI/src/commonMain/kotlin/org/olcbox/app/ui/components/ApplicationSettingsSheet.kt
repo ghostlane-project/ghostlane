@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,6 +86,7 @@ import org.olcbox.app.ui.components.kit.PkSectionEyebrow
 import org.olcbox.app.ui.components.kit.PkSectionLabel
 import org.olcbox.app.ui.components.kit.pkMono
 import org.olcbox.app.ui.components.kit.pkScreenBackground
+import org.olcbox.app.ui.components.kit.pkTopBarsPadding
 import org.olcbox.app.ui.components.kit.pkVersionLine
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.ui.theme.LocalPkPalette
@@ -239,7 +239,7 @@ fun ApplicationSettingsSheet(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                .pkTopBarsPadding()
                 // The 32dp every route pads its own bottom with is not the home
                 // indicator, and on an iPhone it is four points short of it.
                 .navigationBarsPadding()

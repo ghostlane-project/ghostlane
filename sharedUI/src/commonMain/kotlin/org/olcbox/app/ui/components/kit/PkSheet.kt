@@ -141,7 +141,10 @@ fun PkBottomSheet(
     ModalBottomSheet(
         onDismissRequest = { if (dismissible) onDismiss() },
         sheetState = sheetState,
-        modifier = modifier,
+        // Ahead of the sheet's own anchors in the chain, so a tall sheet (the
+        // log) stops under a macOS window's title bar instead of running up
+        // behind the traffic lights. Zero on a phone.
+        modifier = modifier.padding(top = LocalWindowTitleBarInset.current),
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
