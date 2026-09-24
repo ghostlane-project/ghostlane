@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.olcbox.app.crypt.PlatformCrypto
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class RuleSetsTest {
@@ -11,7 +12,7 @@ class RuleSetsTest {
         // The hashes are what scripts/update-rule-sets.sh fetched; a bundle whose
         // bytes differ is either an unrecorded refresh or a corrupted resource, and
         // either one ships a bypass list nobody reviewed.
-        for (file in RuleSets.all) {
+        for (file in RuleSets.bundled) {
             val bytes = RuleSets.bytes(file)
             assertTrue(bytes.isNotEmpty(), "${file.name} is empty")
             assertEquals(file.sha256, PlatformCrypto.sha256(bytes).toHex(), "${file.name} is not the pinned build")
@@ -26,6 +27,19 @@ class RuleSetsTest {
     @Test fun domainListsAreASubsetOfAll() {
         assertTrue(RuleSets.all.containsAll(RuleSets.domains))
         assertTrue(RuleSets.GEOIP_RU !in RuleSets.domains, "an IP list has no names for a DNS rule to match")
+    }
+
+    @Test fun everySupportedRegionSelectsOnlyItsRequiredFiles() {
+        assertEquals(RuleSets.all, RuleSets.regional("ru"))
+        assertEquals(
+            listOf(RuleSets.GEOSITE_CATEGORY_IR, RuleSets.GEOIP_IR),
+            RuleSets.regional("ir")
+        )
+        assertEquals(
+            listOf(RuleSets.GEOSITE_CN, RuleSets.GEOSITE_TLD_CN, RuleSets.GEOIP_CN),
+            RuleSets.regional("cn")
+        )
+        assertFailsWith<IllegalStateException> { RuleSets.regional("future") }
     }
 
     private fun ByteArray.toHex() = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }

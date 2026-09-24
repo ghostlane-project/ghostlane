@@ -25,7 +25,7 @@ import kotlinx.serialization.json.putJsonObject
  * bumps by staying minimal, emitting none of the inbound fields 1.13 removed.
  *
  * The shapes that reach for newer schema are the resolve-over-TCP case and
- * everything [Routing.BypassRussia] adds: a `dns` section in the typed 1.12+
+ * everything [Routing.RuleBased] adds: a `dns` section in the typed 1.12+
  * format with `rule_set` rules, `route.rule_set` entries of the local binary
  * kind, and `route` rules in the `action` form (`sniff`, `hijack-dns`). Those
  * are the parts to re-check first on the next bump; `SingBoxConfigDumpTest`
@@ -215,7 +215,7 @@ object SingBoxConfig {
         /** A per-start name avoids colliding with a Wintun adapter still closing. */
         interfaceName: String? = null,
     ): String {
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.RuleBased
         require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
             "verification proxy credentials must be supplied as a pair"
         }
@@ -253,7 +253,7 @@ object SingBoxConfig {
                                 put("server", "dns-direct")
                             }
                         }
-                        if (bypass != null) addRussianNamesRule()
+                        if (bypass != null) addRegionalDnsRules(bypass)
                         if (answersDns) addFakeIpRules()
                     }
                 }
@@ -331,7 +331,7 @@ object SingBoxConfig {
                         // resolver is still caught and answered rather than refused.
                         addJsonObject { put("action", "hijack-dns"); put("port", 53) }
                     }
-                    if (bypass != null) addBypassRouteRules()
+                    if (bypass != null) addBypassRouteRules(bypass)
                     // IPv6 is claimed and refused, not carried.
                     //
                     // Claimed because auto_route only takes the families the
@@ -420,7 +420,7 @@ object SingBoxConfig {
         logOutput: String?,
         outbounds: JsonArrayBuilder.() -> Unit,
     ): String {
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.RuleBased
         val direct = bypass?.directDns ?: directDns
         val obj = buildJsonObject {
             putJsonObject("log") {
@@ -455,7 +455,7 @@ object SingBoxConfig {
         return obj.toString()
     }
 
-    private fun JsonObjectBuilder.putIosDns(remoteOverTcp: Boolean, direct: DirectDns, bypass: Routing.BypassRussia?) {
+    private fun JsonObjectBuilder.putIosDns(remoteOverTcp: Boolean, direct: DirectDns, bypass: Routing.RuleBased?) {
         putJsonObject("dns") {
             putJsonArray("servers") {
                 addRemoteDnsServer(overTcp = remoteOverTcp)
@@ -463,7 +463,7 @@ object SingBoxConfig {
                 addFakeIpServer()
             }
             putJsonArray("rules") {
-                if (bypass != null) addRussianNamesRule()
+                if (bypass != null) addRegionalDnsRules(bypass)
                 addFakeIpRules()
             }
             put("final", "dns-remote")
@@ -471,13 +471,13 @@ object SingBoxConfig {
         }
     }
 
-    private fun JsonObjectBuilder.putIosRoute(bypass: Routing.BypassRussia?) {
+    private fun JsonObjectBuilder.putIosRoute(bypass: Routing.RuleBased?) {
         putJsonObject("route") {
             if (bypass != null) putRuleSetDeclarations(bypass)
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                if (bypass != null) addBypassRouteRules()
+                if (bypass != null) addBypassRouteRules(bypass)
             }
             put("final", "out")
             put("default_domain_resolver", "dns-direct")
@@ -493,7 +493,7 @@ object SingBoxConfig {
         verboseLogs: Boolean,
         outbounds: JsonArrayBuilder.() -> Unit
     ): String {
-        val bypass = routing as? Routing.BypassRussia
+        val bypass = routing as? Routing.RuleBased
         val obj = buildJsonObject {
             // Without this sing-box applies its own default, which is "info" — and
             // that names every connection the user makes, in a log we invite them to
@@ -578,17 +578,17 @@ object SingBoxConfig {
         }
     }
 
-    /** Names on the Russian lists resolve on the network underneath. */
-    private fun JsonArrayBuilder.addRussianNamesRule() {
+    /** Names on the regional lists resolve on the network underneath. */
+    private fun JsonArrayBuilder.addRegionalDnsRules(bypass: Routing.RuleBased) {
         addJsonObject {
-            putJsonArray("rule_set") { RuleSets.domains.forEach { add(it.tag) } }
+            putJsonArray("rule_set") { RuleSets.regionalDomains(bypass.region).forEach { add(it.tag) } }
             put("server", "dns-direct")
         }
     }
 
-    private fun JsonObjectBuilder.putRuleSetDeclarations(bypass: Routing.BypassRussia) {
+    private fun JsonObjectBuilder.putRuleSetDeclarations(bypass: Routing.RuleBased) {
         putJsonArray("rule_set") {
-            RuleSets.all.forEach { file ->
+            RuleSets.selected(bypass).forEach { file ->
                 addJsonObject {
                     put("type", "local"); put("tag", file.tag)
                     put("format", "binary"); put("path", "${bypass.ruleSetDir}/${file.name}")
@@ -600,35 +600,35 @@ object SingBoxConfig {
     /**
      * After `sniff` and `hijack-dns`, in an order that matters: the local
      * network direct first only because it is cheaper to match, then the
-     * Russian lists. Domain matches come from the sniff, the reverse mapping or
+     * selected regional lists. Domain matches come from the sniff, the reverse mapping or
      * the fake-address store; the IP list matches raw-address dials. sing-box
      * skips IP rules for an unresolved name, so nothing here resolves a
      * foreign name on the network underneath.
      */
-    private fun JsonArrayBuilder.addBypassRouteRules() {
+    private fun JsonArrayBuilder.addBypassRouteRules(bypass: Routing.RuleBased) {
         addJsonObject { put("ip_is_private", true); put("outbound", "direct") }
         addJsonObject {
-            putJsonArray("rule_set") { RuleSets.all.forEach { add(it.tag) } }
+            putJsonArray("rule_set") { RuleSets.regional(bypass.region).forEach { add(it.tag) } }
             put("outbound", "direct")
         }
     }
 
     /**
      * The split for the socks shapes (Android, where hev-socks5-tunnel hands
-     * sing-box a hostname per connection): names on the Russian lists resolve
+     * sing-box a hostname per connection): names on the selected regional lists resolve
      * on the network underneath, everything else through the tunnel.
      * `dns-remote` first because the first server answers what no rule claims,
      * and `final` says so explicitly as well. `reverse_mapping` keeps the name
      * of every address handed out, so a connection to it is matched by the
      * domain lists even when nothing in it can be sniffed.
      */
-    private fun JsonObjectBuilder.putBypassDns(bypass: Routing.BypassRussia, remoteOverTcp: Boolean) {
+    private fun JsonObjectBuilder.putBypassDns(bypass: Routing.RuleBased, remoteOverTcp: Boolean) {
         putJsonObject("dns") {
             putJsonArray("servers") {
                 addRemoteDnsServer(overTcp = remoteOverTcp)
                 addDirectDnsServer(bypass.directDns)
             }
-            putJsonArray("rules") { addRussianNamesRule() }
+            putJsonArray("rules") { addRegionalDnsRules(bypass) }
             put("final", "dns-remote")
             put("reverse_mapping", true)
         }
@@ -643,13 +643,13 @@ object SingBoxConfig {
      * network underneath. Tunnel-bound names never reach it; sing-box sends
      * those to the server unresolved.
      */
-    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.BypassRussia) {
+    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.RuleBased) {
         putJsonObject("route") {
             putRuleSetDeclarations(bypass)
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                addBypassRouteRules()
+                addBypassRouteRules(bypass)
             }
             put("final", "out")
             put("default_domain_resolver", "dns-direct")

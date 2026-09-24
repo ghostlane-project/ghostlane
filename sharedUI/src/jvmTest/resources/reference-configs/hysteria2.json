@@ -1,0 +1,1 @@
+{"log":{"level":"warn"},"inbounds":[{"type":"socks","tag":"in","listen":"127.0.0.1","listen_port":10810}],"outbounds":[{"type":"hysteria2","tag":"out","server":"127.0.0.1","server_port":443,"password":"PASSWORD123","obfs":{"type":"salamander","password":"OBFSPW"},"tls":{"enabled":true,"server_name":"www.microsoft.com","insecure":true}}]}

@@ -1,0 +1,1 @@
+{"log":{"level":"warn"},"inbounds":[{"type":"socks","tag":"in","listen":"127.0.0.1","listen_port":10810}],"outbounds":[{"type":"socks","tag":"out","server":"127.0.0.1","server_port":10808,"version":"5"}]}

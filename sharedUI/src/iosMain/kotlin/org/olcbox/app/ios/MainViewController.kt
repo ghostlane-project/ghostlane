@@ -16,6 +16,7 @@ import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.IosLogExporter
 import org.olcbox.app.data.importer.IosConfigImporter
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.share.ConfigShareService
 import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.components.ApplicationSettingsSheet
@@ -285,7 +286,13 @@ private fun IosApp(
                     isConnectionActive = homeState.isVpnConnected,
                     subscriptionSettings = subscriptionSettings,
                     onSubscriptionSettingsChanged = dependencies.homeViewModel::updateSubscriptionSettings,
-                    routingSettings = routingSettings,
+                    routingSettings = routingSettings.copy(
+                        mode = routingSettings.mode.takeIf {
+                            it == RoutingMode.Global || it == RoutingMode.BypassRussia
+                        } ?: RoutingMode.Global
+                    ),
+                    routingModes = listOf(RoutingMode.Global, RoutingMode.BypassRussia),
+                    compactRouting = false,
                     onRoutingSettingsChanged = dependencies.homeViewModel::updateRoutingSettings,
                     connectionModeTitle = "System VPN",
                     connectionModeSummary = "All device traffic through the tunnel",

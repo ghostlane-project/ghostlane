@@ -37,7 +37,7 @@ class CorePackagingTest {
     fun regionalRoutingFilesArePackaged() {
         val prefix = "composeResources/multiplatform_app.sharedui.generated.resources/files"
         val expected =
-            RuleSets.all.map { "$prefix/rules/${it.name}" } +
+            RuleSets.bundled.map { "$prefix/rules/${it.name}" } +
                 XrayGeodata.all.map { "$prefix/xray/${it.name}" }
 
         expected.forEach { path ->

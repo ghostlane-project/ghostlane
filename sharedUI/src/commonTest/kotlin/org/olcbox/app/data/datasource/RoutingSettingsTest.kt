@@ -12,7 +12,8 @@ import kotlin.test.assertTrue
 
 class RoutingSettingsTest {
     @Test fun defaultIsEverythingThroughTheTunnel() = runTest {
-        assertEquals(RoutingMode.Global, LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings().mode)
+        val settings = LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings()
+        assertEquals(RoutingMode.Global, settings.mode)
     }
 
     @Test fun savedModeComesBack() = runTest {
@@ -58,6 +59,13 @@ class RoutingSettingsTest {
         assertEquals(RoutingMode.Global, bundle.routing.mode)
     }
 
+    @Test fun removedRoutingOptionsDoNotBreakSavedBundles() {
+        val bundle = Json { ignoreUnknownKeys = true }.decodeFromString<LocationBundleV4>(
+            """{"version":5,"routing":{"mode":"bypass_russia","block_ads":true,"disable_ipv6":false},"locations":[]}"""
+        )
+        assertEquals(RoutingMode.BypassRussia, bundle.routing.mode)
+    }
+
     @Test fun serialNamesAreStable() {
         // Persisted on every platform; renaming a constant must not silently
         // reset everyone to Global.
@@ -66,6 +74,16 @@ class RoutingSettingsTest {
             LocationBundleV4(routing = RoutingSettings(RoutingMode.BypassRussia))
         )
         assertTrue("\"routing\":{\"mode\":\"bypass_russia\"}" in json, json)
+        for ((mode, serial) in listOf(
+            RoutingMode.BypassIran to "bypass_iran",
+            RoutingMode.BypassChina to "bypass_china"
+        )) {
+            val encoded = Json.encodeToString(
+                LocationBundleV4.serializer(),
+                LocationBundleV4(routing = RoutingSettings(mode))
+            )
+            assertTrue("\"routing\":{\"mode\":\"$serial\"}" in encoded, encoded)
+        }
     }
 }
 
