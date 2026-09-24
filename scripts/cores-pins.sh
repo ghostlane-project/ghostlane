@@ -212,7 +212,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260923124229-7b78fd4a753c}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260924233529-8d97e32e0b1a}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -277,7 +277,13 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260923124229-7b78fd4a753c}"
 # same API.
 # 30 -> 31: the engine pin above (3cf5f20df43d): the gate's salutejazz cells
 # and the server's link state; the client side is 30's. Same API.
-CORES_BUILD="${CORES_BUILD:-32}"
+# 31 -> 32: the engine pin above (7b78fd4a753c): the salutejazz relay window,
+# a fixed 192 KiB (olcrtc#49). Same API.
+# 32 -> 33: the engine pin above (8d97e32e0b1a): that window sized for its leg,
+# the best rate of the last ten seconds over a 3 s horizon (olcrtc#49, #50),
+# two server-side fixes the client does not run, and salutejazz S3 back on
+# the gate's known failures. Same API.
+CORES_BUILD="${CORES_BUILD:-33}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
