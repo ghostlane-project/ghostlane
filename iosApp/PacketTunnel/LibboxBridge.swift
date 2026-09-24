@@ -191,8 +191,8 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
 
     static func tracePhysicalInterfaces(_ stage: String) {
         let candidates = probePhysicalInterfaces()
-        let v4 = PhysicalInterface.choose(from: candidates, family: AF_INET)
-        let v6 = PhysicalInterface.choose(from: candidates, family: AF_INET6)
+        let v4 = PhysicalInterface.choose(from: candidates, family: AF_INET, preferredName: currentPreferredPhysicalInterface())
+        let v6 = PhysicalInterface.choose(from: candidates, family: AF_INET6, preferredName: currentPreferredPhysicalInterface())
         NetworkDiagnostics.record("\(stage) ipv4=\(v4?.summary ?? "none") ipv6=\(v6?.summary ?? "none") candidates=\(candidates.map(\.summary).joined(separator: ","))")
     }
 
@@ -206,11 +206,28 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         ipv6PinCache.invalidate()
     }
 
+    /// Prefer the physical interface of the system's current path over an
+    /// unrelated bearer that also passes a UDP route probe.
+    static func setPreferredPhysicalInterface(_ name: String?) {
+        preferredLock.lock()
+        preferredName = name
+        preferredLock.unlock()
+        invalidatePinCache()
+    }
+
+    private static func currentPreferredPhysicalInterface() -> String? {
+        preferredLock.lock()
+        defer { preferredLock.unlock() }
+        return preferredName
+    }
+
     // MARK: - choosing the interface
 
     private static let pinLog = Logger(subsystem: "org.proofkit.app", category: "pin")
     private static let ipv4PinCache = PinCache()
     private static let ipv6PinCache = PinCache()
+    private static let preferredLock = NSLock()
+    nonisolated(unsafe) private static var preferredName: String?
     /// Every outbound socket asks. `getifaddrs` plus a route probe per family
     /// per candidate on each dial would be a cost of its own, so the answer is
     /// kept briefly — short enough that a handover is noticed within a dial or
@@ -269,7 +286,7 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         }
         return cache.current(lifetime: pinCacheLifetime) { previous in
             let probed = probePhysicalInterfaces()
-            let chosen = PhysicalInterface.choose(from: probed, family: family)
+            let chosen = PhysicalInterface.choose(from: probed, family: family, preferredName: currentPreferredPhysicalInterface())
             // Once per change, and every refresh while this family has no way
             // out — the second case is rare and is the one worth a line each time.
             if chosen != previous || chosen?.routes(family) != true {

@@ -104,7 +104,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         log.info("startTunnel")
         NetworkDiagnostics.reset()
         NetworkDiagnostics.record("start os=\(ProcessInfo.processInfo.operatingSystemVersionString)")
-        LibboxPlatform.invalidatePinCache()
+        LibboxPlatform.setPreferredPhysicalInterface(nil)
         LibboxPlatform.tracePhysicalInterfaces("before-tun")
         // First thing, so the sentinel the app leaves in stage.txt is replaced
         // the moment this process runs a line of its own. Anything the app reads
@@ -395,29 +395,49 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func startWatchingNetworkChanges() {
-        var lastInterface: String?
+        var lastUsablePath: String?
+        var sawOutage = false
         pathMonitor.pathUpdateHandler = { [weak self] path in
-            // Record before the existing early return: availableInterfaces.first
-            // can stay unchanged even when the usable path or family changes.
             let interfaces = path.availableInterfaces.map { "\($0.name):\($0.type)" }.joined(separator: ",")
             NetworkDiagnostics.record("path status=\(path.status) wifi=\(path.usesInterfaceType(.wifi)) cellular=\(path.usesInterfaceType(.cellular)) ipv4=\(path.supportsIPv4) ipv6=\(path.supportsIPv6) interfaces=\(interfaces)")
-            // Before anything else: whatever moved, the next socket should look
-            // at the interfaces afresh rather than trust a pin from before it.
-            LibboxPlatform.invalidatePinCache()
-            let current = path.availableInterfaces.first?.name
-            guard current != lastInterface else { return }
-            lastInterface = current
+
+            let type: NWInterface.InterfaceType? = path.usesInterfaceType(.wifi) ? .wifi
+                : path.usesInterfaceType(.cellular) ? .cellular : nil
+            let physical: String?
+            if path.status == .satisfied, let type {
+                physical = path.availableInterfaces.first(where: { $0.type == type })?.name
+            } else {
+                physical = nil
+            }
+            // A UDP route probe accepted pdp_ip1 on the affected LTE carrier,
+            // but Network.framework identified pdp_ip0 as the active path.
+            LibboxPlatform.setPreferredPhysicalInterface(physical)
+
             guard let self else { return }
+            guard path.status == .satisfied, let physical else {
+                sawOutage = true
+                return
+            }
+            let current = "\(physical)/4=\(path.supportsIPv4)/6=\(path.supportsIPv6)"
+            let previous = lastUsablePath
+            lastUsablePath = current
+            let changed = previous != nil && (previous != current || sawOutage)
+            sawOutage = false
+            guard changed else { return }
+
             if HevTunnel.isRunning {
-                // hev keeps its tun and its sessions; the engine behind it
-                // re-dials through the pin on its own, as it did before.
-                NetworkDiagnostics.record("network changed; hev keeps its tun, the engine re-dials")
+                if RoomKeeper.shared.isActive {
+                    RoomKeeper.shared.networkChanged()
+                    NetworkDiagnostics.record("network changed \(previous ?? "unknown") -> \(current); olcrtc reconnect queued")
+                } else {
+                    NetworkDiagnostics.record("network changed; borrowed engine will redial")
+                }
                 return
             }
             guard let server = self.commandServer else { return }
-            self.log.info("network changed to \(current ?? "none", privacy: .public), resetting")
+            self.log.info("network changed to \(current, privacy: .public), resetting")
             server.resetNetwork()
-            NetworkDiagnostics.record("sing-box resetNetwork; olcrtc not explicitly restarted")
+            NetworkDiagnostics.record("sing-box resetNetwork after path change")
         }
         pathMonitor.start(queue: DispatchQueue(label: "org.proofkit.path"))
     }
@@ -432,6 +452,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // leaves the next start fighting the previous one for it. Two calls now:
         // one stops the engine, the other tears down the server that owns it.
         pathMonitor.cancel()
+        LibboxPlatform.setPreferredPhysicalInterface(nil)
         // The tun's owner first, on either path: hev stops reading the
         // descriptor before the engine it forwards to goes away.
         HevTunnel.stop()

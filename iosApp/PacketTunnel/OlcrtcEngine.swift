@@ -140,12 +140,15 @@ enum OlcrtcEngine {
 
     /// Starts the engine again over `rooms`, with everything else as `start`
     /// was given. For RoomKeeper, when a generation has ended.
-    static func relaunch(rooms: RoomList.Parsed) throws {
+    static func relaunch(rooms: RoomList.Parsed, resolversForNewPath: [String]? = nil) throws {
         currentLock.lock()
-        let current = current
+        let saved = current
+        if let saved, let resolversForNewPath {
+            current = (saved.parameters, resolversForNewPath)
+        }
         currentLock.unlock()
-        guard let current else { throw failure(nil, "olcRTC was never started") }
-        try launch(current.parameters, resolvers: current.resolvers, rooms: rooms)
+        guard let saved else { throw failure(nil, "olcRTC was never started") }
+        try launch(saved.parameters, resolvers: resolversForNewPath ?? saved.resolvers, rooms: rooms)
     }
 
     /// Hands the running engine a room list. It is read at the engine's next
