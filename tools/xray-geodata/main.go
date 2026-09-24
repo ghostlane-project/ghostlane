@@ -1,5 +1,5 @@
 // xray-geodata trims v2fly's geosite (dlc.dat) and geoip (geoip.dat) to the
-// lists Bypass Russia needs and writes them as text, one rule per line in the
+// lists the bypass regions need and writes them as text, one rule per line in the
 // syntax Xray's routing and dns accept inline: `domain:`, `full:`, `keyword:`,
 // `regexp:` for names, `a.b.c.d/n` for addresses.
 //
@@ -26,9 +26,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var geositeCodes = []string{"category-ru", "tld-ru"}
+// The lists each bypass region needs: Russia (what iOS inlines into Xray and
+// hands the olcRTC engine), and Iran and China for the olcRTC engine on
+// Android. geosite-<code>.txt and geoip-<code>.txt each.
+var geositeCodes = []string{"category-ru", "tld-ru", "category-ir", "cn", "tld-cn"}
 
-const geoipCode = "ru"
+var geoipCodes = []string{"ru", "ir", "cn"}
 
 // IPv6 prefixes are left out unless asked for: the iOS tunnel claims no IPv6
 // route, so no IPv6 destination ever reaches these rules, and the v2fly list
@@ -119,12 +122,17 @@ func writeGeoip(path, out string) error {
 	if err := proto.Unmarshal(raw, &list); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
+	byCode := map[string]*geodata.GeoIP{}
 	for _, entry := range list.Entry {
-		if strings.ToLower(entry.Code) != geoipCode {
-			continue
+		byCode[strings.ToLower(entry.Code)] = entry
+	}
+	for _, code := range geoipCodes {
+		entry, ok := byCode[code]
+		if !ok {
+			return fmt.Errorf("%s has no code %q", path, code)
 		}
 		if entry.ReverseMatch {
-			return fmt.Errorf("%s/%s is a reverse-match list, which inline rules cannot express", path, geoipCode)
+			return fmt.Errorf("%s/%s is a reverse-match list, which inline rules cannot express", path, code)
 		}
 		lines := make([]string, 0, len(entry.Cidr))
 		for _, c := range entry.Cidr {
@@ -136,13 +144,15 @@ func writeGeoip(path, out string) error {
 					continue
 				}
 			default:
-				return fmt.Errorf("%s/%s: address of %d bytes", path, geoipCode, len(c.Ip))
+				return fmt.Errorf("%s/%s: address of %d bytes", path, code, len(c.Ip))
 			}
 			lines = append(lines, fmt.Sprintf("%s/%d", ip.String(), c.Prefix))
 		}
-		return writeLines(filepath.Join(out, "geoip-"+geoipCode+".txt"), lines)
+		if err := writeLines(filepath.Join(out, "geoip-"+code+".txt"), lines); err != nil {
+			return err
+		}
 	}
-	return fmt.Errorf("%s has no code %q", path, geoipCode)
+	return nil
 }
 
 func writeLines(path string, lines []string) error {

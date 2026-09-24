@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Refreshes the Xray-side Bypass Russia lists the app bundles, from v2fly's
-# releases: geosite category-ru and tld-ru out of dlc.dat, geoip ru out of
-# geoip.dat, written as text rules Xray accepts inline (see
+# Refreshes the text bypass lists the app bundles, from v2fly's releases:
+# geosite category-ru, tld-ru, category-ir, cn and tld-cn out of dlc.dat,
+# geoip ru, ir and cn out of geoip.dat, written as text rules Xray accepts
+# inline and the olcRTC engine reads (see
 # tools/xray-geodata/main.go for why text and not .dat). Pinned to a release
 # tag and a sha256 of each download so a re-run reproduces the same bytes;
 # pass GEOSITE_TAG / GEOIP_TAG (and their sums) to move them. Writes
@@ -36,6 +37,7 @@ mkdir -p "$dest"
   echo "# Written by tools/xray-geodata.sh. Do not edit by hand."
   echo "domain-list-community $GEOSITE_TAG dlc.dat $GEOSITE_SHA"
   echo "geoip $GEOIP_TAG geoip.dat $GEOIP_SHA"
-  (cd "$dest" && sha256sum geosite-category-ru.txt geosite-tld-ru.txt geoip-ru.txt)
+  (cd "$dest" && sha256sum geosite-category-ru.txt geosite-tld-ru.txt geoip-ru.txt \
+    geosite-category-ir.txt geoip-ir.txt geosite-cn.txt geosite-tld-cn.txt geoip-cn.txt)
 } > "$lock"
 cat "$lock"

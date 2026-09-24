@@ -38,7 +38,7 @@ class CorePackagingTest {
         val prefix = "composeResources/multiplatform_app.sharedui.generated.resources/files"
         val expected =
             RuleSets.bundled.map { "$prefix/rules/${it.name}" } +
-                XrayGeodata.all.map { "$prefix/xray/${it.name}" }
+                XrayGeodata.bundled.map { "$prefix/xray/${it.name}" }
 
         expected.forEach { path ->
             val hasBytes = runCatching {
