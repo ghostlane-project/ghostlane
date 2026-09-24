@@ -191,9 +191,29 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
 
     static func tracePhysicalInterfaces(_ stage: String) {
         let candidates = probePhysicalInterfaces()
-        let v4 = PhysicalInterface.choose(from: candidates, family: AF_INET)
-        let v6 = PhysicalInterface.choose(from: candidates, family: AF_INET6)
-        NetworkDiagnostics.record("\(stage) ipv4=\(v4?.summary ?? "none") ipv6=\(v6?.summary ?? "none") candidates=\(candidates.map(\.summary).joined(separator: ","))")
+        let system = systemPath.interfaces
+        let v4 = PhysicalInterface.choose(from: candidates, family: AF_INET, system: system)
+        let v6 = PhysicalInterface.choose(from: candidates, family: AF_INET6, system: system)
+        NetworkDiagnostics.record("\(stage) ipv4=\(v4?.summary ?? "none") ipv6=\(v6?.summary ?? "none") system=\(systemLabel(system)) candidates=\(candidates.map(\.summary).joined(separator: ","))")
+    }
+
+    /// Records the interfaces the system routes through, most preferred first,
+    /// from the provider's path monitor; an empty list when the path is not
+    /// satisfied, and before the monitor's first answer. The pin prefers them
+    /// over its own probe (see `PhysicalInterface.choose`).
+    ///
+    /// Only names: the extension imports both Network and NetworkExtension,
+    /// which each have a type called `NWPath`, and the pin needs nothing else.
+    static func noteSystemPath(_ interfaces: [String]) {
+        var unique: [String] = []
+        for name in interfaces where !unique.contains(name) {
+            unique.append(name)
+        }
+        systemPath.interfaces = unique
+    }
+
+    private static func systemLabel(_ system: [String]) -> String {
+        system.isEmpty ? "none" : system.joined(separator: ",")
     }
 
     /// Forgets the interface last pinned to, so the next socket looks again.
@@ -211,6 +231,28 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     private static let pinLog = Logger(subsystem: "org.proofkit.app", category: "pin")
     private static let ipv4PinCache = PinCache()
     private static let ipv6PinCache = PinCache()
+    private static let systemPath = SystemPath()
+
+    /// Written from the path monitor's queue, read by whichever thread is
+    /// dialing, so behind a lock of its own.
+    private final class SystemPath: @unchecked Sendable {
+        private let lock = NSLock()
+        private var names: [String] = []
+
+        var interfaces: [String] {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return names
+            }
+            set {
+                lock.lock()
+                names = newValue
+                lock.unlock()
+            }
+        }
+    }
+
     /// Every outbound socket asks. `getifaddrs` plus a route probe per family
     /// per candidate on each dial would be a cost of its own, so the answer is
     /// kept briefly — short enough that a handover is noticed within a dial or
@@ -269,18 +311,25 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         }
         return cache.current(lifetime: pinCacheLifetime) { previous in
             let probed = probePhysicalInterfaces()
-            let chosen = PhysicalInterface.choose(from: probed, family: family)
+            let system = systemPath.interfaces
+            let chosen = PhysicalInterface.choose(from: probed, family: family, system: system)
             // Once per change, and every refresh while this family has no way
             // out — the second case is rare and is the one worth a line each time.
             if chosen != previous || chosen?.routes(family) != true {
-                report(chosen, among: probed, family: family)
+                report(chosen, among: probed, system: system, family: family)
             }
             return chosen
         }
     }
 
-    private static func report(_ chosen: PhysicalInterface?, among probed: [PhysicalInterface], family: Int32) {
-        let seen = probed.isEmpty ? "no candidates" : probed.map(\.summary).joined(separator: " ")
+    private static func report(
+        _ chosen: PhysicalInterface?,
+        among probed: [PhysicalInterface],
+        system: [String],
+        family: Int32
+    ) {
+        let candidates = probed.isEmpty ? "no candidates" : probed.map(\.summary).joined(separator: " ")
+        let seen = "\(candidates); system \(systemLabel(system))"
         let line: String
         if let chosen, chosen.routes(family) {
             line = "pin \(familyLabel(family)): \(chosen.name) (\(seen))"
@@ -313,8 +362,9 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         let index: UInt32
     }
 
-    /// Interfaces that are up, not loopback, and carry a real address, with
-    /// Wi-Fi ahead of cellular. Ordering only: whether an interface can reach
+    /// Interfaces that are up, not loopback, and carry a real address, in
+    /// `PhysicalInterface.ordered` order: Wi-Fi ahead of cellular, cellular
+    /// bearers by number. Ordering only: whether an interface can reach
     /// anything is the probe's question, not this one's.
     ///
     /// This used to *return* the first `en*`, else the first `pdp_ip*`, and that
@@ -330,9 +380,8 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         guard getifaddrs(&addresses) == 0, let first = addresses else { return [] }
         defer { freeifaddrs(addresses) }
 
-        var wifi: [Candidate] = []
-        var cellular: [Candidate] = []
-        var seen = Set<String>()
+        var found: [String: Candidate] = [:]
+        var listed: [String] = []
         for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
             guard entry.pointee.ifa_flags & UInt32(IFF_UP) != 0,
                   entry.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0,
@@ -341,16 +390,13 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
             else { continue }
 
             let name = String(cString: entry.pointee.ifa_name)
-            guard seen.insert(name).inserted else { continue }
+            guard name.hasPrefix("en") || name.hasPrefix("pdp_ip"), found[name] == nil else { continue }
             let index = if_nametoindex(name)
             guard index != 0 else { continue }
-            if name.hasPrefix("en") {
-                wifi.append(Candidate(name: name, index: index))
-            } else if name.hasPrefix("pdp_ip") {
-                cellular.append(Candidate(name: name, index: index))
-            }
+            found[name] = Candidate(name: name, index: index)
+            listed.append(name)
         }
-        return wifi + cellular
+        return PhysicalInterface.ordered(listed).compactMap { found[$0] }
     }
 
     /// Whether a socket bound to `index` can pick a source address for a public

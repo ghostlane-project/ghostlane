@@ -47,6 +47,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// connection finally fails, which to a user looks like the VPN randomly
     /// breaking. sing-box knows how to rebuild its sockets; it just has to be
     /// told the ground moved.
+    ///
+    /// It also says which interface the system routes through, and every
+    /// outbound socket is pinned to that one when it can be (#58), so it runs
+    /// from the first line of `startTunnel`, before any engine dials.
     private let pathMonitor = NWPathMonitor()
 
     /// Progress written where the app can read it.
@@ -104,7 +108,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         log.info("startTunnel")
         NetworkDiagnostics.reset()
         NetworkDiagnostics.record("start os=\(ProcessInfo.processInfo.operatingSystemVersionString)")
+        // A process can outlive a session: nothing from the last one's path
+        // or pins is evidence about this one.
+        LibboxPlatform.noteSystemPath([])
         LibboxPlatform.invalidatePinCache()
+        // Before any engine starts, not once it is ready: the path's first
+        // answer is what pins the engine's first dials (#58). It arrives on
+        // the monitor's queue while the tunnel settings are being applied.
+        // Until it has, the pin falls back to its own probe.
+        startWatchingNetworkChanges()
         LibboxPlatform.tracePhysicalInterfaces("before-tun")
         // First thing, so the sentinel the app leaves in stage.txt is replaced
         // the moment this process runs a line of its own. Anything the app reads
@@ -310,7 +322,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     "tun up: engine=\(engine)+hev socks=127.0.0.1:\(socks.port) fd=\(fd) dns=\(LibboxPlatform.Tun.dnsThroughSocks.joined(separator: ","))"
                 )
                 mark("ready")
-                startWatchingNetworkChanges()
                 log.info("hev-socks5-tunnel started in front of \(engine, privacy: .public)")
                 completionHandler(nil)
                 return
@@ -336,7 +347,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // instead. Starting the engine is a separate call, and this is it.
             try server.startOrReloadService(config, options: LibboxOverrideOptions())
             mark("ready")
-            startWatchingNetworkChanges()
             self.commandHandler = handler
             self.commandServer = server
 
@@ -402,7 +412,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             let interfaces = path.availableInterfaces.map { "\($0.name):\($0.type)" }.joined(separator: ",")
             NetworkDiagnostics.record("path status=\(path.status) wifi=\(path.usesInterfaceType(.wifi)) cellular=\(path.usesInterfaceType(.cellular)) ipv4=\(path.supportsIPv4) ipv6=\(path.supportsIPv6) interfaces=\(interfaces)")
             // Before anything else: whatever moved, the next socket should look
-            // at the interfaces afresh rather than trust a pin from before it.
+            // at the interfaces afresh rather than trust a pin from before it,
+            // and should prefer the one the system itself now routes through.
+            LibboxPlatform.noteSystemPath(path.status == .satisfied ? path.availableInterfaces.map(\.name) : [])
             LibboxPlatform.invalidatePinCache()
             let current = path.availableInterfaces.first?.name
             guard current != lastInterface else { return }
