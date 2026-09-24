@@ -3,15 +3,18 @@ package org.olcbox.app.net
 import multiplatform_app.sharedui.generated.resources.Res
 
 /**
- * The Bypass Russia lists in the form Xray takes them: text, one rule per
- * line, in the syntax Xray's routing and dns accept inline (`domain:`,
- * `full:`, `keyword:`, `regexp:` for names; `a.b.c.d/n` for addresses).
+ * The bypass lists in the form Xray takes them: text, one rule per line, in
+ * the syntax Xray's routing and dns accept inline (`domain:`, `full:`,
+ * `keyword:`, `regexp:` for names; `a.b.c.d/n` for addresses). The olcRTC
+ * engine reads the same text ([OlcrtcDirectRules]).
  *
- * The same three lists [RuleSets] bundles for sing-box — v2fly's
- * `geosite:category-ru`, `geosite:tld-ru` and `geoip:ru` — trimmed out of
- * v2fly's own releases by `tools/xray-geodata.sh`, which records what it
- * fetched in `tools/xray-geodata.lock`. [XrayGeodataTest] refuses a bundle
- * whose bytes do not hash to the values pinned here.
+ * The Russian three are the lists [RuleSets] bundles for sing-box — v2fly's
+ * `geosite:category-ru`, `geosite:tld-ru` and `geoip:ru` — and what Xray
+ * inlines on iOS. The Iranian (`category-ir`, `geoip:ir`) and Chinese (`cn`,
+ * `tld-cn`, `geoip:cn`) ones are for the olcRTC engine on Android. All are
+ * trimmed out of v2fly's own releases by `tools/xray-geodata.sh`, which
+ * records what it fetched in `tools/xray-geodata.lock`. [XrayGeodataTest]
+ * refuses a bundle whose bytes do not hash to the values pinned here.
  *
  * Inline rather than `geosite.dat`/`geoip.dat` next to the core, which is how
  * Xray usually reads them: the core finds those files through the
@@ -39,12 +42,40 @@ object XrayGeodata {
         name = "geoip-ru.txt",
         sha256 = "124350e02f701693ca81709e2e9fccac1bf7681122b2a0ac373517f40ffe55ea"
     )
+    val GEOSITE_CATEGORY_IR = File(
+        name = "geosite-category-ir.txt",
+        sha256 = "93abdb349b529b51d672134fafa5b44bbd646803d1dd49c518cf6b562934d897"
+    )
+    val GEOIP_IR = File(
+        name = "geoip-ir.txt",
+        sha256 = "dff619714e5970d8b175cd10365d5cb93180bb12fd13453c9e367001840e0afe"
+    )
+    val GEOSITE_CN = File(
+        name = "geosite-cn.txt",
+        sha256 = "71ee69310fb5939b1bf2a37cd6f4b42b63cdfa919ecbcc761108b1b161fa0ba3"
+    )
+    val GEOSITE_TLD_CN = File(
+        name = "geosite-tld-cn.txt",
+        sha256 = "eacf4787727233e709ca4858f3640575adb0a21171a75d773c19b56534455097"
+    )
+    val GEOIP_CN = File(
+        name = "geoip-cn.txt",
+        sha256 = "419111c68a2cbbf94236126bc4cd2fd30ac43274b6b65a640e0d2a6f0e05f014"
+    )
 
-    /** Everything the route rules match on. */
+    /** Everything the Russian route rules match on. */
     val all: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU, GEOIP_RU)
 
-    /** The name lists, which is what a DNS rule can match. An IP list has no names. */
-    val domains: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU)
+    /** Every list the app bundles, for the hash check and the packaging test. */
+    val bundled: List<File> = all + listOf(GEOSITE_CATEGORY_IR, GEOIP_IR, GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_CN)
+
+    /** The files of one bypass region (`ru`, `ir`, `cn`), names first. */
+    fun regional(region: String): List<File> = when (region) {
+        "ru" -> all
+        "ir" -> listOf(GEOSITE_CATEGORY_IR, GEOIP_IR)
+        "cn" -> listOf(GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_CN)
+        else -> error("Unsupported routing region: $region")
+    }
 
     suspend fun bytes(file: File): ByteArray = Res.readBytes("files/xray/${file.name}")
 
@@ -54,10 +85,24 @@ object XrayGeodata {
      */
     class Lists(val domains: List<String>, val cidrs: List<String>)
 
-    suspend fun lists(): Lists = Lists(
-        domains = domains.flatMap { parse(bytes(it).decodeToString()) },
-        cidrs = parse(bytes(GEOIP_RU).decodeToString()),
-    )
+    /** The Russian lists: what [XrayConfig.buildXhttp] inlines on iOS. */
+    suspend fun lists(): Lists = lists("ru")
+
+    /**
+     * A region's name rules and address rules. The file name says which a
+     * list holds: `geosite-` names (what a DNS rule can match), `geoip-`
+     * addresses.
+     */
+    suspend fun lists(region: String): Lists {
+        val files = regional(region)
+        return Lists(
+            domains = files.filter { it.name.startsWith(NAMES) }.flatMap { parse(bytes(it).decodeToString()) },
+            cidrs = files.filter { it.name.startsWith(ADDRESSES) }.flatMap { parse(bytes(it).decodeToString()) },
+        )
+    }
+
+    const val NAMES = "geosite-"
+    const val ADDRESSES = "geoip-"
 
     /** One rule per line; blank lines and `#` comments are not rules. */
     fun parse(text: String): List<String> =

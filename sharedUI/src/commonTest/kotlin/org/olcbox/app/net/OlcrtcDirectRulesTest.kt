@@ -39,13 +39,57 @@ class OlcrtcDirectRulesTest {
         assertEquals("", OlcrtcDirectRules.NONE)
     }
 
+    @Test fun everyRegionIsRulesTheEngineTakes() = runTest {
+        for (region in listOf("ru", "ir", "cn")) {
+            val lines = OlcrtcDirectRules.text(region).lines()
+            assertEquals("", lines.last(), "$region: the text ends with a newline")
+            for (rule in lines.dropLast(1)) {
+                assertTrue(name.matches(rule) || v4.matches(rule) || v6.matches(rule), "$region: not a rule the engine takes: $rule")
+            }
+        }
+    }
+
+    @Test fun eachRegionCarriesItsOwnListsOnly() = runTest {
+        val ru = OlcrtcDirectRules.text("ru").lines().toSet()
+        val ir = OlcrtcDirectRules.text("ir").lines().toSet()
+        val cn = OlcrtcDirectRules.text("cn").lines().toSet()
+        for (rules in listOf(ru, ir, cn)) {
+            for (range in XrayConfig.PRIVATE_RANGES) assertTrue(range in rules, "$range is missing")
+        }
+        assertTrue("domain:ru" in ru && "domain:ru" !in ir && "domain:ru" !in cn)
+        assertTrue("domain:ir" in ir && "domain:ir" !in ru && "domain:ir" !in cn)
+        assertTrue("domain:cn" in cn && "domain:cn" !in ru && "domain:cn" !in ir)
+    }
+
+    @Test fun shapesTheEngineRefusesAreLeftOut() {
+        val text = OlcrtcDirectRules.text(
+            XrayGeodata.Lists(
+                domains = listOf("domain:a.cn", "regexp:^.+\\.b\\.cn$", "keyword:c", "full:d.cn"),
+                cidrs = listOf("1.2.3.0/24")
+            )
+        )
+        assertEquals(XrayConfig.PRIVATE_RANGES + listOf("domain:a.cn", "full:d.cn", "1.2.3.0/24"), text.lines().dropLast(1))
+    }
+
+    @Test fun routingPicksTheRegion() = runTest {
+        assertEquals(OlcrtcDirectRules.NONE, OlcrtcDirectRules.forRouting(Routing.Global))
+        assertEquals(
+            OlcrtcDirectRules.text("cn"),
+            OlcrtcDirectRules.forRouting(Routing.Rules("/data/rules", DirectDns.Servers(emptyList()), "cn"))
+        )
+        assertEquals(
+            OlcrtcDirectRules.text(),
+            OlcrtcDirectRules.forRouting(Routing.BypassRussia(RuleSets.IOS_RELATIVE_DIR, DirectDns.Placeholder))
+        )
+    }
+
     /**
      * SaluteJazz (the third olcRTC carrier, merged 2026-09-22) reaches
      * `salutejazz.ru` (web origin), `ws.salutejazz.ru` (signaling
      * websocket), `bk.salutejazz.ru` (room creation/preconnect REST) and
      * the TURN hosts `s-t.salutejazz.ru`/`a-t.salutejazz.ru`.
      *
-     * This proves the iOS path only. `OlcrtcDirectRules`/[XrayGeodata]'s
+     * This proves the iOS and Android olcRTC paths. `OlcrtcDirectRules`/[XrayGeodata]'s
      * bundle — v2fly's `geosite-tld-ru.txt`, fetched and pinned by
      * `tools/xray-geodata.sh` / [XrayGeodataTest] — already carries a bare
      * `domain:ru` root-domain rule (asserted by
@@ -54,7 +98,7 @@ class OlcrtcDirectRulesTest {
      * Stream's `.ru` hosts ride on, neither of which is listed by name
      * either. Nothing needed adding here.
      *
-     * Android/Desktop do not go through this bundle at all: their Bypass
+     * The desktop proxy does not go through this bundle at all: its Bypass
      * Russia front routes olcRTC with [RuleSets]' sing-box `.srs` files —
      * a *separate* artifact, SagerNet's build rather than v2fly's, fetched
      * and pinned independently (`scripts/rule-sets.lock`, `RuleSetsTest`).

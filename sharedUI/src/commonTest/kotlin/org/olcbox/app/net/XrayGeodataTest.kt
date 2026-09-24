@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.olcbox.app.crypt.PlatformCrypto
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class XrayGeodataTest {
@@ -12,7 +13,7 @@ class XrayGeodataTest {
         // v2fly releases; a bundle whose bytes differ is either an unrecorded
         // refresh or a corrupted resource, and either one ships a bypass list
         // nobody reviewed.
-        for (file in XrayGeodata.all) {
+        for (file in XrayGeodata.bundled) {
             val bytes = XrayGeodata.bytes(file)
             assertTrue(bytes.isNotEmpty(), "${file.name} is empty")
             assertEquals(file.sha256, PlatformCrypto.sha256(bytes).toHex(), "${file.name} is not the pinned build")
@@ -37,6 +38,38 @@ class XrayGeodataTest {
         assertTrue("domain:xn--p1ai" in lists.domains)
     }
 
+    @Test fun russiaByRegionIsWhatXrayInlines() = runTest {
+        // iOS inlines lists() into Xray and hands the same rules to the
+        // engine; asking by region must not change a byte of either.
+        val byRegion = XrayGeodata.lists("ru")
+        val plain = XrayGeodata.lists()
+        assertEquals(plain.domains, byRegion.domains)
+        assertEquals(plain.cidrs, byRegion.cidrs)
+    }
+
+    @Test fun iranAndChinaCarryTheirOwnLists() = runTest {
+        val ir = XrayGeodata.lists("ir")
+        assertTrue(ir.domains.size > 150, "category-ir is over 150 names, got ${ir.domains.size}")
+        assertTrue(ir.cidrs.size > 1_500, "geoip:ir is over 1500 IPv4 prefixes, got ${ir.cidrs.size}")
+        assertTrue("domain:ir" in ir.domains)
+        assertTrue("domain:digikala.com" in ir.domains)
+        val cn = XrayGeodata.lists("cn")
+        assertTrue(cn.domains.size > 6_000, "cn and tld-cn are over 6000 names, got ${cn.domains.size}")
+        assertTrue(cn.cidrs.size > 8_000, "geoip:cn is over 8000 IPv4 prefixes, got ${cn.cidrs.size}")
+        assertTrue("domain:cn" in cn.domains)
+        assertTrue("domain:baidu.com" in cn.domains)
+        val cidr = Regex("""^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$""")
+        val prefixes = listOf("domain:", "full:", "keyword:", "regexp:")
+        for ((region, lists) in listOf("ir" to ir, "cn" to cn)) {
+            for (rule in lists.domains) assertTrue(prefixes.any { rule.startsWith(it) }, "$region: not a name rule: $rule")
+            for (rule in lists.cidrs) assertTrue(cidr.matches(rule), "$region: not an IPv4 prefix: $rule")
+        }
+    }
+
+    @Test fun anUnknownRegionIsAnError() {
+        assertFailsWith<IllegalStateException> { XrayGeodata.regional("future") }
+    }
+
     @Test fun parseSkipsBlanksAndComments() {
         assertEquals(
             listOf("domain:a.ru", "1.2.3.0/24"),
@@ -44,10 +77,19 @@ class XrayGeodataTest {
         )
     }
 
-    @Test fun namesAreASubsetOfAll() {
-        assertTrue(XrayGeodata.all.containsAll(XrayGeodata.domains))
-        assertTrue(XrayGeodata.GEOIP_RU !in XrayGeodata.domains, "an IP list has no names for a DNS rule to match")
-        assertEquals(XrayGeodata.all.size, XrayGeodata.all.map { it.name }.toSet().size)
+    @Test fun everyFileSaysWhetherItHoldsNamesOrAddresses() {
+        // lists() sorts a region's files by this prefix; a file with neither
+        // would silently fall out of both halves.
+        for (file in XrayGeodata.bundled) {
+            assertTrue(
+                file.name.startsWith(XrayGeodata.NAMES) || file.name.startsWith(XrayGeodata.ADDRESSES),
+                "${file.name} is neither a name list nor an address list"
+            )
+        }
+        assertEquals(XrayGeodata.bundled.size, XrayGeodata.bundled.map { it.name }.toSet().size)
+        for (region in listOf("ru", "ir", "cn")) {
+            assertTrue(XrayGeodata.bundled.containsAll(XrayGeodata.regional(region)), "$region: a file that is not bundled")
+        }
     }
 
     private fun ByteArray.toHex() = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
