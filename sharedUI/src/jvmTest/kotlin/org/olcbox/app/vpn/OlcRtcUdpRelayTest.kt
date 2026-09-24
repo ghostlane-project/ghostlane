@@ -42,6 +42,28 @@ class OlcRtcUdpRelayTest {
         }
     }
 
+    // Under a bypass the engine carries the region's UDP itself. A room with
+    // no lane keeps the relay then: the engine (olcrtc#49) takes the
+    // association for direct flows and DNS and drops what is for the lane at
+    // once. Off, a Russian call on a Jitsi room would be refused instead of
+    // going direct, as it did behind the sing-box front.
+    @Test
+    fun directRulesKeepTheRelayOnARoomWithoutALane() {
+        assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_DATACHANNEL, directRules = true))
+        val config = LocationConfig(
+            bypassProvider = "jitsi-meet",
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ).normalized()
+        assertTrue(OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport, directRules = true))
+    }
+
+    @Test
+    fun withoutRulesTheLaneDecides() {
+        assertFalse(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_DATACHANNEL, directRules = false))
+        assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.TRANSPORT_DATACHANNEL, directRules = false))
+        assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_VP8CHANNEL, directRules = false))
+    }
+
     // seichannel has no datagram methods; the engine refuses there by itself,
     // at once, so the relay is left as it is.
     @Test

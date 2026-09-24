@@ -326,19 +326,23 @@ and reword the object's KDoc from "The Bypass Russia rules" to the rules of the 
     // Under a bypass the engine carries the region's UDP itself. A room with
     // no lane keeps the relay then: the engine (olcrtc#49) takes the
     // association for direct flows and DNS and drops what is for the lane at
-    // once. Off, a Russian call on Telemost would be refused instead of going
-    // direct, as it did behind the sing-box front.
+    // once. Off, a Russian call on a Jitsi room would be refused instead of
+    // going direct, as it did behind the sing-box front.
     @Test
     fun directRulesKeepTheRelayOnARoomWithoutALane() {
-        assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_DATACHANNEL, directRules = true))
         assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_DATACHANNEL, directRules = true))
+        val config = LocationConfig(
+            bypassProvider = "jitsi-meet",
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ).normalized()
+        assertTrue(OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport, directRules = true))
     }
 
     @Test
     fun withoutRulesTheLaneDecides() {
-        assertFalse(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_DATACHANNEL))
-        assertFalse(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_DATACHANNEL, directRules = false))
+        assertFalse(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_DATACHANNEL, directRules = false))
         assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.TRANSPORT_DATACHANNEL, directRules = false))
+        assertTrue(OlcRtcUdpRelay.enabled(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_VP8CHANNEL, directRules = false))
     }
 ```
 
@@ -354,18 +358,20 @@ and reword the object's KDoc from "The Bypass Russia rules" to the rules of the 
  *
  * hev asks the engine for an association for every UDP socket off the tun
  * (full-cone). Only livekit (WB Stream) and SaluteJazz have a lane behind
- * datachannel; Telemost and Jitsi do not. Off, the engine answers each
- * association at once with host unreachable, so UDP fails fast there. On, the
- * engine (7b78fd4a753c, olcrtc#49) takes the association on a link without
- * the lane for what it carries off the lane — a direct flow, DNS for a name
- * the rules cover, other DNS over the reliable stream — and drops what is for
- * the lane at once; the association ends with its control connection. That
- * only pays when direct rules give it something to carry: under a bypass a
- * Russian call on Telemost goes direct, as it did behind the sing-box front.
+ * datachannel; the jitsi engine, whose only transport it is, does not.
+ * Off, the engine answers each association at once with host unreachable, so
+ * UDP fails fast there. On, the engine (7b78fd4a753c, olcrtc#49) takes the
+ * association on a link without the lane for what it carries off the lane —
+ * a direct flow, DNS for a name the rules cover, other DNS over the reliable
+ * stream — and drops what is for the lane at once; the association ends with
+ * its control connection. That only pays when direct rules give it something
+ * to carry: under a bypass a Russian call on a Jitsi room goes direct, as it
+ * did behind the sing-box front.
  * Without rules it stays off: a refusal fails fast where a drop only times out
  * (and before olcrtc#49 such an association waited for a lane that never
- * opened, holding its SOCKS slot). vp8channel carries datagrams itself, whatever the carrier;
- * seichannel has no datagram methods, so the engine refuses there on its own.
+ * opened, holding its SOCKS slot). vp8channel carries datagrams itself,
+ * whatever the carrier; seichannel has no datagram methods, so the engine
+ * refuses there on its own.
  */
 object OlcRtcUdpRelay {
     private val DATACHANNEL_LANE_PROVIDERS = setOf(

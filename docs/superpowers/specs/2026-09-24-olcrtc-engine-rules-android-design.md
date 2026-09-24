@@ -91,9 +91,12 @@ names + 12819 prefixes (what iOS already runs), Iran 190 + 2028, China 6603
 
 ### UDP (`OlcRtcUdpRelay`)
 
-The relay is off today on a datachannel room without a datagram lane (Telemost
-and Jitsi), so the engine answers every UDP ASSOCIATE with "host unreachable".
-With the front, a regional UDP flow (QUIC to a Russian site, a VK call) never
+The relay is off today on a datachannel room without a datagram lane, so the
+engine answers every UDP ASSOCIATE with "host unreachable". That is Jitsi
+alone: WB Stream and SaluteJazz have the lane, and Telemost runs vp8channel
+(or seichannel), never datachannel; the platform's own links are Telemost and
+WB Stream on vp8channel and SaluteJazz on datachannel. With the front, a
+regional UDP flow (QUIC to a Russian site, a VK call) on a Jitsi room never
 reached the engine: the front sent it direct. Without the front it would be
 refused.
 
@@ -112,6 +115,14 @@ connection, counts against the engine's `maxSocksConns` (512). hev keeps one
 association per local UDP socket (full-cone), not per destination, and iOS, WB
 Stream and SaluteJazz already run this way.
 
+What this does not cover: on seichannel the engine refuses every association,
+rules or not, because that link has no datagram methods at all
+(`prepareUDPAssociate`). A hand-made SEI location under a bypass therefore
+loses the direct path for regional UDP that the front gave it; apps fall back
+to TCP, as they do on iOS today. No platform link uses SEI. Closing it is an
+engine change (take the association for direct flows on any link), not part of
+this one.
+
 ## Behaviour changes a user sees
 
 - Android proxy mode: Bypass now applies to olcRTC locations (it was Global).
@@ -119,7 +130,8 @@ Stream and SaluteJazz already run this way.
   two. Direct names are resolved on the engine's resolver list (the network's
   resolvers, then the public operator: `UpstreamDns`) instead of the first
   network resolver the front was given.
-- Regional UDP on Telemost/Jitsi datachannel rooms still goes direct.
+- Regional UDP on Jitsi rooms still goes direct. On a hand-made seichannel
+  location it no longer does (see UDP).
 
 ## Testing
 
@@ -128,8 +140,8 @@ Stream and SaluteJazz already run this way.
   another region's; `regexp:`/`keyword:` are dropped; an unknown region fails.
 - `XrayGeodataTest`: all eight files hash to their pins; each region's lists
   have the expected scale; the Russian `all` is unchanged.
-- `OlcRtcUdpRelayTest`: rules on turn the relay on for Telemost and Jitsi
-  datachannel; rules off keeps every current answer.
+- `OlcRtcUdpRelayTest`: rules on turn the relay on for a Jitsi room; rules
+  off keeps every current answer.
 - CI (`pr-checks`): JVM tests, Android compilation, Apple Kotlin compilation
   (iosMain reads `XrayGeodata`), `sing-box check` (unchanged shapes).
 - On a device, Android tun and proxy mode, a Telemost room, each region the
