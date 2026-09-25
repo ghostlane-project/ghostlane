@@ -69,15 +69,26 @@ class LocalizationTest {
         assertEquals(DISCLOSURE_BODY, inLocale("en") { getString(Res.string.vpn_disclosure_body) })
     }
 
-    // The Russian notice keeps every section and paragraph of a required notice, and
-    // none of the words the English one may not use (see DisclosureBlocksTest).
-    @Test fun theRussianDisclosureKeepsEverySectionAndSellsNothing() {
-        val russian = inLocale("ru") { getString(Res.string.vpn_disclosure_body) }
+    // Every translation of the notice keeps every section and paragraph of a required
+    // notice, and none of the words the English one may not use (see DisclosureBlocksTest):
+    // a platform, or "subscription" in that language.
+    @Test fun everyDisclosureKeepsEverySectionAndSellsNothing() {
         fun shape(body: String) = disclosureBlocks(body).map { (it.heading != null) to it.paragraphs.size }
-        assertEquals(shape(DISCLOSURE_BODY), shape(russian))
-        listOf("android", "ios", "iphone", "ipad", "подписк").forEach { word ->
-            assertFalse(word in russian.lowercase(), "the disclosure must not say \"$word\"")
+        for ((tag, subscription) in listOf("ru" to "подписк", "zh" to "订阅", "fa" to "اشتراک")) {
+            val body = inLocale(tag) { getString(Res.string.vpn_disclosure_body) }
+            assertEquals(shape(DISCLOSURE_BODY), shape(body), tag)
+            listOf("android", "ios", "iphone", "ipad", subscription).forEach { word ->
+                assertFalse(word in body.lowercase(), "the $tag disclosure must not say \"$word\"")
+            }
         }
+    }
+
+    @Test fun chineseAndPersianOnTheirSystems() {
+        assertEquals("设置", inLocale("zh-CN") { getString(Res.string.settings_title) })
+        assertEquals("设置", inLocale("zh-TW") { getString(Res.string.settings_title) })
+        assertEquals("تنظیمات", inLocale("fa") { getString(Res.string.settings_title) })
+        assertEquals("5 个节点", inLocale("zh") { getPluralString(Res.plurals.locations_count, 5, 5) })
+        assertEquals("1 مکان", inLocale("fa") { getPluralString(Res.plurals.locations_count, 1, 1) })
     }
 
     // The pure helpers are tested with their English defaults and the screens show
@@ -174,13 +185,15 @@ class LocalizationTest {
         }
     }
 
-    // A string added in English only would show English inside a Russian screen.
-    @Test fun everyEnglishStringHasARussianOne() {
+    // A string added in English only would show English inside a translated screen.
+    @Test fun everyEnglishStringHasEveryTranslation() {
         fun keys(path: String): Set<String> =
             Regex("""<(?:string|plurals) name="([^"]+)"""").findAll(File(path).readText()).map { it.groupValues[1] }.toSet()
         val english = keys("src/commonMain/composeResources/values/strings.xml")
-        val russian = keys("src/commonMain/composeResources/values-ru/strings.xml")
-        assertEquals(emptySet(), english - russian, "missing in values-ru")
-        assertEquals(emptySet(), russian - english, "only in values-ru")
+        for (tag in listOf("ru", "zh", "fa")) {
+            val translated = keys("src/commonMain/composeResources/values-$tag/strings.xml")
+            assertEquals(emptySet(), english - translated, "missing in values-$tag")
+            assertEquals(emptySet(), translated - english, "only in values-$tag")
+        }
     }
 }

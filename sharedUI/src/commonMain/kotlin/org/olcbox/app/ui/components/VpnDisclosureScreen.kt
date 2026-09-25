@@ -162,9 +162,17 @@ fun disclosureBlocks(body: String): List<DisclosureBlock> {
     return blocks
 }
 
-/** A heading is a short line with no lower-case letter in it. */
+/**
+ * A heading is a short line with no lower-case letter in it, and no sentence's end.
+ *
+ * The last part is for the scripts that have no case at all — Chinese, Persian —
+ * where every line passes the first two tests and a short paragraph would become a
+ * heading. A paragraph ends like a sentence; a heading does not.
+ */
 private fun String.isDisclosureHeading(): Boolean =
-    length <= 40 && none { it.isLowerCase() } && any { it.isLetter() }
+    length <= 40 && none { it.isLowerCase() } && any { it.isLetter() } && last() !in SENTENCE_ENDS
+
+private const val SENTENCE_ENDS = ".。!！?？؟…:："
 
 /**
  * Deliberately specific about what the tunnel does rather than about privacy in
