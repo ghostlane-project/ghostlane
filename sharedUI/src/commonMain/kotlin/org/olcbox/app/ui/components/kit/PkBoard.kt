@@ -512,6 +512,27 @@ fun PkGroupHeader(
  * `planFraction`. A provider that reports nothing, or reports it in a spelling
  * the app does not know, gets no bar rather than a bar that is guessing.
  */
+/**
+ * A provider's note to its users (the `announce` subscription header), under
+ * its list and exactly as it was sent: at most 200 characters of plain text,
+ * nothing in it made into a link.
+ */
+@Composable
+fun PkProviderNote(text: String, modifier: Modifier = Modifier) {
+    val palette = LocalPkPalette.current
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(1.dp, palette.hairline, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+    )
+}
+
 @Composable
 fun PkPlanBar(
     label: String,

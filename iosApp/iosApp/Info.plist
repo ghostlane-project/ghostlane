@@ -11,6 +11,7 @@
 			<string>org.proofkit.app.import</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>ghostlane</string>
 				<string>proofkit</string>
 			</array>
 		</dict>

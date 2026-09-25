@@ -152,7 +152,7 @@ private class DesktopAppDependencies {
 private const val WINDOWS_ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
 
 /**
- * The one-tap import link, `proofkit://add?url=…`, until the screen takes it.
+ * The one-tap import link, `ghostlane://add?url=…` or `proofkit://…`, until the screen takes it.
  * Linux hands it over as an argument (the desktop entry's `%u`), macOS as an
  * AWT open-URI event; Windows has no handler registered in this release.
  */

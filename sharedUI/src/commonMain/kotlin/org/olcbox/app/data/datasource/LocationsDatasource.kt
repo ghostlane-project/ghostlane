@@ -6,7 +6,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
+import io.ktor.http.URLBuilder
+import io.ktor.http.URLProtocol
+import io.ktor.http.Url
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,11 +115,17 @@ class LocationsRepositoryImpl(
         val totalBytes: Long? = null,
         val expiresAtEpochMs: Long? = null,
         val supportUrl: String? = null,
-        val webPageUrl: String? = null
+        val webPageUrl: String? = null,
+        /** `announce`: null when absent (the last one stays), "" when the provider sent `0`. */
+        val announce: String? = null,
+        val fallbackUrl: String? = null,
+        /** Where the list lives from now on (`new-url`, or `new-domain` applied to this URL). */
+        val movedTo: String? = null
     ) {
         fun isEmpty(): Boolean = title.isNullOrBlank() &&
             usedBytes == null && totalBytes == null && expiresAtEpochMs == null &&
-            supportUrl.isNullOrBlank() && webPageUrl.isNullOrBlank()
+            supportUrl.isNullOrBlank() && webPageUrl.isNullOrBlank() &&
+            announce == null && fallbackUrl == null && movedTo == null
     }
 
     private data class ParsedImport(
@@ -285,14 +295,29 @@ class LocationsRepositoryImpl(
             // Keep the last reported reason: it belongs to the attempt that
             // ultimately failed (Identity is retried in Compatibility mode).
             var lastFailure: SubscriptionRefreshFailure? = null
+            val recordFailure: SubscriptionFailureSink = { error, status ->
+                lastFailure = SubscriptionRefreshFailure(url, error, status)
+            }
+            // The provider's own spare, arranged in an earlier answer, when the
+            // list's address does not answer now: a blocked domain is the usual
+            // reason. The list stays filed under its own address; only `new-url`
+            // or `new-domain` moves it.
+            val fallbackUrl = previousEntries
+                .firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+                ?.takeIf { it != url }
             val resolved = resolveParsedImport(
                 text = url,
                 fallbackSubscriptionInterval = previousInterval,
                 subscriptionProxy = subscriptionProxy,
-                onFailure = { error, status ->
-                    lastFailure = SubscriptionRefreshFailure(url, error, status)
-                }
-            ) ?: run {
+                onFailure = recordFailure
+            ) ?: fallbackUrl?.let { spare ->
+                resolveParsedImport(
+                    text = spare,
+                    fallbackSubscriptionInterval = previousInterval,
+                    subscriptionProxy = subscriptionProxy,
+                    onFailure = recordFailure
+                )
+            } ?: run {
                 preservePreviousEntries(previousEntries)
                 // Downloaded fine but nothing importable ⇒ Empty.
                 failures += lastFailure
@@ -300,6 +325,19 @@ class LocationsRepositoryImpl(
                 return@forEach
             }
             val source = resolved.source
+            // Filed from now on where the provider says the list lives.
+            val listUrl = source.profile?.movedTo ?: url
+            // A refresh parses fresh entries, which remember nothing: a note the
+            // provider put up and has not taken down, and its spare address,
+            // carry over from the entries they replace.
+            val carriedProfile = (source.profile ?: SubscriptionProfile()).let { profile ->
+                profile.copy(
+                    announce = profile.announce
+                        ?: previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.announce },
+                    fallbackUrl = profile.fallbackUrl
+                        ?: previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+                )
+            }.takeUnless { it.isEmpty() }
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
@@ -338,12 +376,12 @@ class LocationsRepositoryImpl(
                 }
                 entry.copy(
                     storageId = storageId,
-                    subscriptionUrl = url,
+                    subscriptionUrl = listUrl,
                     subscriptionOriginLink = entry.subscriptionOriginLink ?: previousOriginLink,
                     metadata = entry.metadata.withSubscriptionRefreshState(
                         updateIntervalHours = updateInterval,
                         lastRefreshAtEpochMs = refreshTimestamp,
-                        profile = source.profile
+                        profile = carriedProfile
                     )
                 ).normalized()
             }
@@ -750,7 +788,9 @@ class LocationsRepositoryImpl(
             ?.let {
                 ImportSource(
                     content = it,
-                    subscriptionUrl = text.trim(),
+                    // A list that says it has moved is stored at its new address
+                    // from its very first fetch (see subscriptionProfile).
+                    subscriptionUrl = downloaded.profile?.movedTo ?: text.trim(),
                     updateIntervalHours = downloaded.updateIntervalHours,
                     profile = downloaded.profile,
                     requestMode = requestMode
@@ -1469,20 +1509,18 @@ class LocationsRepositoryImpl(
      * `profile-title`, `subscription-userinfo`, `support-url` and
      * `profile-web-page-url`, as every client that shows a subscription reads
      * them. The title is often base64, which the prefix announces.
+     *
+     * Then the headers a provider uses to keep its users when its domain is
+     * blocked, spelled as Happ reads them (happ.su dev-docs, app-management):
+     * `fallback-url`, asked when the list's own address does not answer;
+     * `new-url` or `new-domain`, where the list lives from now on; and
+     * `announce`, a note of at most 200 characters, `0` to take it down.
+     * An address is taken only from an answer that came over https and only
+     * if it is https itself: over plain http anyone on the path could write
+     * these headers, and a moved list never comes back by itself.
      */
-    @OptIn(ExperimentalEncodingApi::class)
     private fun HttpResponse.subscriptionProfile(): SubscriptionProfile? {
-        val title = headers["profile-title"]?.trim()?.let { raw ->
-            if (raw.startsWith("base64:", ignoreCase = true)) {
-                runCatching {
-                    Base64.Default.withPadding(Base64.PaddingOption.PRESENT_OPTIONAL)
-                        .decode(raw.substringAfter(':').trim())
-                        .decodeToString()
-                }.getOrNull()
-            } else {
-                raw
-            }
-        }?.takeIf { it.isNotBlank() }
+        val title = headers["profile-title"]?.trim()?.let(::headerText)?.takeIf { it.isNotBlank() }
 
         // `upload=..; download=..; total=..; expire=..` — used is what the two
         // directions add up to, and total 0 means unmetered rather than empty.
@@ -1499,6 +1537,24 @@ class LocationsRepositoryImpl(
             .takeIf { it.isNotEmpty() }
             ?.sum()
 
+        val announce = headers["announce"]?.trim()?.let { raw ->
+            if (raw == "0") {
+                ""
+            } else {
+                headerText(raw)?.trim()?.take(SubscriptionMetadata.ANNOUNCE_MAX_CHARS)?.takeIf { it.isNotBlank() }
+            }
+        }
+
+        val here = request.url
+        val secure = here.protocol == URLProtocol.HTTPS
+        val movedTo = if (!secure) {
+            null
+        } else {
+            (headers["new-url"]?.trim()?.let(::httpsUrlOrNull)
+                ?: headers["new-domain"]?.trim()?.let { domain -> onDomain(here, domain) })
+                ?.takeIf { it != here.toString() }
+        }
+
         val profile = SubscriptionProfile(
             title = title,
             usedBytes = used,
@@ -1506,9 +1562,37 @@ class LocationsRepositoryImpl(
             // The header is in seconds, and 0 is the documented "never".
             expiresAtEpochMs = info["expire"]?.takeIf { it > 0 }?.let { it * 1000 },
             supportUrl = headers["support-url"]?.trim()?.takeIf { it.isNotBlank() },
-            webPageUrl = headers["profile-web-page-url"]?.trim()?.takeIf { it.isNotBlank() }
+            webPageUrl = headers["profile-web-page-url"]?.trim()?.takeIf { it.isNotBlank() },
+            announce = announce,
+            fallbackUrl = if (secure) headers["fallback-url"]?.trim()?.let(::httpsUrlOrNull) else null,
+            movedTo = movedTo
         )
         return profile.takeUnless { it.isEmpty() }
+    }
+
+    /** A header's text, plain or behind the `base64:` prefix providers use for anything non-ASCII. */
+    @OptIn(ExperimentalEncodingApi::class)
+    private fun headerText(raw: String): String? =
+        if (raw.startsWith("base64:", ignoreCase = true)) {
+            runCatching {
+                Base64.Default.withPadding(Base64.PaddingOption.PRESENT_OPTIONAL)
+                    .decode(raw.substringAfter(':').trim())
+                    .decodeToString()
+            }.getOrNull()
+        } else {
+            raw
+        }
+
+    private fun httpsUrlOrNull(raw: String): String? = runCatching { Url(raw) }.getOrNull()
+        ?.takeIf { it.protocol == URLProtocol.HTTPS && it.host.isNotBlank() && raw.startsWith("https://", ignoreCase = true) }
+        ?.toString()
+
+    /** [url] with its host replaced by [domain], path and query kept; null for anything that is not a bare host. */
+    private fun onDomain(url: Url, domain: String): String? {
+        val host = domain.trim().trimEnd('.').lowercase()
+        if (host.isEmpty() || host.length > 253 || !host.all { it in 'a'..'z' || it in '0'..'9' || it == '.' || it == '-' }) return null
+        if (host.startsWith('.') || host.startsWith('-') || ".." in host) return null
+        return URLBuilder(url).apply { this.host = host }.buildString()
     }
 
     private fun HttpResponse.profileUpdateIntervalHours(): Int? {
@@ -1550,7 +1634,13 @@ class LocationsRepositoryImpl(
             available = profile.totalBytes?.let(::formatByteSize) ?: base.available,
             expiresAtEpochMs = profile.expiresAtEpochMs ?: base.expiresAtEpochMs,
             supportUrl = profile.supportUrl ?: base.supportUrl,
-            webPageUrl = profile.webPageUrl ?: base.webPageUrl
+            webPageUrl = profile.webPageUrl ?: base.webPageUrl,
+            announce = when (profile.announce) {
+                null -> base.announce
+                "" -> null
+                else -> profile.announce
+            },
+            fallbackUrl = profile.fallbackUrl ?: base.fallbackUrl
         ).normalized()
     }
 

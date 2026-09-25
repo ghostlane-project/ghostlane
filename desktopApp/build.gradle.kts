@@ -584,7 +584,7 @@ compose.desktop {
             macOS {
                 iconFile.set(project.file("appIcons/MacosIcon.icns"))
                 bundleID = "org.olcbox.app.desktopApp"
-                // The one-tap import link, proofkit://add?url=…; the app
+                // The one-tap import link, ghostlane:// or proofkit://add?url=…; the app
                 // receives it through Desktop.setOpenURIHandler.
                 infoPlist {
                     extraKeysRawXml = """
@@ -595,6 +595,7 @@ compose.desktop {
                                 <string>org.olcbox.app.desktopApp.import</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
+                                    <string>ghostlane</string>
                                     <string>proofkit</string>
                                 </array>
                             </dict>
@@ -671,7 +672,7 @@ if (currentBuildOs.isLinux) {
             Exec=$desktopPackageName %u
             Icon=olcbox
             Categories=Network;Utility;
-            MimeType=x-scheme-handler/proofkit;
+            MimeType=x-scheme-handler/ghostlane;x-scheme-handler/proofkit;
             Terminal=false
             DESKTOP
 

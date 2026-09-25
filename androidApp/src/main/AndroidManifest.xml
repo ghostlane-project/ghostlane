@@ -47,7 +47,8 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
             </intent-filter>
             <!--
-                The one-tap import link. proofkit://add?url=… from anywhere;
+                The one-tap import link. ghostlane://add?url=… (or proofkit://, add/<list>,
+                import/…) from anywhere;
                 https://proofkit.org/add#… verified against
                 /.well-known/assetlinks.json so a Telegram button opens the app
                 and not the browser.
@@ -56,7 +57,10 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="proofkit" android:host="add" />
+                <data android:scheme="ghostlane" />
+                <data android:scheme="proofkit" />
+                <data android:host="add" />
+                <data android:host="import" />
             </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
