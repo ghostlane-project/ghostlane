@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.activities
 
+import org.olcbox.app.ui.tv.isTelevision
+import org.olcbox.app.ui.tv.hasCamera
+import org.olcbox.app.ui.tv.PhoneImportSheet
 import org.olcbox.app.ui.features.home.localizedSingleMessage
 import multiplatform_app.sharedui.generated.resources.Res
 import org.jetbrains.compose.resources.stringResource
@@ -99,6 +102,11 @@ fun AndroidMainScreen(
     }
 
     val context = LocalContext.current
+    // A TV has no camera to scan with and no clipboard worth the name: it takes a
+    // server list from a phone on the same network instead.
+    val television = remember(context) { context.isTelevision() }
+    val camera = remember(context) { context.hasCamera() }
+    var phoneImportOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val connectionMode by vpnManager.connectionMode.collectAsState()
     val proxySettings by vpnManager.proxySettings.collectAsState()
@@ -423,7 +431,8 @@ fun AndroidMainScreen(
         // and not in a third, which is a difference nobody chose.
         showGetSubscription = false,
         showSplitTunnelingButton = false,
-        canScanQr = true,
+        canScanQr = camera,
+        onImportFromPhoneRequested = if (television || !camera) ({ phoneImportOpen = true }) else null,
         onAppSettingsClick = {
             appSettingsInitialRoute = AppSettingsInitialRoute.Hub
             vpnManager.refreshInstalledApps()
@@ -441,6 +450,24 @@ fun AndroidMainScreen(
             title = title,
             payload = payload,
             onDismiss = { shareSheetPayload = null }
+        )
+    }
+
+    if (phoneImportOpen) {
+        PhoneImportSheet(
+            onLink = { link ->
+                phoneImportOpen = false
+                viewModel.onImportFullConfig(
+                    rawText = link,
+                    onComplete = {
+                        reloadLocationsAfterImport {
+                            Toast.makeText(context, serverListAddedText, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onError = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+                )
+            },
+            onDismiss = { phoneImportOpen = false }
         )
     }
 

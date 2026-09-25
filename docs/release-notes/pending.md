@@ -25,3 +25,7 @@ On a phone or computer set to Russian, Chinese or Persian, the app is now in tha
 ### Android and computers: your own routing rules, and only blocked sites through the tunnel
 
 Routing has a new mode, "Only blocked sites through the tunnel": sites blocked in Russia, and services that shut Russian users out, go through the tunnel, and everything else connects directly. The list is Re:filter's, bundled with the app, so it works offline; it includes whole address ranges of some large services, so other sites hosted there go through the tunnel too. In any mode you can now add rules of your own: domains or IP addresses that always connect directly, or always go through the tunnel. On Android, olcRTC rooms still carry everything in the new mode.
+
+### Android TV
+
+Ghostlane now installs on Android TV and appears in its launcher. Every control can be reached with the remote, with a clear mark on the one in focus. A TV has no camera to scan with, so a server list comes from your phone: the TV shows a code, the phone opens a page on the same home network, and the link pasted there lands on the TV. The same option appears on any Android device without a camera.

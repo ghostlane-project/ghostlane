@@ -34,6 +34,8 @@
     <string name="add_custom_subtitle">Комната, ключ, провайдер и транспорт</string>
     <string name="add_file">Импорт из файла</string>
     <string name="add_file_subtitle">Список серверов или файл конфигурации</string>
+    <string name="add_from_phone">С телефона</string>
+    <string name="add_from_phone_subtitle">Отсканируйте код телефоном и вставьте ссылку там</string>
     <string name="add_paste">Вставить ссылку или URI</string>
     <string name="add_paste_subtitle">HTTP, HTTPS или URI olcrtc</string>
     <string name="add_scan_qr">Сканировать QR-код</string>
@@ -231,6 +233,14 @@
     <string name="open_in_browser">Откройте %1$s в браузере</string>
     <string name="password_regenerated">Пароль обновлён</string>
     <string name="password_required">Укажите пароль</string>
+    <string name="phone_import_no_network">Сначала подключите это устройство к домашней сети: телефон найдёт его там.</string>
+    <string name="phone_import_steps">Подключите телефон к той же сети, что и это устройство, отсканируйте код или откройте адрес ниже, затем вставьте ссылку на список серверов и нажмите «Отправить».</string>
+    <string name="phone_import_title">Отправьте список серверов с телефона</string>
+    <string name="phone_page_empty">Сначала вставьте ссылку.</string>
+    <string name="phone_page_label">Ссылка на список серверов</string>
+    <string name="phone_page_send">Отправить</string>
+    <string name="phone_page_sent">Отправлено. Посмотрите на другой экран.</string>
+    <string name="phone_page_title">Отправить список серверов в Ghostlane</string>
     <string name="ping_checking">Проверка…</string>
     <string name="ping_connected">Доступен, %1$d мс</string>
     <string name="ping_failed">HTTP-пинг не удался</string>

@@ -98,6 +98,7 @@ fun HomeScreen(
     onImportFileRequested: () -> Unit = {},
     onImportFromClipboardRequested: (onImported: () -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
     onScanQrRequested: () -> Unit = {},
+    onImportFromPhoneRequested: (() -> Unit)? = null,
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
     showAppSettingsButton: Boolean = false,
     canScanQr: Boolean = false,
@@ -723,6 +724,12 @@ fun HomeScreen(
             onImportFileClick = {
                 isAddSheetOpen = false
                 onImportFileRequested()
+            },
+            onImportFromPhoneClick = onImportFromPhoneRequested?.let { open ->
+                {
+                    isAddSheetOpen = false
+                    open()
+                }
             },
             onUpdateSubscriptionsClick = {
                 isAddSheetOpen = false

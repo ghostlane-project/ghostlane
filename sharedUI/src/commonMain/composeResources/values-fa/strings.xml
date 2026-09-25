@@ -34,6 +34,8 @@
     <string name="add_custom_subtitle">اتاق، کلید، ارائه‌دهنده و انتقال را وارد کنید</string>
     <string name="add_file">وارد کردن از فایل</string>
     <string name="add_file_subtitle">خواندن فهرست سرورها یا فایل پیکربندی</string>
+    <string name="add_from_phone">از گوشی</string>
+    <string name="add_from_phone_subtitle">کد را با گوشی اسکن کنید و پیوند را آنجا بچسبانید</string>
     <string name="add_paste">چسباندن پیوند یا URI</string>
     <string name="add_paste_subtitle">HTTP، HTTPS یا URI از نوع olcrtc</string>
     <string name="add_scan_qr">اسکن کد QR</string>
@@ -231,6 +233,14 @@
     <string name="open_in_browser">%1$s را در مرورگر باز کنید</string>
     <string name="password_regenerated">گذرواژه دوباره ساخته شد</string>
     <string name="password_required">گذرواژه الزامی است</string>
+    <string name="phone_import_no_network">ابتدا این دستگاه را به شبکهٔ خانگی وصل کنید؛ گوشی از آنجا به آن دسترسی پیدا می‌کند.</string>
+    <string name="phone_import_steps">گوشی را به همان شبکهٔ این دستگاه وصل کنید، کد را اسکن کنید یا نشانی زیر را باز کنید، سپس پیوند فهرست سرورها را بچسبانید و «ارسال» را بزنید.</string>
+    <string name="phone_import_title">فهرست سرورها را از گوشی بفرستید</string>
+    <string name="phone_page_empty">ابتدا یک پیوند بچسبانید.</string>
+    <string name="phone_page_label">پیوند فهرست سرورها</string>
+    <string name="phone_page_send">ارسال</string>
+    <string name="phone_page_sent">ارسال شد. به صفحهٔ دیگر نگاه کنید.</string>
+    <string name="phone_page_title">ارسال فهرست سرورها به Ghostlane</string>
     <string name="ping_checking">در حال بررسی…</string>
     <string name="ping_connected">متصل، %1$d میلی‌ثانیه</string>
     <string name="ping_failed">پینگ HTTP ناموفق بود</string>

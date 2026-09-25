@@ -34,6 +34,8 @@
     <string name="add_custom_subtitle">填写房间、密钥、服务商和传输方式</string>
     <string name="add_file">从文件导入</string>
     <string name="add_file_subtitle">读取服务器列表或配置文件</string>
+    <string name="add_from_phone">从手机发送</string>
+    <string name="add_from_phone_subtitle">用手机扫码，在手机上粘贴链接</string>
     <string name="add_paste">粘贴链接或 URI</string>
     <string name="add_paste_subtitle">HTTP、HTTPS 或 olcrtc URI</string>
     <string name="add_scan_qr">扫描二维码</string>
@@ -231,6 +233,14 @@
     <string name="open_in_browser">请在浏览器中打开 %1$s</string>
     <string name="password_regenerated">密码已重新生成</string>
     <string name="password_required">必须填写密码</string>
+    <string name="phone_import_no_network">请先将此设备连接到家庭网络：手机要通过它找到这台设备。</string>
+    <string name="phone_import_steps">将手机连接到与此设备相同的网络，扫描二维码或打开下方地址，然后粘贴服务器列表链接并点按“发送”。</string>
+    <string name="phone_import_title">从手机发送服务器列表</string>
+    <string name="phone_page_empty">请先粘贴链接。</string>
+    <string name="phone_page_label">服务器列表链接</string>
+    <string name="phone_page_send">发送</string>
+    <string name="phone_page_sent">已发送。请查看另一块屏幕。</string>
+    <string name="phone_page_title">向 Ghostlane 发送服务器列表</string>
     <string name="ping_checking">正在检查…</string>
     <string name="ping_connected">已连接 %1$d 毫秒</string>
     <string name="ping_failed">HTTP ping 失败</string>

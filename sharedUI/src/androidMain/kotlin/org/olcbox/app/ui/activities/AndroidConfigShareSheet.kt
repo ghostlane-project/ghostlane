@@ -155,7 +155,7 @@ private fun Context.sharePayload(payload: String, title: String) {
     )
 }
 
-private fun createQrBitmap(content: String): Bitmap {
+internal fun createQrBitmap(content: String): Bitmap {
     val size = 768
     val matrix = MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
