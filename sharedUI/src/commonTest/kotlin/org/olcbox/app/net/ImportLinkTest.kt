@@ -31,6 +31,30 @@ class ImportLinkTest {
         assertEquals("https://proofkit.org/sub/abc?transport=auto", ImportLink.payloadOf("https://proofkit.org/add#https://proofkit.org/sub/abc?transport=auto"))
     }
 
+    @Test fun theGhostlaneSchemeTakesEveryShapeTheOlderOneDoes() {
+        assertEquals(list, ImportLink.payloadOf(ImportLink.schemeLink(list).replaceFirst("proofkit://", "ghostlane://")))
+        assertEquals("olcrtc://crypt1/abc", ImportLink.payloadOf("ghostlane://add#olcrtc%3A%2F%2Fcrypt1%2Fabc"))
+        assertEquals("olcrtc://crypt1/abc", ImportLink.payloadOf("GHOSTLANE://import?url=olcrtc%3A%2F%2Fcrypt1%2Fabc"))
+    }
+
+    // What Remnawave-style subscription pages write for each client: the list
+    // after add/ (or import/), raw with its own query and fragment, or encoded.
+    @Test fun thePathShapeProviderPagesWriteCarriesTheListWhole() {
+        val raw = "https://sub.example.net/s/Abc%2Bd?format=raw#My VPN"
+        assertEquals(raw, ImportLink.payloadOf("ghostlane://add/$raw"))
+        assertEquals(raw, ImportLink.payloadOf("ghostlane://import/$raw"))
+        assertEquals(raw, ImportLink.payloadOf("proofkit://add/$raw"))
+        assertEquals(
+            "https://sub.example.net/s/abc?format=raw",
+            ImportLink.payloadOf("ghostlane://add/https%3A%2F%2Fsub.example.net%2Fs%2Fabc%3Fformat%3Draw")
+        )
+    }
+
+    // On the web the path is sent to the server, and the list is a credential.
+    @Test fun thePathShapeIsNotTakenOnTheWeb() {
+        assertNull(ImportLink.payloadOf("https://proofkit.org/add/https://sub.example.net/s/abc"))
+    }
+
     @Test fun anythingElseIsNotAnImportLink() {
         assertNull(ImportLink.payloadOf("https://proofkit.org/"))
         assertNull(ImportLink.payloadOf("https://proofkit.org/adder#x"))
@@ -38,6 +62,10 @@ class ImportLinkTest {
         assertNull(ImportLink.payloadOf("proofkit://add"))
         assertNull(ImportLink.payloadOf("proofkit://add?url="))
         assertNull(ImportLink.payloadOf("proofkit://other?url=x"))
+        assertNull(ImportLink.payloadOf("ghostlane://add"))
+        assertNull(ImportLink.payloadOf("ghostlane://add/"))
+        assertNull(ImportLink.payloadOf("ghostlane://adder/https://x.example/s"))
+        assertNull(ImportLink.payloadOf("ghostlane://imports/https://x.example/s"))
         assertNull(ImportLink.payloadOf(""))
     }
 }

@@ -509,7 +509,7 @@ class HomeScreenViewModel(
     }
 
     /**
-     * A `proofkit://add?url=…` or `https://proofkit.org/add#…` link, handed
+     * A `ghostlane://add?url=…` (or `proofkit://`) or `https://proofkit.org/add#…` link, handed
      * to the app by the system: the same import a paste goes through, once
      * the payload is out of the envelope. Not an import link at all is an
      * answer, not a crash — a bot or a panel may hand us a link we never

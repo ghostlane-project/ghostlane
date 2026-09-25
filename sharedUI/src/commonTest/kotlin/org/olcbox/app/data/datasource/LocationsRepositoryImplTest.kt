@@ -988,6 +988,152 @@ class LocationsRepositoryImplTest {
         assertFalse(report.hasFailures)
     }
 
+    // ---- provider headers: keeping users through a blocked domain -----------
+    // Spelled as Happ reads them: fallback-url, new-url / new-domain, announce.
+
+    private val listBody = "olcrtc://wbstream?vp8channel@room-alpha-new#${"c".repeat(64)}${'$'}Alpha"
+
+    private fun FakeLocationsDataSource.subscription() = stored!!.locations.single().metadata?.subscription
+    private fun FakeLocationsDataSource.listUrl() = stored!!.locations.single().subscriptionUrl
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    @Test
+    fun anAnnouncementIsKeptDecodedAndCappedUntilTheProviderSendsZero() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subscribedSource(url)
+        val note = "Серверы переехали, обновите подписку"
+        val encoded = "base64:" + kotlin.io.encoding.Base64.Default.encode(note.encodeToByteArray())
+        var announce: String? = encoded
+        val repo = repoRespondingWith(source, MockEngine {
+            val value = announce
+            if (value == null) respond(listBody) else respond(listBody, headers = headersOf("announce", value))
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals(note, source.subscription()?.announce)
+
+        announce = null
+        repo.refreshSubscription(url)
+        assertEquals(note, source.subscription()?.announce, "an answer without the header keeps the note")
+
+        announce = "x".repeat(300)
+        repo.refreshSubscription(url)
+        assertEquals(200, source.subscription()?.announce?.length)
+
+        announce = "0"
+        repo.refreshSubscription(url)
+        assertNull(source.subscription()?.announce)
+    }
+
+    @Test
+    fun aListThatDoesNotAnswerIsAskedAtItsSpareAddress() = runTest {
+        val url = "https://example.test/alpha"
+        val spare = "https://spare.example.test/alpha"
+        val source = subscribedSource(url)
+        var primaryUp = true
+        val asked = mutableListOf<String>()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            asked += request.url.toString()
+            when {
+                request.url.host == "example.test" && primaryUp ->
+                    respond(listBody, headers = headersOf("fallback-url", spare))
+                request.url.host == "example.test" -> throw IllegalStateException("blocked")
+                else -> respond(listBody)
+            }
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals(spare, source.subscription()?.fallbackUrl)
+
+        primaryUp = false
+        asked.clear()
+        val report = repo.refreshSubscription(url)
+        assertEquals(1, report.updatedCount)
+        assertFalse(report.hasFailures)
+        // The list's own address first (asked again in compatibility mode, as any
+        // failed fetch is), the spare only after it.
+        assertEquals(spare, asked.last())
+        assertTrue(asked.dropLast(1).isNotEmpty() && asked.dropLast(1).all { it == url }, asked.toString())
+        // The spare answered, but the list is still filed under its own address,
+        // and the spare stays known for the next time.
+        assertEquals(url, source.listUrl())
+        assertEquals(spare, source.subscription()?.fallbackUrl)
+    }
+
+    @Test
+    fun aListThatMovedIsFiledAtItsNewAddress() = runTest {
+        val url = "https://example.test/alpha?token=1"
+        val source = subscribedSource(url)
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.host == "example.test") {
+                respond(listBody, headers = headersOf("new-url", "https://new.example.test/beta"))
+            } else {
+                respond(listBody)
+            }
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals("https://new.example.test/beta", source.listUrl())
+    }
+
+    @Test
+    fun aNewDomainKeepsTheListsPathAndQuery() = runTest {
+        val url = "https://example.test/sub/alpha?token=1"
+        val source = subscribedSource(url)
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.host == "example.test") {
+                respond(listBody, headers = headersOf("new-domain", "mirror.example.test"))
+            } else {
+                respond(listBody)
+            }
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals("https://mirror.example.test/sub/alpha?token=1", source.listUrl())
+    }
+
+    // Over plain http anyone on the path could write these headers, and a moved
+    // list never comes back by itself.
+    @Test
+    fun movesAndSparesFromAPlainHttpAnswerAreIgnored() = runTest {
+        val url = "http://example.test/alpha"
+        val source = subscribedSource(url)
+        val repo = repoRespondingWith(source, MockEngine {
+            respond(
+                listBody,
+                headers = headersOf(
+                    "new-url" to listOf("https://elsewhere.example.test/alpha"),
+                    "fallback-url" to listOf("https://spare.example.test/alpha"),
+                    "announce" to listOf("still shown")
+                )
+            )
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals(url, source.listUrl())
+        assertNull(source.subscription()?.fallbackUrl)
+        assertEquals("still shown", source.subscription()?.announce)
+    }
+
+    @Test
+    fun aMoveToAnythingButHttpsIsIgnored() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subscribedSource(url)
+        val repo = repoRespondingWith(source, MockEngine {
+            respond(
+                listBody,
+                headers = headersOf(
+                    "new-url" to listOf("http://downgrade.example.test/alpha"),
+                    "fallback-url" to listOf("javascript:alert(1)")
+                )
+            )
+        })
+
+        repo.refreshSubscription(url)
+        assertEquals(url, source.listUrl())
+        assertNull(source.subscription()?.fallbackUrl)
+    }
+
     // ---- deleteSubscription ------------------------------------------------
     // Removing a subscription must take exactly its own locations with it, leave
     // manually added ones alone, and never leave the bundle pointing at a location

@@ -347,7 +347,19 @@ data class SubscriptionMetadata(
     val supportUrl: String? = null,
     /** `profile-web-page-url`. */
     @SerialName("web_page_url")
-    val webPageUrl: String? = null
+    val webPageUrl: String? = null,
+    /**
+     * `announce`: the provider's note to its users, at most
+     * [ANNOUNCE_MAX_CHARS] characters. Kept until the provider sends `0`.
+     */
+    @SerialName("announce")
+    val announce: String? = null,
+    /**
+     * `fallback-url`: where the list is asked for when its own address does
+     * not answer, as a provider whose domain was blocked arranges in advance.
+     */
+    @SerialName("fallback_url")
+    val fallbackUrl: String? = null
 ) {
     fun normalized(): SubscriptionMetadata {
         return copy(
@@ -362,7 +374,9 @@ data class SubscriptionMetadata(
             lastRefreshAtEpochMs = lastRefreshAtEpochMs?.takeIf { it > 0 },
             expiresAtEpochMs = expiresAtEpochMs?.takeIf { it > 0 },
             supportUrl = supportUrl.cleanMetadataValue(),
-            webPageUrl = webPageUrl.cleanMetadataValue()
+            webPageUrl = webPageUrl.cleanMetadataValue(),
+            announce = announce.cleanMetadataValue()?.take(ANNOUNCE_MAX_CHARS),
+            fallbackUrl = fallbackUrl.cleanMetadataValue()
         )
     }
 
@@ -378,13 +392,17 @@ data class SubscriptionMetadata(
                 lastRefreshAtEpochMs == null &&
                 expiresAtEpochMs == null &&
                 supportUrl.isNullOrBlank() &&
-                webPageUrl.isNullOrBlank()
+                webPageUrl.isNullOrBlank() &&
+                announce.isNullOrBlank() &&
+                fallbackUrl.isNullOrBlank()
     }
 
     companion object {
         const val DEFAULT_UPDATE_INTERVAL_HOURS = 24
         const val MIN_UPDATE_INTERVAL_HOURS = 1
         const val MAX_UPDATE_INTERVAL_HOURS = 720
+        /** What Happ displays of an `announce`; providers write to that length. */
+        const val ANNOUNCE_MAX_CHARS = 200
     }
 }
 

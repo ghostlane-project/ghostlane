@@ -65,7 +65,7 @@ class IosAppSession internal constructor(
     }
 
     /**
-     * A `proofkit://add?url=…` or `https://proofkit.org/add#…` link the system
+     * A `ghostlane://add?url=…` (or `proofkit://`) or `https://proofkit.org/add#…` link the system
      * handed to the app: the same import a paste goes through, then the board
      * reloads. The outcome is said out loud either way — a link tapped in a
      * bot is a promise that something will appear.

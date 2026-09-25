@@ -46,11 +46,13 @@ import org.olcbox.app.ui.components.kit.PkFilterChip
 import org.olcbox.app.ui.components.kit.PkGroupHeader
 import org.olcbox.app.ui.components.kit.PkIconButton
 import org.olcbox.app.ui.components.kit.PkPlanBar
+import org.olcbox.app.ui.components.kit.PkProviderNote
 import org.olcbox.app.ui.components.kit.PkRoomCard
 import org.olcbox.app.ui.components.kit.PkSectionEyebrow
 import org.olcbox.app.ui.components.kit.SeatDisplay
 import org.olcbox.app.ui.components.kit.pkSubscriptionHost
 import org.olcbox.app.ui.components.kit.pkSubscriptionIsSecret
+import org.olcbox.app.update.currentUpdatePlatform
 import org.olcbox.app.ui.components.kit.planFraction
 import org.olcbox.app.ui.components.kit.roomIsBlocked
 import org.olcbox.app.ui.components.kit.seatCountText
@@ -399,6 +401,14 @@ fun RoomBoard(
                         value = first.subscriptionQuota().orEmpty(),
                         fraction = fraction
                     )
+                }
+
+                // The provider's own note (`announce`), under its list. Not on the
+                // iPhone: a provider's note is as often "renew here", and App Review
+                // reads a purchase pointer shown in the app as the app's (3.1.1).
+                val announce = subscription?.announce?.takeIf { it.isNotBlank() }
+                if (announce != null && !isCollapsed && currentUpdatePlatform().os != "ios") {
+                    PkProviderNote(announce)
                 }
 
                 if (!isCollapsed) {
