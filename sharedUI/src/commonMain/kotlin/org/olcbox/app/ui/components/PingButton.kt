@@ -1,5 +1,12 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.ping_checking
+import multiplatform_app.sharedui.generated.resources.ping_connected
+import multiplatform_app.sharedui.generated.resources.ping_offline
+import multiplatform_app.sharedui.generated.resources.ping_tap_to_check
+import multiplatform_app.sharedui.generated.resources.ping_title
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,10 +58,10 @@ fun PingButton(
     var pingState by remember { mutableStateOf<PingState>(PingState.Idle) }
 
     val descriptionText = when (pingState) {
-        is PingState.Error -> "Offline"
-        is PingState.Loading -> "Checking..."
-        is PingState.Success -> "Connected ${(pingState as PingState.Success).latency}ms"
-        else -> "Click To Verify Reachability"
+        is PingState.Error -> stringResource(Res.string.ping_offline)
+        is PingState.Loading -> stringResource(Res.string.ping_checking)
+        is PingState.Success -> stringResource(Res.string.ping_connected, (pingState as PingState.Success).latency)
+        else -> stringResource(Res.string.ping_tap_to_check)
     }
 
     val stateIcon: @Composable () -> Unit = {
@@ -132,7 +139,7 @@ fun PingButton(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Connectivity Check",
+                    text = stringResource(Res.string.ping_title),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface

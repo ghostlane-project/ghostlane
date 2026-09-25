@@ -1,5 +1,35 @@
 package org.olcbox.app.ui.features.home
 
+import org.olcbox.app.ui.components.kit.boardWords
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_cancel
+import multiplatform_app.sharedui.generated.resources.action_remove
+import multiplatform_app.sharedui.generated.resources.imported_from_clipboard
+import multiplatform_app.sharedui.generated.resources.latency_nothing_measurable
+import multiplatform_app.sharedui.generated.resources.latency_on_connected
+import multiplatform_app.sharedui.generated.resources.lowest_selected
+import multiplatform_app.sharedui.generated.resources.reconnecting_lowest
+import multiplatform_app.sharedui.generated.resources.reconnecting_new_location
+import multiplatform_app.sharedui.generated.resources.reconnecting_through
+import multiplatform_app.sharedui.generated.resources.remove_location_body
+import multiplatform_app.sharedui.generated.resources.remove_location_question
+import multiplatform_app.sharedui.generated.resources.remove_server_list_body
+import multiplatform_app.sharedui.generated.resources.remove_server_list_question
+import multiplatform_app.sharedui.generated.resources.removed_locations
+import multiplatform_app.sharedui.generated.resources.status_add_list_to_start
+import multiplatform_app.sharedui.generated.resources.status_connected
+import multiplatform_app.sharedui.generated.resources.status_connecting
+import multiplatform_app.sharedui.generated.resources.status_in_room
+import multiplatform_app.sharedui.generated.resources.status_joining_room
+import multiplatform_app.sharedui.generated.resources.status_no_server_list
+import multiplatform_app.sharedui.generated.resources.status_not_connected
+import multiplatform_app.sharedui.generated.resources.status_room_full
+import multiplatform_app.sharedui.generated.resources.this_server_list
+import org.jetbrains.compose.resources.getString
+import org.jetbrains.compose.resources.getPluralString
+import org.jetbrains.compose.resources.pluralStringResource
+import org.olcbox.app.ui.features.home.components.listWords
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -198,15 +228,14 @@ fun HomeScreen(
         val isList = pending is PendingRemoval.ServerList
         AlertDialog(
             onDismissRequest = { confirmRemove = null },
-            title = { Text(if (isList) "Remove server list?" else "Remove location?") },
+            title = { Text(stringResource(if (isList) Res.string.remove_server_list_question else Res.string.remove_location_question)) },
             text = {
                 Text(
                     when (pending) {
                         is PendingRemoval.ServerList ->
-                            "${pending.title} and the ${pending.count} location(s) it brought in " +
-                                "will be removed from this device. You can add the list again later."
+                            pluralStringResource(Res.plurals.remove_server_list_body, pending.count, pending.title, pending.count)
                         is PendingRemoval.Location ->
-                            "${pending.title} will be removed from this device."
+                            stringResource(Res.string.remove_location_body, pending.title)
                     }
                 )
             },
@@ -215,7 +244,7 @@ fun HomeScreen(
                     when (pending) {
                         is PendingRemoval.ServerList -> viewModel.deleteSubscription(pending.url) { removed ->
                             scope.launch {
-                                snackbarHostState.showSnackbar("Removed ${'$'}removed location(s)")
+                                snackbarHostState.showSnackbar(getPluralString(Res.plurals.removed_locations, removed, removed))
                             }
                             locationViewModel.loadLocations()
                         }
@@ -225,10 +254,10 @@ fun HomeScreen(
                     }
                     confirmRemove = null
                 }) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(Res.string.action_remove), color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text(stringResource(Res.string.action_cancel)) } }
         )
     }
 
@@ -259,7 +288,7 @@ fun HomeScreen(
             locationViewModel.loadLocations {
                 isRefreshingSubscriptions = false
                 restartIfActiveChanged(activeBefore)
-                scope.launch { snackbarHostState.showSnackbar(report.bulkMessage()) }
+                scope.launch { snackbarHostState.showSnackbar(report.localizedBulkMessage()) }
             }
         }
     }
@@ -271,7 +300,7 @@ fun HomeScreen(
             locationViewModel.loadLocations {
                 refreshingSubscriptionUrl = null
                 restartIfActiveChanged(activeBefore)
-                scope.launch { snackbarHostState.showSnackbar(report.singleMessage()) }
+                scope.launch { snackbarHostState.showSnackbar(report.localizedSingleMessage()) }
             }
         }
     }
@@ -292,12 +321,10 @@ fun HomeScreen(
         if (!measurable) {
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    if (state.isVpnConnected) {
-                        "Latency is measured on the connected location"
-                    } else {
-                        "Nothing here can be measured — these locations have no " +
-                            "address to reach"
-                    }
+                    getString(
+                        if (state.isVpnConnected) Res.string.latency_on_connected
+                        else Res.string.latency_nothing_measurable
+                    )
                 )
             }
             onComplete(0, 0)
@@ -406,7 +433,7 @@ fun HomeScreen(
     val lowestActive = selectedItem?.subscriptionUrl?.trim()?.let { it in lowestSubscriptionUrls } == true
     val actualSelectedName = selectedItem?.let { locationDisplayParts(it).second }
     val selectedName = if (lowestActive) {
-        "Lowest / ${actualSelectedName.orEmpty()}"
+        stringResource(Res.string.lowest_selected, actualSelectedName.orEmpty())
     } else {
         actualSelectedName
     }
@@ -469,6 +496,10 @@ fun HomeScreen(
         )
     }
 
+    val words = listWords()
+    val statusWords = statusWords()
+    val boardWords = boardWords()
+    val thisServerList = stringResource(Res.string.this_server_list)
     HomeScreenContent(
         chrome = HomeChrome(
             tag = HEADER_TAG,
@@ -477,7 +508,8 @@ fun HomeScreen(
                 isConnecting = state.isVpnLoading,
                 requiresSetup = requiresSetup,
                 hasSeats = selectedSlots != null,
-                transportLabel = selectedConfig?.transportKind()?.label()
+                transportLabel = selectedConfig?.transportKind()?.label(),
+                words = statusWords
             ),
             statusMeta = {
                 statusMeta(
@@ -485,7 +517,8 @@ fun HomeScreen(
                     bytesLine = bytesLine.value,
                     requiresSetup = requiresSetup,
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
-                    protocolLine = selectedConfig?.protocolLabels()?.joinToString(" · ")
+                    protocolLine = selectedConfig?.protocolLabels()?.joinToString(" · "),
+                    words = statusWords
                 ) + if (state.isVpnConnected) {
                     " · " + (channelLatency?.label() ?: "HTTP …")
                 } else ""
@@ -501,17 +534,19 @@ fun HomeScreen(
             isActive = state.isVpnConnected,
             isBusy = state.isVpnLoading,
             trafficTrace = { throughputTrace(trafficSamples.value) },
-            notice = state.notice(keyGone = selectedId != null && selectedId in locationViewModel.olcrtcRevoked),
+            notice = state.notice(keyGone = selectedId != null && selectedId in locationViewModel.olcrtcRevoked)
+                ?.let { localizedNotice(it) },
             noticeDismissible = state.failure != null,
-            heading = boardHeading(model.hasRooms),
-            sortLabel = sortLabel(subscriptionSettings.sort),
+            heading = boardHeading(model.hasRooms, boardWords),
+            sortLabel = sortLabel(subscriptionSettings.sort, boardWords),
             action = boardAction(
                 requiresSetup = requiresSetup,
                 isConnected = state.isVpnConnected,
                 isConnecting = state.isVpnLoading,
                 selectedIsRoom = !lowestActive && selectedConfig?.transportKind() == TransportKind.Olcrtc,
                 selectedIsFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
-                exitName = selectedName
+                exitName = selectedName,
+                words = boardWords
             ),
             showAppSettingsButton = showAppSettingsButton,
             showSplitTunnelingButton = showSplitTunnelingButton,
@@ -584,8 +619,8 @@ fun HomeScreen(
                             scope.launch {
                                 snackbarHostState.showSnackbar(
                                     name?.takeIf { it.isNotBlank() }
-                                        ?.let { "Reconnecting through $it" }
-                                        ?: "Reconnecting through the new location"
+                                        ?.let { getString(Res.string.reconnecting_through, it) }
+                                        ?: getString(Res.string.reconnecting_new_location)
                                 )
                             }
                         }
@@ -608,7 +643,7 @@ fun HomeScreen(
                         viewModel.loadCurrentConfig()
                         if (wasConnected) {
                             scope.launch {
-                                snackbarHostState.showSnackbar("Reconnecting through Lowest")
+                                snackbarHostState.showSnackbar(getString(Res.string.reconnecting_lowest))
                             }
                         }
                         startLowestConnection(subscriptionUrl)
@@ -627,8 +662,8 @@ fun HomeScreen(
                 val members = locations.filter { it.subscriptionUrl?.trim() == url.trim() }
                 confirmRemove = PendingRemoval.ServerList(
                     url = url,
-                    title = members.firstOrNull()?.subscriptionTitle()?.takeIf { it.isNotBlank() }
-                        ?: "This server list",
+                    title = members.firstOrNull()?.subscriptionTitle(words)?.takeIf { it.isNotBlank() }
+                        ?: thisServerList,
                     count = members.size
                 )
             },
@@ -681,7 +716,7 @@ fun HomeScreen(
             onPasteLinkClick = {
                 isAddSheetOpen = false
                 onImportFromClipboardRequested(
-                    { scope.launch { snackbarHostState.showSnackbar("Imported from clipboard") } },
+                    { scope.launch { snackbarHostState.showSnackbar(getString(Res.string.imported_from_clipboard)) } },
                     { message -> scope.launch { snackbarHostState.showSnackbar(message) } }
                 )
             },
@@ -737,21 +772,50 @@ fun HomeScreen(
 private const val HEADER_TAG = "OLCRTC CORE"
 private const val LOWEST_CONNECT_BUDGET_MS = 6_000L
 
+/**
+ * The words of the status strip. English by default, so the helpers below stay
+ * pure; the screen passes [statusWords], read from string resources.
+ */
+internal data class StatusWords(
+    val inRoom: String = "in a room",
+    val connected: String = "connected",
+    val joiningRoom: String = "joining room",
+    val connecting: String = "connecting",
+    val noServerList: String = "no server list",
+    val notConnected: String = "not connected",
+    val addServerListToStart: String = "Add a server list to start",
+    val roomFull: String = "this room is full"
+)
+
+/** [StatusWords] in the user's language. */
+@Composable
+internal fun statusWords(): StatusWords = StatusWords(
+    inRoom = stringResource(Res.string.status_in_room),
+    connected = stringResource(Res.string.status_connected),
+    joiningRoom = stringResource(Res.string.status_joining_room),
+    connecting = stringResource(Res.string.status_connecting),
+    noServerList = stringResource(Res.string.status_no_server_list),
+    notConnected = stringResource(Res.string.status_not_connected),
+    addServerListToStart = stringResource(Res.string.status_add_list_to_start),
+    roomFull = stringResource(Res.string.status_room_full)
+)
+
 /** What the status strip's first line says. */
 internal fun statusLabel(
     isConnected: Boolean,
     isConnecting: Boolean,
     requiresSetup: Boolean,
     hasSeats: Boolean,
-    transportLabel: String?
+    transportLabel: String?,
+    words: StatusWords = StatusWords()
 ): String = when {
     isConnected -> listOfNotNull(
-        if (hasSeats) "in a room" else "connected",
+        if (hasSeats) words.inRoom else words.connected,
         transportLabel
     ).joinToString(" · ")
-    isConnecting -> if (hasSeats) "joining room" else "connecting"
-    requiresSetup -> "no server list"
-    else -> "not connected"
+    isConnecting -> if (hasSeats) words.joiningRoom else words.connecting
+    requiresSetup -> words.noServerList
+    else -> words.notConnected
 }
 
 /** The second line: traffic while connected, and what would be joined while not. */
@@ -760,12 +824,13 @@ internal fun statusMeta(
     bytesLine: String,
     requiresSetup: Boolean,
     isFull: Boolean,
-    protocolLine: String?
+    protocolLine: String?,
+    words: StatusWords = StatusWords()
 ): String = when {
     isConnected && bytesLine.isNotBlank() -> bytesLine
     isConnected -> protocolLine.orEmpty()
-    requiresSetup -> "Add a server list to start"
-    isFull -> "this room is full"
+    requiresSetup -> words.addServerListToStart
+    isFull -> words.roomFull
     else -> protocolLine.orEmpty()
 }
 

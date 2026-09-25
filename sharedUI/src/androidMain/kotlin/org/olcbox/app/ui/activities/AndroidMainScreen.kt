@@ -1,5 +1,27 @@
 package org.olcbox.app.ui.activities
 
+import org.olcbox.app.ui.features.home.localizedSingleMessage
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.location_qr
+import multiplatform_app.sharedui.generated.resources.no_browser
+import multiplatform_app.sharedui.generated.resources.qr_imported
+import multiplatform_app.sharedui.generated.resources.server_list_added
+import multiplatform_app.sharedui.generated.resources.server_list_not_found
+import multiplatform_app.sharedui.generated.resources.server_list_qr
+import multiplatform_app.sharedui.generated.resources.server_list_removed
+import multiplatform_app.sharedui.generated.resources.unknown_error
+import multiplatform_app.sharedui.generated.resources.update_allow_install
+import multiplatform_app.sharedui.generated.resources.update_already_downloaded
+import multiplatform_app.sharedui.generated.resources.update_available_version
+import multiplatform_app.sharedui.generated.resources.update_check_failed
+import multiplatform_app.sharedui.generated.resources.update_checking
+import multiplatform_app.sharedui.generated.resources.update_download_failed
+import multiplatform_app.sharedui.generated.resources.update_downloading
+import multiplatform_app.sharedui.generated.resources.update_installing
+import multiplatform_app.sharedui.generated.resources.update_service_unavailable
+import multiplatform_app.sharedui.generated.resources.update_up_to_date
+import org.jetbrains.compose.resources.getString
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -143,23 +165,32 @@ fun AndroidMainScreen(
         updateSettingsStore.save(normalized)
     }
 
-    fun showUpdateResult(info: AppUpdateInfo) {
+    // Said from callbacks, which cannot read a resource themselves.
+    val serverListAddedText = stringResource(Res.string.server_list_added)
+    val qrImportedText = stringResource(Res.string.qr_imported)
+    val noBrowserText = stringResource(Res.string.no_browser)
+    val serverListRemovedText = stringResource(Res.string.server_list_removed)
+    val serverListNotFoundText = stringResource(Res.string.server_list_not_found)
+    val locationQrTitle = stringResource(Res.string.location_qr)
+    val serverListQrTitle = stringResource(Res.string.server_list_qr)
+
+    suspend fun showUpdateResult(info: AppUpdateInfo) {
         if (info.isDownloaded(updateSettings)) {
             updateOffer = null
-            updateStatusText = "Latest ${info.channel.name.lowercase()} is already downloaded"
+            updateStatusText = getString(Res.string.update_already_downloaded, info.channel.name.lowercase())
         } else if (info.isUpdateAvailable) {
             updateOffer = info
-            updateStatusText = "${info.channel.name} update available: ${info.version}"
+            updateStatusText = getString(Res.string.update_available_version, info.channel.name, info.version)
         } else {
             updateOffer = null
-            updateStatusText = "Ghostlane is up to date"
+            updateStatusText = getString(Res.string.update_up_to_date)
         }
     }
 
     fun checkUpdate(manual: Boolean) {
         val service = appUpdateService
         if (service == null) {
-            updateStatusText = "Update service unavailable"
+            scope.launch { updateStatusText = getString(Res.string.update_service_unavailable) }
             return
         }
         scope.launch {
@@ -167,7 +198,7 @@ fun AndroidMainScreen(
             val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
 
-            updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
+            updateStatusText = getString(Res.string.update_checking, previousSettings.channel.name.lowercase())
             val result = service.check(
                 previousSettings.channel,
                 vpnManager.subscriptionFetchProxy()
@@ -185,7 +216,7 @@ fun AndroidMainScreen(
                     }
                 },
                 onFailure = { error ->
-                    updateStatusText = error.message ?: "Update check failed"
+                    updateStatusText = error.message ?: getString(Res.string.update_check_failed)
                 }
             )
         }
@@ -195,23 +226,23 @@ fun AndroidMainScreen(
         scope.launch {
             if (!updateInstaller.canRequestPackageInstalls()) {
                 updateInstaller.openUnknownSourcesSettings()
-                updateStatusText = "Allow Ghostlane to install updates, then tap Download again"
+                updateStatusText = getString(Res.string.update_allow_install)
                 Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
                 return@launch
             }
 
             updateDownloadProgress = 0f
-            updateStatusText = "Downloading ${info.asset.name}..."
+            updateStatusText = getString(Res.string.update_downloading, info.asset.name)
             val result = updateInstaller.download(info.asset) { progress ->
                 updateDownloadProgress = progress
             }
             val file = result.getOrElse { error ->
-                updateStatusText = "Download failed: ${error.message ?: "unknown error"}"
+                updateStatusText = getString(Res.string.update_download_failed, error.message ?: getString(Res.string.unknown_error))
                 updateDownloadProgress = null
                 Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
                 return@launch
             }
-            updateStatusText = "Installing ${info.asset.name}"
+            updateStatusText = getString(Res.string.update_installing, info.asset.name)
             saveUpdateSettings(
                 updateSettings.copy(
                     lastSeenUpdateVersion = info.identity(),
@@ -257,7 +288,7 @@ fun AndroidMainScreen(
                     uri = link,
                     onComplete = {
                         reloadLocationsAfterImport {
-                            Toast.makeText(context, "Server list added", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, serverListAddedText, Toast.LENGTH_SHORT).show()
                         }
                     },
                     onError = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
@@ -307,7 +338,7 @@ fun AndroidMainScreen(
 
         viewModel.onImportFullConfig(rawText) {
             reloadLocationsAfterImport {
-                Toast.makeText(context, "QR imported", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, qrImportedText, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -368,7 +399,7 @@ fun AndroidMainScreen(
             qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java))
         },
         onShareLocationRequested = { config ->
-            shareSheetPayload = "Location QR" to ConfigShareService.olcRtcUri(config)
+            shareSheetPayload = locationQrTitle to ConfigShareService.olcRtcUri(config)
         },
         onSaveLogsRequested = { onSaved, onError ->
             pendingLogSaveCallbacks.value = onSaved to onError
@@ -382,7 +413,7 @@ fun AndroidMainScreen(
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }.onFailure {
-                Toast.makeText(context, "No browser available", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, noBrowserText, Toast.LENGTH_SHORT).show()
             }
         },
         // The call to action to go and buy a subscription is gone from every
@@ -467,17 +498,19 @@ fun AndroidMainScreen(
                 checkUpdate(manual = true)
             },
             onSubscriptionShareClick = { url ->
-                shareSheetPayload = "Server list QR" to ConfigShareService.subscriptionQrText(url)
+                shareSheetPayload = serverListQrTitle to ConfigShareService.subscriptionQrText(url)
             },
             onSubscriptionRefreshClick = { url ->
                 viewModel.refreshSubscription(url) { report ->
                     reloadLocationsAfterImport {
                         viewModel.restartVpnIfRunning()
-                        Toast.makeText(
-                            context,
-                            report.singleMessage(),
-                            if (report.hasFailures) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-                        ).show()
+                        scope.launch {
+                            Toast.makeText(
+                                context,
+                                report.localizedSingleMessage(),
+                                if (report.hasFailures) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 }
             },
@@ -486,7 +519,7 @@ fun AndroidMainScreen(
                     reloadLocationsAfterImport {
                         Toast.makeText(
                             context,
-                            if (removed > 0) "Server list removed" else "Server list not found",
+                            if (removed > 0) serverListRemovedText else serverListNotFoundText,
                             Toast.LENGTH_SHORT
                         ).show()
                     }

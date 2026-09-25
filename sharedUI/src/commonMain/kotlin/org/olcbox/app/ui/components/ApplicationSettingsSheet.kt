@@ -1,5 +1,88 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.encrypted_link
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_cancel
+import multiplatform_app.sharedui.generated.resources.action_check_now
+import multiplatform_app.sharedui.generated.resources.action_download
+import multiplatform_app.sharedui.generated.resources.action_later
+import multiplatform_app.sharedui.generated.resources.action_qr_share
+import multiplatform_app.sharedui.generated.resources.action_refresh
+import multiplatform_app.sharedui.generated.resources.action_remove
+import multiplatform_app.sharedui.generated.resources.action_save
+import multiplatform_app.sharedui.generated.resources.action_share
+import multiplatform_app.sharedui.generated.resources.app_logs_title
+import multiplatform_app.sharedui.generated.resources.connection_mode
+import multiplatform_app.sharedui.generated.resources.connection_mode_local_socks
+import multiplatform_app.sharedui.generated.resources.connection_mode_proxy
+import multiplatform_app.sharedui.generated.resources.connection_settings_title
+import multiplatform_app.sharedui.generated.resources.connection_system_tunnel
+import multiplatform_app.sharedui.generated.resources.default_interval
+import multiplatform_app.sharedui.generated.resources.every_hours
+import multiplatform_app.sharedui.generated.resources.field_generated_password
+import multiplatform_app.sharedui.generated.resources.field_listen_address
+import multiplatform_app.sharedui.generated.resources.field_password
+import multiplatform_app.sharedui.generated.resources.field_port
+import multiplatform_app.sharedui.generated.resources.field_username
+import multiplatform_app.sharedui.generated.resources.hide_password
+import multiplatform_app.sharedui.generated.resources.hours_short
+import multiplatform_app.sharedui.generated.resources.https_sources
+import multiplatform_app.sharedui.generated.resources.https_sources_none
+import multiplatform_app.sharedui.generated.resources.lan_choose_interface
+import multiplatform_app.sharedui.generated.resources.lan_connect_first
+import multiplatform_app.sharedui.generated.resources.lan_endpoint
+import multiplatform_app.sharedui.generated.resources.lan_regenerate
+import multiplatform_app.sharedui.generated.resources.lan_selected_interface
+import multiplatform_app.sharedui.generated.resources.lan_share_off_by_default
+import multiplatform_app.sharedui.generated.resources.lan_share_title
+import multiplatform_app.sharedui.generated.resources.lan_sharing
+import multiplatform_app.sharedui.generated.resources.lan_socks_warning
+import multiplatform_app.sharedui.generated.resources.lan_use_interface
+import multiplatform_app.sharedui.generated.resources.last_refresh_at
+import multiplatform_app.sharedui.generated.resources.listen_address_required
+import multiplatform_app.sharedui.generated.resources.locations_count
+import multiplatform_app.sharedui.generated.resources.logs_entries
+import multiplatform_app.sharedui.generated.resources.logs_no_entries
+import multiplatform_app.sharedui.generated.resources.no_server_lists
+import multiplatform_app.sharedui.generated.resources.no_server_lists_hint
+import multiplatform_app.sharedui.generated.resources.not_refreshed_yet
+import multiplatform_app.sharedui.generated.resources.password_required
+import multiplatform_app.sharedui.generated.resources.port_range_hint
+import multiplatform_app.sharedui.generated.resources.port_required
+import multiplatform_app.sharedui.generated.resources.proxy_credentials
+import multiplatform_app.sharedui.generated.resources.proxy_endpoint
+import multiplatform_app.sharedui.generated.resources.regenerate_password
+import multiplatform_app.sharedui.generated.resources.remove_server_list_question
+import multiplatform_app.sharedui.generated.resources.remove_server_list_text
+import multiplatform_app.sharedui.generated.resources.routing_bypass_russia_note
+import multiplatform_app.sharedui.generated.resources.saving_restarts_connection
+import multiplatform_app.sharedui.generated.resources.server_lists_sharing_title
+import multiplatform_app.sharedui.generated.resources.settings_app_log
+import multiplatform_app.sharedui.generated.resources.settings_app_log_value
+import multiplatform_app.sharedui.generated.resources.settings_app_updates
+import multiplatform_app.sharedui.generated.resources.settings_app_updates_value
+import multiplatform_app.sharedui.generated.resources.settings_connection
+import multiplatform_app.sharedui.generated.resources.settings_diagnostics
+import multiplatform_app.sharedui.generated.resources.settings_replay_first_run
+import multiplatform_app.sharedui.generated.resources.settings_replay_first_run_caps
+import multiplatform_app.sharedui.generated.resources.settings_routing
+import multiplatform_app.sharedui.generated.resources.settings_server_list_updates
+import multiplatform_app.sharedui.generated.resources.settings_server_lists
+import multiplatform_app.sharedui.generated.resources.settings_server_lists_sharing
+import multiplatform_app.sharedui.generated.resources.settings_title
+import multiplatform_app.sharedui.generated.resources.show_password
+import multiplatform_app.sharedui.generated.resources.socks_lan_sharing
+import multiplatform_app.sharedui.generated.resources.socks_proxy
+import multiplatform_app.sharedui.generated.resources.unsaved_change
+import multiplatform_app.sharedui.generated.resources.update_available
+import multiplatform_app.sharedui.generated.resources.updates_check_interval
+import multiplatform_app.sharedui.generated.resources.updates_current_version
+import multiplatform_app.sharedui.generated.resources.updates_last_check
+import multiplatform_app.sharedui.generated.resources.updates_not_checked
+import multiplatform_app.sharedui.generated.resources.updates_title
+import multiplatform_app.sharedui.generated.resources.username_required
+import org.jetbrains.compose.resources.pluralStringResource
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutLinearInEasing
@@ -156,8 +239,8 @@ fun ApplicationSettingsSheet(
      * carries the whole device through a tun says so instead, rather than
      * inheriting copy that stopped being true for it.
      */
-    connectionModeTitle: String = "Proxy",
-    connectionModeSummary: String = "Local SOCKS5 proxy",
+    connectionModeTitle: String = stringResource(Res.string.connection_mode_proxy),
+    connectionModeSummary: String = stringResource(Res.string.connection_mode_local_socks),
     /**
      * The ways this platform can carry traffic, when it has more than one.
      *
@@ -248,7 +331,7 @@ fun ApplicationSettingsSheet(
             // back destination — a second one above them would be two arrows
             // pointing at two different places.
             if (route == SharedSettingsRoute.Hub) {
-                PkScreenHeader(title = "Settings", onBack = onDismiss)
+                PkScreenHeader(title = stringResource(Res.string.settings_title), onBack = onDismiss)
             }
 
         AnimatedContent(
@@ -289,7 +372,7 @@ fun ApplicationSettingsSheet(
                     onSubscriptionOptionsClick = { route = SharedSettingsRoute.SubscriptionOptions },
                     showUpdates = showUpdates,
                     connectionSummary = connectionModeSummary,
-                    routingSummary = routingSettings.mode.hubSummary(),
+                    routingSummary = routingSettings.mode.localizedHubSummary(),
                     subscriptionsCount = subscriptions.size,
                     onConnectionClick = { route = SharedSettingsRoute.Connection },
                     onRoutingClick = { route = SharedSettingsRoute.Routing },
@@ -413,54 +496,54 @@ private fun SharedSettingsHubContent(
             .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        PkSectionEyebrow("Connection")
+        PkSectionEyebrow(stringResource(Res.string.settings_connection))
 
         SharedNavigationRow(
-            title = "Connection",
+            title = stringResource(Res.string.settings_connection),
             value = connectionSummary,
             icon = PkIcons.Public,
             onClick = onConnectionClick
         )
 
         SharedNavigationRow(
-            title = "Routing",
+            title = stringResource(Res.string.settings_routing),
             value = routingSummary,
             icon = PkIcons.SwapVert,
             onClick = onRoutingClick
         )
 
         Spacer(Modifier.height(8.dp))
-        PkSectionEyebrow("Server lists")
+        PkSectionEyebrow(stringResource(Res.string.settings_server_lists))
 
         SharedNavigationRow(
-            title = "Server list updates",
+            title = stringResource(Res.string.settings_server_list_updates),
             value = subscriptionSettings.hubSummary(),
             icon = Icons.Outlined.Refresh,
             onClick = onSubscriptionOptionsClick
         )
 
         SharedNavigationRow(
-            title = "Server lists and sharing",
+            title = stringResource(Res.string.settings_server_lists_sharing),
             value = subscriptionsCount.subscriptionSummary(),
             icon = Icons.Outlined.Share,
             onClick = onSubscriptionsClick
         )
 
         Spacer(Modifier.height(8.dp))
-        PkSectionEyebrow("Diagnostics")
+        PkSectionEyebrow(stringResource(Res.string.settings_diagnostics))
 
         if (showUpdates) {
             SharedNavigationRow(
-                title = "Application updates",
-                value = "Nightly · every ${updateSettings.intervalHours}h",
+                title = stringResource(Res.string.settings_app_updates),
+                value = stringResource(Res.string.settings_app_updates_value, updateSettings.intervalHours),
                 icon = Icons.Outlined.Refresh,
                 onClick = onUpdatesClick
             )
         }
 
         SharedNavigationRow(
-            title = "Application log",
-            value = "Diagnostics and export",
+            title = stringResource(Res.string.settings_app_log),
+            value = stringResource(Res.string.settings_app_log_value),
             icon = PkIcons.History,
             onClick = onLogsClick
         )
@@ -473,7 +556,7 @@ private fun SharedSettingsHubContent(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "REPLAY FIRST RUN",
+                text = stringResource(Res.string.settings_replay_first_run_caps),
                 style = pkMono(10, 1.2),
                 color = LocalPkPalette.current.textDim,
                 modifier = Modifier
@@ -483,7 +566,7 @@ private fun SharedSettingsHubContent(
                         MaterialTheme.colorScheme.outlineVariant,
                         RoundedCornerShape(10.dp)
                     )
-                    .clickable(onClickLabel = "Replay first run") { onReplayOnboarding() }
+                    .clickable(onClickLabel = stringResource(Res.string.settings_replay_first_run)) { onReplayOnboarding() }
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             )
             Text(
@@ -514,7 +597,7 @@ private fun SharedConnectionSettingsContent(
             .padding(top = 16.dp, bottom = 32.dp)
     ) {
         SharedDetailHeader(
-            title = "Connection Settings",
+            title = stringResource(Res.string.connection_settings_title),
             subtitle = summary,
             onBack = onBack
         )
@@ -523,7 +606,7 @@ private fun SharedConnectionSettingsContent(
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SharedNavigationRow(
-                title = "Connection Mode",
+                title = stringResource(Res.string.connection_mode),
                 value = modeSummary,
                 icon = PkIcons.Public,
                 onClick = onConnectionModeClick
@@ -535,7 +618,7 @@ private fun SharedConnectionSettingsContent(
             // can follow them.
             if (tunnelDaemonSummary != null) {
                 SharedNavigationRow(
-                    title = "System-wide tunnel",
+                    title = stringResource(Res.string.connection_system_tunnel),
                     value = tunnelDaemonSummary,
                     icon = PkIcons.Public,
                     onClick = onTunnelDaemonClick
@@ -549,7 +632,7 @@ private fun SharedConnectionSettingsContent(
                 (AdminState.configuratorVisible || socksProxySettings.lanSharingSupported)
             ) {
                 SharedNavigationRow(
-                    title = if (socksProxySettings.lanSharingSupported) "SOCKS5 and LAN sharing" else "SOCKS5 Proxy",
+                    title = if (socksProxySettings.lanSharingSupported) stringResource(Res.string.socks_lan_sharing) else stringResource(Res.string.socks_proxy),
                     value = "${socksProxySettings.host}:${socksProxySettings.port}",
                     icon = PkIcons.Public,
                     onClick = onSocksProxyClick
@@ -581,7 +664,7 @@ private fun SharedConnectionModeSettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SharedDetailHeader(
-            title = "Connection Mode",
+            title = stringResource(Res.string.connection_mode),
             subtitle = summary,
             onBack = onBack
         )
@@ -635,8 +718,8 @@ private fun SharedRoutingSettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SharedDetailHeader(
-            title = "Routing",
-            subtitle = settings.mode.hubSummary(),
+            title = stringResource(Res.string.settings_routing),
+            subtitle = settings.mode.localizedHubSummary(),
             onBack = onBack
         )
 
@@ -647,8 +730,8 @@ private fun SharedRoutingSettingsContent(
                 SharedSelectableSettingsCard(
                     selected = settings.mode == mode,
                     icon = if (mode == RoutingMode.Global) PkIcons.Public else PkIcons.SwapVert,
-                    title = mode.title(),
-                    subtitle = mode.summary(),
+                    title = mode.localizedTitle(),
+                    subtitle = mode.localizedSummary(),
                     enabled = unavailableReason == null,
                     onClick = { onChanged(settings.copy(mode = mode)) }
                 )
@@ -659,10 +742,7 @@ private fun SharedRoutingSettingsContent(
 
         Text(
             text = unavailableReason
-                ?: "Russian destinations are matched by lists bundled with the app: " +
-                    "v2fly's category-ru, the Russian top-level domains and the Russian IP ranges. " +
-                    "Names on those lists are resolved by the network you are on; every other name " +
-                    "is resolved through the tunnel. Changing this restarts the connection.",
+                ?: stringResource(Res.string.routing_bypass_russia_note),
             style = MaterialTheme.typography.bodySmall,
             color = LocalPkPalette.current.textDim
         )
@@ -705,7 +785,7 @@ private fun SharedSocksProxySettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SharedDetailHeader(
-            title = if (settings.lanSharingSupported) "Local network sharing" else "SOCKS5 Proxy",
+            title = if (settings.lanSharingSupported) stringResource(Res.string.lan_sharing) else stringResource(Res.string.socks_proxy),
             subtitle = settings.lanEndpoint ?: settings.lanAddress.ifBlank { settings.host },
             onBack = onBack
         )
@@ -717,26 +797,26 @@ private fun SharedSocksProxySettingsContent(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             if (settings.lanSharingSupported) {
-                SharedSectionLabel("Local network sharing")
+                SharedSectionLabel(stringResource(Res.string.lan_sharing))
                 SharedSelectableSettingsCard(
                     selected = settings.shareOnLan,
                     icon = PkIcons.Public,
-                    title = "Share VPN over SOCKS5",
+                    title = stringResource(Res.string.lan_share_title),
                     subtitle = settings.lanHealth
-                        ?: "Off by default. Access is limited to one selected private interface and generated credentials.",
+                        ?: stringResource(Res.string.lan_share_off_by_default),
                     enabled = settings.lanAddresses.isNotEmpty(),
                     onClick = { onLanSharingChanged(!settings.shareOnLan) }
                 )
 
                 if (settings.lanAddresses.isEmpty()) {
                     Text(
-                        "Connect this computer to a private LAN before enabling sharing.",
+                        stringResource(Res.string.lan_connect_first),
                         style = MaterialTheme.typography.bodySmall,
                         color = LocalPkPalette.current.textDim
                     )
                 } else {
                     Text(
-                        "Choose the private interface that client devices can reach:",
+                        stringResource(Res.string.lan_choose_interface),
                         style = MaterialTheme.typography.bodySmall,
                         color = LocalPkPalette.current.textDim
                     )
@@ -745,7 +825,7 @@ private fun SharedSocksProxySettingsContent(
                             selected = address == settings.lanAddress,
                             icon = PkIcons.Public,
                             title = address,
-                            subtitle = if (address == settings.lanAddress) "Selected interface" else "Use this interface",
+                            subtitle = if (address == settings.lanAddress) stringResource(Res.string.lan_selected_interface) else stringResource(Res.string.lan_use_interface),
                             enabled = true,
                             onClick = { onLanAddressSelected(address) }
                         )
@@ -753,25 +833,25 @@ private fun SharedSocksProxySettingsContent(
                 }
 
                 if (settings.lanUsername.isNotBlank() && settings.lanPassword.isNotBlank()) {
-                    SharedInfoRow("Endpoint", settings.lanEndpoint ?: "${settings.lanAddress}:${settings.lanPort}")
-                    SharedInfoRow("Username", settings.lanUsername)
+                    SharedInfoRow(stringResource(Res.string.lan_endpoint), settings.lanEndpoint ?: "${settings.lanAddress}:${settings.lanPort}")
+                    SharedInfoRow(stringResource(Res.string.field_username), settings.lanUsername)
                     SharedInfoRow(
-                        "Password",
+                        stringResource(Res.string.field_password),
                         if (revealLanPassword) settings.lanPassword else "•".repeat(settings.lanPassword.length)
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = { revealLanPassword = !revealLanPassword }) {
-                            Text(if (revealLanPassword) "Hide password" else "Show password")
+                            Text(if (revealLanPassword) stringResource(Res.string.hide_password) else stringResource(Res.string.show_password))
                         }
                         TextButton(onClick = onLanCredentialsRegenerated) {
-                            Text("Regenerate LAN credentials")
+                            Text(stringResource(Res.string.lan_regenerate))
                         }
                     }
                 }
 
                 Text(
                     buildString {
-                        append("SOCKS5 sends its username, password, requested addresses, and traffic without local-network encryption. Use it only on a trusted private LAN and share credentials only with trusted devices.")
+                        append(stringResource(Res.string.lan_socks_warning))
                         settings.lanSecurityNotice?.let { append(' ').append(it) }
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -782,7 +862,7 @@ private fun SharedSocksProxySettingsContent(
 
             if (AdminState.configuratorVisible) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SharedSectionLabel("Internal proxy endpoint")
+                    SharedSectionLabel(stringResource(Res.string.proxy_endpoint))
 
                 SharedSocksProxyTextField(
                     value = editedHost,
@@ -792,12 +872,12 @@ private fun SharedSocksProxySettingsContent(
                             .replace("\n", "")
                             .trim()
                     },
-                    label = "Listen address",
+                    label = stringResource(Res.string.field_listen_address),
                     placeholder = "127.0.0.1",
                     enabled = false,
                     isError = !hostValid,
                     leadingIcon = PkIcons.Public,
-                    supportingText = if (!hostValid) "Listen address is required" else null,
+                    supportingText = if (!hostValid) stringResource(Res.string.listen_address_required) else null,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
                 )
 
@@ -806,16 +886,16 @@ private fun SharedSocksProxySettingsContent(
                     onValueChange = { value ->
                         editedPort = value.filter { it.isDigit() }.take(5)
                     },
-                    label = "Port",
+                    label = stringResource(Res.string.field_port),
                     placeholder = ApplicationSocksProxySettings.DEFAULT_PORT.toString(),
                     enabled = true,
                     isError = editedPort.isBlank() || !portValid,
                     leadingIcon = PkIcons.Public,
                     supportingText = when {
-                        editedPort.isBlank() -> "Port is required"
-                        !portValid -> "Use ${ApplicationSocksProxySettings.MIN_PORT}-${ApplicationSocksProxySettings.MAX_PORT}"
-                        portChanged && isConnectionActive -> "Saving restarts the active connection"
-                        portChanged -> "Unsaved change"
+                        editedPort.isBlank() -> stringResource(Res.string.port_required)
+                        !portValid -> stringResource(Res.string.port_range_hint, ApplicationSocksProxySettings.MIN_PORT, ApplicationSocksProxySettings.MAX_PORT)
+                        portChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                        portChanged -> stringResource(Res.string.unsaved_change)
                         else -> null
                     },
                     keyboardOptions = KeyboardOptions(
@@ -826,20 +906,20 @@ private fun SharedSocksProxySettingsContent(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SharedSectionLabel("Internal proxy credentials")
+                    SharedSectionLabel(stringResource(Res.string.proxy_credentials))
 
                 SharedSocksProxyTextField(
                     value = editedUsername,
                     onValueChange = { editedUsername = it.take(ApplicationSocksProxySettings.MAX_CREDENTIAL_LENGTH) },
-                    label = "Username",
+                    label = stringResource(Res.string.field_username),
                     placeholder = "olcbox...",
                     enabled = true,
                     isError = editedUsername.isBlank(),
                     leadingIcon = Icons.Rounded.Person,
                     supportingText = when {
-                        editedUsername.isBlank() -> "Username is required"
-                        usernameChanged && isConnectionActive -> "Saving restarts the active connection"
-                        usernameChanged -> "Unsaved change"
+                        editedUsername.isBlank() -> stringResource(Res.string.username_required)
+                        usernameChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                        usernameChanged -> stringResource(Res.string.unsaved_change)
                         else -> null
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
@@ -847,15 +927,15 @@ private fun SharedSocksProxySettingsContent(
                 SharedSocksProxyTextField(
                     value = editedPassword,
                     onValueChange = { editedPassword = it.take(ApplicationSocksProxySettings.MAX_CREDENTIAL_LENGTH) },
-                    label = "Password",
-                    placeholder = "Generated password",
+                    label = stringResource(Res.string.field_password),
+                    placeholder = stringResource(Res.string.field_generated_password),
                     enabled = true,
                     isError = editedPassword.isBlank(),
                     leadingIcon = PkIcons.Key,
                     supportingText = when {
-                        editedPassword.isBlank() -> "Password is required"
-                        passwordChanged && isConnectionActive -> "Saving restarts the active connection"
-                        passwordChanged -> "Unsaved change"
+                        editedPassword.isBlank() -> stringResource(Res.string.password_required)
+                        passwordChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                        passwordChanged -> stringResource(Res.string.unsaved_change)
                         else -> null
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
@@ -868,7 +948,7 @@ private fun SharedSocksProxySettingsContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onProxyPasswordRegenerated) {
-                        Text("Regenerate password")
+                        Text(stringResource(Res.string.regenerate_password))
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -883,7 +963,7 @@ private fun SharedSocksProxySettingsContent(
                     ) {
                         Icon(Icons.Rounded.Check, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Save")
+                        Text(stringResource(Res.string.action_save))
                     }
                 }
             }
@@ -937,21 +1017,21 @@ private fun SharedUpdatesSettingsContent(
             .padding(top = 16.dp, bottom = 12.dp)
     ) {
         SharedDetailHeader(
-            title = "Updates",
-            subtitle = "Current version ${CurrentAppInfo.value.version}",
+            title = stringResource(Res.string.updates_title),
+            subtitle = stringResource(Res.string.updates_current_version, CurrentAppInfo.value.version),
             onBack = onBack
         )
 
         Spacer(Modifier.height(18.dp))
 
-        SharedSectionLabel("Check Interval")
+        SharedSectionLabel(stringResource(Res.string.updates_check_interval))
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AppUpdateSettings.INTERVAL_PRESETS.forEach { hours ->
                 FilterChip(
                     selected = settings.intervalHours == hours,
                     onClick = { onIntervalSelected(hours) },
-                    label = { Text("${hours}h") }
+                    label = { Text(stringResource(Res.string.hours_short, hours)) }
                 )
             }
         }
@@ -969,13 +1049,13 @@ private fun SharedUpdatesSettingsContent(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    text = "Last check",
+                    text = stringResource(Res.string.updates_last_check),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = settings.lastCheckAtEpochMs?.formatEpochMs() ?: "Not checked yet",
+                    text = settings.lastCheckAtEpochMs?.formatEpochMs() ?: stringResource(Res.string.updates_not_checked),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1003,7 +1083,7 @@ private fun SharedUpdatesSettingsContent(
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Text("Check now")
+            Text(stringResource(Res.string.action_check_now))
         }
     }
 }
@@ -1024,7 +1104,7 @@ private fun SharedSubscriptionsSettingsContent(
             .padding(top = 16.dp, bottom = 12.dp)
     ) {
         SharedDetailHeader(
-            title = "Server lists & sharing",
+            title = stringResource(Res.string.server_lists_sharing_title),
             subtitle = subscriptions.size.subscriptionSummary(),
             onBack = onBack
         )
@@ -1038,12 +1118,12 @@ private fun SharedSubscriptionsSettingsContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            SharedSectionLabel("Server lists")
+            SharedSectionLabel(stringResource(Res.string.settings_server_lists))
 
             if (subscriptions.isEmpty()) {
                 SharedEmptyState(
-                    title = "No server lists",
-                    subtitle = "Imported HTTPS server lists will appear here."
+                    title = stringResource(Res.string.no_server_lists),
+                    subtitle = stringResource(Res.string.no_server_lists_hint)
                 )
             } else {
                 subscriptions.forEach { item ->
@@ -1077,8 +1157,8 @@ private fun SharedLogsSettingsContent(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SharedDetailHeader(
-                title = "Application Logs",
-                subtitle = if (logs.isEmpty()) "No entries" else "${logs.size} entries",
+                title = stringResource(Res.string.app_logs_title),
+                subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
                 onBack = onBack,
                 modifier = Modifier.weight(1f)
             )
@@ -1087,13 +1167,13 @@ private fun SharedLogsSettingsContent(
                 enabled = logs.isNotEmpty(),
                 onClick = onSaveClick
             ) {
-                Text("Save")
+                Text(stringResource(Res.string.action_save))
             }
             TextButton(
                 enabled = logs.isNotEmpty(),
                 onClick = onShareClick
             ) {
-                Text("Share")
+                Text(stringResource(Res.string.action_share))
             }
         }
 
@@ -1133,7 +1213,7 @@ private fun SharedUpdateOfferCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Update available",
+                text = stringResource(Res.string.update_available),
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold
@@ -1147,10 +1227,10 @@ private fun SharedUpdateOfferCard(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onLater) {
-                    Text("Later")
+                    Text(stringResource(Res.string.action_later))
                 }
                 Button(onClick = onDownload) {
-                    Text("Download")
+                    Text(stringResource(Res.string.action_download))
                 }
             }
         }
@@ -1169,11 +1249,10 @@ private fun SharedSubscriptionRow(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Remove server list?") },
+            title = { Text(stringResource(Res.string.remove_server_list_question)) },
             text = {
                 Text(
-                    "${item.name} and its ${item.locationCount} location(s) will be " +
-                        "removed from this device. You can add the server list again later."
+                    stringResource(Res.string.remove_server_list_text, item.name, item.locationCount)
                 )
             },
             confirmButton = {
@@ -1181,11 +1260,11 @@ private fun SharedSubscriptionRow(
                     confirmDelete = false
                     onDeleteClick()
                 }) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(Res.string.action_remove), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = false }) { Text(stringResource(Res.string.action_cancel)) }
             }
         )
     }
@@ -1214,7 +1293,8 @@ private fun SharedSubscriptionRow(
                     originLink = item.originLink,
                     // Fails closed: a build with no admin hash must not start
                     // printing credentials again.
-                    revealed = AdminState.plumbingVisible
+                    revealed = AdminState.plumbingVisible,
+                    encrypted = stringResource(Res.string.encrypted_link)
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
@@ -1230,13 +1310,13 @@ private fun SharedSubscriptionRow(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onShareClick) {
-                    Text("QR/share")
+                    Text(stringResource(Res.string.action_qr_share))
                 }
                 TextButton(onClick = onRefreshClick) {
-                    Text("Refresh")
+                    Text(stringResource(Res.string.action_refresh))
                 }
                 TextButton(onClick = { confirmDelete = true }) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(Res.string.action_remove), color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1497,21 +1577,17 @@ private enum class SharedSettingsRoute {
     SocksProxy
 }
 
-private fun Int.subscriptionSummary(): String {
-    return when (this) {
-        0 -> "No HTTPS sources"
-        1 -> "1 HTTPS source"
-        else -> "$this HTTPS sources"
-    }
-}
+@Composable
+private fun Int.subscriptionSummary(): String =
+    if (this == 0) stringResource(Res.string.https_sources_none) else pluralStringResource(Res.plurals.https_sources, this, this)
 
+@Composable
 private fun SubscriptionShareItem.subscriptionSummary(): String {
-    val interval = updateIntervalHours?.let { "every ${it}h" } ?: "default interval"
-    val count = when (locationCount) {
-        1 -> "1 location"
-        else -> "$locationCount locations"
-    }
-    val refresh = lastRefreshAtEpochMs?.let { "last refresh ${it.formatEpochMs()}" } ?: "not refreshed yet"
+    val interval = updateIntervalHours?.let { stringResource(Res.string.every_hours, it) }
+        ?: stringResource(Res.string.default_interval)
+    val count = pluralStringResource(Res.plurals.locations_count, locationCount, locationCount)
+    val refresh = lastRefreshAtEpochMs?.let { stringResource(Res.string.last_refresh_at, it.formatEpochMs()) }
+        ?: stringResource(Res.string.not_refreshed_yet)
     return "$interval · $count · $refresh"
 }
 

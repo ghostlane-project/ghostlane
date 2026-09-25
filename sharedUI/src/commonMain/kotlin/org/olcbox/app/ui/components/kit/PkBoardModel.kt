@@ -26,18 +26,18 @@ import org.olcbox.app.net.transportKind
  * choosing, and "a TLS handshake to a real website" is the actual claim Reality
  * makes. Sentence case here, uppercased by the caller that wants mono caps.
  */
-fun wireShape(config: LocationConfig?): String {
-    if (config == null) return "an encrypted tunnel"
+fun wireShape(config: LocationConfig?, words: BoardWords = BoardWords()): String {
+    if (config == null) return words.wireUnknown
     return when (config.transportKind()) {
-        TransportKind.Olcrtc -> "a ${config.providerName()} media session"
-        TransportKind.Hysteria2 -> "obfuscated QUIC over UDP"
-        TransportKind.Xhttp -> "ordinary HTTP requests"
-        TransportKind.Grpc -> "HTTP/2 gRPC requests"
-        TransportKind.Reality -> "a TLS handshake to a real website"
-        TransportKind.Tls -> "ordinary HTTPS"
-        TransportKind.Trojan -> "ordinary HTTPS"
-        TransportKind.Vmess -> "an encrypted stream"
-        TransportKind.Shadowsocks -> "an encrypted stream with no handshake"
+        TransportKind.Olcrtc -> words.wireOlcrtc.fill(config.providerName())
+        TransportKind.Hysteria2 -> words.wireHysteria2
+        TransportKind.Xhttp -> words.wireXhttp
+        TransportKind.Grpc -> words.wireGrpc
+        TransportKind.Reality -> words.wireReality
+        TransportKind.Tls -> words.wireHttps
+        TransportKind.Trojan -> words.wireHttps
+        TransportKind.Vmess -> words.wireStream
+        TransportKind.Shadowsocks -> words.wireStreamNoHandshake
     }
 }
 
@@ -78,14 +78,15 @@ fun pingReading(
     pingMs: Int?,
     isMeasuring: Boolean,
     failed: Boolean,
-    connectedHere: Boolean
+    connectedHere: Boolean,
+    words: BoardWords = BoardWords()
 ): PkPing = when {
     isMeasuring -> PkPing("···", PkPingState.Measuring)
-    pingMs != null -> PkPing("$pingMs ms", PkPingState.Measured)
+    pingMs != null -> PkPing(words.pingMs.fill(pingMs), PkPingState.Measured)
     // Short because this column is beside the room's name and every dp it takes is
     // a dp the name loses on every card — "no answer" cost the title ten of them to
     // say a thing that appears rarely. It still reads as the probe, not the node.
-    failed && !connectedHere -> PkPing("no ping", PkPingState.NoAnswer)
+    failed && !connectedHere -> PkPing(words.noPing, PkPingState.NoAnswer)
     else -> PkPing("—", PkPingState.Unmeasured)
 }
 
@@ -189,9 +190,9 @@ fun roomIsBlocked(slots: OlcrtcSlots?, mine: Boolean): Boolean =
     slots != null && slots.slots_free <= 0 && !mine
 
 /** `7 free`, `full`, or nothing at all where there are no seats to count. */
-fun seatFreeText(slots: OlcrtcSlots?): String? {
+fun seatFreeText(slots: OlcrtcSlots?, words: BoardWords = BoardWords()): String? {
     if (slots == null || slots.slots_total <= 0) return null
-    return if (slots.slots_free <= 0) "full" else "${slots.slots_free} free"
+    return if (slots.slots_free <= 0) words.seatsFull else words.seatsFree.fill(slots.slots_free)
 }
 
 // ── occupancy history ──────────────────────────────────────────────────────
@@ -317,25 +318,26 @@ fun boardAction(
     isConnecting: Boolean,
     selectedIsRoom: Boolean,
     selectedIsFull: Boolean,
-    exitName: String?
+    exitName: String?,
+    words: BoardWords = BoardWords()
 ): PkAction {
     val name = exitName?.trim()?.takeIf { it.isNotEmpty() }?.let(::shortenExitName)?.uppercase()
     return when {
-        requiresSetup -> PkAction("ADD SERVER LIST", PkActionKind.Go)
-        isConnecting -> PkAction("CANCEL", PkActionKind.Busy)
+        requiresSetup -> PkAction(words.addServerList, PkActionKind.Go)
+        isConnecting -> PkAction(words.cancel, PkActionKind.Busy)
         isConnected -> PkAction(
-            name?.let { "LEAVE $it" } ?: "DISCONNECT",
+            name?.let { words.leave.fill(it) } ?: words.disconnect,
             PkActionKind.Stop
         )
         // Only blocks a room the user is not already in; the caller derives this
         // from roomIsBlocked, which asks the app rather than the server.
-        selectedIsFull -> PkAction("ROOM IS FULL", PkActionKind.Blocked)
+        selectedIsFull -> PkAction(words.roomFull, PkActionKind.Blocked)
         selectedIsRoom -> PkAction(
-            name?.let { "TAKE A SEAT IN $it" } ?: "TAKE A SEAT",
+            name?.let { words.takeSeatIn.fill(it) } ?: words.takeSeat,
             PkActionKind.Go
         )
         else -> PkAction(
-            name?.let { "CONNECT VIA $it" } ?: "CONNECT",
+            name?.let { words.connectVia.fill(it) } ?: words.connect,
             PkActionKind.Go
         )
     }
@@ -370,12 +372,13 @@ internal fun shortenExitName(raw: String, max: Int = ACTION_NAME_MAX): String {
  * of olcRTC. A list of nothing but Reality endpoints calling itself Rooms would
  * be the app describing itself as something it is not on that screen.
  */
-fun boardHeading(hasRooms: Boolean): String = if (hasRooms) "Rooms" else "Servers"
+fun boardHeading(hasRooms: Boolean, words: BoardWords = BoardWords()): String =
+    if (hasRooms) words.rooms else words.servers
 
-fun sortLabel(sort: SubscriptionSort): String = when (sort) {
-    SubscriptionSort.None -> "AS SERVED"
-    SubscriptionSort.Ping -> "PING"
-    SubscriptionSort.Alphabetical -> "A–Z"
+fun sortLabel(sort: SubscriptionSort, words: BoardWords = BoardWords()): String = when (sort) {
+    SubscriptionSort.None -> words.sortAsServed
+    SubscriptionSort.Ping -> words.sortPing
+    SubscriptionSort.Alphabetical -> words.sortAlphabetical
 }
 
 fun nextSort(sort: SubscriptionSort): SubscriptionSort = when (sort) {
@@ -429,3 +432,47 @@ fun planFraction(used: String?, available: String?): Float? {
     if (total <= 0L) return null
     return (spent.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
 }
+
+// ── words ──────────────────────────────────────────────────────────────────
+
+/**
+ * The words of the board's lines and its button. English by default, so the
+ * helpers here stay pure and their tests read as the English screen does; the
+ * board passes `boardWords()`, read from string resources. A pattern's `%1$s` /
+ * `%1$d` is its one value, filled in by [fill].
+ */
+data class BoardWords(
+    val wireUnknown: String = "an encrypted tunnel",
+    val wireOlcrtc: String = "a %1\$s media session",
+    val wireHysteria2: String = "obfuscated QUIC over UDP",
+    val wireXhttp: String = "ordinary HTTP requests",
+    val wireGrpc: String = "HTTP/2 gRPC requests",
+    val wireReality: String = "a TLS handshake to a real website",
+    val wireHttps: String = "ordinary HTTPS",
+    val wireStream: String = "an encrypted stream",
+    val wireStreamNoHandshake: String = "an encrypted stream with no handshake",
+    val pingMs: String = "%1\$d ms",
+    val noPing: String = "no ping",
+    val seatsFull: String = "full",
+    val seatsFree: String = "%1\$d free",
+    val addServerList: String = "ADD SERVER LIST",
+    val cancel: String = "CANCEL",
+    val leave: String = "LEAVE %1\$s",
+    val disconnect: String = "DISCONNECT",
+    val roomFull: String = "ROOM IS FULL",
+    val takeSeatIn: String = "TAKE A SEAT IN %1\$s",
+    val takeSeat: String = "TAKE A SEAT",
+    val connectVia: String = "CONNECT VIA %1\$s",
+    val connect: String = "CONNECT",
+    val rooms: String = "Rooms",
+    val servers: String = "Servers",
+    val sortAsServed: String = "AS SERVED",
+    val sortPing: String = "PING",
+    val sortAlphabetical: String = "A–Z"
+)
+
+/** A resource pattern with its values in place of `%1$s` / `%1$d`, `%2$s`, … */
+internal fun String.fill(vararg values: Any): String =
+    values.foldIndexed(this) { index, text, value ->
+        text.replace("%${index + 1}\$s", value.toString()).replace("%${index + 1}\$d", value.toString())
+    }

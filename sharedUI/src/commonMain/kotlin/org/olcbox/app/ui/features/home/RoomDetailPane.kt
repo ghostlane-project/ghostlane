@@ -1,5 +1,19 @@
 package org.olcbox.app.ui.features.home
 
+import org.olcbox.app.ui.components.kit.boardWords
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.label_transport
+import multiplatform_app.sharedui.generated.resources.measure_latency
+import multiplatform_app.sharedui.generated.resources.ping_ms
+import multiplatform_app.sharedui.generated.resources.room_free
+import multiplatform_app.sharedui.generated.resources.room_last_minutes
+import multiplatform_app.sharedui.generated.resources.room_latency
+import multiplatform_app.sharedui.generated.resources.room_measure_caps
+import multiplatform_app.sharedui.generated.resources.room_pick_hint
+import multiplatform_app.sharedui.generated.resources.room_seats
+import multiplatform_app.sharedui.generated.resources.room_selected
+import multiplatform_app.sharedui.generated.resources.room_your_seat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,7 +79,7 @@ fun RoomDetailPane(
     if (selected == null) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                text = "Pick a room on the left",
+                text = stringResource(Res.string.room_pick_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = palette.textMuted
             )
@@ -84,7 +98,7 @@ fun RoomDetailPane(
         modifier = modifier.fillMaxSize().padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        PkSectionEyebrow(if (board.isConnected) "Your seat" else "Selected")
+        PkSectionEyebrow(stringResource(if (board.isConnected) Res.string.room_your_seat else Res.string.room_selected))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (emoji.isNotBlank()) {
@@ -105,7 +119,7 @@ fun RoomDetailPane(
         }
 
         Text(
-            text = wireShape(config).uppercase(),
+            text = wireShape(config, boardWords()).uppercase(),
             style = pkMono(10, 1.2),
             color = palette.textDim
         )
@@ -120,12 +134,12 @@ fun RoomDetailPane(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                DetailStat(label = "Transport", value = transportTag(config) ?: "—")
+                DetailStat(label = stringResource(Res.string.label_transport), value = transportTag(config) ?: "—")
                 slots?.let {
-                    DetailStat(label = "Seats", value = seatCountText(it).orEmpty())
+                    DetailStat(label = stringResource(Res.string.room_seats), value = seatCountText(it).orEmpty())
                     DetailStat(
-                        label = "Free",
-                        value = seatFreeText(it).orEmpty(),
+                        label = stringResource(Res.string.room_free),
+                        value = seatFreeText(it, boardWords()).orEmpty(),
                         color = when {
                             it.slots_free <= 0 -> palette.danger
                             it.slots_free <= 2 -> palette.accent2
@@ -134,10 +148,10 @@ fun RoomDetailPane(
                     )
                 }
                 DetailStat(
-                    label = "Latency",
+                    label = stringResource(Res.string.room_latency),
                     value = when {
                         measuring -> "···"
-                        ping != null -> "$ping ms"
+                        ping != null -> stringResource(Res.string.ping_ms, ping)
                         else -> "—"
                     },
                     color = ping?.let { pkPingColor(it) } ?: palette.textMuted
@@ -148,7 +162,7 @@ fun RoomDetailPane(
                 PkSeats(display = seats, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "LAST FEW MINUTES",
+                        text = stringResource(Res.string.room_last_minutes),
                         style = pkMono(9, 1.2),
                         color = palette.textMuted,
                         modifier = Modifier.weight(1f)
@@ -163,13 +177,13 @@ fun RoomDetailPane(
 
         if (config != null && callbacks.canPing(config)) {
             Text(
-                text = if (measuring) "···" else "MEASURE",
+                text = if (measuring) "···" else stringResource(Res.string.room_measure_caps),
                 style = pkMono(11, 1.2),
                 color = palette.link,
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClickLabel = "Measure latency", role = Role.Button) {
+                    .clickable(onClickLabel = stringResource(Res.string.measure_latency), role = Role.Button) {
                         callbacks.onMeasure(listOf(selected.storageId))
                     }
                     .padding(horizontal = 16.dp, vertical = 12.dp)

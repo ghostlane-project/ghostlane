@@ -17,3 +17,7 @@ When a server is published over several kinds of connection, the app now checks 
 ### Server lists: Trojan, Shadowsocks and VMess
 
 Links and subscriptions with Trojan, Shadowsocks (including Shadowsocks 2022) and VMess servers now import and connect, as do VLESS servers that use WebSocket or HTTP upgrade, which used to import but never connect. A link that asks for something the app cannot carry, such as a Shadowsocks plugin, is left out instead of being added as a server that cannot work.
+
+### The app in Russian
+
+On a phone or computer set to Russian, the app is now in Russian: every screen, message and notification, and the notice shown before the first connection. Other languages still see English.

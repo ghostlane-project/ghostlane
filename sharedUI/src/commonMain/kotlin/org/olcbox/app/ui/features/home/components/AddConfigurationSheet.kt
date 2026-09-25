@@ -1,5 +1,19 @@
 package org.olcbox.app.ui.features.home.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.add_connection
+import multiplatform_app.sharedui.generated.resources.add_connection_subtitle
+import multiplatform_app.sharedui.generated.resources.add_custom
+import multiplatform_app.sharedui.generated.resources.add_custom_subtitle
+import multiplatform_app.sharedui.generated.resources.add_file
+import multiplatform_app.sharedui.generated.resources.add_file_subtitle
+import multiplatform_app.sharedui.generated.resources.add_paste
+import multiplatform_app.sharedui.generated.resources.add_paste_subtitle
+import multiplatform_app.sharedui.generated.resources.add_scan_qr
+import multiplatform_app.sharedui.generated.resources.add_scan_qr_subtitle
+import multiplatform_app.sharedui.generated.resources.add_update_lists
+import multiplatform_app.sharedui.generated.resources.add_update_lists_subtitle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,8 +76,8 @@ fun AddConfigurationSheet(
     showCustomLocation: Boolean = true
 ) {
     PkBottomSheet(
-        title = ADD_TITLE,
-        subtitle = ADD_SUBTITLE,
+        title = stringResource(Res.string.add_connection),
+        subtitle = stringResource(Res.string.add_connection_subtitle),
         onDismiss = onDismiss
     ) {
         AddConfigurationBody(
@@ -79,8 +93,6 @@ fun AddConfigurationSheet(
     }
 }
 
-internal const val ADD_TITLE = "Add connection"
-internal const val ADD_SUBTITLE = "From a provider's list"
 
 /** The sheet's contents, separately so a test can render them. */
 @Composable
@@ -101,8 +113,8 @@ internal fun AddConfigurationBody(
 
         if (canScanQr) {
             PkSheetActionRow(
-                title = "Scan QR code",
-                subtitle = "Server list or olcrtc URI",
+                title = stringResource(Res.string.add_scan_qr),
+                subtitle = stringResource(Res.string.add_scan_qr_subtitle),
                 icon = PkIcons.QrCodeScanner,
                 accent = true,
                 onClick = onScanQrClick
@@ -110,23 +122,23 @@ internal fun AddConfigurationBody(
         }
 
         PkSheetActionRow(
-            title = "Paste link or URI",
-            subtitle = "HTTP, HTTPS, or olcrtc URI",
+            title = stringResource(Res.string.add_paste),
+            subtitle = stringResource(Res.string.add_paste_subtitle),
             icon = PkIcons.Input,
             onClick = onPasteLinkClick
         )
 
         PkSheetActionRow(
-            title = "Import from file",
-            subtitle = "Read server list or config file",
+            title = stringResource(Res.string.add_file),
+            subtitle = stringResource(Res.string.add_file_subtitle),
             icon = PkIcons.FileOpen,
             onClick = onImportFileClick
         )
 
         if (hasSubscriptions) {
             PkSheetActionRow(
-                title = "Update server lists",
-                subtitle = "Refresh imported server locations",
+                title = stringResource(Res.string.add_update_lists),
+                subtitle = stringResource(Res.string.add_update_lists_subtitle),
                 icon = Icons.Outlined.Refresh,
                 showChevron = false,
                 onClick = onUpdateSubscriptionsClick
@@ -135,8 +147,8 @@ internal fun AddConfigurationBody(
 
         if (showCustomLocation) {
             PkSheetActionRow(
-                title = "Create custom location",
-                subtitle = "Enter room, key, provider, and transport",
+                title = stringResource(Res.string.add_custom),
+                subtitle = stringResource(Res.string.add_custom_subtitle),
                 icon = Icons.Outlined.Add,
                 onClick = onAddCustomLocationClick
             )

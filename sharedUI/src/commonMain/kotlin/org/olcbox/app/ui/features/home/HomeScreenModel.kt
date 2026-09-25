@@ -1,5 +1,30 @@
 package org.olcbox.app.ui.features.home
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.blocked_incomplete
+import multiplatform_app.sharedui.generated.resources.blocked_invalid
+import multiplatform_app.sharedui.generated.resources.blocked_no_location
+import multiplatform_app.sharedui.generated.resources.clipboard_empty
+import multiplatform_app.sharedui.generated.resources.connect_select_failed
+import multiplatform_app.sharedui.generated.resources.connect_start_failed
+import multiplatform_app.sharedui.generated.resources.import_empty
+import multiplatform_app.sharedui.generated.resources.import_failed
+import multiplatform_app.sharedui.generated.resources.import_not_a_link
+import multiplatform_app.sharedui.generated.resources.import_nothing_valid
+import multiplatform_app.sharedui.generated.resources.import_partner_unresolved
+import multiplatform_app.sharedui.generated.resources.import_read_failed
+import multiplatform_app.sharedui.generated.resources.logs_save_failed
+import multiplatform_app.sharedui.generated.resources.logs_saved
+import multiplatform_app.sharedui.generated.resources.logs_saved_to
+import multiplatform_app.sharedui.generated.resources.logs_share_failed
+import multiplatform_app.sharedui.generated.resources.mismatch_explanation
+import multiplatform_app.sharedui.generated.resources.smart_blocked_checking
+import multiplatform_app.sharedui.generated.resources.smart_checking
+import multiplatform_app.sharedui.generated.resources.smart_last_resort_through
+import multiplatform_app.sharedui.generated.resources.smart_through
+import multiplatform_app.sharedui.generated.resources.smart_unchecked
+import multiplatform_app.sharedui.generated.resources.smart_whitelist_through
+import org.jetbrains.compose.resources.getString
 import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.net.SmartConnect
@@ -100,7 +125,8 @@ class HomeScreenViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.copy(isVpnLoading = false, failure = e.message ?: "Could not select a server") }
+                val failure = e.message ?: getString(Res.string.connect_select_failed)
+                _state.update { it.copy(isVpnLoading = false, failure = failure) }
             } finally {
                 // A cancelled old job must not clear a newer connection attempt.
                 if (selectionJob === currentCoroutineContext()[Job]) {
@@ -131,8 +157,9 @@ class HomeScreenViewModel(
                 _state.update { it.copy(progress = null) }
                 throw e
             } catch (e: Exception) {
+                val failure = e.message ?: getString(Res.string.connect_start_failed)
                 _state.update {
-                    it.copy(isVpnLoading = false, progress = null, failure = e.message ?: "Could not start the connection")
+                    it.copy(isVpnLoading = false, progress = null, failure = failure)
                 }
             } finally {
                 if (selectionJob === currentCoroutineContext()[Job]) selectionJob = null
@@ -162,9 +189,9 @@ class HomeScreenViewModel(
             val through = when (step) {
                 is SmartConnect.Step.Connect -> true
                 is SmartConnect.Step.Probe -> {
-                    _state.update {
-                        it.copy(progress = blocked?.let { b -> "$b is blocked here, checking $label…" } ?: "Checking $label…")
-                    }
+                    val progress = blocked?.let { b -> getString(Res.string.smart_blocked_checking, b, label) }
+                        ?: getString(Res.string.smart_checking, label)
+                    _state.update { it.copy(progress = progress) }
                     vpnManager.probeTransport(step.entry.location) ?: return
                 }
             }
@@ -179,19 +206,17 @@ class HomeScreenViewModel(
             locationsRepository.saveSubscriptionSettings(
                 settings.copy(lastKnownGoodTransport = settings.lastKnownGoodTransport + (key to step.entry.storageId))
             )
-            _state.update {
-                it.copy(
-                    progress = when {
-                        step is SmartConnect.Step.Connect && whitelist -> "Only domestic sites answer here: connecting through $label"
-                        step is SmartConnect.Step.Connect -> "Nothing else got through: connecting through $label"
-                        step.entry.storageId != active.storageId -> "Connecting through $label"
-                        else -> null
-                    }
-                )
+            val progress = when {
+                step is SmartConnect.Step.Connect && whitelist -> getString(Res.string.smart_whitelist_through, label)
+                step is SmartConnect.Step.Connect -> getString(Res.string.smart_last_resort_through, label)
+                step.entry.storageId != active.storageId -> getString(Res.string.smart_through, label)
+                else -> null
             }
+            _state.update { it.copy(progress = progress) }
             return
         }
-        _state.update { it.copy(progress = "Could not check a transport: connecting as chosen") }
+        val unchecked = getString(Res.string.smart_unchecked)
+        _state.update { it.copy(progress = unchecked) }
     }
 
     /** Asked before a plan that has an olcRTC room to go to; a test puts its own answer here. */
@@ -411,12 +436,13 @@ class HomeScreenViewModel(
     private suspend fun loadCurrentConfigNow() {
         val active = locationsRepository.getActiveLocation()
         if (active == null) {
+            val reason = getString(Res.string.blocked_no_location)
             _state.update {
                 it.copy(
                     selectedLocation = null,
                     configData = LocationConfig(),
                     canStartVpn = false,
-                    startBlockedReason = "Add a location first"
+                    startBlockedReason = reason
                 )
             }
             return
@@ -432,12 +458,13 @@ class HomeScreenViewModel(
             metadata = active.metadata
         )
 
+        val blocked = if (normalized.isComplete()) null else getString(Res.string.blocked_incomplete)
         _state.update {
             it.copy(
                 configData = normalized,
                 selectedLocation = locationItem,
                 canStartVpn = normalized.isComplete(),
-                startBlockedReason = if (normalized.isComplete()) null else "Complete active location first"
+                startBlockedReason = blocked
             )
         }
     }
@@ -496,11 +523,12 @@ class HomeScreenViewModel(
                 } else {
                     val active = locationsRepository.getActiveLocation()
                     if (active == null || !active.location.isComplete()) {
+                        val reason = getString(Res.string.blocked_invalid)
                         _state.update {
                             it.copy(
                                 isVpnLoading = false,
                                 canStartVpn = false,
-                                startBlockedReason = "Add a valid location first"
+                                startBlockedReason = reason
                             )
                         }
                         return@launch
@@ -508,7 +536,7 @@ class HomeScreenViewModel(
                     // Said before a twenty-second wait for a peer that would
                     // never speak this transport: the server is set up for
                     // the one the link named, and the fix is on the server.
-                    TransportMismatch.explanation(active)?.let { why ->
+                    TransportMismatch.explanation(active, getString(Res.string.mismatch_explanation))?.let { why ->
                         _state.update { it.copy(isVpnLoading = false, failure = why) }
                         return@launch
                     }
@@ -524,10 +552,11 @@ class HomeScreenViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                val failure = e.message ?: getString(Res.string.connect_start_failed)
                 _state.update {
                     it.copy(
                         isVpnLoading = false,
-                        failure = e.message ?: "Could not start the connection"
+                        failure = failure
                     )
                 }
             }
@@ -564,15 +593,16 @@ class HomeScreenViewModel(
             logExporter.writeLogs(target, content)
                 .onSuccess { savedPath ->
                     onSaved(
+                        // "Logs saved" is what an exporter answers when it has no path to name.
                         if (savedPath.isBlank() || savedPath == "Logs saved") {
-                            "Logs saved"
+                            getString(Res.string.logs_saved)
                         } else {
-                            "Logs saved to $savedPath"
+                            getString(Res.string.logs_saved_to, savedPath)
                         }
                     )
                 }
                 .onFailure { error ->
-                    onError(error.message ?: "Failed to save logs")
+                    onError(error.message ?: getString(Res.string.logs_save_failed))
                 }
         }
     }
@@ -585,7 +615,7 @@ class HomeScreenViewModel(
             val content = buildLogsExport(logs.value)
             logExporter.shareLogs(content)
                 .onSuccess { message -> onShared(message) }
-                .onFailure { error -> onError(error.message ?: "Failed to share logs") }
+                .onFailure { error -> onError(error.message ?: getString(Res.string.logs_share_failed)) }
         }
     }
 
@@ -593,9 +623,12 @@ class HomeScreenViewModel(
         onComplete: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        configImporter.getFromClipboard()?.let { text ->
-            onImportFullConfig(text, onComplete, onError)
-        } ?: onError("No clipboard data found")
+        val text = configImporter.getFromClipboard()
+        if (text == null) {
+            viewModelScope.launch { onError(getString(Res.string.clipboard_empty)) }
+            return
+        }
+        onImportFullConfig(text, onComplete, onError)
     }
 
     fun onFileSelected(
@@ -606,7 +639,7 @@ class HomeScreenViewModel(
         viewModelScope.launch {
             val text = configImporter.readTextFromSource(fileSource)
             if (text == null) {
-                onError("Could not read config file")
+                onError(getString(Res.string.import_read_failed))
             } else {
                 onImportFullConfig(text, onComplete, onError)
             }
@@ -627,7 +660,7 @@ class HomeScreenViewModel(
     ) {
         val payload = ImportLink.payloadOf(uri)
         if (payload == null) {
-            onError("Not a Ghostlane import link")
+            viewModelScope.launch { onError(getString(Res.string.import_not_a_link)) }
             return
         }
         onImportFullConfig(payload, onComplete, onError)
@@ -639,7 +672,7 @@ class HomeScreenViewModel(
         onError: (String) -> Unit = {}
     ) {
         if (rawText.isBlank()) {
-            onError("No config text found")
+            viewModelScope.launch { onError(getString(Res.string.import_empty)) }
             return
         }
         viewModelScope.launch {
@@ -654,18 +687,17 @@ class HomeScreenViewModel(
                     // A partner link that did not resolve is not a malformed config
                     // — the user's next move is their provider's bot, not another paste.
                     onError(
-                        if (isPartnerLink(rawText)) {
-                            "Link not recognised. Open your provider's bot and copy the server list link again."
-                        } else {
-                            "No valid Ghostlane config found"
-                        }
+                        getString(
+                            if (isPartnerLink(rawText)) Res.string.import_partner_unresolved
+                            else Res.string.import_nothing_valid
+                        )
                     )
                     return@launch
                 }
                 loadCurrentConfigNow()
                 onComplete()
             } catch (e: Exception) {
-                val message = e.message ?: "Import failed"
+                val message = e.message ?: getString(Res.string.import_failed)
                 _state.update {
                     it.copy(
                         canStartVpn = false,
@@ -757,7 +789,7 @@ class HomeScreenViewModel(
         if (report.updatedCount > 0) {
             loadCurrentConfigNow()
             if (_subscriptionSettings.value.notifyOnUpdate) {
-                _autoRefreshNotice.emit(report.bulkMessage())
+                _autoRefreshNotice.emit(report.localizedBulkMessage())
             }
         }
     }

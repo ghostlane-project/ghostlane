@@ -1,5 +1,12 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.vpn_disclosure_accept
+import multiplatform_app.sharedui.generated.resources.vpn_disclosure_body
+import multiplatform_app.sharedui.generated.resources.vpn_disclosure_decline
+import multiplatform_app.sharedui.generated.resources.vpn_disclosure_subtitle
+import multiplatform_app.sharedui.generated.resources.vpn_disclosure_title
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -52,17 +59,14 @@ fun VpnDisclosureScreen(
     onDecline: () -> Unit,
 ) {
     PkBottomSheet(
-        title = DISCLOSURE_TITLE,
-        subtitle = DISCLOSURE_SUBTITLE,
+        title = stringResource(Res.string.vpn_disclosure_title),
+        subtitle = stringResource(Res.string.vpn_disclosure_subtitle),
         onDismiss = onDecline,
         dismissible = false
     ) {
         VpnDisclosureBody(onAccept = onAccept, onDecline = onDecline)
     }
 }
-
-internal const val DISCLOSURE_TITLE = "How the VPN connection works"
-internal const val DISCLOSURE_SUBTITLE = "System VPN · your approval"
 
 /** The sheet's contents, separately so a test can render them. */
 @Composable
@@ -83,7 +87,7 @@ internal fun VpnDisclosureBody(onAccept: () -> Unit, onDecline: () -> Unit) {
                 .padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            disclosureBlocks(DISCLOSURE_BODY).forEach { block ->
+            disclosureBlocks(stringResource(Res.string.vpn_disclosure_body)).forEach { block ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     block.heading?.let { heading ->
                         Text(
@@ -113,8 +117,8 @@ internal fun VpnDisclosureBody(onAccept: () -> Unit, onDecline: () -> Unit) {
             }
         }
 
-        PkSheetButton(label = "I understand", onClick = onAccept, primary = true)
-        PkSheetButton(label = "Not now", onClick = onDecline)
+        PkSheetButton(label = stringResource(Res.string.vpn_disclosure_accept), onClick = onAccept, primary = true)
+        PkSheetButton(label = stringResource(Res.string.vpn_disclosure_decline), onClick = onDecline)
     }
 }
 

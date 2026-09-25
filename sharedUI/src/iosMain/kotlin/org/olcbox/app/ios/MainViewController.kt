@@ -1,5 +1,26 @@
 package org.olcbox.app.ios
 
+import org.olcbox.app.ui.features.home.localizedSingleMessage
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.config_imported
+import multiplatform_app.sharedui.generated.resources.connection_not_connected
+import multiplatform_app.sharedui.generated.resources.detail_all_traffic
+import multiplatform_app.sharedui.generated.resources.detail_exit
+import multiplatform_app.sharedui.generated.resources.detail_not_routed
+import multiplatform_app.sharedui.generated.resources.imported_from_qr
+import multiplatform_app.sharedui.generated.resources.label_transport
+import multiplatform_app.sharedui.generated.resources.plan_traffic
+import multiplatform_app.sharedui.generated.resources.server_list_added
+import multiplatform_app.sharedui.generated.resources.server_list_not_found
+import multiplatform_app.sharedui.generated.resources.server_list_removed
+import multiplatform_app.sharedui.generated.resources.share_location_title
+import multiplatform_app.sharedui.generated.resources.share_server_list_title
+import multiplatform_app.sharedui.generated.resources.system_vpn
+import multiplatform_app.sharedui.generated.resources.system_vpn_summary
+import org.jetbrains.compose.resources.getString
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -76,7 +97,9 @@ class IosAppSession internal constructor(
             onComplete = {
                 dependencies.locationViewModel.loadLocations {
                     dependencies.homeViewModel.loadCurrentConfig()
-                    platformBridge.showMessage("Server list added")
+                    dependencies.homeViewModel.viewModelScope.launch {
+                        platformBridge.showMessage(getString(Res.string.server_list_added))
+                    }
                 }
             },
             onError = { message -> platformBridge.showMessage(message) }
@@ -169,12 +192,19 @@ private fun IosApp(
         val connectionSummary = when {
             homeState.isVpnConnected ->
                 listOfNotNull(
-                    "System VPN",
+                    stringResource(Res.string.system_vpn),
                     activeLocation?.transportKind()?.label()
                 ).joinToString(" · ")
 
-            else -> "Not connected"
+            else -> stringResource(Res.string.connection_not_connected)
         }
+        // Said from callbacks, which cannot read a resource themselves.
+        val configImportedText = stringResource(Res.string.config_imported)
+        val importedFromQrText = stringResource(Res.string.imported_from_qr)
+        val serverListRemovedText = stringResource(Res.string.server_list_removed)
+        val serverListNotFoundText = stringResource(Res.string.server_list_not_found)
+        val locationShareTitle = stringResource(Res.string.share_location_title)
+        val serverListShareTitle = stringResource(Res.string.share_server_list_title)
 
         Box(modifier = Modifier.fillMaxSize()) {
             OlcboxAppContent(
@@ -190,7 +220,7 @@ private fun IosApp(
                         override fun onSuccess(text: String) {
                             dependencies.homeViewModel.onImportFullConfig(text) {
                                 reloadLocationsAfterImport {
-                                    platformBridge.showMessage("Config imported")
+                                    platformBridge.showMessage(configImportedText)
                                 }
                             }
                         }
@@ -215,7 +245,7 @@ private fun IosApp(
                                 rawText = text,
                                 onComplete = {
                                     reloadLocationsAfterImport {
-                                        platformBridge.showMessage("Imported from QR code")
+                                        platformBridge.showMessage(importedFromQrText)
                                     }
                                 },
                                 onError = platformBridge::showMessage
@@ -229,7 +259,7 @@ private fun IosApp(
                     })
                 },
                 onShareLocationRequested = { config: LocationConfig ->
-                    platformBridge.shareText("Location", ConfigShareService.olcRtcUri(config))
+                    platformBridge.shareText(locationShareTitle, ConfigShareService.olcRtcUri(config))
                 },
                 onSaveLogsRequested = { onSaved, onError ->
                     dependencies.homeViewModel.onSaveLogsToFile(
@@ -269,16 +299,14 @@ private fun IosApp(
                     logs = logs,
                     connectionSummary = connectionSummary,
                     connectionDetails = listOfNotNull(
-                        activeLocation?.transportKind()?.label()?.let { "Transport" to it },
+                        activeLocation?.transportKind()?.label()?.let { stringResource(Res.string.label_transport) to it },
                         activeLocation?.displayName()
                             ?.let { TransportGroup.baseName(it) }
                             ?.takeIf { it.isNotBlank() }
-                            ?.let { "Exit" to it },
-                        "Traffic" to if (homeState.isVpnConnected) {
-                            "All apps and system traffic"
-                        } else {
-                            "Not routed"
-                        }
+                            ?.let { stringResource(Res.string.detail_exit) to it },
+                        stringResource(Res.string.plan_traffic) to stringResource(
+                            if (homeState.isVpnConnected) Res.string.detail_all_traffic else Res.string.detail_not_routed
+                        )
                     ),
                     // No local proxy to configure: the extension carries
                     // everything, and its SOCKS port is internal to it.
@@ -294,8 +322,8 @@ private fun IosApp(
                     routingModes = listOf(RoutingMode.Global, RoutingMode.BypassRussia),
                     compactRouting = false,
                     onRoutingSettingsChanged = dependencies.homeViewModel::updateRoutingSettings,
-                    connectionModeTitle = "System VPN",
-                    connectionModeSummary = "All device traffic through the tunnel",
+                    connectionModeTitle = stringResource(Res.string.system_vpn),
+                    connectionModeSummary = stringResource(Res.string.system_vpn_summary),
                     showUpdates = false,
                     onDismiss = { isAppSettingsOpen = false },
                     onSaveLogsClick = {
@@ -317,13 +345,15 @@ private fun IosApp(
                     onDownloadUpdateClick = {},
                     onLaterUpdateClick = {},
                     onSubscriptionShareClick = { url ->
-                        platformBridge.shareText("Server list", ConfigShareService.subscriptionQrText(url))
+                        platformBridge.shareText(serverListShareTitle, ConfigShareService.subscriptionQrText(url))
                     },
                     onSubscriptionRefreshClick = { url ->
                         dependencies.homeViewModel.refreshSubscription(url) { report ->
                             reloadLocationsAfterImport {
                                 dependencies.homeViewModel.restartVpnIfRunning()
-                                platformBridge.showMessage(report.singleMessage())
+                                dependencies.homeViewModel.viewModelScope.launch {
+                                    platformBridge.showMessage(report.localizedSingleMessage())
+                                }
                             }
                         }
                     },
@@ -332,7 +362,7 @@ private fun IosApp(
                         dependencies.homeViewModel.deleteSubscription(url) { removed ->
                             reloadLocationsAfterImport {
                                 platformBridge.showMessage(
-                                    if (removed > 0) "Server list removed" else "Server list not found"
+                                    if (removed > 0) serverListRemovedText else serverListNotFoundText
                                 )
                             }
                         }

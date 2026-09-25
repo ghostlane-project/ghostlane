@@ -1,5 +1,32 @@
 package org.olcbox.app.ui.features.locations
 
+import multiplatform_app.sharedui.generated.resources.field_key_empty
+import multiplatform_app.sharedui.generated.resources.field_key_not_hex
+import multiplatform_app.sharedui.generated.resources.field_name_empty
+import multiplatform_app.sharedui.generated.resources.field_name_too_long
+import multiplatform_app.sharedui.generated.resources.field_room_empty
+import multiplatform_app.sharedui.generated.resources.field_room_too_long
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_back
+import multiplatform_app.sharedui.generated.resources.action_clear
+import multiplatform_app.sharedui.generated.resources.action_delete
+import multiplatform_app.sharedui.generated.resources.action_save
+import multiplatform_app.sharedui.generated.resources.label_transport
+import multiplatform_app.sharedui.generated.resources.location_connection_type
+import multiplatform_app.sharedui.generated.resources.location_key
+import multiplatform_app.sharedui.generated.resources.location_key_placeholder
+import multiplatform_app.sharedui.generated.resources.location_name
+import multiplatform_app.sharedui.generated.resources.location_name_placeholder
+import multiplatform_app.sharedui.generated.resources.location_room_id
+import multiplatform_app.sharedui.generated.resources.location_room_id_placeholder
+import multiplatform_app.sharedui.generated.resources.location_room_url
+import multiplatform_app.sharedui.generated.resources.location_service
+import multiplatform_app.sharedui.generated.resources.location_settings_title
+import multiplatform_app.sharedui.generated.resources.location_share
+import multiplatform_app.sharedui.generated.resources.location_vp8_batch
+import multiplatform_app.sharedui.generated.resources.location_vp8_options
+import multiplatform_app.sharedui.generated.resources.location_vp8_options_subtitle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -79,7 +106,7 @@ fun LocationSettingsTopBar(
     onShare: () -> Unit
 ) {
     TopAppBar(
-        title = { Text("Location settings") },
+        title = { Text(stringResource(Res.string.location_settings_title)) },
         // Below a macOS window's transparent title bar, where the back arrow
         // would otherwise sit under the traffic lights; zero on a phone.
         windowInsets = TopAppBarDefaults.windowInsets.add(
@@ -89,7 +116,7 @@ fun LocationSettingsTopBar(
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = stringResource(Res.string.action_back)
                 )
             }
         },
@@ -104,7 +131,7 @@ fun LocationSettingsTopBar(
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Share,
-                    contentDescription = "Share location"
+                    contentDescription = stringResource(Res.string.location_share)
                 )
             }
         }
@@ -178,11 +205,11 @@ fun LocationSettingsScreen(
                 SettingsTextField(
                     value = name,
                     onValueChange = viewModel::onNameChanged,
-                    label = "Name",
-                    placeholder = "Location name",
+                    label = stringResource(Res.string.location_name),
+                    placeholder = stringResource(Res.string.location_name_placeholder),
                     enabled = !isSaving,
                     isError = viewModel.nameError != null,
-                    supportingText = viewModel.nameError,
+                    supportingText = viewModel.nameError?.let { fieldErrorText(it, config.bypassProvider) },
                     leadingIcon = PkIcons.Public,
                     onClear = { viewModel.onNameChanged("") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
@@ -239,7 +266,7 @@ fun LocationSettingsScreen(
                     placeholder = roomIdPlaceholder(config.bypassProvider),
                     enabled = !isSaving,
                     isError = viewModel.serverError != null,
-                    supportingText = viewModel.serverError,
+                    supportingText = viewModel.serverError?.let { fieldErrorText(it, config.bypassProvider) },
                     leadingIcon = PkIcons.MeetingRoom,
                     onClear = { viewModel.onServerChanged("") },
                     keyboardOptions = KeyboardOptions(
@@ -253,11 +280,11 @@ fun LocationSettingsScreen(
                 SettingsTextField(
                     value = config.key,
                     onValueChange = viewModel::onPasswordChanged,
-                    label = "Encryption key",
-                    placeholder = "64 hex characters",
+                    label = stringResource(Res.string.location_key),
+                    placeholder = stringResource(Res.string.location_key_placeholder),
                     enabled = !isSaving,
                     isError = viewModel.keyError != null,
-                    supportingText = viewModel.keyError,
+                    supportingText = viewModel.keyError?.let { fieldErrorText(it, config.bypassProvider) },
                     leadingIcon = PkIcons.Key,
                     onClear = { viewModel.onPasswordChanged("") },
                     visualTransformation = PasswordVisualTransformation(),
@@ -309,7 +336,7 @@ private fun ConnectionTypePicker(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        SectionTitle(title = "Connection type")
+        SectionTitle(title = stringResource(Res.string.location_connection_type))
 
         SingleChoiceSegmentedButtonRow(
             modifier = Modifier.fillMaxWidth()
@@ -336,7 +363,7 @@ private fun ConnectionTypePicker(
                     enabled = enabled,
                     label = {
                         Text(
-                            text = type.label,
+                            text = type.label(),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -358,7 +385,7 @@ private fun ProviderPicker(
         .filterNot { it == LocationConfig.PROVIDER_JITSI }
 
     SettingsDropdown(
-        label = "Service",
+        label = stringResource(Res.string.location_service),
         selectedValue = selected,
         options = options,
         enabled = enabled,
@@ -379,7 +406,7 @@ private fun TransportPicker(
     val options = LocationConfig.supportedTransportsForProvider(provider)
 
     SettingsDropdown(
-        label = "Transport",
+        label = stringResource(Res.string.label_transport),
         selectedValue = selected,
         options = options,
         enabled = enabled,
@@ -458,8 +485,8 @@ private fun Vp8OptionsCard(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         SectionTitle(
-            title = "VP8 options",
-            subtitle = "Fine-tune stream performance"
+            title = stringResource(Res.string.location_vp8_options),
+            subtitle = stringResource(Res.string.location_vp8_options_subtitle)
         )
 
         Row(
@@ -475,7 +502,7 @@ private fun Vp8OptionsCard(
             )
             NumericTextField(
                 value = batch,
-                label = "Batch",
+                label = stringResource(Res.string.location_vp8_batch),
                 enabled = enabled,
                 onValueChange = onBatchChanged,
                 modifier = Modifier.weight(1f)
@@ -516,7 +543,7 @@ private fun SettingsTextField(
         trailingIcon = {
             if (value.isNotEmpty() && enabled) {
                 IconButton(onClick = onClear) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                    Icon(Icons.Default.Close, contentDescription = stringResource(Res.string.action_clear))
                 }
             }
         }
@@ -566,7 +593,7 @@ private fun ActionsBar(
                 shape = CircleShape,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete")
+                Icon(Icons.Outlined.Delete, contentDescription = stringResource(Res.string.action_delete))
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -589,24 +616,37 @@ private fun ActionsBar(
             } else {
                 Icon(Icons.Rounded.Check, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Save", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(stringResource(Res.string.action_save), fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
 }
 
+@Composable
 private fun roomIdPlaceholder(provider: String): String {
     return when (LocationConfig.normalizeProvider(provider)) {
         LocationConfig.PROVIDER_TELEMOST -> "12345678901234"
         LocationConfig.PROVIDER_WB_STREAM -> "123e4567-e89b-12d3-a456-426614174000"
         LocationConfig.PROVIDER_JITSI -> "https://meet.example.com/room"
         LocationConfig.PROVIDER_SALUTEJAZZ -> "code:password"
-        else -> "room id"
+        else -> stringResource(Res.string.location_room_id_placeholder)
     }
 }
 
+/** What a refused field says under itself; a room's name depends on its provider. */
+@Composable
+private fun fieldErrorText(error: FieldError, provider: String): String = when (error) {
+    FieldError.NameEmpty -> stringResource(Res.string.field_name_empty)
+    FieldError.NameTooLong -> stringResource(Res.string.field_name_too_long)
+    FieldError.RoomEmpty -> stringResource(Res.string.field_room_empty, roomIdLabel(provider))
+    FieldError.RoomTooLong -> stringResource(Res.string.field_room_too_long, roomIdLabel(provider))
+    FieldError.KeyEmpty -> stringResource(Res.string.field_key_empty)
+    FieldError.KeyNotHex -> stringResource(Res.string.field_key_not_hex)
+}
+
+@Composable
 private fun roomIdLabel(provider: String): String {
-    return if (isJitsiProvider(provider)) "Room URL" else "Room ID"
+    return stringResource(if (isJitsiProvider(provider)) Res.string.location_room_url else Res.string.location_room_id)
 }
 
 private fun roomKeyboardType(provider: String): KeyboardType {
@@ -617,7 +657,13 @@ private fun isJitsiProvider(provider: String): Boolean {
     return LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_JITSI
 }
 
-private enum class ConnectionType(val label: String) {
-    Service("Service"),
-    Jitsi("Jitsi")
+private enum class ConnectionType {
+    Service,
+    Jitsi
+}
+
+@Composable
+private fun ConnectionType.label(): String = when (this) {
+    ConnectionType.Service -> stringResource(Res.string.location_service)
+    ConnectionType.Jitsi -> "Jitsi"
 }

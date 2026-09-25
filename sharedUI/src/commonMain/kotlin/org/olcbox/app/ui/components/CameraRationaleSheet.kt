@@ -1,5 +1,14 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_continue
+import multiplatform_app.sharedui.generated.resources.camera_reason_decide
+import multiplatform_app.sharedui.generated.resources.camera_reason_nothing_kept
+import multiplatform_app.sharedui.generated.resources.camera_reason_use
+import multiplatform_app.sharedui.generated.resources.camera_subtitle
+import multiplatform_app.sharedui.generated.resources.camera_title
+import org.jetbrains.compose.resources.StringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -45,17 +54,14 @@ import org.olcbox.app.ui.theme.LocalPkPalette
 @Composable
 fun CameraRationaleSheet(onContinue: () -> Unit) {
     PkBottomSheet(
-        title = CAMERA_TITLE,
-        subtitle = CAMERA_SUBTITLE,
+        title = stringResource(Res.string.camera_title),
+        subtitle = stringResource(Res.string.camera_subtitle),
         onDismiss = {},
         dismissible = false
     ) {
         CameraRationaleBody(onContinue = onContinue)
     }
 }
-
-internal const val CAMERA_TITLE = "Camera access"
-internal const val CAMERA_SUBTITLE = "QR codes only"
 
 /** The sheet's contents, separately so a test can render them. */
 @Composable
@@ -82,7 +88,7 @@ internal fun CameraRationaleBody(onContinue: () -> Unit) {
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = line,
+                        text = stringResource(line),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -90,7 +96,7 @@ internal fun CameraRationaleBody(onContinue: () -> Unit) {
             }
         }
 
-        PkSheetButton(label = "Continue", onClick = onContinue, primary = true)
+        PkSheetButton(label = stringResource(Res.string.action_continue), onClick = onContinue, primary = true)
     }
 }
 
@@ -100,10 +106,8 @@ internal fun CameraRationaleBody(onContinue: () -> Unit) {
  * Each answers a question somebody actually has: what for, what happens to the
  * picture, and where the decision is made and what it costs to say no.
  */
-internal val CAMERA_REASONS = listOf(
-    "The camera is used to read a server-list QR code, and for nothing else.",
-    "No photo or video is recorded, stored or uploaded. The frame is decoded and " +
-        "thrown away.",
-    "You decide in the system prompt that follows. Declining leaves every other " +
-        "way of adding a list open — a link, a URI or a file."
+internal val CAMERA_REASONS: List<StringResource> = listOf(
+    Res.string.camera_reason_use,
+    Res.string.camera_reason_nothing_kept,
+    Res.string.camera_reason_decide
 )

@@ -1,6 +1,24 @@
 package org.olcbox.app.vpn.service
 
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.blocked_no_location
+import multiplatform_app.sharedui.generated.resources.notification_connecting
+import multiplatform_app.sharedui.generated.resources.notification_connection_failed
+import multiplatform_app.sharedui.generated.resources.notification_protecting
+import multiplatform_app.sharedui.generated.resources.notification_proxy_connected
+import multiplatform_app.sharedui.generated.resources.notification_reconnecting
+import multiplatform_app.sharedui.generated.resources.notification_split_error
+import multiplatform_app.sharedui.generated.resources.notification_stop
+import multiplatform_app.sharedui.generated.resources.notification_title_proxy
+import multiplatform_app.sharedui.generated.resources.notification_tunnel_error
+import multiplatform_app.sharedui.generated.resources.notification_tunnel_failed
+import multiplatform_app.sharedui.generated.resources.notification_verifying
+import multiplatform_app.sharedui.generated.resources.notification_vpn_connected
+import multiplatform_app.sharedui.generated.resources.notification_waiting_network
+import multiplatform_app.sharedui.generated.resources.notification_waiting_transport
+import org.jetbrains.compose.resources.getString as resourceString
+import org.jetbrains.compose.resources.StringResource
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -288,6 +306,7 @@ class OlcboxVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        scope.launch { notificationWords = NOTIFICATION_TEXTS.mapValues { resourceString(it.value) } }
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Olcbox::VpnWakeLock")
@@ -1836,16 +1855,26 @@ class OlcboxVpnService : VpnService() {
             .notify(NOTIFICATION_ID, buildNotification(status))
     }
 
+    /**
+     * The notification in the user's language. Its texts are the English strings the
+     * service passes around; their translations are read once when the service is
+     * created, and until they are the notification says the English one.
+     */
+    @Volatile
+    private var notificationWords: Map<String, String> = emptyMap()
+
+    private fun localized(text: String): String = notificationWords[text] ?: text
+
     private fun buildNotification(status: String) =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Ghostlane ${activeModeLabel()}")
-            .setContentText(status)
+            .setContentTitle(localized("Ghostlane ${activeModeLabel()}"))
+            .setContentText(localized(status))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setContentIntent(getAppPendingIntent())
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
-                "Stop",
+                localized("Stop"),
                 PendingIntent.getService(
                     this,
                     0,
@@ -2133,3 +2162,22 @@ class OlcboxVpnService : VpnService() {
         }
     }
 }
+
+/** Each English text the notification can show, and the resource that says it. */
+private val NOTIFICATION_TEXTS: Map<String, StringResource> = mapOf(
+    "Protecting your connection" to Res.string.notification_protecting,
+    "Waiting for network..." to Res.string.notification_waiting_network,
+    "Waiting for transport..." to Res.string.notification_waiting_transport,
+    "Connecting..." to Res.string.notification_connecting,
+    "Reconnecting..." to Res.string.notification_reconnecting,
+    "Verifying tunnel..." to Res.string.notification_verifying,
+    "VPN Connected" to Res.string.notification_vpn_connected,
+    "Proxy Connected" to Res.string.notification_proxy_connected,
+    "Connection failed" to Res.string.notification_connection_failed,
+    "Tunnel failed" to Res.string.notification_tunnel_failed,
+    "VPN tunnel error" to Res.string.notification_tunnel_error,
+    "Split tunneling error" to Res.string.notification_split_error,
+    "Add a location first" to Res.string.blocked_no_location,
+    "Ghostlane Proxy" to Res.string.notification_title_proxy,
+    "Stop" to Res.string.notification_stop
+)

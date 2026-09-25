@@ -1,5 +1,9 @@
 package org.olcbox.app.ui.features.home
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.lowest_failed
+import multiplatform_app.sharedui.generated.resources.lowest_previous_stopping
+import org.jetbrains.compose.resources.getString
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 
@@ -103,7 +107,7 @@ internal class LowestConnection(
             }
             if (!stopAndWait()) return
         }
-        throw IllegalStateException("Lowest could not connect. Tried up to $MAX_ATTEMPTS servers; select a server manually or retry.")
+        throw IllegalStateException(getString(Res.string.lowest_failed, MAX_ATTEMPTS))
     }
 
     private suspend fun stopAndWait(): Boolean {
@@ -112,7 +116,7 @@ internal class LowestConnection(
         return withTimeoutOrNull(STOP_TIMEOUT_MS) {
             vpn.status.first { it is VpnStatus.Disconnected }
             true
-        } ?: throw IllegalStateException("The previous VPN is still stopping. Retry once it disconnects.")
+        } ?: throw IllegalStateException(getString(Res.string.lowest_previous_stopping))
     }
 
     internal suspend fun rank(entries: List<LocationEntry>, selectedId: String): List<LocationEntry> {

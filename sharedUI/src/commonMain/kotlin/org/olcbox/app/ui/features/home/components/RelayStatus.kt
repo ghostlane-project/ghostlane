@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.features.home.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_dismiss
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -81,7 +84,7 @@ private fun NoticeBody(text: String, dismissible: Boolean) {
             // together and a one-line notice is no taller for being dismissible.
             Icon(
                 imageVector = PkIcons.Close,
-                contentDescription = "Dismiss",
+                contentDescription = stringResource(Res.string.action_dismiss),
                 tint = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.size(18.dp)
             )

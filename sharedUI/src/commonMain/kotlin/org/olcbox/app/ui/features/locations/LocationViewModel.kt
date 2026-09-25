@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.features.locations
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.ping_failed
+import org.jetbrains.compose.resources.getString
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -137,13 +140,13 @@ class LocationViewModel(
     var isSaving by mutableStateOf(false)
         private set
 
-    var nameError by mutableStateOf<String?>(null)
+    var nameError by mutableStateOf<FieldError?>(null)
         private set
 
-    var serverError by mutableStateOf<String?>(null)
+    var serverError by mutableStateOf<FieldError?>(null)
         private set
 
-    var keyError by mutableStateOf<String?>(null)
+    var keyError by mutableStateOf<FieldError?>(null)
         private set
 
     val isFormValid: Boolean
@@ -296,7 +299,7 @@ class LocationViewModel(
                     throw e
                 } catch (e: Exception) {
                     completedNormally = true
-                    errorMessage = e.message ?: "HTTP ping failed"
+                    errorMessage = e.message ?: getString(Res.string.ping_failed)
                 } finally {
                     // By identity, so a job that was cancelled and replaced
                     // cannot evict its replacement. Written out rather than
@@ -525,29 +528,24 @@ class LocationViewModel(
 
     private fun validateName(name: String) {
         nameError = when {
-            name.isBlank() -> "Name cannot be empty"
-            name.length > 30 -> "Name is too long (max 30 chars)"
+            name.isBlank() -> FieldError.NameEmpty
+            name.length > 30 -> FieldError.NameTooLong
             else -> null
         }
     }
 
     private fun validateServer(server: String) {
-        val roomLabel = if (editingConfig.bypassProvider == LocationConfig.PROVIDER_JITSI) {
-            "Room URL"
-        } else {
-            "Room ID"
-        }
         serverError = when {
-            server.isBlank() -> "$roomLabel cannot be empty"
-            server.length > 256 -> "$roomLabel is too long"
+            server.isBlank() -> FieldError.RoomEmpty
+            server.length > 256 -> FieldError.RoomTooLong
             else -> null
         }
     }
 
     private fun validateKey(key: String) {
         keyError = when {
-            key.isBlank() -> "Key cannot be empty"
-            !key.matches(Regex("^[a-fA-F0-9]{64}$")) -> "Key must be 64 hex characters"
+            key.isBlank() -> FieldError.KeyEmpty
+            !key.matches(Regex("^[a-fA-F0-9]{64}$")) -> FieldError.KeyNotHex
             else -> null
         }
     }
@@ -656,3 +654,6 @@ class LocationViewModel(
         }
     }
 }
+
+/** Why a field of the location form is refused. The screen says it in the user's language. */
+enum class FieldError { NameEmpty, NameTooLong, RoomEmpty, RoomTooLong, KeyEmpty, KeyNotHex }

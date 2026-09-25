@@ -1,5 +1,12 @@
 package org.olcbox.app.ui.features.home
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.add_connection
+import multiplatform_app.sharedui.generated.resources.app_settings
+import multiplatform_app.sharedui.generated.resources.lock_admin
+import multiplatform_app.sharedui.generated.resources.settings_diagnostics
+import multiplatform_app.sharedui.generated.resources.split_tunneling
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -252,33 +259,33 @@ private fun HomeTopBands(
         PkHeaderRow(tag = chrome.tag, onBrandTap = callbacks.onBrandTap) {
             PkIconButton(
                 icon = PkIcons.History,
-                contentDescription = "Diagnostics",
+                contentDescription = stringResource(Res.string.settings_diagnostics),
                 onClick = callbacks.onDiagnosticsClick
             )
             if (chrome.showLock) {
                 PkIconButton(
                     icon = Icons.Outlined.Lock,
-                    contentDescription = "Lock admin",
+                    contentDescription = stringResource(Res.string.lock_admin),
                     onClick = callbacks.onLockClick
                 )
             }
             if (chrome.showSplitTunnelingButton) {
                 PkIconButton(
                     icon = PkIcons.Shield,
-                    contentDescription = "Split tunneling",
+                    contentDescription = stringResource(Res.string.split_tunneling),
                     onClick = callbacks.onSplitTunnelingClick
                 )
             }
             PkIconButton(
                 icon = Icons.Outlined.Add,
-                contentDescription = "Add connection",
+                contentDescription = stringResource(Res.string.add_connection),
                 onClick = callbacks.onAddClick,
                 tint = MaterialTheme.colorScheme.onSurface
             )
             if (chrome.showAppSettingsButton) {
                 PkIconButton(
                     icon = Icons.Outlined.Settings,
-                    contentDescription = "Application settings",
+                    contentDescription = stringResource(Res.string.app_settings),
                     onClick = callbacks.onSettingsClick
                 )
             }

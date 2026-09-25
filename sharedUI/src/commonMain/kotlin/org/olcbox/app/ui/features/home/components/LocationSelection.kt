@@ -1,5 +1,39 @@
 package org.olcbox.app.ui.features.home.components
 
+import multiplatform_app.sharedui.generated.resources.mismatch_caption_caps
+import org.olcbox.app.ui.components.kit.boardWords
+import org.olcbox.app.ui.components.kit.fill
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.add_custom
+import multiplatform_app.sharedui.generated.resources.add_server_list
+import multiplatform_app.sharedui.generated.resources.age_days
+import multiplatform_app.sharedui.generated.resources.age_hours
+import multiplatform_app.sharedui.generated.resources.age_minutes
+import multiplatform_app.sharedui.generated.resources.age_now
+import multiplatform_app.sharedui.generated.resources.board_empty
+import multiplatform_app.sharedui.generated.resources.board_rooms_note
+import multiplatform_app.sharedui.generated.resources.board_rooms_with_seats
+import multiplatform_app.sharedui.generated.resources.custom_locations
+import multiplatform_app.sharedui.generated.resources.filter_all
+import multiplatform_app.sharedui.generated.resources.list_encrypted
+import multiplatform_app.sharedui.generated.resources.list_expires
+import multiplatform_app.sharedui.generated.resources.list_updated
+import multiplatform_app.sharedui.generated.resources.lowest_connected_via_caps
+import multiplatform_app.sharedui.generated.resources.lowest_fastest_caps
+import multiplatform_app.sharedui.generated.resources.lowest_latency
+import multiplatform_app.sharedui.generated.resources.lowest_tag_caps
+import multiplatform_app.sharedui.generated.resources.pings_stale
+import multiplatform_app.sharedui.generated.resources.plan_resets_in
+import multiplatform_app.sharedui.generated.resources.plan_resets_today
+import multiplatform_app.sharedui.generated.resources.plan_traffic
+import multiplatform_app.sharedui.generated.resources.provider_site
+import multiplatform_app.sharedui.generated.resources.provider_support
+import multiplatform_app.sharedui.generated.resources.quota_available
+import multiplatform_app.sharedui.generated.resources.quota_used
+import multiplatform_app.sharedui.generated.resources.remove_named
+import multiplatform_app.sharedui.generated.resources.remove_server_list
+import multiplatform_app.sharedui.generated.resources.sub_server_list
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -236,7 +270,7 @@ fun BoardFilterChips(
         // The row scrolls, so the last chip would otherwise sit flush against the
         // screen edge and read as cut off rather than as scrollable.
         PkFilterChip(
-            label = "All",
+            label = stringResource(Res.string.filter_all),
             selected = active == null,
             count = model.totalCount,
             onClick = { onFilterSelected(null) }
@@ -305,13 +339,14 @@ fun RoomBoard(
     //
     // Saveable, not merely remembered: opening a location's settings and coming
     // back would otherwise unfold everything again.
+    val words = listWords()
     val collapsed = rememberSaveable(
         saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })
     ) { mutableStateListOf<String>() }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (pingsStale) {
-            Text("Previous network measurements · tap Measure to refresh", style = MaterialTheme.typography.labelSmall)
+            Text(stringResource(Res.string.pings_stale), style = MaterialTheme.typography.labelSmall)
         }
         model.subscriptionGroups.forEach { group ->
             val isCollapsed = collapsible && group.key in collapsed
@@ -336,18 +371,19 @@ fun RoomBoard(
                 val fraction = planFraction(subscription?.used, subscription?.available)
 
                 PkGroupHeader(
-                    title = first.subscriptionTitle().ifBlank { "Server list" },
+                    title = first.subscriptionTitle(words).ifBlank { words.serverList },
                     // Both the quota and the expiry move into the bar where there
                     // is one, rather than being printed twice in two shapes. What
                     // is left on this line is how stale the list is, which is
                     // short enough to survive four buttons beside it.
                     meta = subscriptionMetaLine(
-                        quota = if (fraction == null) first.subscriptionQuota() else null,
+                        quota = if (fraction == null) first.subscriptionQuota(words) else null,
                         expiresAtEpochMs = subscription?.expiresAtEpochMs
                             ?.takeIf { fraction == null },
                         lastRefreshAtEpochMs = subscription?.lastRefreshAtEpochMs,
                         nowEpochMs = nowMillis(),
-                        formatDate = ::formatDate
+                        formatDate = ::formatDate,
+                        words = words
                     ),
                     collapsed = isCollapsed,
                     collapsible = collapsible,
@@ -361,7 +397,7 @@ fun RoomBoard(
                     subscription?.webPageUrl?.takeIf { it.isNotBlank() }?.let { url ->
                         PkIconButton(
                             icon = PkIcons.Info,
-                            contentDescription = "Open the provider's site",
+                            contentDescription = stringResource(Res.string.provider_site),
                             onClick = { onOpenUrl(url) },
                             size = 32,
                             corner = 9
@@ -370,7 +406,7 @@ fun RoomBoard(
                     subscription?.supportUrl?.takeIf { it.isNotBlank() }?.let { url ->
                         PkIconButton(
                             icon = PkIcons.Send,
-                            contentDescription = "Contact support",
+                            contentDescription = stringResource(Res.string.provider_support),
                             onClick = { onOpenUrl(url) },
                             size = 32,
                             corner = 9
@@ -389,7 +425,7 @@ fun RoomBoard(
                         // settings, two screens from the list it removes.
                         PkIconButton(
                             icon = PkIcons.Delete,
-                            contentDescription = "Remove this server list",
+                            contentDescription = stringResource(Res.string.remove_server_list),
                             onClick = { onDeleteSubscriptionClick(groupUrl) }
                         )
                     }
@@ -397,8 +433,8 @@ fun RoomBoard(
 
                 if (fraction != null && !isCollapsed) {
                     PkPlanBar(
-                        label = planLabel(subscription?.expiresAtEpochMs, nowMillis()),
-                        value = first.subscriptionQuota().orEmpty(),
+                        label = planLabel(subscription?.expiresAtEpochMs, nowMillis(), words),
+                        value = first.subscriptionQuota(words).orEmpty(),
                         fraction = fraction
                     )
                 }
@@ -420,8 +456,8 @@ fun RoomBoard(
                                 .firstOrNull { it.storageId == selectedLocationId }
                                 ?.let { locationDisplayParts(it).second }
                             if (measurable.isNotEmpty()) PkRoomCard(
-                                title = "Lowest latency",
-                                tag = "AUTO",
+                                title = stringResource(Res.string.lowest_latency),
+                                tag = stringResource(Res.string.lowest_tag_caps),
                                 emoji = "⚡",
                                 selected = lowestSelected,
                                 connectedHere = lowestSelected && isConnected,
@@ -439,9 +475,9 @@ fun RoomBoard(
                                 },
                                 keyGone = false,
                                 wire = if (lowestSelected && isConnected && !selectedServer.isNullOrBlank()) {
-                                    "CONNECTED VIA $selectedServer"
+                                    stringResource(Res.string.lowest_connected_via_caps, selectedServer)
                                 } else {
-                                    "FASTEST AVAILABLE SERVER IN THIS LIST"
+                                    stringResource(Res.string.lowest_fastest_caps)
                                 },
                                 onClick = { onLowestSelected(groupUrl, first.storageId) },
                                 onMeasure = if (measurable.isNotEmpty()) ({ onMeasure(ids) }) else null
@@ -483,7 +519,7 @@ fun RoomBoard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    PkSectionEyebrow(text = "Custom locations", modifier = Modifier.weight(1f))
+                    PkSectionEyebrow(text = stringResource(Res.string.custom_locations), modifier = Modifier.weight(1f))
                     if (model.customLocations.any { it.config?.let(canPing) == true }) {
                         LatencyButton(
                             isRunning = isCustomPinging,
@@ -521,14 +557,14 @@ fun RoomBoard(
 
         if (showCustomLocation) {
             PkDashedAction(
-                label = "Create custom location",
+                label = stringResource(Res.string.add_custom),
                 icon = Icons.Outlined.Add,
                 onClick = onAddLocationClick
             )
         }
 
         PkDashedAction(
-            label = "Add server list",
+            label = stringResource(Res.string.add_server_list),
             icon = Icons.Outlined.Add,
             onClick = onAddSubscriptionClick
         )
@@ -584,7 +620,7 @@ private fun BoardRoomCard(
         blocked = roomIsBlocked(slots, mine = connectedHere),
         seats = seats,
         seatCountText = seatCountText(slots),
-        freeText = seatFreeText(slots),
+        freeText = seatFreeText(slots, boardWords()),
         freeIsFull = slots != null && slots.slots_free <= 0,
         freeIsTight = slots != null && slots.slots_free in 1..2,
         history = history,
@@ -592,8 +628,8 @@ private fun BoardRoomCard(
         isMeasuring = pingsState.isChecking(location.storageId),
         isOffline = pingsState.isOffline(location.storageId),
         keyGone = keyGone,
-        notice = TransportMismatch.caption(config, location.metadata),
-        wire = wireShape(config),
+        notice = TransportMismatch.caption(config, location.metadata, stringResource(Res.string.mismatch_caption_caps)),
+        wire = wireShape(config, boardWords()),
         onClick = onClick,
         onLongClick = onLongClick,
         // No MEASURE where the platform says nothing can be measured — a button
@@ -606,7 +642,7 @@ private fun BoardRoomCard(
                 // header, where it sits with three others on a line of its own. On
                 // a card it read as a widget dropped into the name, between the
                 // protocol tag and the latency column.
-                RemoveAffordance(label = "Remove ${'$'}name", onClick = remove)
+                RemoveAffordance(label = stringResource(Res.string.remove_named, name), onClick = remove)
             }
         }
     )
@@ -621,12 +657,12 @@ private fun BoardRoomCard(
  * twice taken a screen of this row as evidence that the app unlocks a purchase
  * made elsewhere (Guideline 3.1.1).
  */
-internal fun planLabel(expiresAtEpochMs: Long?, nowEpochMs: Long): String {
+internal fun planLabel(expiresAtEpochMs: Long?, nowEpochMs: Long, words: ListWords = ListWords()): String {
     val days = expiresAtEpochMs
         ?.let { (it - nowEpochMs) / DAY_MILLIS }
         ?.takeIf { it >= 0 }
-        ?: return "Traffic"
-    return if (days == 0L) "Traffic · resets today" else "Traffic · resets in ${days}d"
+        ?: return words.traffic
+    return if (days == 0L) words.trafficResetsToday else words.trafficResetsIn.fill(days)
 }
 
 // ── the empty board ────────────────────────────────────────────────────────
@@ -650,7 +686,7 @@ private fun RelaySetupCard(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        PkSectionEyebrow("Nothing here yet")
+        PkSectionEyebrow(stringResource(Res.string.board_empty))
 
         // What the app is, said once, on the one screen a first-run user and an
         // App Store reviewer both see. The empty state used to be the words
@@ -664,7 +700,7 @@ private fun RelaySetupCard(
         if (showCustomLocation) {
             Spacer(Modifier.height(2.dp))
             PkDashedAction(
-                label = "Create custom location",
+                label = stringResource(Res.string.add_custom),
                 icon = Icons.Outlined.Add,
                 onClick = onAddLocationClick
             )
@@ -685,14 +721,12 @@ private fun PkEmptyBoardNote() {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "Rooms with seats",
+            text = stringResource(Res.string.board_rooms_with_seats),
             style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
             color = MaterialTheme.colorScheme.onSurface
         )
         Text(
-            text = "An olcRTC relay holds a fixed number of seats, and a full room " +
-                "cannot take you. Add a server list and its rooms appear here with " +
-                "their occupancy moving as people come and go.",
+            text = stringResource(Res.string.board_rooms_note),
             style = MaterialTheme.typography.bodySmall,
             color = palette.textDim
         )
@@ -743,7 +777,7 @@ private fun LocationItem.subscriptionGroupKey(): String = listOfNotNull(
     subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }
 ).joinToString("|").ifBlank { storageId }
 
-internal fun LocationItem.subscriptionTitle(): String {
+internal fun LocationItem.subscriptionTitle(words: ListWords = ListWords()): String {
     val subscription = metadata?.subscription
     // Falling back to a literal labelled every unnamed server list identically, so
     // two of them read as the same heading twice. Identify by host instead —
@@ -751,14 +785,14 @@ internal fun LocationItem.subscriptionTitle(): String {
     val secret = subscriptionUrl?.let { pkSubscriptionIsSecret(it, subscriptionOriginLink) } == true
     val name = subscription?.name?.takeIf { it.isNotBlank() }
         ?: subscriptionUrl?.takeUnless { secret }?.let { pkSubscriptionHost(it) }
-        ?: if (secret) "Encrypted list" else "Server list"
+        ?: if (secret) words.encryptedList else words.serverList
 
     return listOfNotNull(subscription?.icon?.takeIf { it.isNotBlank() }, name).joinToString(" ")
 }
 
-private fun LocationItem.subscriptionQuota(): String? {
+private fun LocationItem.subscriptionQuota(words: ListWords): String? {
     val subscription = metadata?.subscription ?: return null
-    return quotaText(subscription.used, subscription.available)
+    return quotaText(subscription.used, subscription.available, words)
 }
 
 /**
@@ -779,33 +813,34 @@ internal fun subscriptionMetaLine(
     expiresAtEpochMs: Long?,
     lastRefreshAtEpochMs: Long?,
     nowEpochMs: Long,
-    formatDate: (Long) -> String
+    formatDate: (Long) -> String,
+    words: ListWords = ListWords()
 ): String? = listOfNotNull(
     quota?.takeIf { it.isNotBlank() },
     // The year stays. "exp 09.09" reads as expired for a plan that runs to 2027,
     // and four characters are not worth a wrong answer.
-    expiresAtEpochMs?.let { "exp ${formatDate(it)}" },
-    lastRefreshAtEpochMs?.let { "upd ${subscriptionAge(it, nowEpochMs)}" }
+    expiresAtEpochMs?.let { words.expires.fill(formatDate(it)) },
+    lastRefreshAtEpochMs?.let { words.updated.fill(subscriptionAge(it, nowEpochMs, words)) }
 ).joinToString(" · ").takeIf { it.isNotBlank() }
 
 /** `now` / `12m` / `2h` / `3d`. A device whose clock ran backwards reads as `now`. */
-internal fun subscriptionAge(lastRefreshAtEpochMs: Long, nowEpochMs: Long): String {
+internal fun subscriptionAge(lastRefreshAtEpochMs: Long, nowEpochMs: Long, words: ListWords = ListWords()): String {
     val delta = (nowEpochMs - lastRefreshAtEpochMs).coerceAtLeast(0L)
     return when {
-        delta < MINUTE_MILLIS -> "now"
-        delta < HOUR_MILLIS -> "${delta / MINUTE_MILLIS}m"
-        delta < DAY_MILLIS -> "${delta / HOUR_MILLIS}h"
-        else -> "${delta / DAY_MILLIS}d"
+        delta < MINUTE_MILLIS -> words.now
+        delta < HOUR_MILLIS -> words.minutes.fill(delta / MINUTE_MILLIS)
+        delta < DAY_MILLIS -> words.hours.fill(delta / HOUR_MILLIS)
+        else -> words.days.fill(delta / DAY_MILLIS)
     }
 }
 
-internal fun quotaText(used: String?, available: String?): String? = when {
+internal fun quotaText(used: String?, available: String?, words: ListWords = ListWords()): String? = when {
     // "6.3/300 GB" when both sides are in the same unit, "9.4 MB / 300 GB" when
     // they are not. Saying GB twice costs five characters on a line that has to
     // fit a phone, and says nothing the once did not.
     !used.isNullOrBlank() && !available.isNullOrBlank() -> compactQuota(used, available)
-    !used.isNullOrBlank() -> "$used used"
-    !available.isNullOrBlank() -> "$available available"
+    !used.isNullOrBlank() -> words.used.fill(used)
+    !available.isNullOrBlank() -> words.available.fill(available)
     else -> null
 }
 
@@ -822,3 +857,42 @@ private fun compactQuota(used: String, available: String): String {
 private const val MINUTE_MILLIS = 60_000L
 private const val HOUR_MILLIS = 60 * MINUTE_MILLIS
 private const val DAY_MILLIS = 24 * HOUR_MILLIS
+
+/**
+ * The words the server-list lines above are made of. English by default, which
+ * keeps those helpers pure and testable; a screen passes [listWords], read from
+ * string resources. A pattern's `%1$s` / `%1$d` is its one value.
+ */
+internal data class ListWords(
+    val serverList: String = "Server list",
+    val encryptedList: String = "Encrypted list",
+    val used: String = "%1\$s used",
+    val available: String = "%1\$s available",
+    val expires: String = "exp %1\$s",
+    val updated: String = "upd %1\$s",
+    val now: String = "now",
+    val minutes: String = "%1\$dm",
+    val hours: String = "%1\$dh",
+    val days: String = "%1\$dd",
+    val traffic: String = "Traffic",
+    val trafficResetsToday: String = "Traffic · resets today",
+    val trafficResetsIn: String = "Traffic · resets in %1\$dd"
+)
+
+/** [ListWords] in the user's language. */
+@Composable
+internal fun listWords(): ListWords = ListWords(
+    serverList = stringResource(Res.string.sub_server_list),
+    encryptedList = stringResource(Res.string.list_encrypted),
+    used = stringResource(Res.string.quota_used),
+    available = stringResource(Res.string.quota_available),
+    expires = stringResource(Res.string.list_expires),
+    updated = stringResource(Res.string.list_updated),
+    now = stringResource(Res.string.age_now),
+    minutes = stringResource(Res.string.age_minutes),
+    hours = stringResource(Res.string.age_hours),
+    days = stringResource(Res.string.age_days),
+    traffic = stringResource(Res.string.plan_traffic),
+    trafficResetsToday = stringResource(Res.string.plan_resets_today),
+    trafficResetsIn = stringResource(Res.string.plan_resets_in)
+)

@@ -1,5 +1,121 @@
 package org.olcbox.app.ui.activities
 
+import multiplatform_app.sharedui.generated.resources.action_cancel
+import multiplatform_app.sharedui.generated.resources.action_check_now
+import multiplatform_app.sharedui.generated.resources.action_qr_share
+import multiplatform_app.sharedui.generated.resources.action_refresh
+import multiplatform_app.sharedui.generated.resources.action_remove
+import multiplatform_app.sharedui.generated.resources.action_save
+import multiplatform_app.sharedui.generated.resources.action_share
+import multiplatform_app.sharedui.generated.resources.always_on_vpn
+import multiplatform_app.sharedui.generated.resources.always_on_vpn_value
+import multiplatform_app.sharedui.generated.resources.app_logs_title
+import multiplatform_app.sharedui.generated.resources.apps_count
+import multiplatform_app.sharedui.generated.resources.apps_no_match
+import multiplatform_app.sharedui.generated.resources.apps_no_match_hint
+import multiplatform_app.sharedui.generated.resources.apps_none_found
+import multiplatform_app.sharedui.generated.resources.apps_none_found_hint
+import multiplatform_app.sharedui.generated.resources.connection_mode
+import multiplatform_app.sharedui.generated.resources.connection_mode_local_socks
+import multiplatform_app.sharedui.generated.resources.connection_mode_proxy
+import multiplatform_app.sharedui.generated.resources.connection_settings_android_value
+import multiplatform_app.sharedui.generated.resources.connection_settings_title
+import multiplatform_app.sharedui.generated.resources.default_interval
+import multiplatform_app.sharedui.generated.resources.every_hours
+import multiplatform_app.sharedui.generated.resources.field_generated_password
+import multiplatform_app.sharedui.generated.resources.field_listen_address
+import multiplatform_app.sharedui.generated.resources.field_password
+import multiplatform_app.sharedui.generated.resources.field_port
+import multiplatform_app.sharedui.generated.resources.field_username
+import multiplatform_app.sharedui.generated.resources.hours_short
+import multiplatform_app.sharedui.generated.resources.https_sources
+import multiplatform_app.sharedui.generated.resources.https_sources_none
+import multiplatform_app.sharedui.generated.resources.lan_endpoint
+import multiplatform_app.sharedui.generated.resources.last_refresh_at
+import multiplatform_app.sharedui.generated.resources.listen_address_required
+import multiplatform_app.sharedui.generated.resources.locations_count
+import multiplatform_app.sharedui.generated.resources.logs_entries
+import multiplatform_app.sharedui.generated.resources.logs_no_entries
+import multiplatform_app.sharedui.generated.resources.mode_full_tunnel
+import multiplatform_app.sharedui.generated.resources.mode_proxy_description
+import multiplatform_app.sharedui.generated.resources.mode_proxy_summary
+import multiplatform_app.sharedui.generated.resources.mode_tun_description
+import multiplatform_app.sharedui.generated.resources.mode_tun_summary
+import multiplatform_app.sharedui.generated.resources.no_server_lists
+import multiplatform_app.sharedui.generated.resources.no_server_lists_hint
+import multiplatform_app.sharedui.generated.resources.not_refreshed_yet
+import multiplatform_app.sharedui.generated.resources.password_required
+import multiplatform_app.sharedui.generated.resources.port_range_hint
+import multiplatform_app.sharedui.generated.resources.port_required
+import multiplatform_app.sharedui.generated.resources.proxy_credentials_section
+import multiplatform_app.sharedui.generated.resources.regenerate_password
+import multiplatform_app.sharedui.generated.resources.remove_server_list_question
+import multiplatform_app.sharedui.generated.resources.remove_server_list_text
+import multiplatform_app.sharedui.generated.resources.ru_bypass_accuracy
+import multiplatform_app.sharedui.generated.resources.ru_bypass_already
+import multiplatform_app.sharedui.generated.resources.ru_bypass_apps
+import multiplatform_app.sharedui.generated.resources.ru_bypass_auto
+import multiplatform_app.sharedui.generated.resources.ru_bypass_auto_manual
+import multiplatform_app.sharedui.generated.resources.ru_bypass_matched
+import multiplatform_app.sharedui.generated.resources.ru_bypass_no_match
+import multiplatform_app.sharedui.generated.resources.ru_bypass_none_selected
+import multiplatform_app.sharedui.generated.resources.ru_bypass_on
+import multiplatform_app.sharedui.generated.resources.saving_restarts_connection
+import multiplatform_app.sharedui.generated.resources.search_apps
+import multiplatform_app.sharedui.generated.resources.server_lists_sharing_title
+import multiplatform_app.sharedui.generated.resources.settings_app_log_value
+import multiplatform_app.sharedui.generated.resources.settings_app_updates_value
+import multiplatform_app.sharedui.generated.resources.settings_routing
+import multiplatform_app.sharedui.generated.resources.settings_server_list_updates
+import multiplatform_app.sharedui.generated.resources.settings_server_lists
+import multiplatform_app.sharedui.generated.resources.settings_title
+import multiplatform_app.sharedui.generated.resources.show_system_apps
+import multiplatform_app.sharedui.generated.resources.socks_proxy
+import multiplatform_app.sharedui.generated.resources.split_all_apps
+import multiplatform_app.sharedui.generated.resources.split_all_use
+import multiplatform_app.sharedui.generated.resources.split_app_list
+import multiplatform_app.sharedui.generated.resources.split_applies_on_close
+import multiplatform_app.sharedui.generated.resources.split_apps_using
+import multiplatform_app.sharedui.generated.resources.split_bypass_selected_apps
+import multiplatform_app.sharedui.generated.resources.split_bypassed_apps
+import multiplatform_app.sharedui.generated.resources.split_choose_bypassing
+import multiplatform_app.sharedui.generated.resources.split_choose_using
+import multiplatform_app.sharedui.generated.resources.split_every_app_uses
+import multiplatform_app.sharedui.generated.resources.split_mode_all
+import multiplatform_app.sharedui.generated.resources.split_mode_bypass
+import multiplatform_app.sharedui.generated.resources.split_mode_selected
+import multiplatform_app.sharedui.generated.resources.split_n_bypass
+import multiplatform_app.sharedui.generated.resources.split_n_bypassed
+import multiplatform_app.sharedui.generated.resources.split_n_use
+import multiplatform_app.sharedui.generated.resources.split_no_bypassed
+import multiplatform_app.sharedui.generated.resources.split_no_list_needed
+import multiplatform_app.sharedui.generated.resources.split_none_bypass
+import multiplatform_app.sharedui.generated.resources.split_none_selected
+import multiplatform_app.sharedui.generated.resources.split_only_n
+import multiplatform_app.sharedui.generated.resources.split_only_n_use
+import multiplatform_app.sharedui.generated.resources.split_required
+import multiplatform_app.sharedui.generated.resources.split_routing_behavior
+import multiplatform_app.sharedui.generated.resources.split_same_route
+import multiplatform_app.sharedui.generated.resources.split_saved_for_tun
+import multiplatform_app.sharedui.generated.resources.split_selected_only
+import multiplatform_app.sharedui.generated.resources.split_tun_rule
+import multiplatform_app.sharedui.generated.resources.split_tunneling_title
+import multiplatform_app.sharedui.generated.resources.system_apps_hidden
+import multiplatform_app.sharedui.generated.resources.system_apps_included
+import multiplatform_app.sharedui.generated.resources.system_apps_none
+import multiplatform_app.sharedui.generated.resources.unsaved_change
+import multiplatform_app.sharedui.generated.resources.update_settings
+import multiplatform_app.sharedui.generated.resources.updates_check_interval
+import multiplatform_app.sharedui.generated.resources.updates_current_version
+import multiplatform_app.sharedui.generated.resources.updates_last_check
+import multiplatform_app.sharedui.generated.resources.updates_not_checked
+import multiplatform_app.sharedui.generated.resources.updates_title
+import multiplatform_app.sharedui.generated.resources.username_required
+import org.jetbrains.compose.resources.pluralStringResource
+import org.olcbox.app.ui.components.localizedHubSummary
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.encrypted_link
+import multiplatform_app.sharedui.generated.resources.Res
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
@@ -214,7 +330,7 @@ internal fun AppSettingsSheet(
                 .navigationBarsPadding()
         ) {
             if (route == AppSettingsRoute.Hub) {
-                PkScreenHeader(title = "Settings", onBack = { closeSheet() })
+                PkScreenHeader(title = stringResource(Res.string.settings_title), onBack = { closeSheet() })
             }
             AnimatedContent(
                 targetState = route,
@@ -383,15 +499,15 @@ private fun AppSettingsHubContent(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         SettingsNavigationRow(
-            title = "Connection Settings",
-            value = "Mode, SOCKS5 proxy, and app routing",
+            title = stringResource(Res.string.connection_settings_title),
+            value = stringResource(Res.string.connection_settings_android_value),
             icon = selectedMode.icon(),
             enabled = enabled,
             onClick = onConnectionSettingsClick
         )
 
         SettingsNavigationRow(
-            title = "Server list updates",
+            title = stringResource(Res.string.settings_server_list_updates),
             value = subscriptionSettings.hubSummary(),
             icon = Icons.Outlined.Refresh,
             enabled = enabled,
@@ -399,7 +515,7 @@ private fun AppSettingsHubContent(
         )
 
         SettingsNavigationRow(
-            title = "Server lists & sharing",
+            title = stringResource(Res.string.server_lists_sharing_title),
             value = subscriptionsCount.subscriptionSummary(),
             icon = Icons.Outlined.Share,
             enabled = true,
@@ -408,8 +524,8 @@ private fun AppSettingsHubContent(
 
         if (showUpdates) {
             SettingsNavigationRow(
-                title = "Update Settings",
-                value = "Nightly · every ${updateSettings.intervalHours}h",
+                title = stringResource(Res.string.update_settings),
+                value = stringResource(Res.string.settings_app_updates_value, updateSettings.intervalHours),
                 icon = Icons.Outlined.Refresh,
                 enabled = true,
                 onClick = onUpdatesClick
@@ -417,8 +533,8 @@ private fun AppSettingsHubContent(
         }
 
         SettingsNavigationRow(
-            title = "Application Logs",
-            value = "Diagnostics and export",
+            title = stringResource(Res.string.app_logs_title),
+            value = stringResource(Res.string.settings_app_log_value),
             icon = PkIcons.History,
             enabled = true,
             onClick = onApplicationLogsClick
@@ -459,7 +575,7 @@ private fun ConnectionSettingsContent(
             .padding(top = 16.dp, bottom = 32.dp)
     ) {
         SettingsDetailHeader(
-            title = "Connection Settings",
+            title = stringResource(Res.string.connection_settings_title),
             subtitle = selectedMode.settingsSummary(),
             onBack = onBack
         )
@@ -468,7 +584,7 @@ private fun ConnectionSettingsContent(
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SettingsNavigationRow(
-                title = "Connection Mode",
+                title = stringResource(Res.string.connection_mode),
                 value = selectedMode.settingsSummary(),
                 icon = selectedMode.icon(),
                 enabled = enabled,
@@ -479,8 +595,8 @@ private fun ConnectionSettingsContent(
             // sits beside it. Both are the system's to set, on its VPN screen.
             val context = LocalContext.current
             SettingsNavigationRow(
-                title = "Always-on VPN",
-                value = "Start with the phone · Android settings",
+                title = stringResource(Res.string.always_on_vpn),
+                value = stringResource(Res.string.always_on_vpn_value),
                 icon = PkIcons.PowerSettingsNew,
                 enabled = enabled,
                 onClick = { openSystemVpnSettings(context) }
@@ -488,7 +604,7 @@ private fun ConnectionSettingsContent(
             // Editing the local proxy credentials/port is plumbing: admin-only.
             if (AdminState.configuratorVisible) {
                 SettingsNavigationRow(
-                    title = "SOCKS5 Proxy",
+                    title = stringResource(Res.string.socks_proxy),
                     value = "${proxySettings.host}:${proxySettings.port}",
                     icon = PkIcons.Public,
                     enabled = enabled,
@@ -496,14 +612,14 @@ private fun ConnectionSettingsContent(
                 )
             }
             SettingsNavigationRow(
-                title = "Routing",
-                value = routingSettings.mode.hubSummary(),
+                title = stringResource(Res.string.settings_routing),
+                value = routingSettings.mode.localizedHubSummary(),
                 icon = PkIcons.SwapVert,
                 enabled = enabled,
                 onClick = onRoutingClick
             )
             SettingsNavigationRow(
-                title = "Split Tunneling",
+                title = stringResource(Res.string.split_tunneling_title),
                 value = splitTunnelSettings.settingsSummary(),
                 icon = PkIcons.Apps,
                 enabled = enabled,
@@ -529,7 +645,7 @@ private fun ConnectionModeSettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SettingsDetailHeader(
-            title = "Connection Mode",
+            title = stringResource(Res.string.connection_mode),
             subtitle = selectedMode.subtitle(),
             onBack = onBack
         )
@@ -584,7 +700,7 @@ private fun SocksProxySettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SettingsDetailHeader(
-            title = "SOCKS5 Proxy",
+            title = stringResource(Res.string.socks_proxy),
             subtitle = proxySettings.host,
             onBack = onBack
         )
@@ -646,7 +762,7 @@ private fun SplitTunnelingSettingsContent(
             .padding(bottom = 32.dp)
     ) {
         SettingsDetailHeader(
-            title = "Split Tunneling",
+            title = stringResource(Res.string.split_tunneling_title),
             subtitle = settings.mode.statusTitle(settings),
             onBack = onBack
         )
@@ -661,7 +777,7 @@ private fun SplitTunnelingSettingsContent(
 
         Spacer(Modifier.height(18.dp))
 
-        SettingsSectionLabel("Routing Behavior")
+        SettingsSectionLabel(stringResource(Res.string.split_routing_behavior))
 
         Spacer(Modifier.height(8.dp))
 
@@ -682,7 +798,7 @@ private fun SplitTunnelingSettingsContent(
         when (settings.mode) {
             AndroidSplitTunnelMode.AllApps -> SplitTunnelNoListCard()
             AndroidSplitTunnelMode.ProxySelected -> SplitTunnelAppListAction(
-                title = "Apps Using Ghostlane",
+                title = stringResource(Res.string.split_apps_using),
                 value = settings.proxyPackages.activeListValue(requireSelection = true),
                 icon = PkIcons.Shield,
                 enabled = enabled,
@@ -690,7 +806,7 @@ private fun SplitTunnelingSettingsContent(
             )
 
             AndroidSplitTunnelMode.BypassSelected -> SplitTunnelAppListAction(
-                title = "Bypassed Apps",
+                title = stringResource(Res.string.split_bypassed_apps),
                 value = settings.bypassPackages.activeListValue(requireSelection = false),
                 icon = PkIcons.Apps,
                 enabled = enabled,
@@ -806,13 +922,14 @@ private fun SplitTunnelingAppListContent(
             .toList()
     }
 
+    @Composable
     fun showSystemAppsValue(): String {
         return if (systemAppsCount == 0) {
-            "No system apps found"
+            stringResource(Res.string.system_apps_none)
         } else if (showSystemApps) {
-            "${appCount(systemAppsCount)} included"
+            stringResource(Res.string.system_apps_included, appCount(systemAppsCount))
         } else {
-            "${appCount(systemAppsCount)} hidden by default"
+            stringResource(Res.string.system_apps_hidden, appCount(systemAppsCount))
         }
     }
 
@@ -841,7 +958,7 @@ private fun SplitTunnelingAppListContent(
         SettingsDetailHeader(
             title = list.title(),
             subtitle = if (list == AndroidSplitTunnelList.Bypass && russianBypassActive) {
-                RUSSIAN_BYPASS_ACCURACY_MESSAGE
+                stringResource(Res.string.ru_bypass_accuracy)
             } else {
                 list.selectionSubtitle(selectedPackages.size)
             },
@@ -867,7 +984,7 @@ private fun SplitTunnelingAppListContent(
                     contentDescription = null
                 )
             },
-            label = { Text("Search apps") },
+            label = { Text(stringResource(Res.string.search_apps)) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
         )
 
@@ -875,7 +992,7 @@ private fun SplitTunnelingAppListContent(
             Spacer(Modifier.height(10.dp))
 
             SettingsSwitchRow(
-                title = "Show system apps",
+                title = stringResource(Res.string.show_system_apps),
                 value = showSystemAppsValue(),
                 icon = Icons.Outlined.Settings,
                 checked = showSystemApps,
@@ -934,12 +1051,10 @@ private fun SplitTunnelingAppListContent(
 
         if (filteredApps.isEmpty()) {
             EmptyAppsState(
-                title = if (installedApps.isEmpty()) "No apps found" else "No matching apps",
-                subtitle = if (installedApps.isEmpty()) {
-                    "Install launchable apps to configure routing rules."
-                } else {
-                    "Try another app name or package."
-                }
+                title = stringResource(if (installedApps.isEmpty()) Res.string.apps_none_found else Res.string.apps_no_match),
+                subtitle = stringResource(
+                    if (installedApps.isEmpty()) Res.string.apps_none_found_hint else Res.string.apps_no_match_hint
+                )
             )
         } else {
             LazyColumn(
@@ -1035,8 +1150,8 @@ private fun ApplicationLogsSettingsContent(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SettingsDetailHeader(
-                title = "Application Logs",
-                subtitle = if (logs.isEmpty()) "No entries" else "${logs.size} entries",
+                title = stringResource(Res.string.app_logs_title),
+                subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
                 onBack = onBack,
                 modifier = Modifier.weight(1f)
             )
@@ -1045,13 +1160,13 @@ private fun ApplicationLogsSettingsContent(
                 enabled = logs.isNotEmpty(),
                 onClick = onSaveClick
             ) {
-                Text("Save")
+                Text(stringResource(Res.string.action_save))
             }
             TextButton(
                 enabled = logs.isNotEmpty(),
                 onClick = onShareClick
             ) {
-                Text("Share")
+                Text(stringResource(Res.string.action_share))
             }
         }
 
@@ -1093,21 +1208,21 @@ private fun UpdatesSettingsContent(
             .padding(top = 16.dp, bottom = 12.dp)
     ) {
         SettingsDetailHeader(
-            title = "Updates",
-            subtitle = "Current version ${CurrentAppInfo.value.version}",
+            title = stringResource(Res.string.updates_title),
+            subtitle = stringResource(Res.string.updates_current_version, CurrentAppInfo.value.version),
             onBack = onBack
         )
 
         Spacer(Modifier.height(18.dp))
 
-        SettingsSectionLabel("Check Interval")
+        SettingsSectionLabel(stringResource(Res.string.updates_check_interval))
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AppUpdateSettings.INTERVAL_PRESETS.forEach { hours ->
                 FilterChip(
                     selected = settings.intervalHours == hours,
                     onClick = { onIntervalSelected(hours) },
-                    label = { Text("${hours}h") }
+                    label = { Text(stringResource(Res.string.hours_short, hours)) }
                 )
             }
         }
@@ -1125,13 +1240,13 @@ private fun UpdatesSettingsContent(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    text = "Last check",
+                    text = stringResource(Res.string.updates_last_check),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = settings.lastCheckAtEpochMs?.formatDateTime() ?: "Not checked yet",
+                    text = settings.lastCheckAtEpochMs?.formatDateTime() ?: stringResource(Res.string.updates_not_checked),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1159,7 +1274,7 @@ private fun UpdatesSettingsContent(
                 .fillMaxWidth()
                 .height(52.dp)
         ) {
-            Text("Check now")
+            Text(stringResource(Res.string.action_check_now))
         }
     }
 }
@@ -1180,7 +1295,7 @@ private fun SubscriptionsSharingSettingsContent(
             .padding(top = 16.dp, bottom = 12.dp)
     ) {
         SettingsDetailHeader(
-            title = "Server lists & sharing",
+            title = stringResource(Res.string.server_lists_sharing_title),
             subtitle = subscriptions.size.subscriptionSummary(),
             onBack = onBack
         )
@@ -1194,12 +1309,12 @@ private fun SubscriptionsSharingSettingsContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            SettingsSectionLabel("Server lists")
+            SettingsSectionLabel(stringResource(Res.string.settings_server_lists))
 
             if (subscriptions.isEmpty()) {
                 EmptyAppsState(
-                    title = "No server lists",
-                    subtitle = "Imported HTTPS server lists will appear here."
+                    title = stringResource(Res.string.no_server_lists),
+                    subtitle = stringResource(Res.string.no_server_lists_hint)
                 )
             } else {
                 subscriptions.forEach { item ->
@@ -1229,23 +1344,20 @@ private fun SubscriptionShareRow(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Remove server list?") },
+            title = { Text(stringResource(Res.string.remove_server_list_question)) },
             text = {
-                Text(
-                    "${item.name} and its ${item.locationCount} location(s) will be " +
-                        "removed from this device. You can add the server list again later."
-                )
+                Text(stringResource(Res.string.remove_server_list_text, item.name, item.locationCount))
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
                     onDeleteClick()
                 }) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(Res.string.action_remove), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmDelete = false }) { Text(stringResource(Res.string.action_cancel)) }
             }
         )
     }
@@ -1276,7 +1388,8 @@ private fun SubscriptionShareRow(
                             originLink = item.originLink,
                             // Fails closed: a build with no admin hash must not
                             // start printing credentials again.
-                            revealed = AdminState.plumbingVisible
+                            revealed = AdminState.plumbingVisible,
+                            encrypted = stringResource(Res.string.encrypted_link)
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
@@ -1296,13 +1409,13 @@ private fun SubscriptionShareRow(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onShareClick) {
-                    Text("QR/share")
+                    Text(stringResource(Res.string.action_qr_share))
                 }
                 TextButton(onClick = onRefreshClick) {
-                    Text("Refresh")
+                    Text(stringResource(Res.string.action_refresh))
                 }
                 TextButton(onClick = { confirmDelete = true }) {
-                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(Res.string.action_remove), color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -1756,7 +1869,7 @@ private fun SplitTunnelNoListCard() {
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "No app list needed",
+                    text = stringResource(Res.string.split_no_list_needed),
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1764,7 +1877,7 @@ private fun SplitTunnelNoListCard() {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Every app follows the same TUN route",
+                    text = stringResource(Res.string.split_same_route),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     maxLines = 1,
@@ -1783,7 +1896,7 @@ private fun SplitTunnelAppListAction(
     enabled: Boolean,
     onClick: () -> Unit
 ) {
-    SettingsSectionLabel("App List")
+    SettingsSectionLabel(stringResource(Res.string.split_app_list))
 
     Spacer(Modifier.height(8.dp))
 
@@ -1823,20 +1936,20 @@ private fun SocksProxySettingsForm(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingsSectionLabel("Endpoint")
+            SettingsSectionLabel(stringResource(Res.string.lan_endpoint))
 
             SocksProxyTextField(
                 value = host,
                 onValueChange = onHostChanged,
-                label = "Listen address",
+                label = stringResource(Res.string.field_listen_address),
                 placeholder = AndroidSocksProxySettings.DEFAULT_HOST,
                 enabled = enabled,
                 isError = !hostValid,
                 leadingIcon = PkIcons.Public,
                 supportingText = when {
-                    !hostValid -> "Listen address is required"
-                    hostChanged && isConnectionActive -> "Saving restarts the active connection"
-                    hostChanged -> "Unsaved change"
+                    !hostValid -> stringResource(Res.string.listen_address_required)
+                    hostChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                    hostChanged -> stringResource(Res.string.unsaved_change)
                     else -> null
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
@@ -1845,16 +1958,16 @@ private fun SocksProxySettingsForm(
             SocksProxyTextField(
                 value = port,
                 onValueChange = onPortChanged,
-                label = "Port",
+                label = stringResource(Res.string.field_port),
                 placeholder = AndroidSocksProxySettings.DEFAULT_PORT.toString(),
                 enabled = enabled,
                 isError = port.isBlank() || !portValid,
                 leadingIcon = PkIcons.Public,
                 supportingText = when {
-                    port.isBlank() -> "Port is required"
-                    !portValid -> "Use ${AndroidSocksProxySettings.MIN_PORT}-${AndroidSocksProxySettings.MAX_PORT}"
-                    portChanged && isConnectionActive -> "Saving restarts the active connection"
-                    portChanged -> "Unsaved change"
+                    port.isBlank() -> stringResource(Res.string.port_required)
+                    !portValid -> stringResource(Res.string.port_range_hint, AndroidSocksProxySettings.MIN_PORT, AndroidSocksProxySettings.MAX_PORT)
+                    portChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                    portChanged -> stringResource(Res.string.unsaved_change)
                     else -> null
                 },
                 keyboardOptions = KeyboardOptions(
@@ -1865,20 +1978,20 @@ private fun SocksProxySettingsForm(
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingsSectionLabel("Credentials")
+            SettingsSectionLabel(stringResource(Res.string.proxy_credentials_section))
 
             SocksProxyTextField(
                 value = username,
                 onValueChange = onUsernameChanged,
-                label = "Username",
+                label = stringResource(Res.string.field_username),
                 placeholder = "olcbox...",
                 enabled = enabled,
                 isError = username.isBlank(),
                 leadingIcon = Icons.Rounded.Person,
                 supportingText = when {
-                    username.isBlank() -> "Username is required"
-                    usernameChanged && isConnectionActive -> "Saving restarts the active connection"
-                    usernameChanged -> "Unsaved change"
+                    username.isBlank() -> stringResource(Res.string.username_required)
+                    usernameChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                    usernameChanged -> stringResource(Res.string.unsaved_change)
                     else -> null
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
@@ -1887,15 +2000,15 @@ private fun SocksProxySettingsForm(
             SocksProxyTextField(
                 value = password,
                 onValueChange = onPasswordChanged,
-                label = "Password",
-                placeholder = "Generated password",
+                label = stringResource(Res.string.field_password),
+                placeholder = stringResource(Res.string.field_generated_password),
                 enabled = enabled,
                 isError = password.isBlank(),
                 leadingIcon = PkIcons.Key,
                 supportingText = when {
-                    password.isBlank() -> "Password is required"
-                    passwordChanged && isConnectionActive -> "Saving restarts the active connection"
-                    passwordChanged -> "Unsaved change"
+                    password.isBlank() -> stringResource(Res.string.password_required)
+                    passwordChanged && isConnectionActive -> stringResource(Res.string.saving_restarts_connection)
+                    passwordChanged -> stringResource(Res.string.unsaved_change)
                     else -> null
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
@@ -1911,7 +2024,7 @@ private fun SocksProxySettingsForm(
                 enabled = enabled,
                 onClick = onRegeneratePassword
             ) {
-                Text("Regenerate password")
+                Text(stringResource(Res.string.regenerate_password))
             }
 
             Spacer(Modifier.width(8.dp))
@@ -1922,7 +2035,7 @@ private fun SocksProxySettingsForm(
             ) {
                 Icon(Icons.Rounded.Check, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Save")
+                Text(stringResource(Res.string.action_save))
             }
         }
     }
@@ -1972,7 +2085,7 @@ private fun RussianBypassPresetChips(
             enabled = enabled,
             onClick = onClick,
             label = {
-                Text(if (active) "RU bypass on" else "Bypass RU apps")
+                Text(stringResource(if (active) Res.string.ru_bypass_on else Res.string.ru_bypass_apps))
             },
             leadingIcon = {
                 Icon(
@@ -2217,28 +2330,25 @@ private fun AppSettingsInitialRoute.toRoute(): AppSettingsRoute {
     }
 }
 
+@Composable
 private fun AndroidConnectionMode.label(): String {
     return when (this) {
         AndroidConnectionMode.Tun -> "TUN"
-        AndroidConnectionMode.Proxy -> "Proxy"
+        AndroidConnectionMode.Proxy -> stringResource(Res.string.connection_mode_proxy)
     }
 }
 
-private fun Int.subscriptionSummary(): String {
-    return when (this) {
-        0 -> "No HTTPS sources"
-        1 -> "1 HTTPS source"
-        else -> "$this HTTPS sources"
-    }
-}
+@Composable
+private fun Int.subscriptionSummary(): String =
+    if (this == 0) stringResource(Res.string.https_sources_none) else pluralStringResource(Res.plurals.https_sources, this, this)
 
+@Composable
 private fun SubscriptionShareItem.subscriptionSummary(): String {
-    val interval = updateIntervalHours?.let { "every ${it}h" } ?: "default interval"
-    val count = when (locationCount) {
-        1 -> "1 location"
-        else -> "$locationCount locations"
-    }
-    val refresh = lastRefreshAtEpochMs?.let { "last refresh ${it.formatDateTime()}" } ?: "not refreshed yet"
+    val interval = updateIntervalHours?.let { stringResource(Res.string.every_hours, it) }
+        ?: stringResource(Res.string.default_interval)
+    val count = pluralStringResource(Res.plurals.locations_count, locationCount, locationCount)
+    val refresh = lastRefreshAtEpochMs?.let { stringResource(Res.string.last_refresh_at, it.formatDateTime()) }
+        ?: stringResource(Res.string.not_refreshed_yet)
     return "$interval · $count · $refresh"
 }
 
@@ -2253,24 +2363,27 @@ private fun AndroidConnectionMode.shortLabel(): String {
     }
 }
 
+@Composable
 private fun AndroidConnectionMode.subtitle(): String {
     return when (this) {
-        AndroidConnectionMode.Tun -> "Full tunnel"
-        AndroidConnectionMode.Proxy -> "Local SOCKS5 proxy"
+        AndroidConnectionMode.Tun -> stringResource(Res.string.mode_full_tunnel)
+        AndroidConnectionMode.Proxy -> stringResource(Res.string.connection_mode_local_socks)
     }
 }
 
+@Composable
 private fun AndroidConnectionMode.settingsSummary(): String {
     return when (this) {
-        AndroidConnectionMode.Tun -> "TUN · Full tunnel"
-        AndroidConnectionMode.Proxy -> "Proxy · Local SOCKS5"
+        AndroidConnectionMode.Tun -> stringResource(Res.string.mode_tun_summary)
+        AndroidConnectionMode.Proxy -> stringResource(Res.string.mode_proxy_summary)
     }
 }
 
+@Composable
 private fun AndroidConnectionMode.description(): String {
     return when (this) {
-        AndroidConnectionMode.Tun -> "System VPN interface"
-        AndroidConnectionMode.Proxy -> "Local SOCKS endpoint"
+        AndroidConnectionMode.Tun -> stringResource(Res.string.mode_tun_description)
+        AndroidConnectionMode.Proxy -> stringResource(Res.string.mode_proxy_description)
     }
 }
 
@@ -2279,19 +2392,20 @@ private fun AndroidConnectionMode.icon() = when (this) {
     AndroidConnectionMode.Proxy -> PkIcons.Public
 }
 
+@Composable
 private fun AndroidSplitTunnelSettings.settingsSummary(): String {
     return when (mode) {
-        AndroidSplitTunnelMode.AllApps -> "All apps"
+        AndroidSplitTunnelMode.AllApps -> stringResource(Res.string.split_all_apps)
         AndroidSplitTunnelMode.ProxySelected -> if (proxyPackages.isEmpty()) {
-            "Selected apps only"
+            stringResource(Res.string.split_selected_only)
         } else {
-            "Only ${appCount(proxyPackages.size)}"
+            stringResource(Res.string.split_only_n, appCount(proxyPackages.size))
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (bypassPackages.isEmpty()) {
-            "Bypass selected apps"
+            stringResource(Res.string.split_bypass_selected_apps)
         } else {
-            "${appCount(bypassPackages.size)} bypassed"
+            stringResource(Res.string.split_n_bypassed, appCount(bypassPackages.size))
         }
     }
 }
@@ -2303,44 +2417,47 @@ private fun AndroidSplitTunnelSettings.packagesFor(list: AndroidSplitTunnelList)
     }
 }
 
+@Composable
 private fun AndroidSplitTunnelMode.title(): String {
     return when (this) {
-        AndroidSplitTunnelMode.AllApps -> "All Apps"
-        AndroidSplitTunnelMode.ProxySelected -> "Selected Apps Only"
-        AndroidSplitTunnelMode.BypassSelected -> "Bypass Selected"
+        AndroidSplitTunnelMode.AllApps -> stringResource(Res.string.split_mode_all)
+        AndroidSplitTunnelMode.ProxySelected -> stringResource(Res.string.split_mode_selected)
+        AndroidSplitTunnelMode.BypassSelected -> stringResource(Res.string.split_mode_bypass)
     }
 }
 
+@Composable
 private fun AndroidSplitTunnelMode.subtitle(settings: AndroidSplitTunnelSettings): String {
     return when (this) {
-        AndroidSplitTunnelMode.AllApps -> "Every app uses Ghostlane"
+        AndroidSplitTunnelMode.AllApps -> stringResource(Res.string.split_every_app_uses)
         AndroidSplitTunnelMode.ProxySelected -> if (settings.proxyPackages.isEmpty()) {
-            "Choose apps that use Ghostlane"
+            stringResource(Res.string.split_choose_using)
         } else {
-            "${appCount(settings.proxyPackages.size)} use Ghostlane"
+            stringResource(Res.string.split_n_use, appCount(settings.proxyPackages.size))
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "Choose apps that bypass Ghostlane"
+            stringResource(Res.string.split_choose_bypassing)
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass Ghostlane"
+            stringResource(Res.string.split_n_bypass, appCount(settings.bypassPackages.size))
         }
     }
 }
 
+@Composable
 private fun AndroidSplitTunnelMode.statusTitle(settings: AndroidSplitTunnelSettings): String {
     return when (this) {
-        AndroidSplitTunnelMode.AllApps -> "All apps use Ghostlane"
+        AndroidSplitTunnelMode.AllApps -> stringResource(Res.string.split_all_use)
         AndroidSplitTunnelMode.ProxySelected -> if (settings.proxyPackages.isEmpty()) {
-            "No apps selected"
+            stringResource(Res.string.split_none_selected)
         } else {
-            "Only ${appCount(settings.proxyPackages.size)} use Ghostlane"
+            stringResource(Res.string.split_only_n_use, appCount(settings.proxyPackages.size))
         }
 
         AndroidSplitTunnelMode.BypassSelected -> if (settings.bypassPackages.isEmpty()) {
-            "No apps bypass Ghostlane"
+            stringResource(Res.string.split_none_bypass)
         } else {
-            "${appCount(settings.bypassPackages.size)} bypass Ghostlane"
+            stringResource(Res.string.split_n_bypass, appCount(settings.bypassPackages.size))
         }
     }
 }
@@ -2351,32 +2468,35 @@ private fun AndroidSplitTunnelMode.icon() = when (this) {
     AndroidSplitTunnelMode.BypassSelected -> PkIcons.Apps
 }
 
+@Composable
 private fun AndroidSplitTunnelList.title(): String {
     return when (this) {
-        AndroidSplitTunnelList.Proxy -> "Apps Using Ghostlane"
-        AndroidSplitTunnelList.Bypass -> "Bypassed Apps"
+        AndroidSplitTunnelList.Proxy -> stringResource(Res.string.split_apps_using)
+        AndroidSplitTunnelList.Bypass -> stringResource(Res.string.split_bypassed_apps)
     }
 }
 
+@Composable
 private fun AndroidSplitTunnelList.selectionSubtitle(count: Int): String {
     return when (this) {
-        AndroidSplitTunnelList.Proxy -> "${appCount(count)} use Ghostlane"
-        AndroidSplitTunnelList.Bypass -> "${appCount(count)} bypassed"
+        AndroidSplitTunnelList.Proxy -> stringResource(Res.string.split_n_use, appCount(count))
+        AndroidSplitTunnelList.Bypass -> stringResource(Res.string.split_n_bypassed, appCount(count))
     }
 }
 
+@Composable
 private fun Set<String>.russianBypassPresetValue(
     autoCount: Int,
     selectedMatchedCount: Int,
     presetActive: Boolean
 ): String {
     return when {
-        isEmpty() -> "No matching installed apps"
-        !presetActive -> "${appCount(size)} matched by package"
-        selectedMatchedCount == 0 -> "No RU apps selected"
-        autoCount == 0 -> "${appCount(selectedMatchedCount)} already selected"
-        autoCount == selectedMatchedCount -> "${appCount(autoCount)} auto-bypassed"
-        else -> "$autoCount auto · ${selectedMatchedCount - autoCount} manual"
+        isEmpty() -> stringResource(Res.string.ru_bypass_no_match)
+        !presetActive -> stringResource(Res.string.ru_bypass_matched, appCount(size))
+        selectedMatchedCount == 0 -> stringResource(Res.string.ru_bypass_none_selected)
+        autoCount == 0 -> stringResource(Res.string.ru_bypass_already, appCount(selectedMatchedCount))
+        autoCount == selectedMatchedCount -> stringResource(Res.string.ru_bypass_auto, appCount(autoCount))
+        else -> stringResource(Res.string.ru_bypass_auto_manual, autoCount, selectedMatchedCount - autoCount)
     }
 }
 
@@ -2386,22 +2506,24 @@ private fun String.matchesRussianBypassPackage(): Boolean {
             RUSSIAN_BYPASS_PACKAGE_PREFIXES.any { packageName.startsWith(it) }
 }
 
+@Composable
 private fun Set<String>.activeListValue(requireSelection: Boolean): String {
     return when {
         isNotEmpty() -> appCount(size)
-        requireSelection -> "Required"
-        else -> "No bypassed apps"
+        requireSelection -> stringResource(Res.string.split_required)
+        else -> stringResource(Res.string.split_no_bypassed)
     }
 }
 
+@Composable
 private fun splitTunnelStatusSubtitle(
     selectedMode: AndroidConnectionMode,
     isConnectionActive: Boolean
 ): String {
     return when {
-        selectedMode == AndroidConnectionMode.Proxy -> "Saved for TUN mode"
-        isConnectionActive -> "Applies when settings closes"
-        else -> "TUN mode routing rule"
+        selectedMode == AndroidConnectionMode.Proxy -> stringResource(Res.string.split_saved_for_tun)
+        isConnectionActive -> stringResource(Res.string.split_applies_on_close)
+        else -> stringResource(Res.string.split_tun_rule)
     }
 }
 
@@ -2416,9 +2538,8 @@ private fun String.initials(): String {
     }
 }
 
-private fun appCount(count: Int): String {
-    return if (count == 1) "1 app" else "$count apps"
-}
+@Composable
+private fun appCount(count: Int): String = pluralStringResource(Res.plurals.apps_count, count, count)
 
 private data class AndroidAppListEntry(
     val app: AndroidInstalledApp,
@@ -2429,8 +2550,6 @@ private data class AndroidAppListEntry(
 private const val MAX_PROXY_USERNAME_LENGTH = 64
 private const val MAX_PROXY_PASSWORD_LENGTH = 64
 private const val MAX_PROXY_PORT_LENGTH = 5
-private const val RUSSIAN_BYPASS_ACCURACY_MESSAGE =
-    "Auto-detection may be inaccurate."
 private val RUSSIAN_BYPASS_PACKAGE_PREFIXES = listOf(
     "ru.",
     "com.yandex."
