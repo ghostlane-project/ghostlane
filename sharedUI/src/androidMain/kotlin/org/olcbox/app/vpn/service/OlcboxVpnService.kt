@@ -297,7 +297,12 @@ class OlcboxVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        val startIntent = intent ?: run {
+            cleanup()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        when (startIntent.action) {
             OlcboxVpnActions.ACTION_STOP_VPN -> {
                 addLog("Stop VPN requested")
                 cleanup()
@@ -305,6 +310,13 @@ class OlcboxVpnService : VpnService() {
             }
 
             OlcboxVpnActions.ACTION_START_VPN -> Unit
+            // Android's always-on VPN starts the service with the interface
+            // action and nothing else, at boot and whenever it brings the VPN
+            // back: connect the way a tap on Connect does, from what the app last
+            // saved. It used to fall to the branch below and stop at once, so an
+            // always-on VPN never came up — and with "Block connections without
+            // VPN" on, neither did the phone's network.
+            SERVICE_INTERFACE -> addLog("Started by Android (always-on VPN)")
             else -> {
                 cleanup()
                 stopSelf()
@@ -312,7 +324,12 @@ class OlcboxVpnService : VpnService() {
             }
         }
 
-        applyStartOptions(loadStartOptions(intent))
+        val options = loadStartOptions(startIntent)
+        // Always-on is a VPN by definition: a saved proxy mode never establishes
+        // the tun the system is waiting for.
+        applyStartOptions(
+            if (startIntent.action == SERVICE_INTERFACE) options.copy(connectionMode = AndroidConnectionMode.Tun) else options
+        )
         val isRestart = shouldRestartForStartCommand()
         if (isRestart) {
             addLog("Restarting ${activeModeLabel()} for selected location")

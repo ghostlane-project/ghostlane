@@ -474,6 +474,17 @@ private fun ConnectionSettingsContent(
                 enabled = enabled,
                 onClick = onConnectionModeClick
             )
+            // Android's own always-on: the system starts the VPN at boot and
+            // brings it back when it drops, and "Block connections without VPN"
+            // sits beside it. Both are the system's to set, on its VPN screen.
+            val context = LocalContext.current
+            SettingsNavigationRow(
+                title = "Always-on VPN",
+                value = "Start with the phone · Android settings",
+                icon = PkIcons.PowerSettingsNew,
+                enabled = enabled,
+                onClick = { openSystemVpnSettings(context) }
+            )
             // Editing the local proxy credentials/port is plumbing: admin-only.
             if (AdminState.configuratorVisible) {
                 SettingsNavigationRow(
@@ -2431,3 +2442,18 @@ private val RUSSIAN_BYPASS_PACKAGE_NAMES = setOf(
     "ru.vtb24.mobilebanking.android",
     "ru.tinkoff.mb"
 )
+
+/**
+ * The system's VPN screen, where Android keeps always-on and "Block connections
+ * without VPN" per app. A phone whose settings app has no such screen gets the
+ * general wireless settings instead of nothing.
+ */
+private fun openSystemVpnSettings(context: android.content.Context) {
+    val attempts = listOf(android.provider.Settings.ACTION_VPN_SETTINGS, android.provider.Settings.ACTION_WIRELESS_SETTINGS)
+    for (action in attempts) {
+        val opened = runCatching {
+            context.startActivity(android.content.Intent(action).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        if (opened) return
+    }
+}
