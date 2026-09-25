@@ -59,8 +59,9 @@ pts = [(x0, 432), (x0 + 60, 428), (x0 + 120, 420), (x0 + 180, 430), (x0 + 240, 4
 d.polygon(pts + [(pts[-1][0], 446), (x0, 446)], fill=LIME + (28,))
 d.line(pts, fill=LIME, width=3, joint='curve')
 
-# rooms panel on the right: three cards, the first one is the user's seat
-px, py, pw, ch, gap = 596, 88, 356, 96, 12
+# rooms panel on the right: three cards, the first one is the user's seat. It ends
+# at the 72 px margin and starts clear of the wordmark (which ends near x=577).
+px, py, pw, ch, gap = 604, 88, 348, 96, 12
 rooms = [('AU · VP8', 1, True), ('DE · VP8', 0, False), ('FR · VP8', 2, False)]
 for i, (name, taken, mine) in enumerate(rooms):
     y = py + i * (ch + gap)
@@ -74,20 +75,22 @@ for i, (name, taken, mine) in enumerate(rooms):
     d.text((px + pw - 22 - lw, y + 20), label, font=pm_sb, fill=LIME)
     if mine:
         seat = 'YOUR SEAT'
-        pm_xs = ImageFont.truetype(F + 'ibm_plex_mono_medium.ttf', 16)
+        pm_xs = ImageFont.truetype(F + 'ibm_plex_mono_medium.ttf', 15)
         sw = d.textlength(seat, font=pm_xs)
-        sx = px + 22 + d.textlength(name, font=ps_sb) + 16
-        d.rounded_rectangle([sx, y + 18, sx + sw + 16, y + 44], radius=8, fill=LIME + (40,))
-        d.text((sx + 8, y + 22), seat, font=pm_xs, fill=LIME)
-    # slots
-    sy = y + 62
-    for s in range(8):
-        sx = px + 22 + s * 36
-        d.rounded_rectangle([sx, sy, sx + 30, sy + 14], radius=4,
-                            fill=LIME if s < taken else SURF2)
+        sx = px + 22 + d.textlength(name, font=ps_sb) + 12
+        d.rounded_rectangle([sx, y + 18, sx + sw + 14, y + 44], radius=8, fill=LIME + (40,))
+        d.text((sx + 7, y + 23), seat, font=pm_xs, fill=LIME)
+    # slots, then the count to their right; the slots stop short of the count
     cnt = f'{taken} / 8'
     cw = d.textlength(cnt, font=pm_s)
-    d.text((px + pw - 22 - cw, sy - 3), cnt, font=pm_s, fill=DIM)
+    cx = px + pw - 22 - cw
+    sy = y + 62
+    pitch = (cx - 14 - (px + 22)) // 8
+    for s in range(8):
+        sx = px + 22 + s * pitch
+        d.rounded_rectangle([sx, sy, sx + pitch - 5, sy + 14], radius=4,
+                            fill=LIME if s < taken else SURF2)
+    d.text((cx, sy - 3), cnt, font=pm_s, fill=DIM)
 
 img.save(OUT + '/feature-graphic.png', optimize=True)
 
