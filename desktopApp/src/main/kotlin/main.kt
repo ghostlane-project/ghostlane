@@ -1,3 +1,5 @@
+import org.olcbox.app.ui.components.RouterExportSheet
+import org.olcbox.app.ui.components.routerEntries
 import androidx.compose.animation.AnimatedVisibility
 import org.olcbox.app.ui.features.home.localizedSingleMessage
 import org.olcbox.app.desktop.localizedDesktopText
@@ -213,6 +215,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
     var updateProgress by remember { mutableStateOf<Float?>(null) }
     var updateOffer by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var sharePayload by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var routerExportUrl by remember { mutableStateOf<String?>(null) }
     var desktopNotice by remember { mutableStateOf<String?>(null) }
     // Null on every platform but macOS, and the settings row is then absent.
     var tunnelDaemonSummary by remember { mutableStateOf(MacOsTunnelDaemon.settingsSummary()) }
@@ -619,6 +622,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         onCheckUpdatesClick = { checkUpdate(manual = true) },
                         onDownloadUpdateClick = { info -> downloadUpdate(info) },
                         onLaterUpdateClick = { info -> postponeUpdate(info) },
+                        onSubscriptionRouterClick = { url -> routerExportUrl = url },
                         onSubscriptionShareClick = { url ->
                             scope.launch { sharePayload = DesktopText.ServerListQr.load() to ConfigShareService.subscriptionQrText(url) }
                         },
@@ -708,6 +712,14 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         downloadProgress = updateProgress,
                         onLater = { postponeUpdate(info) },
                         onDownload = { downloadUpdate(info) }
+                    )
+                }
+
+                routerExportUrl?.let { url ->
+                    RouterExportSheet(
+                        entries = routerEntries(dependencies.locationViewModel.locations.toList(), url),
+                        onCopy = dependencies.homeViewModel::copyToClipboard,
+                        onDismiss = { routerExportUrl = null }
                     )
                 }
 

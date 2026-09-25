@@ -29,3 +29,7 @@ Routing has a new mode, "Only blocked sites through the tunnel": sites blocked i
 ### Android TV
 
 Ghostlane now installs on Android TV and appears in its launcher. Every control can be reached with the remote, with a clear mark on the one in focus. A TV has no camera to scan with, so a server list comes from your phone: the TV shows a code, the phone opens a page on the same home network, and the link pasted there lands on the TV. The same option appears on any Android device without a camera.
+
+### Android and computers: servers for your router
+
+Server lists now have a Router button in "Server lists & sharing". It gives each server of the list in the form a router takes: the link or a sing-box outbound for Podkop on OpenWrt, an Xray outbound for XKeen on Keenetic. Encrypted server lists do not offer it: their provider chose that their servers are not read out of them.

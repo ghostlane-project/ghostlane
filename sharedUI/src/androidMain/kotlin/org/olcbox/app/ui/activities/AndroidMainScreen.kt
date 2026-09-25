@@ -1,5 +1,7 @@
 package org.olcbox.app.ui.activities
 
+import org.olcbox.app.ui.components.RouterExportSheet
+import org.olcbox.app.ui.components.routerEntries
 import org.olcbox.app.ui.tv.isTelevision
 import org.olcbox.app.ui.tv.hasCamera
 import org.olcbox.app.ui.tv.PhoneImportSheet
@@ -107,6 +109,7 @@ fun AndroidMainScreen(
     val television = remember(context) { context.isTelevision() }
     val camera = remember(context) { context.hasCamera() }
     var phoneImportOpen by remember { mutableStateOf(false) }
+    var routerExportUrl by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val connectionMode by vpnManager.connectionMode.collectAsState()
     val proxySettings by vpnManager.proxySettings.collectAsState()
@@ -453,6 +456,14 @@ fun AndroidMainScreen(
         )
     }
 
+    routerExportUrl?.let { url ->
+        RouterExportSheet(
+            entries = routerEntries(locationViewModel.locations.toList(), url),
+            onCopy = viewModel::copyToClipboard,
+            onDismiss = { routerExportUrl = null }
+        )
+    }
+
     if (phoneImportOpen) {
         PhoneImportSheet(
             onLink = { link ->
@@ -524,6 +535,7 @@ fun AndroidMainScreen(
             onCheckUpdatesClick = {
                 checkUpdate(manual = true)
             },
+            onSubscriptionRouterClick = { url -> routerExportUrl = url },
             onSubscriptionShareClick = { url ->
                 shareSheetPayload = serverListQrTitle to ConfigShareService.subscriptionQrText(url)
             },

@@ -303,6 +303,11 @@
     <string name="room_selected">Выбрано</string>
     <string name="room_your_seat">Ваше место</string>
     <string name="room_your_seat_caps">ВАШЕ МЕСТО</string>
+    <string name="router_copy_link">Ссылка</string>
+    <string name="router_export">Роутер</string>
+    <string name="router_export_note">Podkop (OpenWrt) принимает ссылку или outbound для sing-box; XKeen (Keenetic) — outbound для Xray. То, что вы копируете, — ключ к этому серверу: используйте его только на своём роутере.</string>
+    <string name="router_export_title">Для роутера</string>
+    <string name="router_none">В этом списке нет серверов для роутера: комнатам olcRTC нужно приложение.</string>
     <string name="routing_blocked_hub">Через туннель только заблокированное</string>
     <string name="routing_blocked_note">Список (Re:filter) встроен в приложение и работает без сети. В него входят целые диапазоны адресов некоторых крупных сервисов, например части Google и Cloudflare, поэтому другие сайты на них тоже идут через туннель. Имена заблокированных сайтов определяются через туннель. Изменение переподключает туннель.</string>
     <string name="routing_blocked_summary">Заблокированные в России сайты и сервисы, закрытые для пользователей из России, идут через туннель, всё остальное — напрямую. На Android комнаты olcRTC по-прежнему пропускают всё через себя.</string>

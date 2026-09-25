@@ -1,5 +1,7 @@
 package org.olcbox.app.ui.components
 
+import androidx.compose.foundation.layout.FlowRow
+import multiplatform_app.sharedui.generated.resources.router_export
 import multiplatform_app.sharedui.generated.resources.encrypted_link
 import multiplatform_app.sharedui.generated.resources.Res
 import org.jetbrains.compose.resources.stringResource
@@ -290,6 +292,8 @@ fun ApplicationSettingsSheet(
     onDownloadUpdateClick: (AppUpdateInfo) -> Unit,
     onLaterUpdateClick: (AppUpdateInfo) -> Unit,
     onSubscriptionShareClick: (String) -> Unit,
+    /** "Router" on each server list that offers it ([offersRouterExport]); null leaves it out. */
+    onSubscriptionRouterClick: ((String) -> Unit)? = null,
     onSubscriptionRefreshClick: (String) -> Unit,
     onSubscriptionDeleteClick: (String) -> Unit = {},
     onSocksProxySettingsSaved: (String, String, Int) -> Unit = { _, _, _ -> },
@@ -438,6 +442,7 @@ fun ApplicationSettingsSheet(
                     subscriptions = subscriptions,
                     onBack = { route = SharedSettingsRoute.Hub },
                     onShareClick = onSubscriptionShareClick,
+                    onRouterClick = onSubscriptionRouterClick,
                     onRefreshClick = onSubscriptionRefreshClick,
                     onDeleteClick = onSubscriptionDeleteClick
                 )
@@ -1093,6 +1098,7 @@ private fun SharedSubscriptionsSettingsContent(
     subscriptions: List<SubscriptionShareItem>,
     onBack: () -> Unit,
     onShareClick: (String) -> Unit,
+    onRouterClick: ((String) -> Unit)?,
     onRefreshClick: (String) -> Unit,
     onDeleteClick: (String) -> Unit
 ) {
@@ -1132,6 +1138,7 @@ private fun SharedSubscriptionsSettingsContent(
                         // The encrypted link when there is one; url stays the key
                         // Refresh and Remove use.
                         onShareClick = { onShareClick(item.shareText) },
+                        onRouterClick = onRouterClick?.takeIf { offersRouterExport(item) }?.let { open -> { open(item.url) } },
                         onRefreshClick = { onRefreshClick(item.url) },
                         onDeleteClick = { onDeleteClick(item.url) }
                     )
@@ -1241,6 +1248,7 @@ private fun SharedUpdateOfferCard(
 private fun SharedSubscriptionRow(
     item: SubscriptionShareItem,
     onShareClick: () -> Unit,
+    onRouterClick: (() -> Unit)?,
     onRefreshClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
@@ -1308,9 +1316,15 @@ private fun SharedSubscriptionRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps: four buttons in a language with long words do not fit one line.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onShareClick) {
                     Text(stringResource(Res.string.action_qr_share))
+                }
+                onRouterClick?.let { onClick ->
+                    TextButton(onClick = onClick) {
+                        Text(stringResource(Res.string.router_export))
+                    }
                 }
                 TextButton(onClick = onRefreshClick) {
                     Text(stringResource(Res.string.action_refresh))
