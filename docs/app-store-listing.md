@@ -112,10 +112,10 @@ Nothing is collected. No account, no analytics, no advertising identifier, no
 crash reporting service. Your server lists and the app's own log stay on the
 device and are never sent anywhere.
 
-The app talks to exactly two kinds of address: the server-list URL you added,
-and the VPN servers in it. The one exception is a partner link that has to be
-resolved into a server-list URL, and that request carries the link and nothing
-about you.
+Besides the server lists you add and the servers in them, the app makes a few
+small checks that carry nothing about you: whether the tunnel works and how fast
+it answers, and how full each olcRTC room is. The privacy policy names every
+address.
 
 REQUIREMENTS
 

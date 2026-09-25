@@ -145,7 +145,7 @@ A tunnel inside a video call. olcRTC, Reality, Hysteria2 and XHTTP in one app.
 > does not), so the protocol names belong here rather than in a keyword field
 > Play does not have.
 
-**Full description** (4000 max) — [2640]
+**Full description** (4000 max) — [2714]
 
 ```
 Ghostlane carries your traffic inside a video call.
@@ -202,10 +202,10 @@ Nothing is collected. No account, no analytics, no advertising identifier, no
 crash reporting service. Your server lists and the app's own log stay on the
 device and are never sent anywhere.
 
-The app talks to exactly two kinds of address: the server-list URL you added,
-and the VPN servers in it. The one exception is a partner link that has to be
-resolved into a server-list URL, and that request carries the link and nothing
-about you.
+Besides the server lists you add and the servers in them, the app makes a few
+small checks that carry nothing about you: whether the tunnel works and how fast
+it answers, which kind of connection gets through when a server offers several,
+and how full each olcRTC room is. The privacy policy names every address.
 
 REQUIREMENTS
 
