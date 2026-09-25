@@ -104,7 +104,8 @@ fun RouterExportSheet(entries: List<RouterEntry>, onCopy: (String) -> Unit, onDi
                             val forms = listOfNotNull(
                                 LINK to entry.link,
                                 RouterExport.singBoxOutbound(entry.spec)?.let { SING_BOX to it },
-                                XRAY to RouterExport.xrayOutbound(entry.spec)
+                                (RouterExport.xrayMinimumVersion(entry.spec)?.let { "$XRAY $it+" } ?: XRAY) to
+                                    RouterExport.xrayOutbound(entry.spec)
                             )
                             forms.forEach { (form, text) ->
                                 TextButton(onClick = {

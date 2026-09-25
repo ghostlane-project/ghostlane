@@ -37,6 +37,13 @@ object RouterExport {
     /** An Xray outbound for the same server. */
     fun xrayOutbound(spec: OutboundSpec): String = print(xray(spec))
 
+    /**
+     * The oldest Xray that reads [spec]'s outbound, where that is newer than any Xray
+     * a router is likely to carry: native Hysteria2 arrived in Xray 26.3. Null when
+     * any current Xray does.
+     */
+    fun xrayMinimumVersion(spec: OutboundSpec): String? = if (spec is OutboundSpec.Hysteria2) "26.3" else null
+
     internal fun xray(spec: OutboundSpec): JsonObject = buildJsonObject {
         put("tag", TAG)
         when (spec) {

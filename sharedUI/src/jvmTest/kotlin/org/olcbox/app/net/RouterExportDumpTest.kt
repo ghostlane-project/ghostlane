@@ -51,7 +51,12 @@ class RouterExportDumpTest {
 
             val xray = Json.parseToJsonElement(RouterExport.xrayOutbound(spec)).jsonObject
             assertEquals(RouterExport.TAG, xray["tag"]!!.jsonPrimitive.content, name)
-            write("build/xray-configs", "router-$name", buildJsonObject {
+            // CI checks build/xray-configs with the Xray the app ships (release.yml's
+            // XRAY_VERSION, 25.3.6), which predates Xray's native Hysteria2 (26.3). That one
+            // is for a router's Xray: it goes where CI does not look, and was checked by
+            // hand with 26.4.25 (the shape is ProofKit's own client profile's).
+            val xrayDir = if (RouterExport.xrayMinimumVersion(spec) != null) "build/xray-configs-26" else "build/xray-configs"
+            write(xrayDir, "router-$name", buildJsonObject {
                 putJsonObject("log") { put("loglevel", "warning") }
                 putJsonArray("inbounds") {
                     addJsonObject {
@@ -98,5 +103,12 @@ class RouterExportDumpTest {
         val mask = (stream["finalmask"]!!.jsonObject["udp"] as kotlinx.serialization.json.JsonArray)[0].jsonObject
         assertEquals("salamander", mask["type"]!!.jsonPrimitive.content)
         assertEquals("OBFSPW", mask["settings"]!!.jsonObject["password"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun onlyHysteria2NeedsANewerXray() {
+        for ((name, link) in links) {
+            val expected = if (name == "hysteria2") "26.3" else null
+            assertEquals(expected, RouterExport.xrayMinimumVersion(LinkParser.parse(link)!!), name)
+        }
     }
 }
