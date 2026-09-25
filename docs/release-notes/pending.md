@@ -13,3 +13,7 @@ With Android's own "Always-on VPN" turned on for Ghostlane, the connection now c
 ### Android and computers: smart connect
 
 When a server is published over several kinds of connection, the app now checks them before connecting and uses the first one through which a real download gets through, not just a first handshake. If none does, it ends on olcRTC in the same country, and when only domestic sites answer (a mobile "whitelist" shutdown) it goes to olcRTC straight away. It never changes the country by itself, remembers what worked for each server, and can be turned off in the server list settings.
+
+### Server lists: Trojan, Shadowsocks and VMess
+
+Links and subscriptions with Trojan, Shadowsocks (including Shadowsocks 2022) and VMess servers now import and connect, as do VLESS servers that use WebSocket or HTTP upgrade, which used to import but never connect. A link that asks for something the app cannot carry, such as a Shadowsocks plugin, is left out instead of being added as a server that cannot work.
