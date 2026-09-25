@@ -1,6 +1,8 @@
 package org.olcbox.app.vpn.service
 
 
+import org.olcbox.app.net.toRules
+import org.olcbox.app.data.model.RoutingSettings
 import multiplatform_app.sharedui.generated.resources.Res
 import multiplatform_app.sharedui.generated.resources.blocked_no_location
 import multiplatform_app.sharedui.generated.resources.notification_connecting
@@ -181,6 +183,7 @@ class OlcboxVpnService : VpnService() {
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
+    private var routingSettings = RoutingSettings()
     private var verboseDebugLogs = false
 
     // One engine per service. Created by the Go constructor: the generated
@@ -524,6 +527,7 @@ class OlcboxVpnService : VpnService() {
                     OlcboxVpnState.activeLocation = location.normalized()
                     val routingSettings = repository.getRoutingSettings()
                     routingMode = routingSettings.mode
+                    this@OlcboxVpnService.routingSettings = routingSettings
                     verboseDebugLogs = routingSettings.verboseDebugLogs
 
                     if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
@@ -1759,21 +1763,22 @@ class OlcboxVpnService : VpnService() {
      */
     private suspend fun routingFor(upstream: Network?): Routing {
         // Android itself blocks IPv6 at the VpnService boundary.
-        // Global writes no rule files and hands the engine no rules.
-        if (routingMode == RoutingMode.Global) return Routing.Global
+        // Global with no rules of the user's writes no rule files and hands the
+        // engine no rules.
+        if (!routingSettings.needsRules) return Routing.Global
 
         val dir = File(filesDir, RULE_SETS_DIR).apply { mkdirs() }
-        val routing = Routing.Rules(
+        val routing = routingSettings.toRules(
             ruleSetDir = dir.absolutePath,
             // Use the resolver supplied by the active physical network. This
             // preserves captive portals, private DNS and carrier-specific RU
             // answers. DirectDns.Servers supplies the public fallback only
             // when Android reports no usable resolver.
-            directDns = DirectDns.Servers(upstreamDnsAddresses(upstream)),
-            region = requireNotNull(routingMode.region)
+            directDns = DirectDns.Servers(upstreamDnsAddresses(upstream))
         )
         for (file in RuleSets.selected(routing)) File(dir, file.name).writeBytes(RuleSets.bytes(file))
-        addLog("Routing: ${routingMode.hubSummary()}")
+        val own = routing.custom.direct.size + routing.custom.tunnel.size
+        addLog("Routing: ${routingMode.hubSummary()}" + if (own > 0) ", $own rules of the user's" else "")
         return routing
     }
 

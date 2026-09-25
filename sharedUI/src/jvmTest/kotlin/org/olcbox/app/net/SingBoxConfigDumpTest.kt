@@ -316,4 +316,41 @@ class SingBoxConfigDumpTest {
             )
         }
     }
+
+    // "Only blocked sites through the tunnel" and the user's own rules, in every shape
+    // Android and the desktop build. New shapes, no reference: `sing-box check` is the test.
+    @Test fun dumpBlockedOnlyAndCustomRules() = runTest {
+        val rules = File(outDir, "rules").apply { mkdirs() }
+        for (file in RuleSets.bundled) File(rules, file.name).writeBytes(RuleSets.bytes(file))
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
+                "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+                "&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&type=tcp#custom"
+        )
+        assertNotNull(spec)
+        val custom = CustomRules.of(
+            direct = listOf("bank.example", "10.8.0.0/16", "2001:db8::/32"),
+            tunnel = listOf("example.org", "203.0.113.0/24")
+        )
+        val dns = DirectDns.Servers(listOf("10.20.30.40"))
+        val routings = mapOf(
+            "blocked-only" to Routing.Rules(rules.absolutePath, dns, Routing.Policy.BlockedOnly, custom),
+            "custom-global" to Routing.Rules(rules.absolutePath, dns, Routing.Policy.Tunnel, custom),
+            "custom-bypass" to Routing.Rules(rules.absolutePath, dns, Routing.Policy.Bypass("ru"), custom)
+        )
+        for ((name, routing) in routings) {
+            dump("$name-socks", SingBoxConfig.build(spec, routing = routing))
+            dump("$name-front", SingBoxConfig.buildSocksChain(10808, username = "u", password = "p", routing = routing))
+            dumpWithSocksTwin(
+                "$name-desktop-tun",
+                SingBoxConfig.buildDesktopTun(
+                    corePort = 10810,
+                    verifyPort = 10811,
+                    routing = routing.copy(directDns = DirectDns.System),
+                    bindInterface = "en0"
+                )
+            )
+        }
+        assertTrue(File(outDir, "blocked-only-desktop-tun.json").exists())
+    }
 }

@@ -259,12 +259,15 @@ object SingBoxConfig {
                                 put("server", "dns-direct")
                             }
                         }
-                        if (bypass != null) addRegionalDnsRules(bypass)
-                        if (answersDns) addFakeIpRules()
+                        if (bypass != null) addPolicyDnsRules(bypass, fakeTunnelNames = true)
+                        // Every other name is the tunnel's, except under BlockedOnly,
+                        // where every other name goes straight out and needs its
+                        // real address.
+                        if (answersDns && bypass?.policy != Routing.Policy.BlockedOnly) addFakeIpRules()
                     }
                 }
                 if (answersDns) {
-                    put("final", "dns-remote")
+                    put("final", bypass?.let(::finalDns) ?: "dns-remote")
                     if (bypass != null) put("reverse_mapping", true)
                 }
             }
@@ -337,7 +340,7 @@ object SingBoxConfig {
                         // resolver is still caught and answered rather than refused.
                         addJsonObject { put("action", "hijack-dns"); put("port", 53) }
                     }
-                    if (bypass != null) addBypassRouteRules(bypass)
+                    if (bypass != null) addPolicyRouteRules(bypass)
                     // IPv6 is claimed and refused, not carried.
                     //
                     // Claimed because auto_route only takes the families the
@@ -353,7 +356,7 @@ object SingBoxConfig {
                     // outcome bought with a timeout.
                     addJsonObject { put("action", "reject"); put("ip_version", 6) }
                 }
-                if (bypass != null) put("final", "out")
+                if (bypass != null) put("final", finalOutbound(bypass))
             }
             if (answersDns) {
                 putJsonObject("experimental") {
@@ -427,6 +430,11 @@ object SingBoxConfig {
         outbounds: JsonArrayBuilder.() -> Unit,
     ): String {
         val bypass = routing as? Routing.RuleBased
+        // Nothing but a bypass has been built or run in this shape: the phone gets
+        // blocked-only and custom rules with the rest of its routing work.
+        require(bypass == null || (bypass.policy is Routing.Policy.Bypass && bypass.custom.isEmpty)) {
+            "the tun shape builds bypass routing only"
+        }
         val direct = bypass?.directDns ?: directDns
         val obj = buildJsonObject {
             putJsonObject("log") {
@@ -469,7 +477,7 @@ object SingBoxConfig {
                 addFakeIpServer()
             }
             putJsonArray("rules") {
-                if (bypass != null) addRegionalDnsRules(bypass)
+                if (bypass != null) addPolicyDnsRules(bypass, fakeTunnelNames = true)
                 addFakeIpRules()
             }
             put("final", "dns-remote")
@@ -483,7 +491,7 @@ object SingBoxConfig {
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                if (bypass != null) addBypassRouteRules(bypass)
+                if (bypass != null) addPolicyRouteRules(bypass)
             }
             put("final", "out")
             put("default_domain_resolver", "dns-direct")
@@ -591,17 +599,65 @@ object SingBoxConfig {
         }
     }
 
-    /** Names on the regional lists resolve on the network underneath. */
-    private fun JsonArrayBuilder.addRegionalDnsRules(bypass: Routing.RuleBased) {
-        addJsonObject {
-            putJsonArray("rule_set") { RuleSets.regionalDomains(bypass.region).forEach { add(it.tag) } }
-            put("server", "dns-direct")
+    /**
+     * Where a name is resolved follows where its connection goes. The user's own
+     * tunnel names, and under BlockedOnly the blocked list, are resolved through the
+     * tunnel — an ISP resolver may answer a blocked name with its own stub. The
+     * user's direct names, and under a bypass the region's lists, are resolved on the
+     * network underneath. First match wins, so the user's rules come first.
+     *
+     * [fakeTunnelNames]: the tun shapes answer a tunnel-bound A/AAAA with a fake
+     * address and refuse HTTPS, as they do for every other tunnel name.
+     */
+    private fun JsonArrayBuilder.addPolicyDnsRules(bypass: Routing.RuleBased, fakeTunnelNames: Boolean) {
+        fun tunnel(ruleSets: List<String>, suffixes: List<String>) {
+            if (ruleSets.isEmpty() && suffixes.isEmpty()) return
+            if (fakeTunnelNames) {
+                addJsonObject {
+                    putNames(ruleSets, suffixes)
+                    putJsonArray("query_type") { add("A"); add("AAAA") }
+                    put("server", "dns-fakeip")
+                }
+                addJsonObject {
+                    putNames(ruleSets, suffixes)
+                    putJsonArray("query_type") { add("HTTPS") }
+                    put("action", "reject")
+                }
+            }
+            addJsonObject { putNames(ruleSets, suffixes); put("server", "dns-remote") }
+        }
+        fun direct(ruleSets: List<String>, suffixes: List<String>) {
+            if (ruleSets.isEmpty() && suffixes.isEmpty()) return
+            addJsonObject { putNames(ruleSets, suffixes); put("server", "dns-direct") }
+        }
+        tunnel(emptyList(), bypass.custom.tunnel.domains)
+        direct(emptyList(), bypass.custom.direct.domains)
+        when (val policy = bypass.policy) {
+            Routing.Policy.Tunnel -> Unit
+            is Routing.Policy.Bypass -> direct(RuleSets.regionalDomains(policy.region).map { it.tag }, emptyList())
+            Routing.Policy.BlockedOnly -> tunnel(listOf(RuleSets.BLOCKED_DOMAINS.tag), emptyList())
         }
     }
 
+    /** A rule's name half: a rule-set, a list of suffixes, or both (either one matches). */
+    private fun JsonObjectBuilder.putNames(ruleSets: List<String>, suffixes: List<String>) {
+        if (ruleSets.isNotEmpty()) putJsonArray("rule_set") { ruleSets.forEach { add(it) } }
+        if (suffixes.isNotEmpty()) putJsonArray("domain_suffix") { suffixes.forEach { add(it) } }
+    }
+
+    /** Where what no rule claims goes: straight out under BlockedOnly, the tunnel otherwise. */
+    private fun finalOutbound(bypass: Routing.RuleBased): String =
+        if (bypass.policy == Routing.Policy.BlockedOnly) "direct" else "out"
+
+    /** And where a name no rule claims is resolved: the same side. */
+    private fun finalDns(bypass: Routing.RuleBased): String =
+        if (bypass.policy == Routing.Policy.BlockedOnly) "dns-direct" else "dns-remote"
+
     private fun JsonObjectBuilder.putRuleSetDeclarations(bypass: Routing.RuleBased) {
+        val files = RuleSets.selected(bypass)
+        if (files.isEmpty()) return
         putJsonArray("rule_set") {
-            RuleSets.selected(bypass).forEach { file ->
+            files.forEach { file ->
                 addJsonObject {
                     put("type", "local"); put("tag", file.tag)
                     put("format", "binary"); put("path", "${bypass.ruleSetDir}/${file.name}")
@@ -618,11 +674,42 @@ object SingBoxConfig {
      * skips IP rules for an unresolved name, so nothing here resolves a
      * foreign name on the network underneath.
      */
-    private fun JsonArrayBuilder.addBypassRouteRules(bypass: Routing.RuleBased) {
+    private fun JsonArrayBuilder.addPolicyRouteRules(bypass: Routing.RuleBased) {
         addJsonObject { put("ip_is_private", true); put("outbound", "direct") }
+        // The user's own rules win over every list, direct ones first: an entry is
+        // in one list only, so the order between the two decides nothing.
+        addCustomRouteRule(bypass.custom.direct, "direct")
+        addCustomRouteRule(bypass.custom.tunnel, "out")
+        when (val policy = bypass.policy) {
+            Routing.Policy.Tunnel -> Unit
+            is Routing.Policy.Bypass -> addJsonObject {
+                putJsonArray("rule_set") { RuleSets.regional(policy.region).forEach { add(it.tag) } }
+                put("outbound", "direct")
+            }
+            Routing.Policy.BlockedOnly -> {
+                addJsonObject {
+                    putJsonArray("rule_set") { add(RuleSets.BLOCKED_DOMAINS.tag) }
+                    put("outbound", "out")
+                }
+                // A site blocked by address alone has a name on no list. Its name is
+                // resolved here, on the network underneath where it is going anyway
+                // unless the next rule sends it on, and the address is matched.
+                addJsonObject { put("action", "resolve"); put("server", "dns-direct") }
+                addJsonObject {
+                    putJsonArray("rule_set") { add(RuleSets.BLOCKED_IPS.tag) }
+                    put("outbound", "out")
+                }
+            }
+        }
+    }
+
+    /** One rule for [rules]: a name ending in one of the domains, or an address in one of the prefixes. */
+    private fun JsonArrayBuilder.addCustomRouteRule(rules: List<RoutingRule>, outbound: String) {
+        if (rules.isEmpty()) return
         addJsonObject {
-            putJsonArray("rule_set") { RuleSets.regional(bypass.region).forEach { add(it.tag) } }
-            put("outbound", "direct")
+            if (rules.domains.isNotEmpty()) putJsonArray("domain_suffix") { rules.domains.forEach { add(it) } }
+            if (rules.cidrs.isNotEmpty()) putJsonArray("ip_cidr") { rules.cidrs.forEach { add(it) } }
+            put("outbound", outbound)
         }
     }
 
@@ -641,8 +728,8 @@ object SingBoxConfig {
                 addRemoteDnsServer(overTcp = remoteOverTcp)
                 addDirectDnsServer(bypass.directDns)
             }
-            putJsonArray("rules") { addRegionalDnsRules(bypass) }
-            put("final", "dns-remote")
+            putJsonArray("rules") { addPolicyDnsRules(bypass, fakeTunnelNames = false) }
+            put("final", finalDns(bypass))
             put("reverse_mapping", true)
         }
     }
@@ -662,9 +749,9 @@ object SingBoxConfig {
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
                 addJsonObject { put("action", "hijack-dns"); put("port", 53) }
-                addBypassRouteRules(bypass)
+                addPolicyRouteRules(bypass)
             }
-            put("final", "out")
+            put("final", finalOutbound(bypass))
             put("default_domain_resolver", "dns-direct")
         }
     }
