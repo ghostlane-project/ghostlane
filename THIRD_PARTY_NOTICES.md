@@ -14,6 +14,7 @@ these carry obligations the MIT licence does not.
 | [Xray-core](https://github.com/XTLS/Xray-core) | **MPL-2.0** | XHTTP, through [libXray](https://github.com/XTLS/libXray) (MIT). A separate binary on desktop; linked into the mobile builds. |
 | [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 on Apple platforms. |
 | [Wintun](https://www.wintun.net/) | GPL-2.0 (redistribution permitted per its own terms) | The Windows TUN driver. Shipped as the vendor's signed binary, unmodified. |
+| [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its sing-box rule-sets, bundled unmodified (`files/rules/refilter-*.srs`, pinned in `scripts/rule-sets.lock`). |
 
 Their sources are the upstream repositories above, at the versions pinned in
 `scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Nothing in this repository

@@ -1,5 +1,20 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.region_blocked_only
+import multiplatform_app.sharedui.generated.resources.remove_named
+import multiplatform_app.sharedui.generated.resources.routing_blocked_hub
+import multiplatform_app.sharedui.generated.resources.routing_blocked_note
+import multiplatform_app.sharedui.generated.resources.routing_blocked_summary
+import multiplatform_app.sharedui.generated.resources.routing_blocked_title
+import multiplatform_app.sharedui.generated.resources.routing_rules_add_direct
+import multiplatform_app.sharedui.generated.resources.routing_rules_add_hint
+import multiplatform_app.sharedui.generated.resources.routing_rules_add_tunnel
+import multiplatform_app.sharedui.generated.resources.routing_rules_direct
+import multiplatform_app.sharedui.generated.resources.routing_rules_empty
+import multiplatform_app.sharedui.generated.resources.routing_rules_invalid
+import multiplatform_app.sharedui.generated.resources.routing_rules_note
+import multiplatform_app.sharedui.generated.resources.routing_rules_title
+import multiplatform_app.sharedui.generated.resources.routing_rules_tunnel
 import multiplatform_app.sharedui.generated.resources.routing_china_hub
 import multiplatform_app.sharedui.generated.resources.routing_china_summary
 import multiplatform_app.sharedui.generated.resources.routing_china_title
@@ -25,6 +40,14 @@ import multiplatform_app.sharedui.generated.resources.routing_region
 import multiplatform_app.sharedui.generated.resources.routing_region_subtitle
 import multiplatform_app.sharedui.generated.resources.settings_routing
 import androidx.compose.foundation.BorderStroke
+import org.olcbox.app.net.RoutingRule
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -138,9 +161,14 @@ fun RoutingSettingsScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
+        CustomRulesCard(settings = settings, enabled = enabled, onChanged = onChanged)
+        Spacer(Modifier.height(16.dp))
         Text(
             text = unavailableReason
-                ?: stringResource(Res.string.routing_lists_note),
+                ?: stringResource(
+                    if (settings.mode == RoutingMode.BlockedOnly) Res.string.routing_blocked_note
+                    else Res.string.routing_lists_note
+                ),
             style = MaterialTheme.typography.bodySmall,
             color = LocalPkPalette.current.textDim
         )
@@ -186,12 +214,123 @@ private fun RoutingValueRow(icon: ImageVector, title: String, subtitle: String, 
     }
 }
 
+/**
+ * The user's own rules: two lists and one field. An entry goes into the list its
+ * button names and out of the other; what is neither a domain nor an address is
+ * refused where it was typed.
+ */
+@Composable
+private fun CustomRulesCard(settings: RoutingSettings, enabled: Boolean, onChanged: (RoutingSettings) -> Unit) {
+    var input by remember { mutableStateOf("") }
+    var invalid by remember { mutableStateOf(false) }
+    fun add(toTunnel: Boolean) {
+        val rule = RoutingRule.parse(input)
+        if (rule == null) {
+            invalid = true
+            return
+        }
+        onChanged(if (toTunnel) settings.withTunnelRule(rule) else settings.withDirectRule(rule))
+        input = ""
+        invalid = false
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                stringResource(Res.string.routing_rules_title),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                stringResource(Res.string.routing_rules_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalPkPalette.current.textDim
+            )
+            RuleList(stringResource(Res.string.routing_rules_direct), settings.directRules, enabled) {
+                onChanged(settings.withoutRule(it))
+            }
+            RuleList(stringResource(Res.string.routing_rules_tunnel), settings.tunnelRules, enabled) {
+                onChanged(settings.withoutRule(it))
+            }
+            OutlinedTextField(
+                value = input,
+                onValueChange = {
+                    input = it
+                    invalid = false
+                },
+                enabled = enabled,
+                singleLine = true,
+                isError = invalid,
+                label = { Text(stringResource(Res.string.routing_rules_add_hint)) },
+                supportingText = if (invalid) {
+                    { Text(stringResource(Res.string.routing_rules_invalid)) }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { add(toTunnel = false) },
+                    enabled = enabled && input.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(Res.string.routing_rules_add_direct), maxLines = 1) }
+                OutlinedButton(
+                    onClick = { add(toTunnel = true) },
+                    enabled = enabled && input.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) { Text(stringResource(Res.string.routing_rules_add_tunnel), maxLines = 1) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuleList(title: String, entries: List<String>, enabled: Boolean, onRemove: (String) -> Unit) {
+    Column {
+        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (entries.isEmpty()) {
+            Text(
+                stringResource(Res.string.routing_rules_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalPkPalette.current.textDim
+            )
+        }
+        entries.forEach { entry ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    entry,
+                    modifier = Modifier.weight(1f),
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                IconButton(onClick = { onRemove(entry) }, enabled = enabled) {
+                    Icon(
+                        PkIcons.Close,
+                        contentDescription = stringResource(Res.string.remove_named, entry),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun RoutingMode.regionLabel(): String = when (this) {
     RoutingMode.Global -> stringResource(Res.string.region_global)
     RoutingMode.BypassRussia -> stringResource(Res.string.region_russia)
     RoutingMode.BypassIran -> stringResource(Res.string.region_iran)
     RoutingMode.BypassChina -> stringResource(Res.string.region_china)
+    RoutingMode.BlockedOnly -> stringResource(Res.string.region_blocked_only)
 }
 
 /**
@@ -212,6 +351,7 @@ internal fun RoutingMode.titleRes(): StringResource = when (this) {
     RoutingMode.BypassRussia -> Res.string.routing_russia_title
     RoutingMode.BypassIran -> Res.string.routing_iran_title
     RoutingMode.BypassChina -> Res.string.routing_china_title
+    RoutingMode.BlockedOnly -> Res.string.routing_blocked_title
 }
 
 internal fun RoutingMode.summaryRes(): StringResource = when (this) {
@@ -219,6 +359,7 @@ internal fun RoutingMode.summaryRes(): StringResource = when (this) {
     RoutingMode.BypassRussia -> Res.string.routing_russia_summary
     RoutingMode.BypassIran -> Res.string.routing_iran_summary
     RoutingMode.BypassChina -> Res.string.routing_china_summary
+    RoutingMode.BlockedOnly -> Res.string.routing_blocked_summary
 }
 
 internal fun RoutingMode.hubSummaryRes(): StringResource = when (this) {
@@ -226,4 +367,5 @@ internal fun RoutingMode.hubSummaryRes(): StringResource = when (this) {
     RoutingMode.BypassRussia -> Res.string.routing_russia_hub
     RoutingMode.BypassIran -> Res.string.routing_iran_hub
     RoutingMode.BypassChina -> Res.string.routing_china_hub
+    RoutingMode.BlockedOnly -> Res.string.routing_blocked_hub
 }

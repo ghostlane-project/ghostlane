@@ -125,10 +125,14 @@ func handle(_ line: String) -> Data {
 /// config with a dozen route exclusions is comfortably large enough for that to
 /// happen. A single read would parse half a request as a whole one and answer
 /// "unparseable" to something perfectly well formed.
+///
+/// Up to 4 MiB: a start under "only blocked sites through the tunnel" carries the
+/// blocked lists, about 860 KB in base64 today, and they grow. Older daemons stop
+/// at 1 MiB, which the app keeps a start under (MacOsTunControllerTest).
 func readRequest(_ fd: Int32) -> String? {
     var collected = Data()
     var chunk = [UInt8](repeating: 0, count: 16 * 1024)
-    while collected.count < 1_048_576 {
+    while collected.count < 4 * 1_048_576 {
         let read = recv(fd, &chunk, chunk.count, 0)
         if read <= 0 { break }
         collected.append(contentsOf: chunk[0..<read])

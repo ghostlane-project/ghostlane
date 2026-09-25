@@ -557,7 +557,10 @@ class IosVpnManager(
         when (mode) {
             RoutingMode.Global,
             RoutingMode.BypassIran,
-            RoutingMode.BypassChina -> Routing.Global
+            RoutingMode.BypassChina,
+            // Not offered on the phone yet (roadmap item 11); a setting that
+            // arrives here anyway keeps everything in the tunnel.
+            RoutingMode.BlockedOnly -> Routing.Global
             RoutingMode.BypassRussia -> {
                 addLog("Routing: ${mode.hubSummary()}")
                 Routing.BypassRussia(RuleSets.IOS_RELATIVE_DIR, DirectDns.Placeholder)

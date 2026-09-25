@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn
 
 
+import org.olcbox.app.net.toRules
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -414,9 +415,10 @@ class DesktopVpnManager private constructor(
             // enter them; they stay global until they have a way out.
             val routingSettings = locationsRepository.getRoutingSettings()
             val verboseLogs = routingSettings.verboseDebugLogs
-            // Only a regional bypass needs rule-set routing. Global retains
-            // the existing desktop core and tunnel configuration.
-            val rulesRequested = routingSettings.mode.region != null
+            // Only a mode other than Global, or rules of the user's own, need
+            // rule-set routing. Global without them keeps the existing desktop
+            // core and tunnel configuration.
+            val rulesRequested = routingSettings.needsRules
             val rulesApply = rulesRequested &&
                 (desktopMode == DesktopMode.SystemProxy || desktopMode == DesktopMode.MacTun)
             if (rulesRequested && !rulesApply) {
@@ -427,10 +429,9 @@ class DesktopVpnManager private constructor(
             // In the proxy the rules live in the core; in the macOS tunnel they
             // live in the daemon, and the core stays as it was.
             val coreRouting: Routing = if (rulesApply && desktopMode == DesktopMode.SystemProxy) {
-                val routing = Routing.Rules(
+                val routing = routingSettings.toRules(
                     DesktopPaths.appDataDir().resolve("rulesets").toString(),
-                    DirectDns.System,
-                    requireNotNull(routingSettings.mode.region)
+                    DirectDns.System
                 )
                 installRuleSets(routing)
                 routing
@@ -499,11 +500,7 @@ class DesktopVpnManager private constructor(
                 )
                 DesktopMode.MacTun -> {
                     val daemonRouting = if (rulesApply) {
-                        Routing.Rules(
-                            TunnelDaemonProtocol.RULES_DIR,
-                            DirectDns.System,
-                            requireNotNull(routingSettings.mode.region)
-                        )
+                        routingSettings.toRules(TunnelDaemonProtocol.RULES_DIR, DirectDns.System)
                     } else {
                         Routing.Global
                     }

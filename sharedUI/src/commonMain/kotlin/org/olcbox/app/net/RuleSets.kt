@@ -44,6 +44,16 @@ object RuleSets {
     val GEOSITE_TLD_CN = File(name = "geosite-tld-cn.srs", tag = "geosite-tld-cn", sha256 = "246d4792b8d1959854d485420e4f85ea906f85562860c08a34bfd20b1a33c630")
     val GEOIP_IR = File(name = "geoip-ir.srs", tag = "geoip-ir", sha256 = "c88af3372f71234f6d015d0452ba472f26b0d9d62e82ae5167d066c1df24b8f5")
     val GEOIP_CN = File(name = "geoip-cn.srs", tag = "geoip-cn", sha256 = "ebee603fdf402314b44b9f653cdcf6d9cc9c41e84e2b3515e3123c5c920a93bc")
+
+    /**
+     * Sites blocked in Russia, for "only blocked sites through the tunnel": Re:filter
+     * (github.com/1andrevich/Re-filter-lists, MIT), its sing-box rule-sets bundled
+     * unmodified — 81k domain suffixes and 25k address prefixes, pinned by release in
+     * `scripts/rule-sets.lock`.
+     */
+    val BLOCKED_DOMAINS = File(name = "refilter-domains.srs", tag = "refilter-domains", sha256 = "2756235a05407dced55bd362f80daeafd19a87ed9720f98cbf69343023a5b534")
+    val BLOCKED_IPS = File(name = "refilter-ips.srs", tag = "refilter-ips", sha256 = "381fcfaaf4d2b95b0b3c5ece1cb3525eb2f34f41013930ad25409a29deca3daa")
+    val blocked: List<File> = listOf(BLOCKED_DOMAINS, BLOCKED_IPS)
     /** Everything the route rules match on. */
     val all: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU, GEOIP_RU)
 
@@ -62,7 +72,7 @@ object RuleSets {
 
 
     /** Bundled data: available offline before the first connection. */
-    val bundled: List<File> = all + listOf(GEOSITE_CATEGORY_IR, GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_IR, GEOIP_CN)
+    val bundled: List<File> = all + listOf(GEOSITE_CATEGORY_IR, GEOSITE_CN, GEOSITE_TLD_CN, GEOIP_IR, GEOIP_CN) + blocked
 
     fun regional(region: String): List<File> = when (region) {
         "ru" -> all
@@ -73,7 +83,12 @@ object RuleSets {
 
     fun regionalDomains(region: String): List<File> = regional(region).filter { it.name.startsWith("geosite-") }
 
-    fun selected(routing: Routing.RuleBased): List<File> = regional(routing.region)
+    /** The files [routing]'s policy matches on: none of its own under Tunnel. */
+    fun selected(routing: Routing.RuleBased): List<File> = when (val policy = routing.policy) {
+        Routing.Policy.Tunnel -> emptyList()
+        is Routing.Policy.Bypass -> regional(policy.region)
+        Routing.Policy.BlockedOnly -> blocked
+    }
 
     suspend fun bytes(file: File): ByteArray = Res.readBytes("files/rules/${file.name}")
 }

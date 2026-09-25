@@ -1,5 +1,8 @@
 package org.olcbox.app.net
 
+import org.olcbox.app.data.model.RoutingMode
+import org.olcbox.app.data.model.RoutingSettings
+
 /**
  * What sing-box does with a connection: everything through the tunnel, or a
  * regional split where matching destinations use the physical network.
@@ -13,10 +16,26 @@ sealed interface Routing {
     /** Everything through the tunnel: the shape every builder emitted before routing existed. */
     data object Global : Routing
 
+    /** What the bundled lists mean under a rule-based routing. */
+    sealed interface Policy {
+        /** No list: everything rides the tunnel but the user's own direct rules. */
+        data object Tunnel : Policy
+
+        /** [region]'s lists and the local network go straight out; the rest rides the tunnel. */
+        data class Bypass(val region: String) : Policy
+
+        /**
+         * The inverse: only the blocked-in-Russia lists ([RuleSets.blocked]) and the
+         * user's own tunnel rules ride the tunnel; everything else goes straight out.
+         */
+        data object BlockedOnly : Policy
+    }
+
     sealed interface RuleBased : Routing {
         val ruleSetDir: String
         val directDns: DirectDns
-        val region: String
+        val policy: Policy
+        val custom: CustomRules
     }
 
     /** The original iOS routing shape, kept stable for its Xray and olcRTC paths. */
@@ -24,12 +43,14 @@ sealed interface Routing {
         override val ruleSetDir: String,
         override val directDns: DirectDns
     ) : RuleBased {
-        override val region: String = "ru"
+        override val policy: Policy = Policy.Bypass("ru")
+        override val custom: CustomRules = CustomRules.NONE
     }
 
     /**
-     * Destinations for [region] and the local network go straight out;
-     * everything else rides the tunnel, name resolution included.
+     * Android and desktop: [policy]'s lists, with the user's own rules ([custom])
+     * ahead of them. Name resolution follows the traffic: a name bound for the
+     * tunnel is resolved through it.
      *
      * [ruleSetDir] holds the files in [RuleSets]. Absolute where the app knows
      * the path (Android); relative to the core's working directory where only
@@ -38,9 +59,35 @@ sealed interface Routing {
     data class Rules(
         override val ruleSetDir: String,
         override val directDns: DirectDns,
-        override val region: String
-    ) : RuleBased
+        override val policy: Policy,
+        override val custom: CustomRules = CustomRules.NONE
+    ) : RuleBased {
+        /** A bypass region and nothing of the user's: what every caller built before custom rules. */
+        constructor(ruleSetDir: String, directDns: DirectDns, region: String) :
+            this(ruleSetDir, directDns, Policy.Bypass(region))
+    }
 }
+
+/**
+ * The user's own rules, parsed: [direct] goes straight out and [tunnel] rides the
+ * tunnel, whatever the policy's lists say. An entry is in one of them only.
+ */
+data class CustomRules(val direct: List<RoutingRule>, val tunnel: List<RoutingRule>) {
+    val isEmpty: Boolean get() = direct.isEmpty() && tunnel.isEmpty()
+
+    companion object {
+        val NONE = CustomRules(emptyList(), emptyList())
+
+        /** From the stored texts; the tunnel list wins an entry both claim, as the screen does. */
+        fun of(direct: List<String>, tunnel: List<String>): CustomRules {
+            val tunnelRules = RoutingRule.parseAll(tunnel)
+            return CustomRules(RoutingRule.parseAll(direct) - tunnelRules.toSet(), tunnelRules)
+        }
+    }
+}
+
+internal val List<RoutingRule>.domains: List<String> get() = filterIsInstance<RoutingRule.Domain>().map { it.name }
+internal val List<RoutingRule>.cidrs: List<String> get() = filterIsInstance<RoutingRule.Cidr>().map { it.prefix }
 
 /**
  * The resolver for names that go direct. It must not be the tunnel: the whole
@@ -90,3 +137,19 @@ sealed interface DirectDns {
      */
     data object Placeholder : DirectDns
 }
+
+/** The policy [RoutingMode] asks of a rule-based routing; Global's is Tunnel (only the user's rules). */
+fun RoutingMode.policy(): Routing.Policy = when (this) {
+    RoutingMode.Global -> Routing.Policy.Tunnel
+    RoutingMode.BlockedOnly -> Routing.Policy.BlockedOnly
+    else -> Routing.Policy.Bypass(requireNotNull(region))
+}
+
+/** These settings as the builders take them: rules in [ruleSetDir], names direct through [directDns]. */
+fun RoutingSettings.toRules(ruleSetDir: String, directDns: DirectDns): Routing.Rules =
+    Routing.Rules(
+        ruleSetDir = ruleSetDir,
+        directDns = directDns,
+        policy = mode.policy(),
+        custom = CustomRules.of(directRules, tunnelRules)
+    )

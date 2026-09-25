@@ -2,6 +2,8 @@ package org.olcbox.app.data.datasource
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
@@ -85,6 +87,27 @@ class RoutingSettingsTest {
             assertTrue("\"routing\":{\"mode\":\"$serial\"}" in encoded, encoded)
         }
     }
+
+    @Test fun theNewModeAndTheUsersRulesComeBackAndOldBundlesStillRead() = runTest {
+        val source = MemoryLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        val settings = RoutingSettings(
+            RoutingMode.BlockedOnly,
+            directRules = listOf("bank.example"),
+            tunnelRules = listOf("203.0.113.0/24")
+        )
+        repository.saveRoutingSettings(settings)
+        assertEquals(settings, repository.getRoutingSettings())
+        assertEquals(
+            "blocked_only",
+            Json.encodeToJsonElement(RoutingSettings.serializer(), settings).jsonObject["mode"]!!.jsonPrimitive.content
+        )
+        // Written before the rules existed: reads as none.
+        assertEquals(
+            RoutingSettings(RoutingMode.BypassRussia),
+            Json.decodeFromString(RoutingSettings.serializer(), """{"mode":"bypass_russia"}""")
+        )
+    }
 }
 
 /** The bundle in memory and nothing else; the repository's other collaborators keep their defaults. */
@@ -96,4 +119,5 @@ private class MemoryLocationsDataSource(
     override suspend fun saveLocationBundle(bundle: LocationBundleV4) { stored = bundle }
     override suspend fun loadLegacyLocations(): List<Pair<String, String>> = legacy
     override suspend fun loadLegacyActiveLocationId(): String? = null
+
 }

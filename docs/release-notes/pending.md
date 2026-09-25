@@ -21,3 +21,7 @@ Links and subscriptions with Trojan, Shadowsocks (including Shadowsocks 2022) an
 ### The app in Russian
 
 On a phone or computer set to Russian, the app is now in Russian: every screen, message and notification, and the notice shown before the first connection. Other languages still see English.
+
+### Android and computers: your own routing rules, and only blocked sites through the tunnel
+
+Routing has a new mode, "Only blocked sites through the tunnel": sites blocked in Russia, and services that shut Russian users out, go through the tunnel, and everything else connects directly. The list is Re:filter's, bundled with the app, so it works offline; it includes whole address ranges of some large services, so other sites hosted there go through the tunnel too. In any mode you can now add rules of your own: domains or IP addresses that always connect directly, or always go through the tunnel. On Android, olcRTC rooms still carry everything in the new mode.
