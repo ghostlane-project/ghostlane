@@ -19,13 +19,18 @@ import androidx.compose.ui.unit.dp
  * google/material-design-icons at the variant each call site asks for, so these
  * render identically to what they replace.
  */
-private fun materialIcon(name: String, pathData: String): ImageVector =
+/**
+ * [autoMirror]: the icon points somewhere — back, forward, out — and turns round in a
+ * right-to-left layout, as Material's own AutoMirrored icons do.
+ */
+private fun materialIcon(name: String, pathData: String, autoMirror: Boolean = false): ImageVector =
     ImageVector.Builder(
         name = name,
         defaultWidth = 24.dp,
         defaultHeight = 24.dp,
         viewportWidth = 24f,
         viewportHeight = 24f,
+        autoMirror = autoMirror,
     ).apply {
         // Black is what the Material icons themselves declare; the colour a
         // caller wants arrives as the Icon tint.
@@ -102,6 +107,7 @@ object PkIcons {
         materialIcon(
             "ChevronRight",
             "M9.29 6.71c-.39.39-.39 1.02 0 1.41L13.17 12l-3.88 3.88c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l4.59-4.59c.39-.39.39-1.02 0-1.41L10.7 6.7c-.38-.38-1.02-.38-1.41.01z",
+            autoMirror = true,
         )
     }
 
@@ -166,6 +172,7 @@ object PkIcons {
         materialIcon(
             "Input",
             "M21 3.01H3c-1.1 0-2 .9-2 2V9h2V4.99h18v14.03H3V15H1v4.01c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98v-14c0-1.11-.9-2-2-2zM11 16l4-4-4-4v3H1v2h10v3zM21 3.01H3c-1.1 0-2 .9-2 2V9h2V4.99h18v14.03H3V15H1v4.01c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98v-14c0-1.11-.9-2-2-2zM11 16l4-4-4-4v3H1v2h10v3z",
+            autoMirror = true,
         )
     }
 
@@ -174,6 +181,7 @@ object PkIcons {
         materialIcon(
             "Send",
             "M2.01 21L23 12 2.01 3 2 10l15 2-15 2z",
+            autoMirror = true,
         )
     }
 
@@ -190,6 +198,7 @@ object PkIcons {
         materialIcon(
             "ArrowBack",
             "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z",
+            autoMirror = true,
         )
     }
 
@@ -214,6 +223,7 @@ object PkIcons {
         materialIcon(
             "OpenInNew",
             "M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z",
+            autoMirror = true,
         )
     }
 }

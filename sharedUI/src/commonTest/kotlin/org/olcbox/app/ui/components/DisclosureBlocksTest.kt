@@ -70,4 +70,16 @@ class DisclosureBlocksTest {
         assertNull(blocks.single().heading)
         assertEquals(1, blocks.single().paragraphs.size)
     }
+
+    @Test
+    fun inAScriptWithoutCaseAShortSentenceIsStillProse() {
+        // Chinese and Persian have no lower case, so "no lower-case letter" holds for
+        // every line; a paragraph is told from a heading by ending like a sentence.
+        val zh = disclosureBlocks("第一句。\n\n它的作用\n\n流量是加密的。")
+        assertEquals(listOf(null, "它的作用"), zh.map { it.heading })
+        assertEquals(listOf(listOf("第一句。"), listOf("流量是加密的。")), zh.map { it.paragraphs })
+        val fa = disclosureBlocks("کار آن چیست\n\nترافیک رمزگذاری می‌شود.")
+        assertEquals("کار آن چیست", fa.single().heading)
+        assertEquals(listOf("ترافیک رمزگذاری می‌شود."), fa.single().paragraphs)
+    }
 }
