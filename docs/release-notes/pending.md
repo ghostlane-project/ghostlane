@@ -1,0 +1,3 @@
+### Computers: Bypass in olcRTC rooms on Linux, and your network's own DNS on macOS and Windows
+
+On Linux, Bypass Russia, Iran and China, and your own "always direct" rules, now work in olcRTC rooms: the country's sites and your local network connect directly, and everything else goes through the room. With other kinds of server, Linux still sends everything through the tunnel, and the routing screen says so. On macOS and Windows, olcRTC now looks names up on your network's own DNS servers first and on a public one after them, so it no longer waits on networks that block public DNS. In the Windows tunnel, routing still carries everything; the screen now says to switch to proxy mode for it.

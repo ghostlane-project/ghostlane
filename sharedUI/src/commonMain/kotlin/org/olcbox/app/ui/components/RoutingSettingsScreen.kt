@@ -96,6 +96,8 @@ fun RoutingSettingsScreen(
     enabled: Boolean,
     availableModes: List<RoutingMode> = RoutingMode.entries,
     unavailableReason: String? = null,
+    /** What the choice means on this platform, where that differs; shown while it applies. */
+    note: String? = null,
     onChanged: (RoutingSettings) -> Unit,
     onBack: () -> Unit
 ) {
@@ -163,6 +165,14 @@ fun RoutingSettingsScreen(
         Spacer(Modifier.height(16.dp))
         CustomRulesCard(settings = settings, enabled = enabled, onChanged = onChanged)
         Spacer(Modifier.height(16.dp))
+        if (unavailableReason == null && note != null) {
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalPkPalette.current.textDim
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         Text(
             text = unavailableReason
                 ?: stringResource(

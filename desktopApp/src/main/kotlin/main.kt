@@ -124,6 +124,8 @@ import org.olcbox.app.vpn.DesktopSocksProxySettings
 import org.olcbox.app.vpn.DesktopVpnManager
 import org.olcbox.app.vpn.DesktopConnectionMode
 import org.olcbox.app.vpn.DesktopConnectionModePreference
+import org.olcbox.app.vpn.desktopRoutingModes
+import org.olcbox.app.vpn.desktopRoutingNote
 import org.olcbox.app.vpn.desktopRoutingUnavailableReason
 import org.olcbox.app.vpn.JvmDesktopSocksProxySettingsStore
 import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
@@ -591,7 +593,9 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         subscriptionSettings = subscriptionSettings,
                         routingSettings = routingSettings,
                         onRoutingSettingsChanged = dependencies.homeViewModel::updateRoutingSettings,
+                        routingModes = desktopRoutingModes(),
                         routingUnavailableReason = desktopRoutingUnavailableReason(effectiveConnectionMode?.mode)?.let { localizedDesktopText(it) },
+                        routingNote = desktopRoutingNote()?.let { localizedDesktopText(it) },
                         onSubscriptionSettingsChanged =
                             dependencies.homeViewModel::updateSubscriptionSettings,
                         onDismiss = { showDesktopSettings = false },

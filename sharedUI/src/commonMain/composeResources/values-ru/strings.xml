@@ -95,7 +95,8 @@
     <string name="desktop_mode_tunnel_linux">Все приложения на этом компьютере, через устройство TUN</string>
     <string name="desktop_mode_tunnel_mac">Все приложения на этом Mac, через utun</string>
     <string name="desktop_mode_tunnel_windows">Все приложения на этом ПК — Ghostlane перезапустится от имени администратора</string>
-    <string name="desktop_routing_unavailable">Работает в режиме прокси и в туннеле macOS. Туннели Linux и Windows получат это в следующих сборках.</string>
+    <string name="desktop_routing_linux_rooms">В туннеле Linux маршрутизация работает для комнат olcRTC. С другими серверами весь трафик идёт через туннель.</string>
+    <string name="desktop_routing_unavailable">Туннель Windows пропускает весь трафик. Маршрутизация работает в режиме прокси.</string>
     <string name="detail_all_traffic">Все приложения и системный трафик</string>
     <string name="detail_exit">Выход</string>
     <string name="detail_not_routed">Не направляется</string>
@@ -331,7 +332,7 @@
     <string name="routing_rules_direct">Всегда напрямую</string>
     <string name="routing_rules_empty">Нет</string>
     <string name="routing_rules_invalid">Это не домен и не IP-адрес</string>
-    <string name="routing_rules_note">Домен включает свои поддомены; адрес — один IP или подсеть. Свои правила важнее списков режима. На Android в комнатах olcRTC правило «через туннель» может только исключить сайт из списка региона.</string>
+    <string name="routing_rules_note">Домен включает свои поддомены; адрес — один IP или подсеть. Свои правила важнее списков режима. На Android и Linux в комнатах olcRTC правило «через туннель» может только исключить сайт из списка региона.</string>
     <string name="routing_rules_title">Свои правила</string>
     <string name="routing_rules_tunnel">Всегда через туннель</string>
     <string name="routing_russia_hub">Россия и локальная сеть напрямую</string>

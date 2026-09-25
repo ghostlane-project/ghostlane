@@ -15,6 +15,7 @@ import multiplatform_app.sharedui.generated.resources.desktop_mode_proxy
 import multiplatform_app.sharedui.generated.resources.desktop_mode_tunnel_linux
 import multiplatform_app.sharedui.generated.resources.desktop_mode_tunnel_mac
 import multiplatform_app.sharedui.generated.resources.desktop_mode_tunnel_windows
+import multiplatform_app.sharedui.generated.resources.desktop_routing_linux_rooms
 import multiplatform_app.sharedui.generated.resources.desktop_routing_unavailable
 import multiplatform_app.sharedui.generated.resources.dialog_import_config
 import multiplatform_app.sharedui.generated.resources.dialog_save_logs
@@ -45,6 +46,8 @@ import multiplatform_app.sharedui.generated.resources.update_up_to_date
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
+import org.olcbox.app.vpn.LINUX_TUNNEL_ROOMS_ONLY
+import org.olcbox.app.vpn.WINDOWS_TUNNEL_CARRIES_ALL
 
 /**
  * The desktop app's own words. Its module cannot see this one's resources (the
@@ -94,7 +97,7 @@ fun DesktopText.text(vararg args: Any): String = stringResource(resource, *args)
 suspend fun DesktopText.load(vararg args: Any): String = getString(resource, *args)
 
 /**
- * A connection-mode option's text, or the routing note, in the user's language.
+ * A connection-mode option's text, or a routing note, in the user's language.
  * They are English in [org.olcbox.app.vpn.DesktopConnectionModePreference], where
  * they are also the identity; anything else is shown as it is.
  */
@@ -109,6 +112,6 @@ internal val DESKTOP_MODE_TEXTS: Map<String, StringResource> = mapOf(
     "Local SOCKS5 proxy — only apps that follow the system proxy" to Res.string.desktop_mode_proxy,
     "Every app on this PC — Ghostlane restarts as administrator" to Res.string.desktop_mode_tunnel_windows,
     "Every app on this machine, through a TUN device" to Res.string.desktop_mode_tunnel_linux,
-    "Applies in proxy mode and in the macOS tunnel. The Linux and Windows tunnels follow in a later build." to
-        Res.string.desktop_routing_unavailable
+    WINDOWS_TUNNEL_CARRIES_ALL to Res.string.desktop_routing_unavailable,
+    LINUX_TUNNEL_ROOMS_ONLY to Res.string.desktop_routing_linux_rooms
 )

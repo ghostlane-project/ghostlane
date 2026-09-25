@@ -95,7 +95,8 @@
     <string name="desktop_mode_tunnel_linux">همهٔ برنامه‌های این دستگاه، از طریق دستگاه TUN</string>
     <string name="desktop_mode_tunnel_mac">همهٔ برنامه‌های این Mac، از طریق utun</string>
     <string name="desktop_mode_tunnel_windows">همهٔ برنامه‌های این رایانه — Ghostlane با دسترسی مدیر دوباره اجرا می‌شود</string>
-    <string name="desktop_routing_unavailable">در حالت پراکسی و تونل macOS اعمال می‌شود. تونل‌های Linux و Windows در نسخه‌های بعدی می‌آیند.</string>
+    <string name="desktop_routing_linux_rooms">در تونل Linux، مسیریابی برای اتاق‌های olcRTC اعمال می‌شود. با سرورهای دیگر، همهٔ ترافیک از تونل می‌رود.</string>
+    <string name="desktop_routing_unavailable">تونل Windows همهٔ ترافیک را منتقل می‌کند. مسیریابی در حالت پراکسی کار می‌کند.</string>
     <string name="detail_all_traffic">همهٔ برنامه‌ها و ترافیک سیستم</string>
     <string name="detail_exit">خروجی</string>
     <string name="detail_not_routed">مسیریابی نمی‌شود</string>
@@ -331,7 +332,7 @@
     <string name="routing_rules_direct">همیشه مستقیم</string>
     <string name="routing_rules_empty">هیچ</string>
     <string name="routing_rules_invalid">این دامنه یا نشانی IP نیست</string>
-    <string name="routing_rules_note">دامنه زیردامنه‌هایش را هم در بر می‌گیرد؛ نشانی می‌تواند یک IP یا یک محدوده باشد. قوانین شما بر فهرست‌های حالت مقدم‌اند. در Android، در اتاق‌های olcRTC قانون «از تونل» فقط می‌تواند سایتی را از فهرست مستقیم منطقه بیرون بیاورد.</string>
+    <string name="routing_rules_note">دامنه زیردامنه‌هایش را هم در بر می‌گیرد؛ نشانی می‌تواند یک IP یا یک محدوده باشد. قوانین شما بر فهرست‌های حالت مقدم‌اند. در Android و Linux، در اتاق‌های olcRTC قانون «از تونل» فقط می‌تواند سایتی را از فهرست مستقیم منطقه بیرون بیاورد.</string>
     <string name="routing_rules_title">قوانین شما</string>
     <string name="routing_rules_tunnel">همیشه از تونل</string>
     <string name="routing_russia_hub">روسیه و شبکهٔ محلی مستقیم</string>

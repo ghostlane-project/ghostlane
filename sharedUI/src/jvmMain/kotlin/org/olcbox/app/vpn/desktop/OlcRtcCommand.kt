@@ -10,7 +10,13 @@ internal data class OlcRtcCommand(
     val socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
     val socksUser: String = "",
     val socksPass: String = "",
-    val dnsServer: String
+    val dnsServer: String,
+    /**
+     * A file of the engine's direct rules ([org.olcbox.app.net.OlcrtcDirectRules]),
+     * or null for none: the destinations the engine dials itself instead of through
+     * the room. Named, not inlined: Russia's lists are 224 KB.
+     */
+    val directRulesFile: Path? = null
 ) {
     fun args(configPath: Path): List<String> {
         return listOf(binary.toString(), configPath.toString())
@@ -37,6 +43,10 @@ internal data class OlcRtcCommand(
             if (socksUser.isNotBlank()) {
                 appendLine("  user: ${socksUser.yamlValue()}")
                 appendLine("  pass: ${socksPass.yamlValue()}")
+            }
+            if (directRulesFile != null) {
+                appendLine("route:")
+                appendLine("  direct_file: ${directRulesFile.toAbsolutePath().toString().yamlValue()}")
             }
             // The engine's UDP relay is opt-in from yaml; without this line
             // SOCKS5 UDP ASSOCIATE is refused and calls fall back to nothing.

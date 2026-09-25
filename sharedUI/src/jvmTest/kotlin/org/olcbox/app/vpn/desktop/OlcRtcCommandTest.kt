@@ -8,7 +8,7 @@ import kotlin.test.assertFalse
 
 class OlcRtcCommandTest {
 
-    private fun command(provider: String, transport: String) = OlcRtcCommand(
+    private fun command(provider: String, transport: String, directRulesFile: Path? = null) = OlcRtcCommand(
         binary = Path.of("/tmp/olcrtc"),
         location = LocationConfig(
             id = "https://meet.example/room",
@@ -16,7 +16,8 @@ class OlcRtcCommandTest {
             bypassProvider = provider,
             transport = transport
         ),
-        dnsServer = "1.1.1.1:53"
+        dnsServer = "1.1.1.1:53",
+        directRulesFile = directRulesFile
     )
 
     /** Upstream rejects unknown keys: none of the retired blocks may appear. */
@@ -39,5 +40,16 @@ class OlcRtcCommandTest {
         assertContains(yaml, "net:\n  transport: 'vp8channel'\n  dns: '1.1.1.1:53'")
         assertContains(yaml, "socks:\n  host: '127.0.0.1'\n  port: 10808")
         assertContains(yaml, "vp8:\n  fps: ${LocationConfig.DEFAULT_VP8_FPS}\n  batch_size: ${LocationConfig.DEFAULT_VP8_BATCH}")
+    }
+
+    @Test
+    fun theEngineIsToldWhereItsDirectRulesAreAndOnlyThen() {
+        val without = command(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_DATACHANNEL).yaml()
+        assertFalse("route:" in without, without)
+
+        val rules = Path.of("/home/a user/it's here/olcrtc-direct-1.txt")
+        val with = command(LocationConfig.PROVIDER_TELEMOST, LocationConfig.TRANSPORT_DATACHANNEL, rules).yaml()
+        // By absolute path, single-quoted with the quote doubled: YAML's own escape.
+        assertContains(with, "route:\n  direct_file: '/home/a user/it''s here/olcrtc-direct-1.txt'\n")
     }
 }
