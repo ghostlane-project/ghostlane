@@ -303,6 +303,11 @@
     <string name="room_selected">已选择</string>
     <string name="room_your_seat">你的座位</string>
     <string name="room_your_seat_caps">你的座位</string>
+    <string name="router_copy_link">链接</string>
+    <string name="router_export">路由器</string>
+    <string name="router_export_note">Podkop（OpenWrt）可使用链接或 sing-box 出站；XKeen（Keenetic）使用 Xray 出站。你复制的内容就是这台服务器的密钥：只在你自己的路由器上使用。</string>
+    <string name="router_export_title">用于路由器</string>
+    <string name="router_none">此列表中没有路由器可用的服务器：olcRTC 房间需要本应用。</string>
     <string name="routing_blocked_hub">仅被封锁的网站走隧道</string>
     <string name="routing_blocked_note">该列表（Re:filter）内置于应用中，离线可用。它包含一些大型服务的完整地址段，例如部分 Google 和 Cloudflare，因此托管在那里的其他网站也会走隧道。被封锁网站的域名通过隧道解析。更改后会重新连接隧道。</string>
     <string name="routing_blocked_summary">在俄罗斯被封锁的网站，以及拒绝俄罗斯用户的服务，都会走隧道；其余一律直连。在 Android 上，olcRTC 房间仍承载全部流量。</string>

@@ -583,6 +583,9 @@ class HomeScreenViewModel(
     }
     fun suggestedLogsFileName(): String = "ghostlane-logs.txt"
 
+    /** What a sheet copies for the user: the platform's clipboard, with no message of its own. */
+    fun copyToClipboard(text: String) = configImporter.copyToClipboard(text)
+
     fun onSaveLogsToFile(
         target: Any,
         onSaved: (String) -> Unit = {},

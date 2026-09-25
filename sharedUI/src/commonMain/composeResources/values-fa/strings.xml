@@ -303,6 +303,11 @@
     <string name="room_selected">انتخاب‌شده</string>
     <string name="room_your_seat">صندلی شما</string>
     <string name="room_your_seat_caps">صندلی شما</string>
+    <string name="router_copy_link">پیوند</string>
+    <string name="router_export">روتر</string>
+    <string name="router_export_note">Podkop (OpenWrt) پیوند یا outbound مربوط به sing-box را می‌پذیرد؛ XKeen (Keenetic) outbound مربوط به Xray را. آنچه کپی می‌کنید کلید این سرور است؛ فقط روی روتر خودتان از آن استفاده کنید.</string>
+    <string name="router_export_title">برای روتر</string>
+    <string name="router_none">این فهرست سروری برای روتر ندارد: اتاق‌های olcRTC به برنامه نیاز دارند.</string>
     <string name="routing_blocked_hub">فقط سایت‌های مسدود از تونل</string>
     <string name="routing_blocked_note">این فهرست (Re:filter) درون برنامه است و بدون اینترنت کار می‌کند. محدوده‌های کامل نشانی برخی سرویس‌های بزرگ، مانند بخش‌هایی از Google و Cloudflare، در آن هست؛ پس سایت‌های دیگری که آنجا میزبانی می‌شوند هم از تونل می‌روند. نام سایت‌های مسدود از طریق تونل تفکیک می‌شود. تغییر آن، تونل را دوباره وصل می‌کند.</string>
     <string name="routing_blocked_summary">سایت‌های مسدود در روسیه و سرویس‌هایی که کاربران روسی را نمی‌پذیرند از تونل می‌روند؛ بقیه مستقیم وصل می‌شوند. در Android، اتاق‌های olcRTC همچنان همه‌چیز را منتقل می‌کنند.</string>

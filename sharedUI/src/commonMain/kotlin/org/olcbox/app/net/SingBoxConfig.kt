@@ -1,6 +1,10 @@
 package org.olcbox.app.net
 
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
@@ -754,6 +758,12 @@ object SingBoxConfig {
             put("final", finalOutbound(bypass))
             put("default_domain_resolver", "dns-direct")
         }
+    }
+
+    /** [spec]'s outbound on its own, tagged [tag]: what a router that runs sing-box is given (see [RouterExport]). */
+    internal fun outbound(spec: OutboundSpec, tag: String): JsonObject {
+        val built = buildJsonArray { addOutbound(spec) }.single().jsonObject
+        return JsonObject(built + ("tag" to JsonPrimitive(tag)))
     }
 
     private fun JsonArrayBuilder.addOutbound(spec: OutboundSpec) {

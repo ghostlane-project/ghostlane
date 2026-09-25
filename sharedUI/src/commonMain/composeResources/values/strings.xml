@@ -303,6 +303,11 @@
     <string name="room_selected">Selected</string>
     <string name="room_your_seat">Your seat</string>
     <string name="room_your_seat_caps">YOUR SEAT</string>
+    <string name="router_copy_link">Link</string>
+    <string name="router_export">Router</string>
+    <string name="router_export_note">Podkop (OpenWrt) takes the link or the sing-box outbound; XKeen (Keenetic) takes the Xray outbound. What you copy is this server's key: keep it to your own router.</string>
+    <string name="router_export_title">For your router</string>
+    <string name="router_none">This list has no server a router can use: olcRTC rooms need the app.</string>
     <string name="routing_blocked_hub">Only blocked sites through the tunnel</string>
     <string name="routing_blocked_note">The list (Re:filter) is bundled with the app and works offline. It includes whole address ranges of some large services, such as parts of Google and Cloudflare, so other sites hosted there go through the tunnel too. Blocked names are resolved through the tunnel. Changes reconnect the tunnel.</string>
     <string name="routing_blocked_summary">Sites blocked in Russia, and services that shut Russian users out, go through the tunnel; everything else connects directly. On Android, olcRTC rooms still carry everything.</string>

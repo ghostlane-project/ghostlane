@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
-import android.widget.Toast
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -22,9 +21,8 @@ class AndroidConfigImporter(private val context: Context) : ConfigImporter {
 
     override fun copyToClipboard(text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("Ghostlane Locations", text)
-        clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "Config copied to clipboard", Toast.LENGTH_SHORT).show()
+        // The sheet that asked says "Copied" in the user's language.
+        clipboard.setPrimaryClip(ClipData.newPlainText("Ghostlane", text))
     }
 
     override suspend fun readTextFromSource(source: Any): String? {
