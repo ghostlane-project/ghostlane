@@ -51,6 +51,46 @@ class SingBoxConfigDumpTest {
         else -> value
     }
 
+    // The protocols a provider's subscription may carry besides VLESS and Hysteria2.
+    // No reference file: these shapes are new, and CI's `sing-box check` is the test.
+    @Test fun dumpTrojanWs() {
+        val spec = LinkParser.parse(
+            "trojan://secret@127.0.0.1:443?security=tls&sni=example.com&type=ws&path=%2Fws&host=cdn.example.com&fp=chrome&alpn=h2%2Chttp%2F1.1#T"
+        )
+        assertNotNull(spec)
+        dump("trojan-ws", SingBoxConfig.build(spec))
+    }
+
+    @Test fun dumpShadowsocksAead() {
+        val spec = LinkParser.parse("ss://YWVzLTI1Ni1nY206c2VjcmV0@127.0.0.1:8388#SS")
+        assertNotNull(spec)
+        dump("shadowsocks-aead", SingBoxConfig.build(spec))
+    }
+
+    @Test fun dumpShadowsocks2022() {
+        val spec = LinkParser.parse(
+            "ss://2022-blake3-aes-256-gcm:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8%3D@127.0.0.1:8388#SS2022"
+        )
+        assertNotNull(spec)
+        dump("shadowsocks-2022", SingBoxConfig.build(spec))
+    }
+
+    @Test fun dumpVmessWsTls() {
+        val json = """{"v":"2","ps":"VM","add":"127.0.0.1","port":"443","id":"11111111-1111-1111-1111-111111111111",""" +
+            """"aid":"0","scy":"auto","net":"ws","host":"cdn.example.com","path":"/vm","tls":"tls","sni":"cdn.example.com","fp":"chrome"}"""
+        val spec = LinkParser.parse("vmess://" + java.util.Base64.getEncoder().encodeToString(json.toByteArray()))
+        assertNotNull(spec)
+        dump("vmess-ws-tls", SingBoxConfig.build(spec))
+    }
+
+    @Test fun dumpVlessWsTls() {
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?security=tls&sni=example.com&type=ws&path=%2Fv&host=cdn.example.com&fp=chrome#V"
+        )
+        assertNotNull(spec)
+        dump("vless-ws-tls", SingBoxConfig.build(spec))
+    }
+
     @Test fun dumpVlessRealityTcp() {
         val link = "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
             "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +

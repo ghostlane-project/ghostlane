@@ -48,7 +48,8 @@ class LinkParserTest {
         assertIs<OutboundSpec.Vless>(empty)
         assertEquals(TransportSpec.Tcp, empty.transport)
 
-        val unknown = "$prefix?type=ws&sni=host"
+        // ws was the example here until WebSocket became supported (LinkParserProtocolsTest).
+        val unknown = "$prefix?type=kcp&sni=host"
         val preserved = assertIs<OutboundSpec.Vless>(LinkParser.parse(unknown))
         assertEquals(TransportSpec.Tcp, preserved.transport)
     }

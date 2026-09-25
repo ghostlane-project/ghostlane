@@ -69,7 +69,7 @@ data class LocationConfig(
 
     fun isComplete(): Boolean = when (kind) {
         LocationKind.Olcrtc -> id.isNotBlank() && key.isNotBlank()
-        LocationKind.Vless, LocationKind.Hysteria2 ->
+        LocationKind.Vless, LocationKind.Hysteria2, LocationKind.Trojan, LocationKind.Shadowsocks, LocationKind.Vmess ->
             rawLink?.let { LinkParser.parse(it) != null } ?: false
     }
 
@@ -112,6 +112,18 @@ data class LocationConfig(
                 "Hysteria2",
                 "Salamander".takeIf { !spec?.obfsPassword.isNullOrBlank() }
             )
+        }
+        LocationKind.Trojan -> {
+            val spec = rawLink?.let { LinkParser.parse(it) } as? OutboundSpec.Trojan
+            listOfNotNull("Trojan", spec?.transport?.label())
+        }
+        LocationKind.Shadowsocks -> {
+            val spec = rawLink?.let { LinkParser.parse(it) } as? OutboundSpec.Shadowsocks
+            listOfNotNull("Shadowsocks", "2022".takeIf { spec?.method?.startsWith("2022-") == true })
+        }
+        LocationKind.Vmess -> {
+            val spec = rawLink?.let { LinkParser.parse(it) } as? OutboundSpec.Vmess
+            listOfNotNull("VMess", spec?.transport?.label(), "TLS".takeIf { spec?.tls != null })
         }
     }
 
@@ -677,4 +689,13 @@ data class LocationBundleV4(
     companion object {
         const val CURRENT_VERSION = 5
     }
+}
+
+/** A transport's name on a row, when it is not plain TCP. */
+private fun org.olcbox.app.net.TransportSpec.label(): String? = when (this) {
+    org.olcbox.app.net.TransportSpec.Tcp -> null
+    is org.olcbox.app.net.TransportSpec.Grpc -> "gRPC"
+    is org.olcbox.app.net.TransportSpec.Xhttp -> "XHTTP"
+    is org.olcbox.app.net.TransportSpec.Ws -> "WS"
+    is org.olcbox.app.net.TransportSpec.HttpUpgrade -> "HTTPUpgrade"
 }

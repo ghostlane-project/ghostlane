@@ -900,6 +900,9 @@ class LocationsRepositoryImpl(
         val kind = when (spec) {
             is OutboundSpec.Vless -> LocationKind.Vless
             is OutboundSpec.Hysteria2 -> LocationKind.Hysteria2
+            is OutboundSpec.Trojan -> LocationKind.Trojan
+            is OutboundSpec.Shadowsocks -> LocationKind.Shadowsocks
+            is OutboundSpec.Vmess -> LocationKind.Vmess
         }
         return LocationConfig(
             name = spec.tag,
@@ -918,9 +921,7 @@ class LocationsRepositoryImpl(
         val usedStorageIds = mutableSetOf<String>()
         val entries = text.lineSequence()
             .map { it.normalizedImportText() }
-            .filter { line ->
-                line.startsWith(VLESS_URI_PREFIX) || HY2_URI_PREFIXES.any { line.startsWith(it) }
-            }
+            .filter { line -> LinkParser.supports(line) }
             .mapNotNull { line ->
                 val spec = LinkParser.parse(line) ?: return@mapNotNull null
                 val location = outboundToLocation(spec, line).normalized()

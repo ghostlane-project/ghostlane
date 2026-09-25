@@ -11,6 +11,9 @@ enum class TransportKind {
     Grpc,
     /** VLESS over TLS without Reality keys. */
     Tls,
+    Trojan,
+    Shadowsocks,
+    Vmess,
     Olcrtc;
 
     /** Short label for the UI. */
@@ -20,6 +23,9 @@ enum class TransportKind {
         Xhttp -> "XHTTP"
         Grpc -> "gRPC"
         Tls -> "TLS"
+        Trojan -> "Trojan"
+        Shadowsocks -> "Shadowsocks"
+        Vmess -> "VMess"
         Olcrtc -> "olcRTC"
     }
 }
@@ -27,6 +33,9 @@ enum class TransportKind {
 fun LocationConfig.transportKind(): TransportKind = when (kind) {
     LocationKind.Olcrtc -> TransportKind.Olcrtc
     LocationKind.Hysteria2 -> TransportKind.Hysteria2
+    LocationKind.Trojan -> TransportKind.Trojan
+    LocationKind.Shadowsocks -> TransportKind.Shadowsocks
+    LocationKind.Vmess -> TransportKind.Vmess
     LocationKind.Vless -> {
         when (val spec = rawLink?.let { LinkParser.parse(it) }) {
             is OutboundSpec.Vless ->
@@ -52,7 +61,10 @@ object TransportSelector {
         TransportKind.Hysteria2,
         TransportKind.Grpc,
         TransportKind.Xhttp,
-        TransportKind.Tls
+        TransportKind.Tls,
+        TransportKind.Trojan,
+        TransportKind.Vmess,
+        TransportKind.Shadowsocks
     )
 
     /**

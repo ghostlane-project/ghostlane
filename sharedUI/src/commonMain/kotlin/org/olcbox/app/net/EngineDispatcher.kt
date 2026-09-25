@@ -41,7 +41,7 @@ class EngineDispatcher(
                 olcrtc.start(location)
                 singBox.start(SingBoxConfig.buildOlcrtcSocks(olcrtc.olcrtcSocksPort))
             }
-            LocationKind.Hysteria2 -> {
+            LocationKind.Hysteria2, LocationKind.Trojan, LocationKind.Shadowsocks, LocationKind.Vmess -> {
                 singBox.start(SingBoxConfig.build(requireVlessOrHy2Spec(location)))
             }
             LocationKind.Vless -> {
