@@ -56,6 +56,7 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.net.TunnelExit
 import org.olcbox.app.net.TunnelVerifier
@@ -81,6 +82,7 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -152,10 +154,12 @@ class OlcboxVpnService : VpnService() {
     // subprocesses (this VpnService is a Context). The app's UID already bypasses
     // the tun (addDisallowedApp(self) in applySplitTunneling), so a core's own
     // sockets don't loop back through the tunnel. `activeCorePort` is the SOCKS
-    // port the hev bridge targets when a core is active (null = olcrtc default).
+    // port the hev bridge targets when a core is active (null = olcrtc default),
+    // and `activeCoreLogin` the login that port demands (null = none, proxy mode).
     private val singBoxCore by lazy { AndroidSingBoxController(this) }
     private val xrayCore by lazy { AndroidXrayController(this) }
     private var activeCorePort: Int? = null
+    private var activeCoreLogin: SocksLogin? = null
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
@@ -519,7 +523,7 @@ class OlcboxVpnService : VpnService() {
         if (requestedGeneration != generation) return
 
         if (startTransport(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
-            val exit = verifyTunnel(location)
+            val exit = verifyTunnel()
             if (requestedGeneration != generation) return
             if (exit == null) {
                 failUnverifiedTunnel(
@@ -586,7 +590,7 @@ class OlcboxVpnService : VpnService() {
 //                stopTransportProcesses(closeTun = true)
 //                return
 //            }
-            val proxyExit = verifyTunnel(location)
+            val proxyExit = verifyTunnel()
             if (requestedGeneration != generation) return
             if (proxyExit == null) {
                 failUnverifiedTunnel("Proxy mode", isMigration, requestedGeneration)
@@ -621,7 +625,7 @@ class OlcboxVpnService : VpnService() {
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return
 
-        val exit = verifyTunnel(location)
+        val exit = verifyTunnel()
         if (requestedGeneration != generation) return
         if (exit == null) {
             failUnverifiedTunnel("VPN tunnel", isMigration, requestedGeneration)
@@ -650,15 +654,14 @@ class OlcboxVpnService : VpnService() {
      * tun → tun2socks leg: this app's UID bypasses the tun by design, so its own
      * traffic cannot travel that path.
      */
-    private suspend fun verifyTunnel(location: LocationConfig): TunnelExit? {
-        val isOlcrtc = location.kind == LocationKind.Olcrtc
+    private suspend fun verifyTunnel(): TunnelExit? {
         updateNotification("Verifying tunnel...")
+        val (username, password) = upstreamLogin()
         return TunnelVerifier.verify(
             socksHost = AndroidSocksProxySettings.connectHost(socksListenHost),
             socksPort = activeCorePort ?: socksListenPort,
-            // Only olcRTC's local proxy asks for a login; the cores listen open.
-            username = if (isOlcrtc) socksUsername else "",
-            password = if (isOlcrtc) socksPassword else ""
+            username = username,
+            password = password
         )
     }
 
@@ -701,6 +704,7 @@ class OlcboxVpnService : VpnService() {
         val routing = routingFor(upstream)
         return if (location.kind == LocationKind.Olcrtc) {
             activeCorePort = null
+            activeCoreLogin = null
             startMobile(location, upstream, requestedGeneration, setErrorOnFailure, routing)
         } else {
             startCore(location, setErrorOnFailure, routing)
@@ -712,19 +716,21 @@ class OlcboxVpnService : VpnService() {
      *
      * In proxy mode the core listens on [socksListenPort], because that is the
      * endpoint the app tells other apps to use — putting the core anywhere else
-     * leaves that promised port dead. In tun mode nothing outside talks to it, so
-     * it takes the internal core port and tun2socks follows [activeCorePort].
+     * leaves that promised port dead — and, as before, without a login. In tun
+     * mode nothing outside talks to it, so it takes a port the kernel hands out
+     * for this start and demands the app's own login: tun2socks follows
+     * [activeCorePort] and sends [activeCoreLogin]. It used to be 10810, open,
+     * which any app on the phone could use to leave through the tunnel or to
+     * read its exit address (see [SocksLogin]).
      */
     private suspend fun startCore(
         location: LocationConfig,
         setErrorOnFailure: Boolean,
         routing: Routing
     ): Boolean {
-        val port = if (connectionMode == AndroidConnectionMode.Proxy) {
-            socksListenPort
-        } else {
-            SingBoxConfig.SINGBOX_SOCKS_PORT
-        }
+        val tun = connectionMode == AndroidConnectionMode.Tun
+        val port = if (tun) freeLoopbackPort() else socksListenPort
+        val login = if (tun) SocksLogin.of(socksUsername, socksPassword) else null
         return try {
             val raw = location.rawLink ?: error("core location has no link")
             val spec = LinkParser.parse(raw) ?: error("unparseable core link")
@@ -742,19 +748,27 @@ class OlcboxVpnService : VpnService() {
             if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
                 if (fronted) {
                     // Xray does not route; sing-box does, so it goes in front.
+                    // Both ports are loopback and both demand the login: the one
+                    // behind the front is as reachable from other apps as the
+                    // front itself.
+                    val xrayPort = freeLoopbackPort()
                     xrayCore.start(
                         XrayConfig.buildXhttp(
                             spec,
-                            socksPort = XRAY_BEHIND_FRONT_PORT,
-                            verboseLogs = verboseDebugLogs
+                            socksPort = xrayPort,
+                            verboseLogs = verboseDebugLogs,
+                            login = login
                         )
                     )
                     singBoxCore.start(
                         SingBoxConfig.buildSocksChain(
-                            XRAY_BEHIND_FRONT_PORT,
+                            xrayPort,
                             socksPort = port,
+                            username = login?.username.orEmpty(),
+                            password = login?.password.orEmpty(),
                             routing = routing,
-                            verboseLogs = verboseDebugLogs
+                            verboseLogs = verboseDebugLogs,
+                            login = login
                         )
                     )
                     label = "sing-box front + Xray/xhttp"
@@ -763,7 +777,7 @@ class OlcboxVpnService : VpnService() {
                 } else {
                     if (routing is Routing.Rules) addLog("Routing: proxy mode keeps xhttp global")
                     xrayCore.start(
-                        XrayConfig.buildXhttp(spec, socksPort = port, verboseLogs = verboseDebugLogs)
+                        XrayConfig.buildXhttp(spec, socksPort = port, verboseLogs = verboseDebugLogs, login = login)
                     )
                     label = "Xray/xhttp"
                     diagnose = xrayCore::diagnostics
@@ -775,7 +789,8 @@ class OlcboxVpnService : VpnService() {
                         spec,
                         socksPort = port,
                         routing = routing,
-                        verboseLogs = verboseDebugLogs
+                        verboseLogs = verboseDebugLogs,
+                        login = login
                     )
                 )
                 label = "sing-box/${location.kind}"
@@ -783,6 +798,7 @@ class OlcboxVpnService : VpnService() {
                 alive = singBoxCore::isRunning
             }
             activeCorePort = port
+            activeCoreLogin = login
             if (!waitForSocksPortOpen(port, MOBILE_READY_TIMEOUT_MS) || !alive()) {
                 // The core's own account of what went wrong, which otherwise sits
                 // in a cache file only root can read. Without it this branch says
@@ -816,7 +832,32 @@ class OlcboxVpnService : VpnService() {
         singBoxCore.stopNow()
         xrayCore.stopNow()
         activeCorePort = null
+        activeCoreLogin = null
     }
+
+    /**
+     * A loopback port nothing holds at this moment, from the kernel's ephemeral
+     * range. Another process can take it before the core binds it; the start then
+     * fails the way any start does, and the next one draws again. Should the
+     * kernel not hand one out, the old fixed port: the login still guards it.
+     */
+    private fun freeLoopbackPort(): Int = runCatching {
+        ServerSocket(0, 1, InetAddress.getByName(AndroidSocksProxySettings.DEFAULT_HOST)).use { it.localPort }
+    }.getOrDefault(SingBoxConfig.SINGBOX_SOCKS_PORT)
+
+    /**
+     * The login the SOCKS server behind the tun demands, as (username, password):
+     * the core's on the core path, olcRTC's own pair otherwise, ("", "") for none.
+     * Everything that talks to that server (tun2socks, the tunnel check, the
+     * channel proxy) asks here, so none of them can disagree with what the server
+     * was started with; see [HevTunnelConfig] for what a disagreement looks like.
+     */
+    private fun upstreamLogin(): Pair<String, String> =
+        if (activeCorePort != null) {
+            activeCoreLogin?.let { it.username to it.password } ?: ("" to "")
+        } else {
+            socksUsername to socksPassword
+        }
 
     /** Poll until the given local SOCKS port accepts connections, or timeout. */
     private suspend fun waitForSocksPortOpen(port: Int, timeoutMs: Long): Boolean {
@@ -1081,8 +1122,8 @@ class OlcboxVpnService : VpnService() {
                 socksAddress = socksConnectHost(),
                 socksPort = socksListenPort,
                 corePort = activeCorePort,
-                username = socksUsername,
-                password = socksPassword
+                username = upstreamLogin().first,
+                password = upstreamLogin().second
             )
         )
         return file
@@ -1809,10 +1850,11 @@ class OlcboxVpnService : VpnService() {
 
     private fun setStatus(status: VpnStatus) {
         if (status is VpnStatus.Connected) {
+            val (username, password) = upstreamLogin()
             OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
                 AndroidSocksProxySettings.connectHost(socksListenHost), activeCorePort ?: socksListenPort,
-                if (activeCorePort == null) socksUsername else "",
-                if (activeCorePort == null) socksPassword else ""
+                username,
+                password
             )
         } else {
             OlcboxVpnState.channelProxy = null
@@ -2063,8 +2105,6 @@ class OlcboxVpnService : VpnService() {
         /** Under filesDir, so a cache sweep cannot take the lists out from under a running core. */
         private const val RULE_SETS_DIR = "rulesets"
 
-        /** Where Xray listens when sing-box fronts it, so the front can keep the core port. */
-        private const val XRAY_BEHIND_FRONT_PORT = 10811
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
         private const val NOTIFICATION_CHANNEL_ID = "olcbox_vpn"

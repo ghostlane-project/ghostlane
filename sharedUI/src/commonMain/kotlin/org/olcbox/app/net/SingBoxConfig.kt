@@ -38,12 +38,17 @@ object SingBoxConfig {
     // core binding it first made every desktop connect fail with "Address already in use".
     const val SINGBOX_SOCKS_PORT = 10810
 
+    /**
+     * [login], when given, is demanded of every client of the SOCKS inbound; see
+     * [SocksLogin] for why the Android tun path always passes one.
+     */
     fun build(
         outbound: OutboundSpec,
         socksPort: Int = SINGBOX_SOCKS_PORT,
         routing: Routing = Routing.Global,
         verboseLogs: Boolean = false,
-    ): String = render(socksPort, routing, verboseLogs) { addOutbound(outbound) }
+        login: SocksLogin? = null,
+    ): String = render(socksPort, routing, verboseLogs, login) { addOutbound(outbound) }
 
     /// iOS addressing. Fixed rather than negotiated: the extension applies these
     /// same values to the system when it hands the core its descriptor, so the two
@@ -129,8 +134,9 @@ object SingBoxConfig {
      * A SOCKS inbound in front of another core's SOCKS port — the Android shape
      * for olcRTC and xhttp under Bypass Russia, where sing-box has to sit between
      * hev-socks5-tunnel and a transport it does not implement so its rules can
-     * decide what goes direct. Credentials only when the upstream demands them,
-     * which is olcRTC and only olcRTC.
+     * decide what goes direct. [username] and [password] are what the upstream
+     * demands (olcRTC always, Xray when it was built with a login); [login] is what
+     * this chain's own inbound demands.
      */
     fun buildSocksChain(
         upstreamPort: Int,
@@ -139,7 +145,8 @@ object SingBoxConfig {
         password: String = "",
         routing: Routing = Routing.Global,
         verboseLogs: Boolean = false,
-    ): String = render(socksPort, routing, verboseLogs) {
+        login: SocksLogin? = null,
+    ): String = render(socksPort, routing, verboseLogs, login) {
         addSocksOutbound(upstreamPort, username, password)
     }
 
@@ -148,13 +155,12 @@ object SingBoxConfig {
             put("type", "socks"); put("tag", "out")
             put("server", "127.0.0.1"); put("server_port", port)
             put("version", "5")
-            // Sent only when the core on the other end asked for them, which is
-            // olcRTC and only olcRTC: it refuses the connection outright when
-            // started with a credential pair and offered none, and on iOS it
-            // always is — the app generates one on first run. That produced a
-            // tunnel that came up, carried its own media perfectly, and passed
-            // not one user connection. Xray's inbound has no auth, so for xhttp
-            // these stay absent exactly as before.
+            // Sent only when the core on the other end asked for them: olcRTC
+            // refuses the connection outright when started with a credential
+            // pair and offered none, and on iOS it always is — the app generates
+            // one on first run. That produced a tunnel that came up, carried its
+            // own media perfectly, and passed not one user connection. An Xray
+            // behind this chain asks when it was built with a [SocksLogin].
             if (username.isNotBlank()) put("username", username)
             if (password.isNotBlank()) put("password", password)
         }
@@ -491,6 +497,7 @@ object SingBoxConfig {
         socksPort: Int,
         routing: Routing,
         verboseLogs: Boolean,
+        login: SocksLogin?,
         outbounds: JsonArrayBuilder.() -> Unit
     ): String {
         val bypass = routing as? Routing.RuleBased
@@ -505,6 +512,12 @@ object SingBoxConfig {
                 addJsonObject {
                     put("type", "socks"); put("tag", "in")
                     put("listen", "127.0.0.1"); put("listen_port", socksPort)
+                    if (login != null) putJsonArray("users") {
+                        addJsonObject {
+                            put("username", login.username)
+                            put("password", login.password)
+                        }
+                    }
                 }
             }
             putJsonArray("outbounds") {
