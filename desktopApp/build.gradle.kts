@@ -566,7 +566,9 @@ compose.desktop {
         }
 
         nativeDistributions {
-            modules("jdk.httpserver")
+            // java.naming + jdk.naming.dns: the system's DNS servers on macOS and Windows
+            // (DesktopDnsResolver.systemServers).
+            modules("jdk.httpserver", "java.naming", "jdk.naming.dns")
             targetFormats(*currentBuildTargetFormats)
             packageName = desktopPackageName
             packageVersion = desktopPackageVersion

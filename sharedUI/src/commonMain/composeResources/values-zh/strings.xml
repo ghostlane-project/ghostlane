@@ -95,7 +95,8 @@
     <string name="desktop_mode_tunnel_linux">本机所有应用，通过 TUN 设备</string>
     <string name="desktop_mode_tunnel_mac">这台 Mac 上的所有应用，通过 utun</string>
     <string name="desktop_mode_tunnel_windows">这台电脑上的所有应用——Ghostlane 将以管理员身份重启</string>
-    <string name="desktop_routing_unavailable">仅在代理模式和 macOS 隧道中生效。Linux 和 Windows 隧道将在后续版本中支持。</string>
+    <string name="desktop_routing_linux_rooms">在 Linux 隧道中，分流只对 olcRTC 房间生效。使用其他服务器时，全部流量都走隧道。</string>
+    <string name="desktop_routing_unavailable">Windows 隧道承载全部流量。分流在代理模式下生效。</string>
     <string name="detail_all_traffic">所有应用和系统流量</string>
     <string name="detail_exit">出口</string>
     <string name="detail_not_routed">未经隧道</string>
@@ -331,7 +332,7 @@
     <string name="routing_rules_direct">始终直连</string>
     <string name="routing_rules_empty">无</string>
     <string name="routing_rules_invalid">这不是域名或 IP 地址</string>
-    <string name="routing_rules_note">域名包含其子域名；地址可以是单个 IP 或一个网段。你的规则优先于模式自带的列表。在 Android 上的 olcRTC 房间中，走隧道规则只能把某个网站移出地区直连列表。</string>
+    <string name="routing_rules_note">域名包含其子域名；地址可以是单个 IP 或一个网段。你的规则优先于模式自带的列表。在 Android 和 Linux 上的 olcRTC 房间中，走隧道规则只能把某个网站移出地区直连列表。</string>
     <string name="routing_rules_title">你的规则</string>
     <string name="routing_rules_tunnel">始终走隧道</string>
     <string name="routing_russia_hub">俄罗斯和本地网络直连</string>

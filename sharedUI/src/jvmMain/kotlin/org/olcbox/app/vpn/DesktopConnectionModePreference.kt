@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn
 
+import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
@@ -125,22 +126,30 @@ object DesktopConnectionModePreference {
 
 /**
  * Why the routing choice cannot be applied on this desktop right now, or null
- * where it can. The proxy and the macOS tunnel apply it; the Linux and Windows
- * tunnels route by policy and by metric, and a direct socket from the core
- * would enter them, so they stay global until they have a way out.
+ * where it can ([desktopRulesHome] has the reasons). Only the Windows tunnel
+ * has no way out for a direct socket; its users can switch to the proxy.
  */
 fun desktopRoutingUnavailableReason(effective: DesktopConnectionMode?): String? =
     routingUnavailableReasonFor(DesktopPaths.os, effective)
 
-internal fun routingUnavailableReasonFor(os: DesktopOs, effective: DesktopConnectionMode?): String? {
-    val tunWithoutAWayOut = when (os) {
-        DesktopOs.Linux -> true
-        DesktopOs.Windows -> effective != DesktopConnectionMode.Proxy
-        DesktopOs.MacOS, DesktopOs.Other -> false
-    }
-    return if (tunWithoutAWayOut) {
-        "Applies in proxy mode and in the macOS tunnel. The Linux and Windows tunnels follow in a later build."
-    } else {
-        null
-    }
-}
+internal fun routingUnavailableReasonFor(os: DesktopOs, effective: DesktopConnectionMode?): String? =
+    if (os == DesktopOs.Windows && effective != DesktopConnectionMode.Proxy) WINDOWS_TUNNEL_CARRIES_ALL else null
+
+/** What the routing screen adds on this desktop, or null: the Linux tunnel routes only in rooms. */
+fun desktopRoutingNote(): String? = routingNoteFor(DesktopPaths.os)
+
+internal fun routingNoteFor(os: DesktopOs): String? = if (os == DesktopOs.Linux) LINUX_TUNNEL_ROOMS_ONLY else null
+
+/**
+ * The modes this desktop offers. The Linux tunnel routes only in olcRTC rooms,
+ * where the engine takes "these go direct" and nothing else, so "only blocked
+ * sites" would change nothing there and is not offered.
+ */
+fun desktopRoutingModes(): List<RoutingMode> = routingModesFor(DesktopPaths.os)
+
+internal fun routingModesFor(os: DesktopOs): List<RoutingMode> =
+    if (os == DesktopOs.Linux) RoutingMode.entries - RoutingMode.BlockedOnly else RoutingMode.entries
+
+internal const val WINDOWS_TUNNEL_CARRIES_ALL = "The Windows tunnel carries all traffic. Routing works in proxy mode."
+internal const val LINUX_TUNNEL_ROOMS_ONLY =
+    "In the Linux tunnel, routing applies to olcRTC rooms. With other servers, all traffic goes through the tunnel."

@@ -275,6 +275,8 @@ fun ApplicationSettingsSheet(
      * under the cards, which are then not selectable. Null where it applies.
      */
     routingUnavailableReason: String? = null,
+    /** What the choice means on this platform, where that differs; shown while it applies. */
+    routingNote: String? = null,
     /**
      * False where the store owns updates.
      *
@@ -412,6 +414,7 @@ fun ApplicationSettingsSheet(
                         enabled = routingUnavailableReason == null,
                         availableModes = routingModes,
                         unavailableReason = routingUnavailableReason,
+                        note = routingNote,
                         onChanged = onRoutingSettingsChanged,
                         onBack = { route = SharedSettingsRoute.Hub }
                     )
@@ -420,6 +423,7 @@ fun ApplicationSettingsSheet(
                         settings = routingSettings,
                         availableModes = routingModes,
                         unavailableReason = routingUnavailableReason,
+                        note = routingNote,
                         onChanged = onRoutingSettingsChanged,
                         onBack = { route = SharedSettingsRoute.Hub }
                     )
@@ -713,6 +717,7 @@ private fun SharedRoutingSettingsContent(
     settings: RoutingSettings,
     availableModes: List<RoutingMode>,
     unavailableReason: String?,
+    note: String?,
     onChanged: (RoutingSettings) -> Unit,
     onBack: () -> Unit
 ) {
@@ -744,6 +749,15 @@ private fun SharedRoutingSettingsContent(
         }
 
         Spacer(Modifier.height(16.dp))
+
+        if (unavailableReason == null && note != null) {
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalPkPalette.current.textDim
+            )
+            Spacer(Modifier.height(8.dp))
+        }
 
         Text(
             text = unavailableReason

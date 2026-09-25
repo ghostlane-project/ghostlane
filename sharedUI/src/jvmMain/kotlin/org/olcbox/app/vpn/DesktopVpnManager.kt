@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
+import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.DesktopChannelProbe
 import org.olcbox.app.net.DesktopSingBoxController
@@ -29,6 +30,7 @@ import org.olcbox.app.net.DesktopXrayController
 import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
+import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.Routing
 import org.olcbox.app.vpn.desktop.TunnelDaemonProtocol
 import org.olcbox.app.data.repository.LocationsRepository
@@ -122,6 +124,7 @@ class DesktopVpnManager private constructor(
     private var process: Process? = null
     private var tunProcess: Process? = null
     private var olcRtcConfigPath: Path? = null
+    private var olcRtcDirectRulesPath: Path? = null
     private var generation = 0L
     /** Separates adapter names from adapters retained by an earlier app process. */
     private val windowsTunSessionId = UUID.randomUUID().toString().take(8)
@@ -408,27 +411,21 @@ class DesktopVpnManager private constructor(
             val desktopMode = DesktopMode.current()
             val socksSettings = _socksProxySettings.value.normalized()
 
-            // Where a bypass can apply here: the proxy, whose core's direct
-            // sockets are ordinary ones, and the macOS tunnel, whose daemon binds
-            // them to the physical interface. The Linux and Windows tunnels route
-            // by policy and by metric, and a direct socket from the core would
-            // enter them; they stay global until they have a way out.
             val routingSettings = locationsRepository.getRoutingSettings()
             val verboseLogs = routingSettings.verboseDebugLogs
-            // Only a mode other than Global, or rules of the user's own, need
-            // rule-set routing. Global without them keeps the existing desktop
-            // core and tunnel configuration.
-            val rulesRequested = routingSettings.needsRules
-            val rulesApply = rulesRequested &&
-                (desktopMode == DesktopMode.SystemProxy || desktopMode == DesktopMode.MacTun)
-            if (rulesRequested && !rulesApply) {
-                addLog("Routing: $desktopMode keeps everything through the tunnel for now")
-            } else if (rulesApply) {
+            val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
+            // Where the rules apply, if anywhere (desktopRulesHome). Global with
+            // no rules of the user's keeps every core and tunnel as it was.
+            val rulesHome = desktopRulesHome(desktopMode, isOlcrtc, routingSettings.needsRules)
+            if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
+                addLog("Routing: $desktopMode carries everything for this server")
+            } else if (rulesHome != DesktopRulesHome.Nowhere) {
                 addLog("Routing: ${routingSettings.mode.hubSummary()}")
             }
-            // In the proxy the rules live in the core; in the macOS tunnel they
-            // live in the daemon, and the core stays as it was.
-            val coreRouting: Routing = if (rulesApply && desktopMode == DesktopMode.SystemProxy) {
+            // In the proxy the rules live in the core, or for olcRTC in the front
+            // before it; in the macOS tunnel they live in the daemon, and the core
+            // stays as it was.
+            val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
                 val routing = routingSettings.toRules(
                     DesktopPaths.appDataDir().resolve("rulesets").toString(),
                     DirectDns.System
@@ -437,6 +434,13 @@ class DesktopVpnManager private constructor(
                 routing
             } else {
                 Routing.Global
+            }
+            // In the Linux tunnel the engine takes them itself, from a file its
+            // yaml names.
+            val engineRules = if (rulesHome == DesktopRulesHome.Engine) {
+                writeOlcRtcDirectRules(routingSettings)
+            } else {
+                null
             }
             var frontPort: Int? = null
 
@@ -448,7 +452,6 @@ class DesktopVpnManager private constructor(
             // (unchanged); vless/hy2/xhttp start a sing-box/Xray core on the core
             // SOCKS port. The tun/PAC then targets whichever port is active.
             connectedLocation = location.normalized()
-            val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             val effectiveSocksPort =
                 if (isOlcrtc) {
                     socksSettings.port
@@ -468,7 +471,8 @@ class DesktopVpnManager private constructor(
                     ready = ready,
                     startupFailure = startupFailure,
                     logOutput = true,
-                    privileged = desktopMode == DesktopMode.LinuxTun
+                    privileged = desktopMode == DesktopMode.LinuxTun,
+                    directRulesFile = engineRules
                 )
                 val olcRtcProcess = process ?: error("olcRTC process is missing")
                 waitForOlcRtcReady(
@@ -499,7 +503,7 @@ class DesktopVpnManager private constructor(
                     socksSettings
                 )
                 DesktopMode.MacTun -> {
-                    val daemonRouting = if (rulesApply) {
+                    val daemonRouting = if (rulesHome == DesktopRulesHome.Daemon) {
                         routingSettings.toRules(TunnelDaemonProtocol.RULES_DIR, DirectDns.System)
                     } else {
                         Routing.Global
@@ -1070,13 +1074,14 @@ class DesktopVpnManager private constructor(
         ready: CompletableDeferred<Unit>,
         startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
-        privileged: Boolean
+        privileged: Boolean,
+        directRulesFile: Path?
     ): Process {
         val binaries = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
         val dnsServer = DesktopDnsResolver.current()
         var lastException: Exception? = null
 
-        addLog("Using DNS server $dnsServer for olcRTC")
+        addLog("olcRTC resolvers: $dnsServer")
 
         for (binary in binaries) {
             try {
@@ -1088,7 +1093,8 @@ class DesktopVpnManager private constructor(
                     startupFailure = startupFailure,
                     logOutput = logOutput,
                     privileged = privileged,
-                    dnsServer = dnsServer
+                    dnsServer = dnsServer,
+                    directRulesFile = directRulesFile
                 )
             } catch (e: Exception) {
                 lastException = e
@@ -1180,6 +1186,7 @@ class DesktopVpnManager private constructor(
         stopProcess(process)
         process = null
         deleteOlcRtcConfig()
+        deleteOlcRtcDirectRules()
 
         if (finalStatus) {
             _exitInfo.value = null
@@ -1219,7 +1226,8 @@ class DesktopVpnManager private constructor(
         startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean,
-        dnsServer: String
+        dnsServer: String,
+        directRulesFile: Path?
     ): Process {
         val config = location.normalized()
         val provider = OlcRtcCommand.desktopProviderArg(config.bypassProvider)
@@ -1230,7 +1238,8 @@ class DesktopVpnManager private constructor(
             socksPort = socksSettings.port,
             socksUser = socksSettings.username,
             socksPass = socksSettings.password,
-            dnsServer = dnsServer
+            dnsServer = dnsServer,
+            directRulesFile = directRulesFile
         )
         val configPath = writeOlcRtcClientConfig(olcRtcCommand)
         val command = olcRtcCommand.args(configPath)
@@ -1311,6 +1320,32 @@ class DesktopVpnManager private constructor(
             runCatching { Files.deleteIfExists(path) }
         }
         olcRtcConfigPath = null
+    }
+
+    /**
+     * The engine's direct rules for [settings] ([OlcrtcDirectRules.forRouting], the
+     * text Android hands `setDirectRules`), in a file next to the yaml; null when
+     * they come to nothing. The engine reads it once, at start, and it goes with the
+     * yaml when the session ends.
+     */
+    private suspend fun writeOlcRtcDirectRules(settings: RoutingSettings): Path? {
+        deleteOlcRtcDirectRules()
+        // The engine reads no rule-set files; the directory is sing-box's alone.
+        val text = OlcrtcDirectRules.forRouting(settings.toRules(ruleSetDir = "", directDns = DirectDns.System))
+        if (text.isEmpty()) return null
+        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        Files.createDirectories(runtimeDir)
+        val path = Files.createTempFile(runtimeDir, "olcrtc-direct-", ".txt")
+        Files.writeString(path, text, StandardCharsets.UTF_8)
+        olcRtcDirectRulesPath = path
+        return path
+    }
+
+    private fun deleteOlcRtcDirectRules() {
+        olcRtcDirectRulesPath?.let { path ->
+            runCatching { Files.deleteIfExists(path) }
+        }
+        olcRtcDirectRulesPath = null
     }
 
     private fun startTunLogReader(target: Process) {
@@ -1679,3 +1714,40 @@ internal enum class DesktopMode {
  */
 internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
     if (daemon == MacOsTunnelDaemon.Registration.Enabled) DesktopMode.MacTun else DesktopMode.SystemProxy
+
+/** Where a session's routing rules are applied, if anywhere. */
+internal enum class DesktopRulesHome {
+    /** Everything through the tunnel: no rules asked for, or no way out for a direct socket. */
+    Nowhere,
+
+    /** The proxy's core, or for olcRTC the sing-box front before the engine. */
+    Core,
+
+    /** The macOS tunnel daemon; the core behind it stays as it was. */
+    Daemon,
+
+    /** The olcRTC engine itself, from its direct rules. */
+    Engine
+}
+
+/**
+ * Where [mode] can apply the rules [needsRules] asks for. A rule that sends a
+ * connection direct needs a socket that leaves outside the tunnel:
+ *
+ * - the proxy's sockets are ordinary ones;
+ * - the macOS daemon binds its own to the physical interface;
+ * - in the Linux tunnel only root's traffic keeps the main table, and of what
+ *   runs there only the olcRTC engine runs as root (the cores run as the user);
+ * - in the Windows tunnel nothing does yet.
+ *
+ * The proxy keeps its front for olcRTC: it also does what the engine cannot,
+ * "only blocked sites" and a tunnel rule under a whole-TLD entry.
+ */
+internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
+    when {
+        !needsRules -> DesktopRulesHome.Nowhere
+        mode == DesktopMode.SystemProxy -> DesktopRulesHome.Core
+        mode == DesktopMode.MacTun -> DesktopRulesHome.Daemon
+        mode == DesktopMode.LinuxTun && isOlcrtc -> DesktopRulesHome.Engine
+        else -> DesktopRulesHome.Nowhere
+    }

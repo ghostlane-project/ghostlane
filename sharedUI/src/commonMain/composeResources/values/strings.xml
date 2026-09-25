@@ -95,7 +95,8 @@
     <string name="desktop_mode_tunnel_linux">Every app on this machine, through a TUN device</string>
     <string name="desktop_mode_tunnel_mac">Every app on this Mac, through a utun</string>
     <string name="desktop_mode_tunnel_windows">Every app on this PC — Ghostlane restarts as administrator</string>
-    <string name="desktop_routing_unavailable">Applies in proxy mode and in the macOS tunnel. The Linux and Windows tunnels follow in a later build.</string>
+    <string name="desktop_routing_linux_rooms">In the Linux tunnel, routing applies to olcRTC rooms. With other servers, all traffic goes through the tunnel.</string>
+    <string name="desktop_routing_unavailable">The Windows tunnel carries all traffic. Routing works in proxy mode.</string>
     <string name="detail_all_traffic">All apps and system traffic</string>
     <string name="detail_exit">Exit</string>
     <string name="detail_not_routed">Not routed</string>
@@ -331,7 +332,7 @@
     <string name="routing_rules_direct">Always direct</string>
     <string name="routing_rules_empty">None</string>
     <string name="routing_rules_invalid">Not a domain or an IP address</string>
-    <string name="routing_rules_note">A domain covers its subdomains; an address can be one IP or a prefix. Your rules win over the mode's lists. On Android, in olcRTC rooms a tunnel rule can only take a site out of a region's direct list.</string>
+    <string name="routing_rules_note">A domain covers its subdomains; an address can be one IP or a prefix. Your rules win over the mode's lists. On Android and Linux, in olcRTC rooms a tunnel rule can only take a site out of a region's direct list.</string>
     <string name="routing_rules_title">Your rules</string>
     <string name="routing_rules_tunnel">Always through the tunnel</string>
     <string name="routing_russia_hub">Russia and local network direct</string>
