@@ -5,3 +5,11 @@ Between the VPN and the engine that carries it, the app runs a small proxy on th
 ### Server lists: provider links, and lists that outlive a blocked domain
 
 A provider's subscription page can now open the app with a `ghostlane://` link, including the `ghostlane://add/…` form such pages use for other apps. A provider can also keep its users when its domain is blocked: when a list's usual address does not answer, the app asks the spare address the provider named in advance, and when the provider says the list has moved, the app follows it. Both are accepted only over a secure connection. On Android and computers, a provider's short note now appears under its server list.
+
+### Android: always-on VPN
+
+With Android's own "Always-on VPN" turned on for Ghostlane, the connection now comes up by itself after a restart and whenever Android brings it back; before, the app stopped the moment Android started it. Connection settings has a row that opens Android's VPN screen, where always-on and "Block connections without VPN" are set. The "Russian apps" preset for apps that bypass the VPN now also finds T-Bank, Avito, Wildberries and VK.
+
+### Android and computers: smart connect
+
+When a server is published over several kinds of connection, the app now checks them before connecting and uses the first one through which a real download gets through, not just a first handshake. If none does, it ends on olcRTC in the same country, and when only domestic sites answer (a mobile "whitelist" shutdown) it goes to olcRTC straight away. It never changes the country by itself, remembers what worked for each server, and can be turned off in the server list settings.
