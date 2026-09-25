@@ -28,6 +28,8 @@ fun OlcboxAppContent(
     onImportFileRequested: () -> Unit,
     onImportFromClipboardRequested: (onImported: () -> Unit, onError: (String) -> Unit) -> Unit,
     onScanQrRequested: () -> Unit = {},
+    /** Where a platform offers it (no camera, no clipboard: a TV), the add sheet's "From your phone". */
+    onImportFromPhoneRequested: (() -> Unit)? = null,
     onShareLocationRequested: (LocationConfig) -> Unit = {},
     onSaveLogsRequested: (onSaved: (String) -> Unit, onError: (String) -> Unit) -> Unit,
     showAppSettingsButton: Boolean,
@@ -89,6 +91,7 @@ fun OlcboxAppContent(
                     onImportFileRequested = onImportFileRequested,
                     onImportFromClipboardRequested = onImportFromClipboardRequested,
                     onScanQrRequested = onScanQrRequested,
+                    onImportFromPhoneRequested = onImportFromPhoneRequested,
                     onSaveLogsRequested = onSaveLogsRequested,
                     showAppSettingsButton = showAppSettingsButton,
                     onGetSubscriptionClick = onGetSubscriptionClick,

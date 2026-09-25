@@ -1,5 +1,7 @@
 package org.olcbox.app.ui.features.home.components
 
+import multiplatform_app.sharedui.generated.resources.add_from_phone_subtitle
+import multiplatform_app.sharedui.generated.resources.add_from_phone
 import multiplatform_app.sharedui.generated.resources.Res
 import org.jetbrains.compose.resources.stringResource
 import multiplatform_app.sharedui.generated.resources.add_connection
@@ -58,6 +60,8 @@ fun AddConfigurationSheet(
     onScanQrClick: () -> Unit,
     onPasteLinkClick: () -> Unit,
     onImportFileClick: () -> Unit,
+    /** "From your phone", where the platform offers it; null leaves the row out. */
+    onImportFromPhoneClick: (() -> Unit)? = null,
     onUpdateSubscriptionsClick: () -> Unit,
     onAddCustomLocationClick: () -> Unit,
     onGetSubscriptionClick: () -> Unit = {},
@@ -87,6 +91,7 @@ fun AddConfigurationSheet(
             onScanQrClick = onScanQrClick,
             onPasteLinkClick = onPasteLinkClick,
             onImportFileClick = onImportFileClick,
+            onImportFromPhoneClick = onImportFromPhoneClick,
             onUpdateSubscriptionsClick = onUpdateSubscriptionsClick,
             onAddCustomLocationClick = onAddCustomLocationClick
         )
@@ -103,6 +108,8 @@ internal fun AddConfigurationBody(
     onScanQrClick: () -> Unit,
     onPasteLinkClick: () -> Unit,
     onImportFileClick: () -> Unit,
+    /** "From your phone", where the platform offers it; null leaves the row out. */
+    onImportFromPhoneClick: (() -> Unit)? = null,
     onUpdateSubscriptionsClick: () -> Unit,
     onAddCustomLocationClick: () -> Unit
 ) {
@@ -110,6 +117,17 @@ internal fun AddConfigurationBody(
         // No row here points at a purchase. Someone with nothing yet gets the
         // import actions below and nothing else — where they obtained a server
         // list is not this app's business.
+
+        // First where it is offered: on a TV it is the one way in that works.
+        onImportFromPhoneClick?.let { onClick ->
+            PkSheetActionRow(
+                title = stringResource(Res.string.add_from_phone),
+                subtitle = stringResource(Res.string.add_from_phone_subtitle),
+                icon = PkIcons.QrCodeScanner,
+                accent = true,
+                onClick = onClick
+            )
+        }
 
         if (canScanQr) {
             PkSheetActionRow(

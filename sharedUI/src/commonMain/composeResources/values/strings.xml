@@ -34,6 +34,8 @@
     <string name="add_custom_subtitle">Enter room, key, provider, and transport</string>
     <string name="add_file">Import from file</string>
     <string name="add_file_subtitle">Read server list or config file</string>
+    <string name="add_from_phone">From your phone</string>
+    <string name="add_from_phone_subtitle">Scan a code with your phone and paste the link there</string>
     <string name="add_paste">Paste link or URI</string>
     <string name="add_paste_subtitle">HTTP, HTTPS, or olcrtc URI</string>
     <string name="add_scan_qr">Scan QR code</string>
@@ -231,6 +233,14 @@
     <string name="open_in_browser">Open %1$s in your browser</string>
     <string name="password_regenerated">Password regenerated</string>
     <string name="password_required">Password is required</string>
+    <string name="phone_import_no_network">Connect this device to your home network first: that is where the phone reaches it.</string>
+    <string name="phone_import_steps">Connect your phone to the same network as this device, scan the code or open the address below, then paste the server-list link and tap Send.</string>
+    <string name="phone_import_title">Send a server list from your phone</string>
+    <string name="phone_page_empty">Paste a link first.</string>
+    <string name="phone_page_label">Server list link</string>
+    <string name="phone_page_send">Send</string>
+    <string name="phone_page_sent">Sent. Look at the other screen.</string>
+    <string name="phone_page_title">Send a server list to Ghostlane</string>
     <string name="ping_checking">Checking...</string>
     <string name="ping_connected">Connected %1$dms</string>
     <string name="ping_failed">HTTP ping failed</string>

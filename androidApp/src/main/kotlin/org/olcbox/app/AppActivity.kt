@@ -1,5 +1,6 @@
 package org.olcbox.app
 
+import org.olcbox.app.ui.tv.TelevisionAware
 import android.Manifest
 import android.content.Intent
 import android.os.Build
@@ -70,13 +71,15 @@ class AppActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             AppTheme {
-                AndroidMainScreen(
-                    viewModel = viewModel,
-                    locationViewModel = locationViewModel,
-                    vpnManager = vpnManager,
-                    appUpdateService = updateService,
-                    pendingImportLink = pendingImportLink
-                )
+                TelevisionAware {
+                    AndroidMainScreen(
+                        viewModel = viewModel,
+                        locationViewModel = locationViewModel,
+                        vpnManager = vpnManager,
+                        appUpdateService = updateService,
+                        pendingImportLink = pendingImportLink
+                    )
+                }
             }
         }
         intent?.dataString?.let { pendingImportLink.value = it }
