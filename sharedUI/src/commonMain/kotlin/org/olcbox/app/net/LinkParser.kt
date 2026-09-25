@@ -1,12 +1,26 @@
 package org.olcbox.app.net
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
+
 object LinkParser {
+    /** The schemes [parse] reads; the importer takes a line only when it starts with one. */
+    val SCHEMES = listOf("vless://", "hysteria2://", "hy2://", "trojan://", "ss://", "vmess://")
+
+    fun supports(line: String): Boolean = SCHEMES.any { line.trim().startsWith(it) }
+
     fun parse(line: String): OutboundSpec? {
         val t = line.trim()
         return when {
             t.startsWith("vless://") -> parseVless(t)
             t.startsWith("hysteria2://") -> parseHy2(t, "hysteria2://")
             t.startsWith("hy2://") -> parseHy2(t, "hy2://")
+            t.startsWith("trojan://") -> parseTrojan(t)
+            t.startsWith("ss://") -> parseShadowsocks(t)
+            t.startsWith("vmess://") -> parseVmess(t)
             else -> null
         }
     }
@@ -51,6 +65,7 @@ object LinkParser {
             "grpc" -> TransportSpec.Grpc(
                 p.query["serviceName"] ?: p.query["servicename"].orEmpty()
             )
+            "ws", "httpupgrade" -> streamTransport(type, p.query)!!
             "tcp", "raw" -> TransportSpec.Tcp
             // Keep older unsupported rows readable and stored. They remain
             // visible instead of disappearing during normalization after an
@@ -87,6 +102,135 @@ object LinkParser {
             insecure = p.query["insecure"] == "1" || p.query["insecure"] == "true",
             tag = p.tag.ifBlank { p.host },
         )
+    }
+
+    /**
+     * `trojan://password@host:port?security=tls&sni=…&type=ws&path=…&host=…#tag`, as
+     * Xray and v2rayN share it. Trojan is TLS by definition, so a link without
+     * `security` still gets it; an unknown transport is refused rather than
+     * guessed, since a row that cannot work is worse than no row.
+     */
+    private fun parseTrojan(s: String): OutboundSpec.Trojan? {
+        val p = splitLink(s, "trojan://") ?: return null
+        if (p.userinfo.isBlank()) return null
+        // Reality on Trojan is not what sing-box's Trojan speaks: refused, not dialled as TLS.
+        if (p.query["security"]?.lowercase() == "reality") return null
+        val transport = streamTransport(p.query["type"]?.trim()?.lowercase().orEmpty().ifEmpty { "tcp" }, p.query) ?: return null
+        return OutboundSpec.Trojan(
+            password = urlDecode(p.userinfo),
+            host = p.host,
+            port = p.port,
+            tls = tlsOf(p.query, fallbackSni = p.host),
+            transport = transport,
+            tag = p.tag.ifBlank { p.host },
+        )
+    }
+
+    /**
+     * SIP002: `ss://userinfo@host:port[/][?plugin=…]#tag`, userinfo base64url of
+     * `method:password` or, for the 2022 methods, `method:password` percent-encoded;
+     * and the legacy form, `ss://base64(method:password@host:port)#tag`. A plugin
+     * (obfs, v2ray-plugin) is refused: sing-box would have to run it, and it does not.
+     */
+    private fun parseShadowsocks(s: String): OutboundSpec.Shadowsocks? {
+        val body = s.removePrefix("ss://")
+        val hashIdx = body.indexOf('#')
+        val tag = if (hashIdx >= 0) urlDecode(body.substring(hashIdx + 1)) else ""
+        var main = if (hashIdx >= 0) body.substring(0, hashIdx) else body
+        val qIdx = main.indexOf('?')
+        if (qIdx >= 0) {
+            if (!parseQuery(main.substring(qIdx + 1))["plugin"].isNullOrBlank()) return null
+            main = main.substring(0, qIdx)
+        }
+        main = main.trimEnd('/')
+        val (credentials, hostPort) = if ('@' in main) {
+            val at = main.lastIndexOf('@')
+            val userinfo = urlDecode(main.substring(0, at))
+            (if (':' in userinfo) userinfo else decodeBase64(userinfo) ?: return null) to main.substring(at + 1)
+        } else {
+            val decoded = decodeBase64(main) ?: return null
+            val at = decoded.lastIndexOf('@').takeIf { it > 0 } ?: return null
+            decoded.substring(0, at) to decoded.substring(at + 1)
+        }
+        val method = credentials.substringBefore(':').trim().lowercase()
+        val password = credentials.substringAfter(':', "")
+        if (method !in OutboundSpec.Shadowsocks.METHODS || password.isEmpty()) return null
+        val colon = hostPort.lastIndexOf(':')
+        if (colon <= 0) return null
+        val host = hostPort.substring(0, colon).removePrefix("[").removeSuffix("]")
+        val port = hostPort.substring(colon + 1).toIntOrNull() ?: return null
+        if (host.isBlank()) return null
+        return OutboundSpec.Shadowsocks(method, password, host, port, tag.ifBlank { host })
+    }
+
+    /**
+     * `vmess://base64(json)` in v2rayN's shape: `add`, `port`, `id`, `aid`, `scy`,
+     * `net`, `host`, `path`, `tls`, `sni`, `alpn`, `fp`, `ps`. Numbers arrive as
+     * strings or numbers, depending on who wrote the link. `tcp` with an HTTP
+     * header disguise and the transports sing-box has no counterpart for (kcp,
+     * quic) are refused.
+     */
+    private fun parseVmess(s: String): OutboundSpec.Vmess? {
+        val json = decodeBase64(s.removePrefix("vmess://").trim())?.trim() ?: return null
+        val obj = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return null
+        fun str(key: String): String = (obj[key] as? JsonPrimitive)?.content?.trim().orEmpty()
+        val host = str("add")
+        val port = str("port").toIntOrNull() ?: return null
+        val uuid = str("id")
+        if (host.isBlank() || uuid.isBlank()) return null
+        val net = str("net").lowercase().ifEmpty { "tcp" }
+        if (net == "tcp" && str("type").lowercase().let { it.isNotEmpty() && it != "none" }) return null
+        val query = mapOf("path" to str("path"), "host" to str("host"), "serviceName" to str("path"))
+        val transport = when (net) {
+            "grpc" -> TransportSpec.Grpc(str("path"))
+            else -> streamTransport(net, query) ?: return null
+        }
+        val tls = if (str("tls").lowercase() == "tls") {
+            tlsOf(
+                mapOf("sni" to str("sni").ifEmpty { str("host") }, "alpn" to str("alpn"), "fp" to str("fp")),
+                fallbackSni = host
+            )
+        } else {
+            null
+        }
+        return OutboundSpec.Vmess(
+            uuid = uuid,
+            host = host,
+            port = port,
+            alterId = str("aid").toIntOrNull() ?: 0,
+            security = str("scy").ifEmpty { "auto" },
+            tls = tls,
+            transport = transport,
+            tag = str("ps").ifBlank { host },
+        )
+    }
+
+    /** tcp, ws and httpupgrade, the transports a link can ask for by `type`; null for any other. */
+    private fun streamTransport(type: String, query: Map<String, String>): TransportSpec? = when (type) {
+        "tcp", "raw", "" -> TransportSpec.Tcp
+        "ws" -> TransportSpec.Ws(path = query["path"].orEmpty().ifEmpty { "/" }, host = query["host"].orEmpty())
+        "httpupgrade" -> TransportSpec.HttpUpgrade(path = query["path"].orEmpty().ifEmpty { "/" }, host = query["host"].orEmpty())
+        "grpc" -> TransportSpec.Grpc(query["serviceName"] ?: query["servicename"].orEmpty())
+        else -> null
+    }
+
+    private fun tlsOf(query: Map<String, String>, fallbackSni: String): TlsSpec = TlsSpec(
+        sni = query["sni"].orEmpty().ifEmpty { query["peer"].orEmpty() }.ifEmpty { fallbackSni },
+        insecure = query["allowInsecure"] == "1" || query["allowInsecure"] == "true" ||
+            query["insecure"] == "1" || query["insecure"] == "true",
+        fingerprint = query["fp"]?.trim()?.takeIf { it.isNotEmpty() },
+        alpn = query["alpn"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() },
+    )
+
+    /** Standard or URL-safe base64, padding optional, as links carry it; null for anything else. */
+    @OptIn(ExperimentalEncodingApi::class)
+    private fun decodeBase64(text: String): String? {
+        val compact = text.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+        if (compact.isEmpty()) return null
+        val urlSafe = compact.replace('-', '+').replace('_', '/')
+        return runCatching {
+            Base64.Default.withPadding(Base64.PaddingOption.PRESENT_OPTIONAL).decode(urlSafe).decodeToString()
+        }.getOrNull()
     }
 
     private fun parseQuery(q: String): Map<String, String> =

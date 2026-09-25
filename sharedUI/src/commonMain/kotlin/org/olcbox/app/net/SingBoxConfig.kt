@@ -676,10 +676,7 @@ object SingBoxConfig {
                 put("server", spec.host); put("server_port", spec.port)
                 put("uuid", spec.uuid); put("packet_encoding", "xudp")
                 if (spec.flow != null) put("flow", spec.flow)
-                if (spec.transport is TransportSpec.Grpc) putJsonObject("transport") {
-                    put("type", "grpc")
-                    put("service_name", spec.transport.serviceName)
-                }
+                putTransport(spec.transport)
                 putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
                     putJsonObject("utls") { put("enabled", true); put("fingerprint", spec.fingerprint) }
@@ -724,6 +721,57 @@ object SingBoxConfig {
                     // fingerprint the operator published is NOT being checked.
                     put("insecure", spec.insecure || spec.certPinSha256 != null)
                 }
+            }
+            is OutboundSpec.Trojan -> addJsonObject {
+                put("type", "trojan"); put("tag", "out")
+                put("server", spec.host); put("server_port", spec.port)
+                put("password", spec.password)
+                putTls(spec.tls)
+                putTransport(spec.transport)
+            }
+            is OutboundSpec.Shadowsocks -> addJsonObject {
+                put("type", "shadowsocks"); put("tag", "out")
+                put("server", spec.host); put("server_port", spec.port)
+                put("method", spec.method); put("password", spec.password)
+            }
+            is OutboundSpec.Vmess -> addJsonObject {
+                put("type", "vmess"); put("tag", "out")
+                put("server", spec.host); put("server_port", spec.port)
+                put("uuid", spec.uuid); put("security", spec.security)
+                if (spec.alterId > 0) put("alter_id", spec.alterId)
+                spec.tls?.let { putTls(it) }
+                putTransport(spec.transport)
+            }
+        }
+    }
+
+    /** Ordinary TLS, as Trojan and VMess links ask for it. */
+    private fun JsonObjectBuilder.putTls(tls: TlsSpec) {
+        putJsonObject("tls") {
+            put("enabled", true); put("server_name", tls.sni)
+            if (tls.insecure) put("insecure", true)
+            if (tls.alpn.isNotEmpty()) putJsonArray("alpn") { tls.alpn.forEach { add(it) } }
+            tls.fingerprint?.let { fp ->
+                putJsonObject("utls") { put("enabled", true); put("fingerprint", fp) }
+            }
+        }
+    }
+
+    /** The stream transport, when it is not plain TCP. xhttp never reaches here (Xray's). */
+    private fun JsonObjectBuilder.putTransport(transport: TransportSpec) {
+        when (transport) {
+            TransportSpec.Tcp, is TransportSpec.Xhttp -> Unit
+            is TransportSpec.Grpc -> putJsonObject("transport") {
+                put("type", "grpc")
+                put("service_name", transport.serviceName)
+            }
+            is TransportSpec.Ws -> putJsonObject("transport") {
+                put("type", "ws"); put("path", transport.path)
+                if (transport.host.isNotBlank()) putJsonObject("headers") { put("Host", transport.host) }
+            }
+            is TransportSpec.HttpUpgrade -> putJsonObject("transport") {
+                put("type", "httpupgrade"); put("path", transport.path)
+                if (transport.host.isNotBlank()) put("host", transport.host)
             }
         }
     }

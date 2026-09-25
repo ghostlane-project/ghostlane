@@ -35,6 +35,9 @@ fun wireShape(config: LocationConfig?): String {
         TransportKind.Grpc -> "HTTP/2 gRPC requests"
         TransportKind.Reality -> "a TLS handshake to a real website"
         TransportKind.Tls -> "ordinary HTTPS"
+        TransportKind.Trojan -> "ordinary HTTPS"
+        TransportKind.Vmess -> "an encrypted stream"
+        TransportKind.Shadowsocks -> "an encrypted stream with no handshake"
     }
 }
 
