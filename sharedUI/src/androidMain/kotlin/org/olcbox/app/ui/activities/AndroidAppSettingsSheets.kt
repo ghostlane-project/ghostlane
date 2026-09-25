@@ -474,6 +474,17 @@ private fun ConnectionSettingsContent(
                 enabled = enabled,
                 onClick = onConnectionModeClick
             )
+            // Android's own always-on: the system starts the VPN at boot and
+            // brings it back when it drops, and "Block connections without VPN"
+            // sits beside it. Both are the system's to set, on its VPN screen.
+            val context = LocalContext.current
+            SettingsNavigationRow(
+                title = "Always-on VPN",
+                value = "Start with the phone · Android settings",
+                icon = PkIcons.PowerSettingsNew,
+                enabled = enabled,
+                onClick = { openSystemVpnSettings(context) }
+            )
             // Editing the local proxy credentials/port is plumbing: admin-only.
             if (AdminState.configuratorVisible) {
                 SettingsNavigationRow(
@@ -2424,10 +2435,31 @@ private val RUSSIAN_BYPASS_PACKAGE_PREFIXES = listOf(
     "ru.",
     "com.yandex."
 )
+// The prefixes above catch most Russian apps (ru.sberbankmobile, ru.rostel for
+// Gosuslugi, ru.oneme.app for MAX, ru.nspk.mirpay...). These are the ones they
+// miss, under their real package names: T-Bank is com.idamob.tinkoff.android,
+// not "ru.tinkoff.mb", and Avito is com.avito.android, not "ru.avito", so the
+// preset used to leave the biggest bank and the biggest classifieds app on the
+// VPN. Checked against Google Play and RuStore on 2026-09-25 where they list
+// the app. A name that is not installed matches nothing.
 private val RUSSIAN_BYPASS_PACKAGE_NAMES = setOf(
-    "ru.sberbankmobile",
-    "ru.ozon.app.android",
-    "ru.avito",
-    "ru.vtb24.mobilebanking.android",
-    "ru.tinkoff.mb"
+    "com.idamob.tinkoff.android",
+    "com.avito.android",
+    "com.wildberries.ru",
+    "com.vkontakte.android",
 )
+
+/**
+ * The system's VPN screen, where Android keeps always-on and "Block connections
+ * without VPN" per app. A phone whose settings app has no such screen gets the
+ * general wireless settings instead of nothing.
+ */
+private fun openSystemVpnSettings(context: android.content.Context) {
+    val attempts = listOf(android.provider.Settings.ACTION_VPN_SETTINGS, android.provider.Settings.ACTION_WIRELESS_SETTINGS)
+    for (action in attempts) {
+        val opened = runCatching {
+            context.startActivity(android.content.Intent(action).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        if (opened) return
+    }
+}
