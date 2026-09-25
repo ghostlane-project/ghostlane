@@ -23,7 +23,7 @@ stand side by side in `LICENSE`, as MIT requires. The app's header names the
 protocol rather than the fork: `Ghostlane · OLCRTC CORE`.
 
 It is a client, not a service: you bring a server list from your provider — a
-subscription URL, a QR code, or a pasted link — and the app turns it into
+server-list URL, a QR code, or a pasted link — and the app turns it into
 servers you can connect to. It is free, there is no account, nothing to sign
 up for, and nothing to buy here.
 
@@ -68,11 +68,17 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 | Protocol | Engine |
 | --- | --- |
 | olcRTC — a tunnel inside a WebRTC video call | our own engine fork |
-| VLESS + Reality | sing-box |
-| VLESS gRPC + Reality | sing-box |
-| VLESS over TLS, incl. behind a CDN | sing-box |
+| VLESS + Reality, over TCP or gRPC | sing-box |
+| VLESS over TLS, incl. behind a CDN, over TCP, WebSocket or HTTPUpgrade | sing-box |
 | Hysteria2, with Salamander obfuscation | sing-box |
+| Trojan | sing-box |
+| Shadowsocks, AEAD and 2022 | sing-box |
+| VMess | sing-box |
 | XHTTP | Xray — sing-box has no xhttp transport |
+
+A link that asks for something the app cannot carry — a Shadowsocks plugin or
+stream cipher, Trojan over Reality, VMess over mKCP or QUIC — is left out at
+import rather than added as a server that can never connect.
 
 olcRTC rides four meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz
 and Jitsi. A server list says which one each room is on, and a provider that
@@ -80,7 +86,7 @@ offers one exit over several of them shows up as a server per service.
 SaluteJazz admits a guest to a call's data channels only, so its rooms always
 run over `datachannel`.
 
-One subscription usually carries several. The app groups them by provider,
+One server list usually carries several. The app groups them by provider,
 filters by protocol, and remembers the exit last used.
 
 Hysteria2 rides QUIC, and a carrier that throttles or drops UDP leaves it
@@ -89,30 +95,53 @@ few hundred bytes reach a well-known endpoint, and on two failures moves to the
 same exit over a transport that rides TCP — once per connect, never to another
 exit, and it says so in the log.
 
+**Smart connect**, on Android and the desktop, checks before a connect instead,
+for a server published over several transports. Through each one it asks for a
+`204` and then for 64 KB whole: Russian DPI lets a connection to a foreign
+address carry its first 16–20 KB and then freezes it, so one small request passes
+exactly where browsing then stalls. It takes the first transport that passes,
+starting with the one that worked last time, and ends on olcRTC in the same
+country. When only domestic sites answer — a mobile "whitelist" shutdown — it
+goes to olcRTC first. It never changes the country, and it can be turned off in
+the server-list settings.
+
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ — the matrix below says how.
 
 ## Routing
 
-Two modes, under Settings → Routing, stored beside the server lists and the same
-on every platform:
+Settings → Routing, stored beside the server lists:
 
 | Mode | What goes where |
 | --- | --- |
 | All traffic through the tunnel | Everything. The exit is the server's, for every connection. |
-| Bypass Russia | Russian sites, `.ru` domains and the local network go straight out; everything else rides the tunnel, name resolution included. |
+| Bypass Russia | Russian sites, Russian top-level domains and the local network go straight out; everything else rides the tunnel, name resolution included. |
+| Bypass Iran | The same, for Iranian destinations. |
+| Bypass China | The same, for Chinese destinations. |
+| Only blocked sites through the tunnel | The inverse: sites blocked in Russia, and services that shut Russian users out, ride the tunnel; everything else goes straight out. |
 
-The three rule-sets Bypass Russia needs — `geosite-category-ru`,
-`geosite-tld-ru`, `geoip-ru` — ship inside the app and are pinned by hash, so the
-mode needs nothing from the network to start working. On the networks it is for,
-the lists are as likely to be unreachable as anything else.
+In any mode you can add rules of your own: a domain, which covers its
+subdomains, or an address or prefix that always goes direct or always through
+the tunnel. They win over the mode's lists.
 
-It applies in the iOS and Android tunnels, in desktop proxy mode and in the macOS
-tunnel. The Linux and Windows tunnels stay global — the cores run unprivileged
-there, and a socket meant to go direct would re-enter the policy-routed tun — and
-the app greys the choice out with that reason rather than quietly ignoring it. An
-olcRTC room on iOS is global too: hev-socks5-tunnel hands everything to the
-engine's SOCKS port and no router sits in that path.
+The lists ship inside the app and are pinned by hash, so no mode needs anything
+from the network to start working; on the networks they are for, the lists are
+as likely to be unreachable as anything else. The bypass modes use v2fly's
+`category-ru`, `tld-ru` and `geoip-ru`; `category-ir` and `geoip-ir`; `cn`,
+`tld-cn` and `geoip-cn`. Blocked-only uses
+[Re:filter](https://github.com/1andrevich/Re-filter-lists) (MIT), which lists
+whole address ranges of some large services, so other sites hosted there ride
+the tunnel too.
+
+Where it applies:
+
+| Platform | What applies |
+| --- | --- |
+| Android, TUN and proxy | Every mode and your rules. An olcRTC room applies them itself, from the engine's direct rules, which say "these go direct" and nothing else. So in a room blocked-only carries everything, and a tunnel rule can only take a site out of the region's list: a site under a whole-TLD entry such as `domain:ru` stays direct |
+| iOS | All traffic, or Bypass Russia; an olcRTC room applies it from the engine's direct rules |
+| macOS, proxy and tunnel | Every mode and your rules |
+| Windows | Every mode and your rules in proxy mode. The Windows tunnel carries everything, and the routing screen says to use proxy mode for it |
+| Linux | olcRTC rooms: a bypass and your rules, as in a room on Android. The engine runs as root there, and root keeps its own route out of the tunnel. Other servers carry everything: their cores run as the user, and a socket meant to go direct would re-enter the policy-routed tun. The routing screen says so and does not offer blocked-only |
 
 ## Server lists
 
@@ -120,19 +149,39 @@ You bring the list; the app turns it into servers. Paste a link, scan a QR code,
 or open a file. A provider's panel or bot can also hand over a one-tap link:
 
 ```text
-proofkit://add?url=<payload>
+ghostlane://add?url=<payload>
+ghostlane://add/<server-list URL>
 https://proofkit.org/add#<payload>
 ```
 
-`proofkit` there is the scheme the app registered under its former name. It is
-kept because links already handed out by providers, and copies already
-installed, use it; renaming it would break them for no gain. The web spelling is
+The path form is the one provider pages write for every client, the URL raw or
+percent-encoded. `proofkit://`, the scheme the app registered under its former
+name, still works the same way. It is kept because links already handed out by
+providers, and copies already installed, use it; dropping it would break them
+for no gain. The web spelling is
 for the places that will not open a custom scheme: a phone with the app
 installed opens it in the app, a phone without it lands on a page with the
 downloads. There the payload rides the fragment on purpose — a fragment
 never leaves the browser, so the list, which is a credential, is in nobody's
 access log. For the same reason the app shows where a list came from and never
 reads the link itself back out.
+
+A provider can say more in the list's own HTTP headers, in the forms other
+clients read:
+- `profile-title`;
+- `subscription-userinfo` (traffic and expiry);
+- `support-url` and `profile-web-page-url`;
+- `profile-update-interval`;
+- `announce`, a short note shown under the list on Android and the desktop.
+
+Two headers keep a list alive when its address is blocked:
+- `fallback-url` names a spare address, which the app asks when the usual one
+  does not answer;
+- `new-url` or `new-domain` moves the list for good.
+
+Both are honoured only from an HTTPS answer and only to an HTTPS address: over
+plain HTTP anyone on the path could write them, and a moved list never comes
+back by itself.
 
 ## Status
 
@@ -141,7 +190,7 @@ Shipping on every platform.
 | Platform | Where it comes from |
 | --- | --- |
 | iOS | [TestFlight](https://testflight.apple.com/join/sU7aTHQv) gets every release the day it is cut. The App Store, as [Ghostlane](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) (listed under its former name until the rename is approved), follows after App Review, so it can be a few versions behind |
-| Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now |
+| Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now. The same app installs on Android TV |
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
 | Linux | AppImage |
@@ -208,11 +257,16 @@ The project does not support or encourage such use.
 
 ## Features
 - One tap to connect, with the session's elapsed time and traffic on screen.
+- In English, Russian, Chinese and Persian, following the system's language;
+  Persian is laid out right to left on Android.
 - Server lists by link, QR code or file; grouped, foldable, and refreshed on
-  a schedule you choose. A `proofkit://` or `proofkit.org/add` link imports one
-  without a paste.
-- What the provider says about your plan — quota, expiry, its own support and
-  web links — read from the server list's own headers.
+  a schedule you choose. A `ghostlane://`, `proofkit://` or `proofkit.org/add`
+  link imports one without a paste.
+- What the provider says about your plan — quota, expiry, a short note, its own
+  support and web links — read from the server list's own headers, and a list
+  that survives its provider's blocked domain (see Server lists).
+- Smart connect: another transport when one is blocked, olcRTC in the same
+  country when nothing else gets through (Android and the desktop).
 - olcRTC rooms carry their occupancy on the board, and say out loud when one is
   full or its key is no longer good rather than failing at connect.
 - olcRTC on a server that moves its clients between rooms: the next room is read
@@ -231,13 +285,28 @@ The project does not support or encourage such use.
 - A failure that says what failed: a link asking for a transport its provider
   cannot carry, a dead key, an empty room, a tunnel that came up but carried
   nothing.
-- Routing modes: everything through the tunnel, or Russia and the local network
-  direct.
+- Routing: everything through the tunnel; Russia, Iran or China and the local
+  network direct; or only blocked sites through the tunnel. Rules of your own on
+  top (see Routing).
+- Servers for your router: each server of a list as its link or a sing-box
+  outbound for Podkop on OpenWrt, or as an Xray outbound for XKeen on Keenetic.
+  Encrypted server lists do not offer it: their provider chose that their
+  servers are not read out of them.
 - Diagnostics log with export, and a failed connection that says why. Server
   addresses are replaced by short tags before a line reaches the log, so the
   file is safe to send to anyone and still says which hop failed.
 - TUN and proxy modes wherever the platform has both, SOCKS5 listen address and
-  credentials, Android split tunneling.
+  credentials, Android split tunneling with a preset for Russian apps that
+  refuse to work through a VPN.
+- Android: always-on VPN (the connection comes up by itself after a restart),
+  and a quick-settings tile.
+- Android TV: a launcher entry, a focus mark you can see from the sofa, and a
+  server list sent from your phone. The TV shows a code, and the phone opens a
+  one-page form on the same home network.
+- On Android and iPhone, the local SOCKS ports between the tunnel and its
+  engine ask for a login only the app knows, so another app on the phone cannot
+  use them or learn the exit. On Android the port also changes with every
+  connect.
 - Network migration, reconnect handling, and watchdog recovery.
 - No account, no analytics, nothing collected.
 
