@@ -1,5 +1,11 @@
 package org.olcbox.app.ui.features.home
 
+import org.olcbox.app.data.datasource.createProxyHttpClient
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.net.SmartConnect
+import org.olcbox.app.net.TransportGroup
+import org.olcbox.app.net.WhitelistCheck
+import org.olcbox.app.net.transportKind
 import org.olcbox.app.net.ImportLink
 import org.olcbox.app.net.isPartnerLink
 import org.olcbox.app.net.LocationKind
@@ -108,6 +114,103 @@ class HomeScreenViewModel(
 
     /** Connect in the order already measured and displayed by the home screen. */
     fun connectLowest(preferredLocationIds: List<String>? = null) = startLowest(preferredLocationIds)
+
+    /**
+     * Smart connect (docs/superpowers/specs/2026-09-25-smart-connect-design.md): run
+     * [active]'s plan, make the first transport that gets through the active one, then
+     * connect. In [selectionJob], so a second tap cancels it as it cancels Lowest.
+     */
+    private fun startSmartConnect(active: LocationEntry) {
+        cancelAutomaticSelection()
+        _state.update { it.copy(isVpnLoading = true, failure = null, progress = null) }
+        selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                chooseTransport(active)
+                vpnManager.startVpn()
+            } catch (e: CancellationException) {
+                _state.update { it.copy(progress = null) }
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(isVpnLoading = false, progress = null, failure = e.message ?: "Could not start the connection")
+                }
+            } finally {
+                if (selectionJob === currentCoroutineContext()[Job]) selectionJob = null
+            }
+        }
+        selectionJob?.start()
+    }
+
+    /**
+     * Which of [active]'s transports to connect, made the active location before the
+     * VPN starts. Leaves [active] as it is when there is nothing to choose between or
+     * nothing got through: smart connect never refuses to connect.
+     */
+    internal suspend fun chooseTransport(active: LocationEntry) {
+        val settings = locationsRepository.getSubscriptionSettings()
+        val all = locationsRepository.getAllLocations()
+        val key = SmartConnect.groupKey(active)
+        val lastWinner = settings.lastKnownGoodTransport[key]
+        if (SmartConnect.plan(active, all, lastWinner).isEmpty()) return
+
+        // Only worth asking when there is an olcRTC room to go to.
+        val whitelist = TransportGroup.olcrtcFallbacks(active, all).isNotEmpty() && whitelistCheck()
+        val plan = SmartConnect.plan(active, all, lastWinner, whitelist)
+        var blocked: String? = null
+        for (step in plan) {
+            val label = step.entry.location.transportKind().label()
+            val through = when (step) {
+                is SmartConnect.Step.Connect -> true
+                is SmartConnect.Step.Probe -> {
+                    _state.update {
+                        it.copy(progress = blocked?.let { b -> "$b is blocked here, checking $label…" } ?: "Checking $label…")
+                    }
+                    vpnManager.probeTransport(step.entry.location) ?: return
+                }
+            }
+            if (!through) {
+                blocked = label
+                continue
+            }
+            if (step.entry.storageId != active.storageId) {
+                locationsRepository.setActiveLocationId(step.entry.storageId)
+                loadCurrentConfigNow()
+            }
+            locationsRepository.saveSubscriptionSettings(
+                settings.copy(lastKnownGoodTransport = settings.lastKnownGoodTransport + (key to step.entry.storageId))
+            )
+            _state.update {
+                it.copy(
+                    progress = when {
+                        step is SmartConnect.Step.Connect && whitelist -> "Only domestic sites answer here: connecting through $label"
+                        step is SmartConnect.Step.Connect -> "Nothing else got through: connecting through $label"
+                        step.entry.storageId != active.storageId -> "Connecting through $label"
+                        else -> null
+                    }
+                )
+            }
+            return
+        }
+        _state.update { it.copy(progress = "Could not check a transport: connecting as chosen") }
+    }
+
+    /** Asked before a plan that has an olcRTC room to go to; a test puts its own answer here. */
+    internal var whitelistCheck: suspend () -> Boolean = { whitelistMode() }
+
+    private suspend fun whitelistMode(): Boolean {
+        val client = createProxyHttpClient(
+            null,
+            connectTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            requestTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            socketTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            followRedirects = false
+        )
+        return try {
+            WhitelistCheck.detect(client)
+        } finally {
+            client.close()
+        }
+    }
 
     /** Keep the measured order while the platform obtains VPN permission. */
     fun queueLowestAfterPermission(preferredLocationIds: List<String>) {
@@ -409,9 +512,11 @@ class HomeScreenViewModel(
                         _state.update { it.copy(isVpnLoading = false, failure = why) }
                         return@launch
                     }
-                    if (locationsRepository.getSubscriptionSettings()
-                            .lowestEnabledFor(active.subscriptionUrl)) {
+                    val settings = locationsRepository.getSubscriptionSettings()
+                    if (settings.lowestEnabledFor(active.subscriptionUrl)) {
                         startLowest()
+                    } else if (settings.smartConnect && vpnManager.canProbeTransports) {
+                        startSmartConnect(active)
                     } else {
                         vpnManager.startVpn()
                     }
@@ -732,7 +837,9 @@ data class HomeScreenState(
     val canStartVpn: Boolean,
     val startBlockedReason: String?,
     /** Why the last connection attempt failed, or null when nothing has. */
-    val failure: String? = null
+    val failure: String? = null,
+    /** What smart connect is doing ("Checking Reality…"), until the connection settles. */
+    val progress: String? = null
 ) {
     /**
      * The one line worth putting under the status pill: what went wrong, or
@@ -747,7 +854,7 @@ data class HomeScreenState(
      * server without our key stays silent, which the engine cannot tell from an
      * older server, so the protocol text is replaced by the one remedy that works.
      */
-    fun notice(keyGone: Boolean = false): String? = failure
+    fun notice(keyGone: Boolean = false): String? = progress ?: failure
         ?.let {
             val revocable = it == OlcrtcFailure.PROTOCOL ||
                 it == OlcrtcFailure.KEY ||
@@ -759,7 +866,7 @@ data class HomeScreenState(
     /** The state after the platform reports [status]. Pure, so it can be tested. */
     fun applying(status: VpnStatus): HomeScreenState = when (status) {
         VpnStatus.Connected ->
-            copy(isVpnConnected = true, isVpnLoading = false, failure = null)
+            copy(isVpnConnected = true, isVpnLoading = false, failure = null, progress = null)
 
         VpnStatus.Connecting ->
             copy(isVpnConnected = false, isVpnLoading = true, failure = null)
@@ -773,10 +880,10 @@ data class HomeScreenState(
         // and a red box about a room you had given up on stayed for the rest
         // of the session.
         VpnStatus.Stopping ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = null)
+            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null)
 
         VpnStatus.Disconnected ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = null)
+            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null)
 
         // The reason used to stop here. The extension goes to real trouble to
         // explain itself — it writes a stage breadcrumb the app reads back
@@ -785,7 +892,7 @@ data class HomeScreenState(
         // returns to START and says nothing. The commonest case of all is a
         // user who declined the VPN permission prompt.
         is VpnStatus.Error ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = OlcrtcFailure.describe(status.message))
+            copy(isVpnConnected = false, isVpnLoading = false, failure = OlcrtcFailure.describe(status.message), progress = null)
     }
 }
 

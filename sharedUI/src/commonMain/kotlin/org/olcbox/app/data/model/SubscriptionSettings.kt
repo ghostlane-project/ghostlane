@@ -77,7 +77,19 @@ data class SubscriptionSettings(
 
     /** Allow folding a subscription's rows away. Off means always expanded. */
     @SerialName("collapsible")
-    val collapsible: Boolean = true
+    val collapsible: Boolean = true,
+
+    /**
+     * Smart connect: when the exit the user connects is published over several
+     * transports, try them in turn and end on olcRTC of the same country
+     * (SmartConnect). On by default; off is exactly the old behaviour.
+     */
+    @SerialName("smart_connect")
+    val smartConnect: Boolean = true,
+
+    /** The transport that last got through, per exit (SmartConnect.groupKey → storageId). */
+    @SerialName("last_known_good_transport")
+    val lastKnownGoodTransport: Map<String, String> = emptyMap()
 ) {
     fun normalized(): SubscriptionSettings = copy(
         updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),

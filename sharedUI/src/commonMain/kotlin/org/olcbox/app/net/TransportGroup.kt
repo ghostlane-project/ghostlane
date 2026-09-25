@@ -53,4 +53,32 @@ object TransportGroup {
 
     fun groupByExit(all: List<LocationEntry>): Map<Key, List<LocationEntry>> =
         all.filter { it.location.kind != LocationKind.Olcrtc }.groupBy { keyOf(it) }
+
+    /**
+     * The country a line serves, from its name: a core line's base name leads with
+     * it (`US via RU | 0.13TON/GB`, `DE Direct | …`) and an olcRTC line is named by
+     * it (`DE · olcRTC`, `DE · olcRTC · WB`). Two capital letters and nothing else,
+     * or null: a name that does not say its country gets no olcRTC step.
+     */
+    fun countryOf(name: String): String? {
+        val first = name.trim().substringBefore(' ').substringBefore('|').trim()
+        return first.takeIf { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+    }
+
+    /**
+     * The olcRTC lines of [entry]'s subscription for [entry]'s own country, in the
+     * order the subscription lists them (Telemost, WB, SaluteJazz). The smart
+     * connect's last resort: the same country, never another one, so no line for
+     * this country means none at all.
+     */
+    fun olcrtcFallbacks(entry: LocationEntry, all: List<LocationEntry>): List<LocationEntry> {
+        if (entry.location.kind == LocationKind.Olcrtc) return emptyList()
+        val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val country = countryOf(keyOf(entry).baseName) ?: return emptyList()
+        return all.filter { candidate ->
+            candidate.location.kind == LocationKind.Olcrtc &&
+                candidate.subscriptionUrl?.trim() == url &&
+                countryOf(candidate.name.ifBlank { candidate.location.displayName() }) == country
+        }
+    }
 }
