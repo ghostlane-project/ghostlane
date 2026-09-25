@@ -1,5 +1,9 @@
 package org.olcbox.app.ui.components.kit
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_back
+import multiplatform_app.sharedui.generated.resources.change_sorting
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -224,12 +228,12 @@ fun PkScreenHeader(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .clickable(onClickLabel = "Back", role = Role.Button) { onBack() },
+                .clickable(onClickLabel = stringResource(Res.string.action_back), role = Role.Button) { onBack() },
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = PkIcons.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(Res.string.action_back),
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(21.dp)
             )
@@ -449,7 +453,7 @@ fun PkBoardHead(
                             MaterialTheme.colorScheme.outlineVariant,
                             RoundedCornerShape(10.dp)
                         )
-                        .clickable(onClickLabel = "Change sorting", role = Role.Button) {
+                        .clickable(onClickLabel = stringResource(Res.string.change_sorting), role = Role.Button) {
                             onSortClick()
                         }
                         .padding(horizontal = 11.dp, vertical = 8.dp),

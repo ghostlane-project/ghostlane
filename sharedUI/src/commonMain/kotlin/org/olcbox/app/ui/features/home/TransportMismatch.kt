@@ -3,6 +3,7 @@ package org.olcbox.app.ui.features.home
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.ui.components.kit.fill
 
 /**
  * A link can ask for a transport its provider cannot carry — vp8channel on a
@@ -13,20 +14,29 @@ import org.olcbox.app.data.model.LocationMetadata
  * that look like a broken app (olcbox#15).
  */
 object TransportMismatch {
+    /**
+     * [caption]'s words (what the link asked for, the provider, what it runs), and
+     * [explanation]'s (the same and the transport to set). English; a screen passes
+     * its string resource, which says the same in the user's language.
+     */
+    const val CAPTION = "LINK ASKS FOR %1\$s · %2\$s RUNS %3\$s"
+    const val EXPLANATION = "This link asks for %1\$s, and Ghostlane runs %2\$s rooms over %3\$s. " +
+        "Set the server's transport to %4\$s, then connect."
+
     /** One line for the room card, in the board's own voice. */
-    fun caption(entry: LocationEntry): String? = caption(entry.location, entry.metadata)
+    fun caption(entry: LocationEntry, pattern: String = CAPTION): String? =
+        caption(entry.location, entry.metadata, pattern)
 
     /** The same, for a board row that carries the config and metadata apart. */
-    fun caption(location: LocationConfig?, metadata: LocationMetadata?): String? =
+    fun caption(location: LocationConfig?, metadata: LocationMetadata?, pattern: String = CAPTION): String? =
         parts(location, metadata)?.let { (asked, provider, runs) ->
-            "LINK ASKS FOR ${asked.uppercase()} · ${provider.uppercase()} RUNS ${runs.uppercase()}"
+            pattern.fill(asked.uppercase(), provider.uppercase(), runs.uppercase())
         }
 
     /** The sentence the connect button answers with, and what to do about it. */
-    fun explanation(entry: LocationEntry): String? =
+    fun explanation(entry: LocationEntry, pattern: String = EXPLANATION): String? =
         parts(entry.location, entry.metadata)?.let { (asked, provider, runs) ->
-            "This link asks for $asked, and Ghostlane runs $provider rooms over $runs. " +
-                "Set the server's transport to ${entry.location.transport}, then connect."
+            pattern.fill(asked, provider, runs, entry.location.transport)
         }
 
     private fun parts(location: LocationConfig?, metadata: LocationMetadata?): Triple<String, String, String>? {

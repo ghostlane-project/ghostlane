@@ -1,5 +1,11 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_cancel
+import multiplatform_app.sharedui.generated.resources.admin_enter_code
+import multiplatform_app.sharedui.generated.resources.admin_incorrect
+import multiplatform_app.sharedui.generated.resources.admin_unlock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -24,7 +30,7 @@ fun AdminPasswordDialog(
     var error by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Enter access code") },
+        title = { Text(stringResource(Res.string.admin_enter_code)) },
         text = {
             OutlinedTextField(
                 value = pw,
@@ -32,14 +38,14 @@ fun AdminPasswordDialog(
                 singleLine = true,
                 isError = error,
                 visualTransformation = PasswordVisualTransformation(),
-                supportingText = if (error) ({ Text("Incorrect") }) else null,
+                supportingText = if (error) ({ Text(stringResource(Res.string.admin_incorrect)) }) else null,
             )
         },
         confirmButton = {
             TextButton(onClick = { if (onSubmit(pw)) onDismiss() else error = true }) {
-                Text("Unlock")
+                Text(stringResource(Res.string.admin_unlock))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.action_cancel)) } },
     )
 }

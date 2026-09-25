@@ -1,5 +1,9 @@
 package org.olcbox.app.update
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.update_allow_install
+import multiplatform_app.sharedui.generated.resources.update_installing
+import org.jetbrains.compose.resources.getString
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -46,7 +50,7 @@ class AndroidUpdateInstaller(
         return runCatching {
             if (!canRequestPackageInstalls()) {
                 openUnknownSourcesSettings().getOrThrow()
-                return@runCatching "Allow Ghostlane to install updates, then tap Download again"
+                return@runCatching getString(Res.string.update_allow_install)
             }
 
             val file = download(asset, onProgress).getOrThrow()
@@ -63,7 +67,7 @@ class AndroidUpdateInstaller(
                     }
                 )
             }
-            "Installing ${asset.name}"
+            getString(Res.string.update_installing, asset.name)
         }
     }
 

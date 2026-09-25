@@ -1,5 +1,9 @@
 package org.olcbox.app.ui.features.locations.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.measure_latency
+import multiplatform_app.sharedui.generated.resources.refresh_server_list
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -55,7 +59,7 @@ fun SubscriptionRefreshButton(
 
     PkIconButton(
         icon = Icons.Rounded.Refresh,
-        contentDescription = "Update server list",
+        contentDescription = stringResource(Res.string.refresh_server_list),
         onClick = onClick,
         modifier = modifier.rotate(rotation),
         size = 32,
@@ -97,7 +101,7 @@ fun LatencyButton(
 
     PkIconButton(
         icon = PkIcons.Bolt,
-        contentDescription = "Measure latency",
+        contentDescription = stringResource(Res.string.measure_latency),
         onClick = onClick,
         modifier = modifier,
         size = 32,

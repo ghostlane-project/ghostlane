@@ -1,5 +1,11 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_download
+import multiplatform_app.sharedui.generated.resources.action_later
+import multiplatform_app.sharedui.generated.resources.update_available
+import multiplatform_app.sharedui.generated.resources.update_size_unknown
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,7 +62,7 @@ fun ApplicationUpdateOfferSheet(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Update available",
+                    text = stringResource(Res.string.update_available),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -84,7 +90,7 @@ fun ApplicationUpdateOfferSheet(
                         fontSize = 15.sp
                     )
                     Text(
-                        text = info.asset.sizeBytes?.formatBytes() ?: "Size unknown",
+                        text = info.asset.sizeBytes?.formatBytes() ?: stringResource(Res.string.update_size_unknown),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp
                     )
@@ -104,14 +110,14 @@ fun ApplicationUpdateOfferSheet(
                     modifier = Modifier.weight(1f),
                     enabled = downloadProgress == null
                 ) {
-                    Text("Later")
+                    Text(stringResource(Res.string.action_later))
                 }
                 Button(
                     onClick = onDownload,
                     modifier = Modifier.weight(1f),
                     enabled = downloadProgress == null
                 ) {
-                    Text("Download")
+                    Text(stringResource(Res.string.action_download))
                 }
             }
         }

@@ -1,5 +1,39 @@
 package org.olcbox.app.ui.components.kit
 
+import multiplatform_app.sharedui.generated.resources.action_cancel_caps
+import multiplatform_app.sharedui.generated.resources.action_connect_caps
+import multiplatform_app.sharedui.generated.resources.action_connect_via_caps
+import multiplatform_app.sharedui.generated.resources.action_disconnect_caps
+import multiplatform_app.sharedui.generated.resources.action_leave_caps
+import multiplatform_app.sharedui.generated.resources.action_room_full_caps
+import multiplatform_app.sharedui.generated.resources.action_take_seat_caps
+import multiplatform_app.sharedui.generated.resources.action_take_seat_in_caps
+import multiplatform_app.sharedui.generated.resources.board_rooms
+import multiplatform_app.sharedui.generated.resources.board_servers
+import multiplatform_app.sharedui.generated.resources.no_ping
+import multiplatform_app.sharedui.generated.resources.onboarding_add_list_caps
+import multiplatform_app.sharedui.generated.resources.ping_ms
+import multiplatform_app.sharedui.generated.resources.seats_free
+import multiplatform_app.sharedui.generated.resources.seats_full
+import multiplatform_app.sharedui.generated.resources.sort_as_served_caps
+import multiplatform_app.sharedui.generated.resources.sort_az_caps
+import multiplatform_app.sharedui.generated.resources.sort_ping_caps
+import multiplatform_app.sharedui.generated.resources.wire_grpc
+import multiplatform_app.sharedui.generated.resources.wire_https
+import multiplatform_app.sharedui.generated.resources.wire_hysteria2
+import multiplatform_app.sharedui.generated.resources.wire_olcrtc
+import multiplatform_app.sharedui.generated.resources.wire_reality
+import multiplatform_app.sharedui.generated.resources.wire_stream
+import multiplatform_app.sharedui.generated.resources.wire_stream_no_handshake
+import multiplatform_app.sharedui.generated.resources.wire_unknown
+import multiplatform_app.sharedui.generated.resources.wire_xhttp
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_collapse
+import multiplatform_app.sharedui.generated.resources.action_expand
+import multiplatform_app.sharedui.generated.resources.board_key_gone_caps
+import multiplatform_app.sharedui.generated.resources.measure_latency
+import multiplatform_app.sharedui.generated.resources.room_your_seat_caps
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -283,7 +317,7 @@ fun PkRoomCard(
             // else — that the session running right now is on this card.
             if (connectedHere) {
                 Spacer(Modifier.width(8.dp))
-                PkBadge(text = "YOUR SEAT", highlighted = true)
+                PkBadge(text = stringResource(Res.string.room_your_seat_caps), highlighted = true)
             }
             // The title carries the weight, so nothing after it is pushed apart on
             // its own — without this the tag and the seat count ran together as
@@ -306,7 +340,8 @@ fun PkRoomCard(
                 pingMs = pingMs,
                 isMeasuring = isMeasuring,
                 failed = isOffline,
-                connectedHere = connectedHere
+                connectedHere = connectedHere,
+                words = boardWords()
             )
             Text(
                 text = ping.label,
@@ -329,7 +364,7 @@ fun PkRoomCard(
         // revoked key look like a broken app.
         if (keyGone) {
             Text(
-                text = "KEY NO LONGER VALID · REFRESH THIS LIST",
+                text = stringResource(Res.string.board_key_gone_caps),
                 style = pkMono(9, 1.1),
                 color = palette.accent2,
                 maxLines = 1,
@@ -390,7 +425,7 @@ fun PkRoomCard(
                             .clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .clickable(
-                                onClickLabel = "Measure latency",
+                                onClickLabel = stringResource(Res.string.measure_latency),
                                 role = Role.Button
                             ) { onMeasure() }
                             .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -453,7 +488,7 @@ fun PkGroupHeader(
                 .then(
                     if (collapsible) {
                         Modifier.clickable(
-                            onClickLabel = if (collapsed) "Expand" else "Collapse",
+                            onClickLabel = stringResource(if (collapsed) Res.string.action_expand else Res.string.action_collapse),
                             role = Role.Button
                         ) { onToggle() }
                     } else {
@@ -584,3 +619,35 @@ fun PkPlanBar(
         }
     }
 }
+
+/** [BoardWords] in the user's language. */
+@Composable
+fun boardWords(): BoardWords = BoardWords(
+    wireUnknown = stringResource(Res.string.wire_unknown),
+    wireOlcrtc = stringResource(Res.string.wire_olcrtc),
+    wireHysteria2 = stringResource(Res.string.wire_hysteria2),
+    wireXhttp = stringResource(Res.string.wire_xhttp),
+    wireGrpc = stringResource(Res.string.wire_grpc),
+    wireReality = stringResource(Res.string.wire_reality),
+    wireHttps = stringResource(Res.string.wire_https),
+    wireStream = stringResource(Res.string.wire_stream),
+    wireStreamNoHandshake = stringResource(Res.string.wire_stream_no_handshake),
+    pingMs = stringResource(Res.string.ping_ms),
+    noPing = stringResource(Res.string.no_ping),
+    seatsFull = stringResource(Res.string.seats_full),
+    seatsFree = stringResource(Res.string.seats_free),
+    addServerList = stringResource(Res.string.onboarding_add_list_caps),
+    cancel = stringResource(Res.string.action_cancel_caps),
+    leave = stringResource(Res.string.action_leave_caps),
+    disconnect = stringResource(Res.string.action_disconnect_caps),
+    roomFull = stringResource(Res.string.action_room_full_caps),
+    takeSeatIn = stringResource(Res.string.action_take_seat_in_caps),
+    takeSeat = stringResource(Res.string.action_take_seat_caps),
+    connectVia = stringResource(Res.string.action_connect_via_caps),
+    connect = stringResource(Res.string.action_connect_caps),
+    rooms = stringResource(Res.string.board_rooms),
+    servers = stringResource(Res.string.board_servers),
+    sortAsServed = stringResource(Res.string.sort_as_served_caps),
+    sortPing = stringResource(Res.string.sort_ping_caps),
+    sortAlphabetical = stringResource(Res.string.sort_az_caps)
+)

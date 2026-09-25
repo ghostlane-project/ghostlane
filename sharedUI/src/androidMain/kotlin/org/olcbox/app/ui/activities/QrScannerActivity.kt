@@ -1,5 +1,18 @@
 package org.olcbox.app.ui.activities
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.camera_permission_denied
+import multiplatform_app.sharedui.generated.resources.camera_unavailable
+import multiplatform_app.sharedui.generated.resources.qr_close
+import multiplatform_app.sharedui.generated.resources.qr_ready
+import multiplatform_app.sharedui.generated.resources.qr_ready_hint
+import multiplatform_app.sharedui.generated.resources.qr_scan_subtitle
+import multiplatform_app.sharedui.generated.resources.qr_scan_title
+import org.jetbrains.compose.resources.getString as resourceString
+import org.jetbrains.compose.resources.StringResource
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
@@ -90,7 +103,14 @@ class QrScannerActivity : ComponentActivity() {
             hasCameraPermission = true
             maybeStartCamera()
         } else {
-            Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show()
+            closeWith(Res.string.camera_permission_denied)
+        }
+    }
+
+    /** Says [message] and closes the scanner; the resource is read in a coroutine, so both happen there. */
+    private fun closeWith(message: StringResource) {
+        lifecycleScope.launch {
+            Toast.makeText(this@QrScannerActivity, resourceString(message), Toast.LENGTH_SHORT).show()
             finish()
         }
     }
@@ -136,8 +156,7 @@ class QrScannerActivity : ComponentActivity() {
                 val provider = runCatching { cameraProviderFuture.get() }
                     .getOrElse {
                         cameraStarted = false
-                        Toast.makeText(this, "Camera unavailable", Toast.LENGTH_SHORT).show()
-                        finish()
+                        closeWith(Res.string.camera_unavailable)
                         return@addListener
                     }
                 cameraProvider = provider
@@ -164,8 +183,7 @@ class QrScannerActivity : ComponentActivity() {
                     )
                 }.onFailure {
                     cameraStarted = false
-                    Toast.makeText(this, "Camera unavailable", Toast.LENGTH_SHORT).show()
-                    finish()
+                    closeWith(Res.string.camera_unavailable)
                 }
             },
             ContextCompat.getMainExecutor(this)
@@ -315,12 +333,12 @@ private fun QrScannerTopBar(onClose: () -> Unit) {
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Scan QR",
+                    text = stringResource(Res.string.qr_scan_title),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "server list or location URI",
+                    text = stringResource(Res.string.qr_scan_subtitle),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -330,7 +348,7 @@ private fun QrScannerTopBar(onClose: () -> Unit) {
             IconButton(onClick = onClose) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
-                    contentDescription = "Close scanner",
+                    contentDescription = stringResource(Res.string.qr_close),
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
@@ -422,13 +440,13 @@ private fun QrScannerStatusPanel(modifier: Modifier = Modifier) {
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Ready to scan",
+                        text = stringResource(Res.string.qr_ready),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Server list or location URI",
+                        text = stringResource(Res.string.qr_ready_hint),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -1,5 +1,14 @@
 package org.olcbox.app.ui.features.home.components
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_export
+import multiplatform_app.sharedui.generated.resources.action_share
+import multiplatform_app.sharedui.generated.resources.logs_debug
+import multiplatform_app.sharedui.generated.resources.logs_debug_note
+import multiplatform_app.sharedui.generated.resources.logs_scrub_note
+import multiplatform_app.sharedui.generated.resources.logs_scrubbed
+import multiplatform_app.sharedui.generated.resources.settings_diagnostics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -37,8 +46,8 @@ fun LogsSheet(
     onDismiss: () -> Unit
 ) {
     PkBottomSheet(
-        title = "Diagnostics",
-        subtitle = "Scrubbed · safe to send",
+        title = stringResource(Res.string.settings_diagnostics),
+        subtitle = stringResource(Res.string.logs_scrubbed),
         onDismiss = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -52,9 +61,9 @@ fun LogsSheet(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Detailed debug logs", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(Res.string.logs_debug), style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Record DNS, routing and connection decisions. Changing this reconnects an active tunnel.",
+                            stringResource(Res.string.logs_debug_note),
                             style = MaterialTheme.typography.bodySmall,
                             color = LocalPkPalette.current.textMuted
                         )
@@ -74,9 +83,7 @@ fun LogsSheet(
             // Says what the scrubber does, where a user decides whether to send
             // the file. The guarantee is worth nothing if it is only in the code.
             Text(
-                text = "Server addresses are replaced by short tags before a line " +
-                    "reaches the log, so the file is safe to send and still says " +
-                    "which hop failed.",
+                text = stringResource(Res.string.logs_scrub_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = LocalPkPalette.current.textMuted
             )
@@ -85,13 +92,13 @@ fun LogsSheet(
 
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 PkSheetButton(
-                    label = "Export",
+                    label = stringResource(Res.string.action_export),
                     onClick = onSaveClick,
                     enabled = logs.isNotEmpty(),
                     modifier = Modifier.weight(1f)
                 )
                 PkSheetButton(
-                    label = "Share",
+                    label = stringResource(Res.string.action_share),
                     onClick = onShareClick,
                     enabled = logs.isNotEmpty(),
                     modifier = Modifier.weight(1f)

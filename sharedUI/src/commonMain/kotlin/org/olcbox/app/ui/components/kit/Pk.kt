@@ -113,14 +113,18 @@ fun pkSubscriptionIsSecret(url: String, originLink: String?): Boolean =
  * [revealed] is the admin gate: `AdminState.plumbingVisible`, which fails closed,
  * rather than `configuratorVisible`, which does not. Forgetting to bake the admin
  * hash must not be what puts credentials back on the screen.
+ *
+ * [encrypted] is what an encrypted one says instead, in the user's language: a
+ * screen passes its string resource, and this stays pure.
  */
 fun pkSubscriptionSourceLine(
     url: String,
     originLink: String? = null,
-    revealed: Boolean = false
+    revealed: Boolean = false,
+    encrypted: String = "Encrypted link"
 ): String = when {
     revealed -> pkMaskSubscriptionUrl(url)
-    pkSubscriptionIsSecret(url, originLink) -> "Encrypted link"
+    pkSubscriptionIsSecret(url, originLink) -> encrypted
     else -> pkSubscriptionHost(url) ?: pkMaskSubscriptionUrl(url)
 }
 

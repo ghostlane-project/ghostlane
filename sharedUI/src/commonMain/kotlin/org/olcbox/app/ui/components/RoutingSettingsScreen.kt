@@ -1,5 +1,29 @@
 package org.olcbox.app.ui.components
 
+import multiplatform_app.sharedui.generated.resources.routing_china_hub
+import multiplatform_app.sharedui.generated.resources.routing_china_summary
+import multiplatform_app.sharedui.generated.resources.routing_china_title
+import multiplatform_app.sharedui.generated.resources.routing_global_hub
+import multiplatform_app.sharedui.generated.resources.routing_global_summary
+import multiplatform_app.sharedui.generated.resources.routing_global_title
+import multiplatform_app.sharedui.generated.resources.routing_iran_hub
+import multiplatform_app.sharedui.generated.resources.routing_iran_summary
+import multiplatform_app.sharedui.generated.resources.routing_iran_title
+import multiplatform_app.sharedui.generated.resources.routing_russia_hub
+import multiplatform_app.sharedui.generated.resources.routing_russia_summary
+import multiplatform_app.sharedui.generated.resources.routing_russia_title
+import org.jetbrains.compose.resources.StringResource
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_close
+import multiplatform_app.sharedui.generated.resources.region_china
+import multiplatform_app.sharedui.generated.resources.region_global
+import multiplatform_app.sharedui.generated.resources.region_iran
+import multiplatform_app.sharedui.generated.resources.region_russia
+import multiplatform_app.sharedui.generated.resources.routing_lists_note
+import multiplatform_app.sharedui.generated.resources.routing_region
+import multiplatform_app.sharedui.generated.resources.routing_region_subtitle
+import multiplatform_app.sharedui.generated.resources.settings_routing
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,7 +80,7 @@ fun RoutingSettingsScreen(
     if (selectingRegion) {
         AlertDialog(
             onDismissRequest = { selectingRegion = false },
-            title = { Text("Region") },
+            title = { Text(stringResource(Res.string.routing_region)) },
             text = {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -68,8 +92,8 @@ fun RoutingSettingsScreen(
                             RoutingChoiceRow(
                                 selected = settings.mode == mode,
                                 icon = if (mode == RoutingMode.Global) PkIcons.Public else PkIcons.SwapVert,
-                                title = mode.title(),
-                                subtitle = mode.summary(),
+                                title = mode.localizedTitle(),
+                                subtitle = mode.localizedSummary(),
                                 enabled = enabled,
                                 onClick = {
                                     onChanged(settings.copy(mode = mode))
@@ -83,7 +107,7 @@ fun RoutingSettingsScreen(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { selectingRegion = false }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { selectingRegion = false }) { Text(stringResource(Res.string.action_close)) } }
         )
     }
 
@@ -94,7 +118,7 @@ fun RoutingSettingsScreen(
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
-        PkScreenHeader(title = "Routing", subtitle = settings.mode.hubSummary(), onBack = onBack)
+        PkScreenHeader(title = stringResource(Res.string.settings_routing), subtitle = settings.mode.localizedHubSummary(), onBack = onBack)
         Spacer(Modifier.height(20.dp))
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -105,8 +129,8 @@ fun RoutingSettingsScreen(
             Column {
                 RoutingValueRow(
                     icon = PkIcons.SwapVert,
-                    title = "Region",
-                    subtitle = "Choose which country's sites and local network connect directly",
+                    title = stringResource(Res.string.routing_region),
+                    subtitle = stringResource(Res.string.routing_region_subtitle),
                     value = settings.mode.regionLabel(),
                     enabled = enabled,
                     onClick = { selectingRegion = true }
@@ -116,8 +140,7 @@ fun RoutingSettingsScreen(
         Spacer(Modifier.height(16.dp))
         Text(
             text = unavailableReason
-                ?: "Regional site and IP lists are bundled for offline use. Local destinations " +
-                    "go directly; other traffic and DNS use the VPN. Changes reconnect the tunnel.",
+                ?: stringResource(Res.string.routing_lists_note),
             style = MaterialTheme.typography.bodySmall,
             color = LocalPkPalette.current.textDim
         )
@@ -163,9 +186,44 @@ private fun RoutingValueRow(icon: ImageVector, title: String, subtitle: String, 
     }
 }
 
+@Composable
 private fun RoutingMode.regionLabel(): String = when (this) {
-    RoutingMode.Global -> "Global"
-    RoutingMode.BypassRussia -> "Russia"
-    RoutingMode.BypassIran -> "Iran"
-    RoutingMode.BypassChina -> "China"
+    RoutingMode.Global -> stringResource(Res.string.region_global)
+    RoutingMode.BypassRussia -> stringResource(Res.string.region_russia)
+    RoutingMode.BypassIran -> stringResource(Res.string.region_iran)
+    RoutingMode.BypassChina -> stringResource(Res.string.region_china)
+}
+
+/**
+ * A routing mode's name, description and one-line hub summary on screen. The
+ * model's own title(), summary() and hubSummary() stay English, for logs and tests.
+ */
+@Composable
+fun RoutingMode.localizedTitle(): String = stringResource(titleRes())
+
+@Composable
+fun RoutingMode.localizedSummary(): String = stringResource(summaryRes())
+
+@Composable
+fun RoutingMode.localizedHubSummary(): String = stringResource(hubSummaryRes())
+
+internal fun RoutingMode.titleRes(): StringResource = when (this) {
+    RoutingMode.Global -> Res.string.routing_global_title
+    RoutingMode.BypassRussia -> Res.string.routing_russia_title
+    RoutingMode.BypassIran -> Res.string.routing_iran_title
+    RoutingMode.BypassChina -> Res.string.routing_china_title
+}
+
+internal fun RoutingMode.summaryRes(): StringResource = when (this) {
+    RoutingMode.Global -> Res.string.routing_global_summary
+    RoutingMode.BypassRussia -> Res.string.routing_russia_summary
+    RoutingMode.BypassIran -> Res.string.routing_iran_summary
+    RoutingMode.BypassChina -> Res.string.routing_china_summary
+}
+
+internal fun RoutingMode.hubSummaryRes(): StringResource = when (this) {
+    RoutingMode.Global -> Res.string.routing_global_hub
+    RoutingMode.BypassRussia -> Res.string.routing_russia_hub
+    RoutingMode.BypassIran -> Res.string.routing_iran_hub
+    RoutingMode.BypassChina -> Res.string.routing_china_hub
 }

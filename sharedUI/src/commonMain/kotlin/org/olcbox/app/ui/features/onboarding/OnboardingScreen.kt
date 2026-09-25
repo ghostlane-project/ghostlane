@@ -1,5 +1,22 @@
 package org.olcbox.app.ui.features.onboarding
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.onboarding_add_list_caps
+import multiplatform_app.sharedui.generated.resources.onboarding_bring_body
+import multiplatform_app.sharedui.generated.resources.onboarding_bring_eyebrow
+import multiplatform_app.sharedui.generated.resources.onboarding_bring_title
+import multiplatform_app.sharedui.generated.resources.onboarding_next_caps
+import multiplatform_app.sharedui.generated.resources.onboarding_rooms_body
+import multiplatform_app.sharedui.generated.resources.onboarding_rooms_eyebrow
+import multiplatform_app.sharedui.generated.resources.onboarding_rooms_title
+import multiplatform_app.sharedui.generated.resources.onboarding_seats_taken
+import multiplatform_app.sharedui.generated.resources.onboarding_skip
+import multiplatform_app.sharedui.generated.resources.onboarding_skip_caps
+import multiplatform_app.sharedui.generated.resources.onboarding_what_body
+import multiplatform_app.sharedui.generated.resources.onboarding_what_eyebrow
+import multiplatform_app.sharedui.generated.resources.onboarding_what_title
+import org.jetbrains.compose.resources.StringResource
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -88,12 +105,12 @@ fun OnboardingScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "SKIP",
+                    text = stringResource(Res.string.onboarding_skip_caps),
                     style = pkMono(10, 1.4),
                     color = palette.textDim,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClickLabel = "Skip", role = Role.Button) { onFinished() }
+                        .clickable(onClickLabel = stringResource(Res.string.onboarding_skip), role = Role.Button) { onFinished() }
                         .padding(horizontal = 8.dp, vertical = 8.dp)
                 )
             }
@@ -108,13 +125,13 @@ fun OnboardingScreen(
                 Spacer(Modifier.height(28.dp))
 
                 Text(
-                    text = current.eyebrow,
+                    text = stringResource(current.eyebrow),
                     style = pkMono(10, 2.0),
                     color = palette.accent
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    text = current.title,
+                    text = stringResource(current.title),
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontSize = 29.sp,
                         fontWeight = FontWeight.Bold,
@@ -125,7 +142,7 @@ fun OnboardingScreen(
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    text = current.body,
+                    text = stringResource(current.body),
                     style = MaterialTheme.typography.bodyMedium,
                     color = palette.textDim,
                     textAlign = TextAlign.Center
@@ -162,7 +179,7 @@ fun OnboardingScreen(
                     .height(56.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(palette.accent)
-                    .clickable(onClickLabel = current.cta, role = Role.Button) {
+                    .clickable(onClickLabel = stringResource(current.cta), role = Role.Button) {
                         if (step < ONBOARDING_STEPS.lastIndex) {
                             step++
                         } else {
@@ -176,7 +193,7 @@ fun OnboardingScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = current.cta,
+                    text = stringResource(current.cta),
                     style = pkMono(13, 1.6).copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onTertiary
                 )
@@ -234,7 +251,7 @@ private fun SeatRing(taken: Int, mine: Boolean) {
                 color = if (mine) accent else MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(4.dp))
-            Text(text = "SEATS TAKEN", style = pkMono(9, 1.4), color = palette.textMuted)
+            Text(text = stringResource(Res.string.onboarding_seats_taken), style = pkMono(9, 1.4), color = palette.textMuted)
         }
     }
 }
@@ -243,10 +260,10 @@ private const val SEATS = 8
 
 /** One step. [seatsTaken] and [seatIsMine] drive the ring above the words. */
 private data class OnboardingStep(
-    val eyebrow: String,
-    val title: String,
-    val body: String,
-    val cta: String,
+    val eyebrow: StringResource,
+    val title: StringResource,
+    val body: StringResource,
+    val cta: StringResource,
     val seatsTaken: Int,
     val seatIsMine: Boolean
 )
@@ -261,31 +278,26 @@ private data class OnboardingStep(
  */
 private val ONBOARDING_STEPS = listOf(
     OnboardingStep(
-        eyebrow = "WHAT THIS IS",
-        title = "Carried over WebRTC",
-        body = "olcRTC carries traffic over WebRTC — the same real-time media " +
-            "transport a video call uses — so it keeps working where ordinary " +
-            "tunnel transports are unreliable.",
-        cta = "NEXT",
+        eyebrow = Res.string.onboarding_what_eyebrow,
+        title = Res.string.onboarding_what_title,
+        body = Res.string.onboarding_what_body,
+        cta = Res.string.onboarding_next_caps,
         seatsTaken = 1,
         seatIsMine = true
     ),
     OnboardingStep(
-        eyebrow = "HOW ROOMS WORK",
-        title = "Every room has seats",
-        body = "A relay holds a fixed number of seats and a full room cannot take " +
-            "you. The board shows how full each one is, and it moves as people " +
-            "come and go.",
-        cta = "NEXT",
+        eyebrow = Res.string.onboarding_rooms_eyebrow,
+        title = Res.string.onboarding_rooms_title,
+        body = Res.string.onboarding_rooms_body,
+        cta = Res.string.onboarding_next_caps,
         seatsTaken = 6,
         seatIsMine = false
     ),
     OnboardingStep(
-        eyebrow = "WHAT YOU BRING",
-        title = "You bring the servers",
-        body = "No account, nothing to buy, nothing collected. Add a server list " +
-            "by link, QR code or file and it becomes rooms you can join.",
-        cta = "ADD SERVER LIST",
+        eyebrow = Res.string.onboarding_bring_eyebrow,
+        title = Res.string.onboarding_bring_title,
+        body = Res.string.onboarding_bring_body,
+        cta = Res.string.onboarding_add_list_caps,
         seatsTaken = 0,
         seatIsMine = false
     )

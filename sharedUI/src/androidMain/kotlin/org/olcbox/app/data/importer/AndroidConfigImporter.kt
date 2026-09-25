@@ -12,14 +12,11 @@ class AndroidConfigImporter(private val context: Context) : ConfigImporter {
     override fun getFromClipboard(): String? {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = clipboard.primaryClip
+        // No toast of its own when there is nothing: the import that asked says so,
+        // in the user's language, and a toast here said it a second time in English.
         if (clip != null && clip.itemCount > 0) {
-            val text = clip.getItemAt(0).text?.toString()
-            if (text.isNullOrBlank()) {
-                Toast.makeText(context, "Clipboard is empty", Toast.LENGTH_SHORT).show()
-            }
-            return text
+            return clip.getItemAt(0).text?.toString()
         }
-        Toast.makeText(context, "No clipboard data found", Toast.LENGTH_SHORT).show()
         return null
     }
 

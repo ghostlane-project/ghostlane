@@ -1,4 +1,9 @@
 import androidx.compose.animation.AnimatedVisibility
+import org.olcbox.app.ui.features.home.localizedSingleMessage
+import org.olcbox.app.desktop.localizedDesktopText
+import org.olcbox.app.desktop.text
+import org.olcbox.app.desktop.load
+import org.olcbox.app.desktop.DesktopText
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -238,7 +243,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
             val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
 
-            updateMessage = "Checking ${previousSettings.channel.name.lowercase()}..."
+            updateMessage = DesktopText.UpdateChecking.load(previousSettings.channel.name.lowercase())
             val result = dependencies.updateService.check(previousSettings.channel)
             val checkedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val checkedSettings = previousSettings.copy(lastCheckAtEpochMs = checkedAt).normalized()
@@ -248,13 +253,13 @@ private fun runDesktopApplication(args: Array<String>) = application {
                     if (manual || info.shouldShowOffer(previousSettings, checkedAt)) {
                         if (info.isDownloaded(checkedSettings)) {
                             updateOffer = null
-                            updateMessage = "Latest ${info.channel.name.lowercase()} is already downloaded"
+                            updateMessage = DesktopText.UpdateAlreadyDownloaded.load(info.channel.name.lowercase())
                         } else if (info.isUpdateAvailable) {
                             updateOffer = info
-                            updateMessage = "${info.channel.name} update found: ${info.version}"
+                            updateMessage = DesktopText.UpdateFound.load(info.channel.name, info.version)
                         } else {
                             updateOffer = null
-                            updateMessage = "Ghostlane is up to date"
+                            updateMessage = DesktopText.UpToDate.load()
                         }
                     } else {
                         updateOffer = null
@@ -262,7 +267,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                     }
                 },
                 onFailure = { error ->
-                    updateMessage = error.message ?: "Update check failed"
+                    updateMessage = error.message ?: DesktopText.UpdateCheckFailed.load()
                 }
             )
         }
@@ -271,12 +276,12 @@ private fun runDesktopApplication(args: Array<String>) = application {
     fun downloadUpdate(info: AppUpdateInfo) {
         scope.launch {
             updateProgress = 0f
-            updateMessage = "Downloading ${info.asset.name}..."
+            updateMessage = DesktopText.Downloading.load(info.asset.name)
             val result = dependencies.updateInstaller.downloadAndOpen(info.asset) { progress ->
                 updateProgress = progress
             }
             updateMessage = result.getOrElse { error ->
-                "Download failed: ${error.message ?: "unknown error"}"
+                DesktopText.DownloadFailed.load(error.message ?: DesktopText.UnknownError.load())
             }
             if (result.isSuccess) {
                 saveUpdateSettings(
@@ -360,20 +365,20 @@ private fun runDesktopApplication(args: Array<String>) = application {
         icon = rememberDesktopTrayIcon(appIcon = painterResource("LinuxIcon.png")),
         tooltip = "Ghostlane",
         menu = {
-            Item("Open", onClick = { isWindowVisible = true })
+            Item(DesktopText.Open.text(), onClick = { isWindowVisible = true })
             Item(
-                if (trayHomeState.isVpnConnected || trayHomeState.isVpnLoading) "Stop" else "Start",
+                (if (trayHomeState.isVpnConnected || trayHomeState.isVpnLoading) DesktopText.Stop else DesktopText.Start).text(),
                 enabled = trayHomeState.isVpnConnected || trayHomeState.isVpnLoading || trayHomeState.canStartVpn,
                 onClick = {
                     dependencies.homeViewModel.ToggleVpn()
                 }
             )
-            Item("Settings", onClick = {
+            Item(DesktopText.Settings.text(), onClick = {
                 isWindowVisible = true
                 showDesktopSettings = true
             })
             Separator()
-            Item("Quit", onClick = {
+            Item(DesktopText.Quit.text(), onClick = {
                 dependencies.close()
                 exitApplication()
             })
@@ -429,12 +434,15 @@ private fun runDesktopApplication(args: Array<String>) = application {
                     pendingImportLink.value = null
                     dependencies.homeViewModel.onImportLink(
                         uri = link,
-                        onComplete = { reloadLocationsAfterImport { desktopNotice = "Server list added" } },
+                        onComplete = { reloadLocationsAfterImport { scope.launch { desktopNotice = DesktopText.ServerListAdded.load() } } },
                         onError = { message -> desktopNotice = message }
                     )
                 }
             }
 
+            // Read here, where composition can; the file dialogs open from callbacks.
+            val importDialogTitle = DesktopText.ImportConfigDialog.text()
+            val saveLogsDialogTitle = DesktopText.SaveLogsDialog.text()
             Box(modifier = Modifier.fillMaxSize()) {
                 OlcboxAppContent(
                     homeViewModel = dependencies.homeViewModel,
@@ -447,7 +455,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         dependencies.homeViewModel.ToggleVpn()
                     },
                     onImportFileRequested = {
-                        chooseConfigFile(window)?.let { file ->
+                        chooseConfigFile(window, importDialogTitle)?.let { file ->
                             dependencies.homeViewModel.onFileSelected(file) {
                                 reloadLocationsAfterImport()
                             }
@@ -463,12 +471,13 @@ private fun runDesktopApplication(args: Array<String>) = application {
                     },
                     onScanQrRequested = {},
                     onShareLocationRequested = { config ->
-                        sharePayload = "Location QR" to ConfigShareService.olcRtcUri(config)
+                        scope.launch { sharePayload = DesktopText.LocationQr.load() to ConfigShareService.olcRtcUri(config) }
                     },
                     onSaveLogsRequested = { onSaved, onError ->
                         chooseSaveFile(
                             owner = window,
-                            defaultName = dependencies.homeViewModel.suggestedLogsFileName()
+                            defaultName = dependencies.homeViewModel.suggestedLogsFileName(),
+                            title = saveLogsDialogTitle
                         )?.let { file ->
                             dependencies.homeViewModel.onSaveLogsToFile(
                                 target = file,
@@ -495,7 +504,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                                 error("browser unavailable")
                             }
                         }.onFailure {
-                            desktopNotice = "Open ${PkBrand.siteUrl} in your browser"
+                            scope.launch { desktopNotice = DesktopText.OpenInBrowser.load(PkBrand.siteUrl) }
                         }
                     },
                     showSplitTunnelingButton = false,
@@ -513,16 +522,16 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         updateOffer = updateOffer,
                         subscriptions = subscriptionShareItems(dependencies.locationViewModel.locations.toList()),
                         logs = logs,
-                        connectionSummary = effectiveConnectionMode?.summary.orEmpty(),
-                        connectionModeTitle = effectiveConnectionMode?.title.orEmpty(),
-                        connectionModeSummary = effectiveConnectionMode?.summary.orEmpty(),
+                        connectionSummary = effectiveConnectionMode?.summary?.let { localizedDesktopText(it) }.orEmpty(),
+                        connectionModeTitle = effectiveConnectionMode?.title?.let { localizedDesktopText(it) }.orEmpty(),
+                        connectionModeSummary = effectiveConnectionMode?.summary?.let { localizedDesktopText(it) }.orEmpty(),
                         connectionModeOptions = connectionModeOptions.map { option ->
                             ApplicationConnectionModeOption(
                                 id = option.mode.id,
-                                title = option.title,
-                                summary = option.summary,
+                                title = localizedDesktopText(option.title),
+                                summary = localizedDesktopText(option.summary),
                                 enabled = option.enabled,
-                                disabledReason = option.disabledReason
+                                disabledReason = option.disabledReason?.let { localizedDesktopText(it) }
                             )
                         },
                         selectedConnectionModeId = effectiveConnectionMode?.mode?.id,
@@ -579,14 +588,15 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         subscriptionSettings = subscriptionSettings,
                         routingSettings = routingSettings,
                         onRoutingSettingsChanged = dependencies.homeViewModel::updateRoutingSettings,
-                        routingUnavailableReason = desktopRoutingUnavailableReason(effectiveConnectionMode?.mode),
+                        routingUnavailableReason = desktopRoutingUnavailableReason(effectiveConnectionMode?.mode)?.let { localizedDesktopText(it) },
                         onSubscriptionSettingsChanged =
                             dependencies.homeViewModel::updateSubscriptionSettings,
                         onDismiss = { showDesktopSettings = false },
                         onSaveLogsClick = {
                             chooseSaveFile(
                                 owner = window,
-                                defaultName = dependencies.homeViewModel.suggestedLogsFileName()
+                                defaultName = dependencies.homeViewModel.suggestedLogsFileName(),
+                                title = saveLogsDialogTitle
                             )?.let { file ->
                                 dependencies.homeViewModel.onSaveLogsToFile(
                                     target = file,
@@ -610,23 +620,21 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         onDownloadUpdateClick = { info -> downloadUpdate(info) },
                         onLaterUpdateClick = { info -> postponeUpdate(info) },
                         onSubscriptionShareClick = { url ->
-                            sharePayload = "Server list QR" to ConfigShareService.subscriptionQrText(url)
+                            scope.launch { sharePayload = DesktopText.ServerListQr.load() to ConfigShareService.subscriptionQrText(url) }
                         },
                         onSubscriptionRefreshClick = { url ->
                             dependencies.homeViewModel.refreshSubscription(url) { report ->
                                 reloadLocationsAfterImport {
                                     dependencies.homeViewModel.restartVpnIfRunning()
-                                    updateMessage = report.singleMessage()
+                                    scope.launch { updateMessage = report.localizedSingleMessage() }
                                 }
                             }
                         },
                         onSubscriptionDeleteClick = { url ->
                             dependencies.homeViewModel.deleteSubscription(url) { removed ->
                                 reloadLocationsAfterImport {
-                                    updateMessage = if (removed > 0) {
-                                        "Server list removed"
-                                    } else {
-                                        "Server list not found"
+                                    scope.launch {
+                                        updateMessage = (if (removed > 0) DesktopText.ServerListRemoved else DesktopText.ServerListNotFound).load()
                                     }
                                 }
                             }
@@ -641,7 +649,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             scope.launch {
                                 dependencies.socksProxySettingsStore.save(settings)
                             }
-                            desktopNotice = "SOCKS proxy saved"
+                            scope.launch { desktopNotice = DesktopText.SocksSaved.load() }
                             if (homeState.isVpnConnected) {
                                 dependencies.homeViewModel.restartVpnIfRunning()
                             }
@@ -658,11 +666,12 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             ).normalized()
                             dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
-                            desktopNotice = when {
-                                settings.shareOnLan -> "LAN sharing enabled"
-                                enabled -> "Select a LAN interface before enabling sharing"
-                                else -> "LAN sharing disabled"
+                            val notice = when {
+                                settings.shareOnLan -> DesktopText.LanEnabled
+                                enabled -> DesktopText.LanSelectInterfaceFirst
+                                else -> DesktopText.LanDisabled
                             }
+                            scope.launch { desktopNotice = notice.load() }
                         },
                         onLanAddressSelected = { address ->
                             val settings = dependencies.vpnManager.withTrustedLanAddress(
@@ -675,7 +684,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             val settings = socksProxySettings.withGeneratedLanCredentials().normalized()
                             dependencies.vpnManager.applyLanSharingSettings(settings)
                             scope.launch { dependencies.socksProxySettingsStore.save(settings) }
-                            desktopNotice = "LAN credentials regenerated"
+                            scope.launch { desktopNotice = DesktopText.LanCredentialsRegenerated.load() }
                         },
                         onSocksProxyPasswordRegenerated = {
                             val settings = socksProxySettings.copy(
@@ -685,7 +694,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             scope.launch {
                                 dependencies.socksProxySettingsStore.save(settings)
                             }
-                            desktopNotice = "Password regenerated"
+                            scope.launch { desktopNotice = DesktopText.PasswordRegenerated.load() }
                             if (homeState.isVpnConnected) {
                                 dependencies.homeViewModel.restartVpnIfRunning()
                             }
@@ -708,7 +717,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         payload = payload,
                         onCopy = {
                             dependencies.configImporter.copyToClipboard(payload)
-                            desktopNotice = "Copied"
+                            scope.launch { desktopNotice = DesktopText.Copied.load() }
                         },
                         onDismiss = {
                             sharePayload = null
@@ -803,7 +812,7 @@ private fun DesktopConfigShareOverlay(
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = if (copied) "Copied to clipboard" else "Scan QR or copy the link",
+                            text = (if (copied) DesktopText.CopiedToClipboard else DesktopText.ScanOrCopy).text(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp
                         )
@@ -848,7 +857,7 @@ private fun DesktopConfigShareOverlay(
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = onDismiss) {
-                            Text("Close")
+                            Text(DesktopText.Close.text())
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
@@ -857,7 +866,7 @@ private fun DesktopConfigShareOverlay(
                                 copied = true
                             }
                         ) {
-                            Text("Copy")
+                            Text(DesktopText.Copy.text())
                         }
                     }
                 }
@@ -951,15 +960,15 @@ private fun generateDesktopProxyPassword(length: Int = 24): String {
 private const val DESKTOP_PROXY_PASSWORD_ALPHABET =
     "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 
-private fun chooseConfigFile(owner: Frame): File? {
-    val dialog = FileDialog(owner, "Import Ghostlane Config", FileDialog.LOAD)
+private fun chooseConfigFile(owner: Frame, title: String): File? {
+    val dialog = FileDialog(owner, title, FileDialog.LOAD)
     dialog.isVisible = true
 
     return dialog.files.firstOrNull()
 }
 
-private fun chooseSaveFile(owner: Frame, defaultName: String): File? {
-    val dialog = FileDialog(owner, "Save Ghostlane Logs", FileDialog.SAVE)
+private fun chooseSaveFile(owner: Frame, defaultName: String, title: String): File? {
+    val dialog = FileDialog(owner, title, FileDialog.SAVE)
     dialog.file = defaultName
     dialog.isVisible = true
 

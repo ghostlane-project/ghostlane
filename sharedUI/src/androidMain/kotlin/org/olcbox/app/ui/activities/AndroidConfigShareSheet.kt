@@ -1,5 +1,11 @@
 package org.olcbox.app.ui.activities
 
+import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
+import multiplatform_app.sharedui.generated.resources.action_copy
+import multiplatform_app.sharedui.generated.resources.action_share
+import multiplatform_app.sharedui.generated.resources.copied
+import multiplatform_app.sharedui.generated.resources.qr_code
 import org.olcbox.app.ui.icons.PkIcons
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -80,7 +86,7 @@ internal fun AndroidConfigShareSheet(
             ) {
                 Image(
                     bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "QR code",
+                    contentDescription = stringResource(Res.string.qr_code),
                     modifier = Modifier
                         .size(248.dp)
                         .padding(12.dp),
@@ -101,6 +107,7 @@ internal fun AndroidConfigShareSheet(
 
             Spacer(Modifier.height(20.dp))
 
+            val copiedText = stringResource(Res.string.copied)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -108,13 +115,13 @@ internal fun AndroidConfigShareSheet(
                 OutlinedButton(
                     onClick = {
                         context.copySharePayload(payload)
-                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, copiedText, Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(PkIcons.ContentCopy, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
-                    Text("Copy")
+                    Text(stringResource(Res.string.action_copy))
                 }
 
                 Button(
@@ -123,7 +130,7 @@ internal fun AndroidConfigShareSheet(
                 ) {
                     Icon(Icons.Outlined.Share, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
-                    Text("Share")
+                    Text(stringResource(Res.string.action_share))
                 }
             }
         }

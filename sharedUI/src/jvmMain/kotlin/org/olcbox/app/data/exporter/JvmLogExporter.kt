@@ -1,5 +1,8 @@
 package org.olcbox.app.data.exporter
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.logs_copied
+import org.jetbrains.compose.resources.getString
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.io.File
@@ -25,7 +28,7 @@ class JvmLogExporter : LogExporter {
     override suspend fun shareLogs(content: String): Result<String> {
         return runCatching {
             Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(content), null)
-            "Logs copied to clipboard"
+            getString(Res.string.logs_copied)
         }
     }
 }

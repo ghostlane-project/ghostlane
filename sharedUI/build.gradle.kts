@@ -410,4 +410,8 @@ kotlin {
 tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "jvmTest" }.configureEach {
     outputs.dir(layout.buildDirectory.dir("singbox-configs"))
     outputs.dir(layout.buildDirectory.dir("xray-configs"))
+    // The tests read the English screen (LocalizationTest switches language itself),
+    // so a machine set to another language must not change what they see.
+    systemProperty("user.language", "en")
+    systemProperty("user.country", "US")
 }
