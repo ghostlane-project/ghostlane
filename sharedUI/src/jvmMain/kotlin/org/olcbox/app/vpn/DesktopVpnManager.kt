@@ -23,6 +23,9 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.DesktopChannelProbe
+import org.olcbox.app.net.DesktopSingBoxController
+import org.olcbox.app.net.DesktopXrayController
+import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.Routing
@@ -242,6 +245,28 @@ class DesktopVpnManager private constructor(
             deviceId = locationsRepository.getDeviceIdentity()
         )
     }
+
+    override val canProbeTransports: Boolean get() = true
+
+    // Smart connect: the location's core, alone, on its own port and config.
+    override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
+        TransportProbe.passes(locationConfig) { spec, config ->
+            if (TransportProbe.usesXray(spec)) {
+                val xray = DesktopXrayController()
+                xray.start(config)
+                object : TransportProbe.Core {
+                    override fun isRunning(): Boolean = xray.isRunning()
+                    override suspend fun stop() = xray.stop()
+                }
+            } else {
+                val singBox = DesktopSingBoxController()
+                singBox.start(config)
+                object : TransportProbe.Core {
+                    override fun isRunning(): Boolean = singBox.isRunning()
+                    override suspend fun stop() = singBox.stop()
+                }
+            }
+        }
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null

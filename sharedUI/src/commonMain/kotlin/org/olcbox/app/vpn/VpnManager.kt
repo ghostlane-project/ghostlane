@@ -69,6 +69,16 @@ interface VpnManager {
 
     /** Measure the active channel without starting another engine or room. */
     suspend fun measureCurrentChannel(): Long? = null
+
+    /**
+     * Whether [locationConfig]'s transport carries traffic past a DPI freeze, asked
+     * through its own core before any tunnel exists (smart connect, TransportCheck).
+     * Null where this platform cannot run a core on its own (iOS).
+     */
+    suspend fun probeTransport(locationConfig: LocationConfig): Boolean? = null
+
+    /** Whether [probeTransport] can answer here; smart connect runs only where it can. */
+    val canProbeTransports: Boolean get() = false
     fun subscriptionFetchProxy(): SubscriptionFetchProxy? = null
 
     /**

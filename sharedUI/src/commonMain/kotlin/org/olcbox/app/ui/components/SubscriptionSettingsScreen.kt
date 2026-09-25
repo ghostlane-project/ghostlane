@@ -1,5 +1,6 @@
 package org.olcbox.app.ui.components
 
+import org.olcbox.app.update.currentUpdatePlatform
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -122,6 +123,21 @@ fun SubscriptionSettingsScreen(
         SubscriptionSettingsNote(
             "Refreshing, connecting and measuring latency happen every time the app starts."
         )
+
+        // Smart connect runs where the app can start a transport's core on its own
+        // to check it (Android and computers), so the switch is shown only there.
+        if (currentUpdatePlatform().os != "ios") {
+            Spacer(Modifier.height(18.dp))
+            SubscriptionToggleRow(
+                title = "Smart connect",
+                checked = settings.smartConnect,
+                onCheckedChange = { onChanged(settings.copy(smartConnect = it)) }
+            )
+            SubscriptionSettingsNote(
+                "When a server is published over several transports, they are checked before " +
+                    "connecting and the first that gets through is used, ending on olcRTC of the same country."
+            )
+        }
 
         Spacer(Modifier.height(18.dp))
         PkSectionLabel("Server list")

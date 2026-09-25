@@ -24,6 +24,9 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.LinkParser
+import org.olcbox.app.net.AndroidCoreProcess
+import org.olcbox.app.net.TransportProbe
+import java.util.concurrent.atomic.AtomicInteger
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.PathLatency
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
@@ -307,6 +310,31 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         val measured = session.measure()
         return measured.takeIf { status.value is VpnStatus.Connected && OlcboxVpnState.channelProbe === session }
     }
+
+    override val canProbeTransports: Boolean get() = true
+
+    // Smart connect: the location's core, alone, in a work dir of its own so the
+    // service's core is never touched (AndroidCoreProcess keys its dir by label).
+    override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
+        TransportProbe.passes(locationConfig) { spec, config ->
+            val label = "probe-${probeSerial.incrementAndGet()}"
+            val core = AndroidCoreProcess(
+                context = appContext,
+                soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
+                label = label,
+                argv = { bin, file -> listOf(bin, "run", "-c", file) },
+            )
+            core.start(config)
+            object : TransportProbe.Core {
+                override fun isRunning(): Boolean = core.isRunning()
+                override suspend fun stop() {
+                    core.stop()
+                    File(appContext.cacheDir, "olcbox-$label").deleteRecursively()
+                }
+            }
+        }
+
+    private val probeSerial = AtomicInteger()
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
