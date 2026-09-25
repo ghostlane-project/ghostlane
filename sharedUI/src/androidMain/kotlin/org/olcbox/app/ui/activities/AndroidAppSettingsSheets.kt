@@ -2435,12 +2435,18 @@ private val RUSSIAN_BYPASS_PACKAGE_PREFIXES = listOf(
     "ru.",
     "com.yandex."
 )
+// The prefixes above catch most Russian apps (ru.sberbankmobile, ru.rostel for
+// Gosuslugi, ru.oneme.app for MAX, ru.nspk.mirpay...). These are the ones they
+// miss, under their real package names: T-Bank is com.idamob.tinkoff.android,
+// not "ru.tinkoff.mb", and Avito is com.avito.android, not "ru.avito", so the
+// preset used to leave the biggest bank and the biggest classifieds app on the
+// VPN. Checked against Google Play and RuStore on 2026-09-25 where they list
+// the app. A name that is not installed matches nothing.
 private val RUSSIAN_BYPASS_PACKAGE_NAMES = setOf(
-    "ru.sberbankmobile",
-    "ru.ozon.app.android",
-    "ru.avito",
-    "ru.vtb24.mobilebanking.android",
-    "ru.tinkoff.mb"
+    "com.idamob.tinkoff.android",
+    "com.avito.android",
+    "com.wildberries.ru",
+    "com.vkontakte.android",
 )
 
 /**
