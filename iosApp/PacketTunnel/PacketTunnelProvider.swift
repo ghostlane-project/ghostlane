@@ -379,15 +379,41 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// The SOCKS server hev forwards to on the paths it owns, or nil on the
     /// paths sing-box owns. olcRTC's port and credentials come from its
-    /// parameters; Xray's port is read from the config the app wrote (the
-    /// inbound it built).
+    /// parameters; Xray's port and login are read from the config the app wrote
+    /// (the inbound it built).
     private static func hevSocks(xrayConfig: String?, olcrtc: OlcrtcEngine.Parameters?) -> HevTunnel.Socks? {
         guard hevOwnsTun(xrayConfig: xrayConfig, olcrtc: olcrtc) else { return nil }
         if let olcrtc {
             return HevTunnel.Socks(port: olcrtc.socksPort, username: olcrtc.socksUser, password: olcrtc.socksPass)
         }
         guard let xrayConfig else { return nil }
-        return HevTunnel.Socks(port: xraySocksPort(in: xrayConfig), username: nil, password: nil)
+        let login = xraySocksLogin(in: xrayConfig)
+        return HevTunnel.Socks(port: xraySocksPort(in: xrayConfig), username: login?.username, password: login?.password)
+    }
+
+    /// The login Xray's SOCKS inbound demands, or nil when it demands none.
+    ///
+    /// The app builds that inbound with the pair olcRTC is started with
+    /// (SocksLogin in XrayConfig.kt): on loopback any other app on the phone
+    /// could reach an open one, leave through the tunnel and read its exit.
+    /// hev has to send exactly what the inbound demands - a login offered to an
+    /// inbound without one is refused just as surely as none offered to one
+    /// with it - so it is read from the same config rather than assumed.
+    static func xraySocksLogin(in configJSON: String) -> (username: String, password: String)? {
+        guard let data = configJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let inbounds = object["inbounds"] as? [[String: Any]]
+        else { return nil }
+        for inbound in inbounds where inbound["protocol"] as? String == "socks" {
+            guard let settings = inbound["settings"] as? [String: Any],
+                  settings["auth"] as? String == "password",
+                  let account = (settings["accounts"] as? [[String: Any]])?.first,
+                  let username = account["user"] as? String, !username.isEmpty,
+                  let password = account["pass"] as? String, !password.isEmpty
+            else { return nil }
+            return (username, password)
+        }
+        return nil
     }
 
     /// The port Xray's SOCKS inbound listens on, or 10810 when the config

@@ -41,6 +41,7 @@ import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.net.UdpBlockedFailover
 import org.olcbox.app.net.transportKind
@@ -500,6 +501,10 @@ class IosVpnManager(
         // Xray and sing-box becomes the tun front-end for it. Reality and
         // hysteria2 are native sing-box outbounds with no second core involved.
         val vless = spec as? OutboundSpec.Vless
+        // Demanded by Xray's SOCKS inbound on this path: hev reaches it on
+        // loopback, and so could any other app on the phone (see SocksLogin).
+        // The extension reads the pair back from the config, as it reads the port.
+        val xrayLogin = _socksProxySettings.value.let { SocksLogin.of(it.username, it.password) }
         val xrayConfig = if (vless != null && vless.transport is TransportSpec.Xhttp) {
             // Since 1.0.426 the extension puts hev-socks5-tunnel, not sing-box,
             // in front of Xray on this path (docs/ios-one-go-runtime.md), so
@@ -513,6 +518,7 @@ class IosVpnManager(
                 geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
                 answersDns = true,
                 verboseLogs = verboseLogs,
+                login = xrayLogin,
             )
         } else {
             null
@@ -521,6 +527,8 @@ class IosVpnManager(
             config = if (xrayConfig != null) {
                 SingBoxConfig.buildTunSocks(
                     XrayConfig.XRAY_SOCKS_PORT,
+                    username = xrayLogin?.username.orEmpty(),
+                    password = xrayLogin?.password.orEmpty(),
                     routing = routing,
                     verboseLogs = verboseLogs,
                     logOutput = IOS_SING_BOX_LOG

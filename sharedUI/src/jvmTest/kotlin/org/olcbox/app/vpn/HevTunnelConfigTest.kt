@@ -81,15 +81,33 @@ class HevTunnelConfigTest {
         assertTrue("  password: 's3cret'" in socks5, socks5.toString())
     }
 
-    // A sing-box or Xray inbound has no auth, and hev offering only
+    // On the tun path a sing-box or Xray core demands the app's login too
+    // (SocksLogin): hev has to send it, or its SOCKS handshake is refused.
+    @Test
+    fun aCoreIsReachedOnItsPortWithTheLoginItWasGiven() {
+        val socks5 = socks5Block(yaml(corePort = 41234))
+        assertTrue("  port: 41234" in socks5, socks5.toString())
+        assertTrue("  username: 'olcbox-user'" in socks5, socks5.toString())
+        assertTrue("  password: 's3cret'" in socks5, socks5.toString())
+    }
+
+    // A server built without a login is offered none: hev offering only
     // username/password to it is a tunnel that comes up and carries nothing.
     @Test
-    fun aCoreIsReachedOnItsPortWithNoLogin() {
-        val yaml = yaml(corePort = 10810)
-        val socks5 = socks5Block(yaml)
-        assertTrue("  port: 10810" in socks5, socks5.toString())
-        assertFalse(yaml.contains("username"), yaml)
-        assertFalse(yaml.contains("password"), yaml)
+    fun aServerWithoutALoginIsReachedWithNone() {
+        for (corePort in listOf(null, 10810)) {
+            val yaml = HevTunnelConfig.yaml(
+                mtu = 1500,
+                ipv4 = "10.0.88.88",
+                socksAddress = "127.0.0.1",
+                socksPort = 10808,
+                corePort = corePort,
+                username = "",
+                password = ""
+            )
+            assertFalse(yaml.contains("username"), yaml)
+            assertFalse(yaml.contains("password"), yaml)
+        }
     }
 
     // The login is the user's to type; a quote left bare ends the scalar and

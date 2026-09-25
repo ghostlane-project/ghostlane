@@ -22,6 +22,8 @@ object HevTunnelConfig {
      * [socksPort] is the user-set SOCKS port olcRTC listens on; [corePort] is
      * the port of the sing-box or Xray core hev feeds instead, null when hev
      * talks to olcRTC directly. [socksAddress] is where either one is reached.
+     * [username] and [password] are the login that server demands, empty when
+     * it demands none.
      */
     fun yaml(
         mtu: Int,
@@ -51,17 +53,17 @@ object HevTunnelConfig {
         // (OlcRtcUdpRelay), and it refuses the association at once.
         add("  udp: 'udp'")
         add("  pipeline: false")
-        // Only olcRTC's local proxy asks for a login; the cores listen open — the
-        // same rule OlcboxVpnService.verifyTunnel() already follows, stated there
-        // in as many words.
-        //
-        // Sending credentials to a core makes hev offer username/password as its
-        // only SOCKS method, and a sing-box or Xray inbound is built with no `auth`
-        // at all, so it answers "no matching auth method" and closes. Nothing about
-        // that is visible from here: the core's SOCKS port opens before it has
+        // The login is sent exactly when the server demands one, and the caller
+        // is the one who knows: olcRTC always does, and on the tun path so do the
+        // sing-box and Xray cores now (SocksLogin: an open local SOCKS port is
+        // one every app on the phone can use). The two must agree. A login sent
+        // to a server built without one makes hev offer username/password as its
+        // only SOCKS method, the server answers "no matching auth method", and
+        // none of that is visible from here: the port opens before the core has
         // touched the server, so the transport reports ready, the tunnel is
-        // established, and not one packet crosses.
-        if (corePort == null) {
+        // established, and not one packet crosses. OlcboxVpnService passes one
+        // pair to both this file and the core it starts, for that reason.
+        if (username.isNotEmpty() || password.isNotEmpty()) {
             add("  username: '${yamlQuoted(username)}'")
             add("  password: '${yamlQuoted(password)}'")
         }

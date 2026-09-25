@@ -72,6 +72,9 @@ object XrayConfig {
      * is one only we answer, see `LibboxBridge.Tun.dns`), so someone has to
      * answer. With sing-box in front it does, and this stays false; the
      * default output is then byte-for-byte what it was before routing existed.
+     *
+     * [login], when given, is demanded of every client of the SOCKS inbound
+     * (see [SocksLogin]); the tun front and every probe then have to send it.
      */
     fun buildXhttp(
         spec: OutboundSpec.Vless,
@@ -81,6 +84,7 @@ object XrayConfig {
         geodata: XrayGeodata.Lists? = null,
         answersDns: Boolean = false,
         verboseLogs: Boolean = false,
+        login: SocksLogin? = null,
     ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
             ?: error("XrayConfig.buildXhttp requires an xhttp transport")
@@ -103,7 +107,20 @@ object XrayConfig {
                 addJsonObject {
                     put("tag", "in"); put("listen", "127.0.0.1"); put("port", socksPort)
                     put("protocol", "socks")
-                    putJsonObject("settings") { put("udp", true) }
+                    putJsonObject("settings") {
+                        // Demanded of every client when given: see SocksLogin.
+                        // Xray's own spelling, `user`/`pass`, not sing-box's.
+                        if (login != null) {
+                            put("auth", "password")
+                            putJsonArray("accounts") {
+                                addJsonObject {
+                                    put("user", login.username)
+                                    put("pass", login.password)
+                                }
+                            }
+                        }
+                        put("udp", true)
+                    }
                     // The tun hands over addresses, and a rule that matches a
                     // name needs the name: TLS and QUIC carry it in the hello,
                     // HTTP in the Host header. The sniffed name also replaces
