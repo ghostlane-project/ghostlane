@@ -30,7 +30,9 @@ data class IosOlcRtcStartRequest(
      * tunnel's life. A server-list URL is a credential: it goes into the App
      * Group beside the key, and nowhere else.
      */
-    val subscriptionUrl: String? = null
+    val subscriptionUrl: String? = null,
+    /** The engine's DTLS ClientHello profile ([org.olcbox.app.net.OlcrtcDtls]). */
+    val dtlsProfile: String = "off"
 )
 
 data class IosOlcRtcCheckRequest(
@@ -42,7 +44,9 @@ data class IosOlcRtcCheckRequest(
     val timeoutMillis: Long,
     val pingUrl: String,
     val vp8Fps: Int,
-    val vp8BatchSize: Int
+    val vp8BatchSize: Int,
+    /** As [IosOlcRtcStartRequest.dtlsProfile]: a probe shakes hands the way the tunnel would. */
+    val dtlsProfile: String = "off"
 )
 
 data class IosBridgeResult(

@@ -111,6 +111,7 @@ enum RoomList {
         case "wbstream", "wb-stream", "wildberries": return "wbstream"
         case "jitsi", "jitsi-meet", "jitsi_meet", "meet": return "jitsi"
         case "salutejazz", "jazz", "sberjazz", "sber_jazz": return "salutejazz"
+        case "vkcalls", "vk", "vkcall", "vk_calls", "vk-calls": return "vkcalls"
         default: return value
         }
     }

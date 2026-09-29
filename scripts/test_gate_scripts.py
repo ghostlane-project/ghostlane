@@ -44,6 +44,9 @@ WB_ROOM = "fakewbroom0001"
 WB_SPARE = "fakewbroom0002"
 WB_TOKEN = "fake.wb-token.0123456789abcdefghij"
 JITSI_HOST = "jitsi.example.invalid"
+VK_ROOM = "https://vk.example.invalid/call/join/FakeVkRoom0001"
+VK_ID = "FakeVkRoom0001"
+VK_SPARE = "https://vk.example.invalid/call/join/FakeVkRoom0002"
 SESSION_KEY = "ab" * 32
 JITSI_ROOM = "gate-0123456789ab"
 FAKE_JWT = "eyJhbGciOiJub25lIn0.eyJmYWtlIjoidGVzdCJ9.ZmFrZS1zaWduYXR1cmU"
@@ -270,9 +273,9 @@ class Resolve(unittest.TestCase):
         self.assertEqual("scheduled", out["mode"])
         self.assertEqual(PIN_SHA, out["engine_sha"])
         self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "wbstream"},
-                                      {"provider": "salutejazz"}]},
+                                      {"provider": "salutejazz"}, {"provider": "vkcalls"}]},
                          json.loads(out["legs"]))
-        self.assertEqual("jitsi,telemost,wbstream,salutejazz", out["providers"])
+        self.assertEqual("jitsi,telemost,wbstream,salutejazz,vkcalls", out["providers"])
         self.assertEqual("false", out["skip"])
         self.assertEqual("false", out["limited"])
         self.assertEqual("warn", out["severity"])
@@ -291,7 +294,7 @@ class Resolve(unittest.TestCase):
         out = outputs(r.stdout)
         self.assertEqual("release", out["mode"])
         self.assertEqual("v1.0.999", out["current_tag"])
-        self.assertEqual(4, len(json.loads(out["legs"])["include"]))
+        self.assertEqual(5, len(json.loads(out["legs"])["include"]))
 
     def test_a_release_for_another_engine_than_the_pin_is_refused(self):
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_CALL_MODE="release",
@@ -363,7 +366,7 @@ class Check(unittest.TestCase):
         return self.box.run("gate-resolve.sh", "check", provider, env=self.box.env(**secrets))
 
     def assert_no_value(self, r):
-        for value in (TELEMOST_URL, TELEMOST_ID, WB_ROOM, WB_TOKEN, JITSI_HOST, "abc"):
+        for value in (TELEMOST_URL, TELEMOST_ID, WB_ROOM, WB_TOKEN, JITSI_HOST, VK_ROOM, VK_ID, "abc"):
             self.assertNotIn(value, r.stdout + r.stderr)
 
     def test_the_wbstream_leg_needs_its_rooms_and_its_token(self):
@@ -418,6 +421,22 @@ class Check(unittest.TestCase):
             self.assertEqual(0, r.returncode, r.stderr)
             self.assertIn("needs no secret", r.stderr)
             self.assert_no_value(r)
+
+    def test_the_vkcalls_leg_needs_its_rooms(self):
+        # A guest joins by link, so there is no token; without a room the leg
+        # fails by name, and another leg's secret does not stand in for it.
+        r = self.check("vkcalls", GATE_TELEMOST_ROOMS=TELEMOST_URL)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("needs the repository secret GATE_VKCALLS_ROOMS", r.stderr)
+        self.assertIn("never skipped", r.stderr)
+        self.assert_no_value(r)
+        r = self.check("vkcalls", GATE_VKCALLS_ROOMS=f"{VK_ROOM}, abc")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GATE_VKCALLS_ROOMS, entry 2", r.stderr)
+        self.assert_no_value(r)
+        r = self.check("vkcalls", GATE_VKCALLS_ROOMS=f"{VK_ROOM}\n{VK_SPARE}")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assert_no_value(r)
 
     def test_a_leg_with_what_it_needs_passes(self):
         r = self.check("wbstream", GATE_WBSTREAM_ROOMS=f"{WB_ROOM}\n{WB_SPARE}", GATE_WBSTREAM_TOKEN=WB_TOKEN)
@@ -541,6 +560,20 @@ class Run(unittest.TestCase):
         r = self.gate_run("run", "cli", "gate-artifacts/jitsi/cli", GATE_PROVIDER="jitsi")
         self.assertEqual(1, r.returncode)
         self.assertIn("must be absolute", r.stderr)
+
+    def test_the_vkcalls_leg_hands_the_engine_its_first_room_by_env_only(self):
+        d = self.leg / "vkcalls" / "mobile"
+        r = self.gate_run("run", "mobile", str(d), GATE_PROVIDER="vkcalls",
+                          GATE_VKCALLS_ROOMS=f" {VK_ROOM} , {VK_SPARE}")
+        self.assertEqual(0, r.returncode, r.stderr)
+        (call,) = self.box.go_calls()
+        self.assertIn("-olcrtc.gate-providers=vkcalls", call["argv"])
+        self.assertFalse([a for a in call["argv"] if VK_ID in a], call["argv"])
+        self.assertEqual(VK_ROOM, call["env"]["OLCRTC_GATE_VKCALLS_ROOMS"])
+        self.assertNotIn("GATE_VKCALLS_ROOMS", call["env"])
+        r = self.gate_run("run", "cli", str(self.leg / "vkcalls" / "cli"), GATE_PROVIDER="vkcalls")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("the vkcalls leg needs GATE_VKCALLS_ROOMS", r.stderr)
 
     def test_the_salutejazz_leg_runs_with_no_room_or_token_and_an_unknown_provider_is_refused(self):
         d = self.leg / "salutejazz" / "mobile"
@@ -1080,7 +1113,7 @@ class Wiring(unittest.TestCase):
 
     workflows = REPO / ".github" / "workflows"
     OWNER = {"GATE_TELEMOST_ROOMS": "telemost", "GATE_WBSTREAM_ROOMS": "wbstream",
-             "GATE_WBSTREAM_TOKEN": "wbstream", "GATE_JITSI_HOSTS": "jitsi"}
+             "GATE_WBSTREAM_TOKEN": "wbstream", "GATE_JITSI_HOSTS": "jitsi", "GATE_VKCALLS_ROOMS": "vkcalls"}
     ENGINE_NAMES = r"-olcrtc\.gate|OLCRTC_GATE_|olcrtc_lean|cmd/gate-report"
 
     def read(self, name):
@@ -1122,10 +1155,10 @@ class Wiring(unittest.TestCase):
     def test_every_provider_is_named_wherever_providers_are_listed(self):
         # One list, gate-resolve.sh's: a provider added there and missing from
         # a list a person or a script reads is a leg that fails or a doc that
-        # lies. (salutejazz joined as the fourth.)
+        # lies. (salutejazz joined as the fourth, vkcalls as the fifth.)
         resolve = (HERE / "gate-resolve.sh").read_text()
         providers = re.search(r"^readonly PROVIDERS=\(([^)]*)\)$", resolve, re.M).group(1).split()
-        self.assertEqual(["jitsi", "telemost", "wbstream", "salutejazz"], providers)
+        self.assertEqual(["jitsi", "telemost", "wbstream", "salutejazz", "vkcalls"], providers)
         run = (HERE / "gate-run.sh").read_text()
         accepted = re.search(r"^ +([a-z| ]+)\) ;;\n +\*\) die \"GATE_PROVIDER must be", run, re.M).group(1)
         self.assertEqual(providers, [p.strip() for p in accepted.split("|")])

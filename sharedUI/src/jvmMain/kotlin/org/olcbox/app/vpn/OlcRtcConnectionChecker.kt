@@ -11,6 +11,7 @@ import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
+import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
@@ -32,13 +33,14 @@ internal object OlcRtcConnectionChecker {
     suspend fun check(
         locationConfig: LocationConfig,
         deviceId: String = DEFAULT_DEVICE_ID,
-        privileged: Boolean = false
+        privileged: Boolean = false,
+        dtlsProfile: String = OlcrtcDtls.OFF
     ): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
 
-            val nativeLib = if (DesktopPaths.os == DesktopOs.Linux) null else OlcRtcNativeLib.INSTANCE
+            val nativeLib = nativeLibFor(dtlsProfile)
             if (nativeLib != null) {
                 repeat(CONNECTION_CHECK_ATTEMPTS) {
                     val socksPort = allocateLocalPort()
@@ -68,7 +70,8 @@ internal object OlcRtcConnectionChecker {
                 val result = runCatching {
                     checkOnce(
                         config = config,
-                        privileged = privileged
+                        privileged = privileged,
+                        dtlsProfile = dtlsProfile
                     )
                 }.getOrNull()
 
@@ -84,13 +87,14 @@ internal object OlcRtcConnectionChecker {
     suspend fun ping(
         locationConfig: LocationConfig,
         deviceId: String = DEFAULT_DEVICE_ID,
-        privileged: Boolean = false
+        privileged: Boolean = false,
+        dtlsProfile: String = OlcrtcDtls.OFF
     ): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
 
-            val nativeLib = if (DesktopPaths.os == DesktopOs.Linux) null else OlcRtcNativeLib.INSTANCE
+            val nativeLib = nativeLibFor(dtlsProfile)
             if (nativeLib != null) {
                 repeat(HTTP_PING_ATTEMPTS) {
                     val socksPort = allocateLocalPort()
@@ -123,7 +127,8 @@ internal object OlcRtcConnectionChecker {
                 val result = runCatching {
                     pingOnce(
                         config = config,
-                        privileged = privileged
+                        privileged = privileged,
+                        dtlsProfile = dtlsProfile
                     )
                 }.onFailure {
                     println("OlcRtcConnectionChecker: HTTP ping failed: ${it.message}")
@@ -140,7 +145,8 @@ internal object OlcRtcConnectionChecker {
 
     private suspend fun checkOnce(
         config: LocationConfig,
-        privileged: Boolean
+        privileged: Boolean,
+        dtlsProfile: String
     ): Long = coroutineScope {
         val socksPort = allocateLocalPort()
         val ready = CompletableDeferred<Unit>()
@@ -150,7 +156,8 @@ internal object OlcRtcConnectionChecker {
             config = config,
             socksPort = socksPort,
             ready = ready,
-            privileged = privileged
+            privileged = privileged,
+            dtlsProfile = dtlsProfile
         )
 
         val startedAt = System.currentTimeMillis()
@@ -170,7 +177,8 @@ internal object OlcRtcConnectionChecker {
 
     private suspend fun pingOnce(
         config: LocationConfig,
-        privileged: Boolean
+        privileged: Boolean,
+        dtlsProfile: String
     ): Long = coroutineScope {
         val socksPort = allocateLocalPort()
         val ready = CompletableDeferred<Unit>()
@@ -180,7 +188,8 @@ internal object OlcRtcConnectionChecker {
             config = config,
             socksPort = socksPort,
             ready = ready,
-            privileged = privileged
+            privileged = privileged,
+            dtlsProfile = dtlsProfile
         )
 
         try {
@@ -201,7 +210,8 @@ internal object OlcRtcConnectionChecker {
         config: LocationConfig,
         socksPort: Int,
         ready: CompletableDeferred<Unit>,
-        privileged: Boolean
+        privileged: Boolean,
+        dtlsProfile: String
     ): Process {
         val binaries = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
         var lastException: Exception? = null
@@ -214,7 +224,8 @@ internal object OlcRtcConnectionChecker {
                     config = config,
                     socksPort = socksPort,
                     ready = ready,
-                    privileged = privileged
+                    privileged = privileged,
+                    dtlsProfile = dtlsProfile
                 )
             } catch (e: Exception) {
                 lastException = e
@@ -239,7 +250,8 @@ internal object OlcRtcConnectionChecker {
         config: LocationConfig,
         socksPort: Int,
         ready: CompletableDeferred<Unit>,
-        privileged: Boolean
+        privileged: Boolean,
+        dtlsProfile: String
     ): Process {
         val normalized = config.normalized()
 
@@ -248,7 +260,8 @@ internal object OlcRtcConnectionChecker {
             location = normalized,
             socksHost = PacServer.LOCAL_SOCKS_HOST,
             socksPort = socksPort,
-            dnsServer = DesktopDnsResolver.current()
+            dnsServer = DesktopDnsResolver.current(),
+            dtlsProfile = dtlsProfile
         )
         val configPath = writeOlcRtcClientConfig(command)
 
@@ -274,6 +287,14 @@ internal object OlcRtcConnectionChecker {
 
         return process
     }
+
+    /**
+     * The bundled library for a probe, or null for the binary. The library's
+     * Check and Ping take no handshake profile, so a probe that needs one runs
+     * the binary, which reads it from its yaml - as Linux always does.
+     */
+    internal fun nativeLibFor(dtlsProfile: String, os: DesktopOs = DesktopPaths.os): OlcRtcNativeLib? =
+        if (os == DesktopOs.Linux || dtlsProfile != OlcrtcDtls.OFF) null else OlcRtcNativeLib.INSTANCE
 
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
         val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")

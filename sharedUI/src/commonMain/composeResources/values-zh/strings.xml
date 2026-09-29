@@ -168,6 +168,8 @@
     <string name="logs_copied">日志已复制到剪贴板</string>
     <string name="logs_debug">详细调试日志</string>
     <string name="logs_debug_note">记录 DNS、分流和连接决策。更改后会重新连接当前隧道。</string>
+    <string name="olcrtc_chrome_dtls">类 Chrome 的 olcRTC 握手</string>
+    <string name="olcrtc_chrome_dtls_note">实验性功能。olcRTC 房间像 Chrome 一样建立加密连接，而不是按其 WebRTC 库的方式。如果在你的网络中房间无法连接，可以试试。更改后会重新连接当前隧道。</string>
     <string name="logs_no_entries">没有记录</string>
     <string name="logs_save_failed">保存日志失败</string>
     <string name="logs_saved">日志已保存</string>

@@ -212,7 +212,7 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260924233529-8d97e32e0b1a}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260929121845-f9edaa7f1ab5}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -283,7 +283,10 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260924233529-8d97e32e0b1a}"
 # the best rate of the last ten seconds over a 3 s horizon (olcrtc#49, #50),
 # two server-side fixes the client does not run, and salutejazz S3 back on
 # the gate's known failures. Same API.
-CORES_BUILD="${CORES_BUILD:-33}"
+# 33 -> 34: the engine pin above (f9edaa7f1ab5, olcrtc#52): the vkcalls carrier
+# (VK Calls, guest join, vp8channel) and a DTLS ClientHello profile; the API
+# grew Runtime.SetDTLSProfile, which the extension and the app's probes call.
+CORES_BUILD="${CORES_BUILD:-34}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.

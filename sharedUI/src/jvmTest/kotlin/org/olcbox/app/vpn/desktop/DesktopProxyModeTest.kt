@@ -1,12 +1,16 @@
 package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.desktop.DesktopOs
+import org.olcbox.app.net.OlcrtcDtls
+import org.olcbox.app.vpn.OlcRtcConnectionChecker
 import org.olcbox.app.vpn.olcRtcNativeLibrarySpec
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopProxyModeTest {
@@ -205,6 +209,59 @@ class DesktopProxyModeTest {
         assertContains(command, "provider: 'salutejazz'")
         assertContains(command, "transport: '${LocationConfig.TRANSPORT_DATACHANNEL}'")
         assertContains(command, "id: 'zzz999:pw123456'")
+    }
+
+    @Test
+    fun olcRtcCommandSelectsVkcallsEngineNameWithTheWholeJoinLink() {
+        val command = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = LocationConfig(
+                name = "VK",
+                id = "https://vk.ru/call/join/AbC-12_xyz",
+                key = "f".repeat(64),
+                bypassProvider = "vk",
+                transport = LocationConfig.TRANSPORT_DATACHANNEL
+            ),
+            dnsServer = "192.168.43.1:53"
+        ).yaml()
+
+        assertContains(command, "provider: 'vkcalls'")
+        // Asked for DataChannel, run over the one lane VK Calls has.
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_VP8CHANNEL}'")
+        assertContains(command, "id: 'https://vk.ru/call/join/AbC-12_xyz'")
+    }
+
+    // The engine reads `dtls.profile`; the yaml of a default run carries no
+    // dtls block at all, so it is the one an engine without the setting read.
+    @Test
+    fun olcRtcCommandWritesTheDtlsProfileOnlyWhenOneIsChosen() {
+        val location = LocationConfig(
+            name = "T",
+            id = "12345678901234",
+            key = "e".repeat(64),
+            bypassProvider = LocationConfig.PROVIDER_TELEMOST,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        )
+        val plain = OlcRtcCommand(binary = Path.of("/tmp/olcrtc"), location = location, dnsServer = "1.1.1.1:53").yaml()
+        assertFalse("dtls:" in plain, plain)
+
+        val chrome = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = location,
+            dnsServer = "1.1.1.1:53",
+            dtlsProfile = OlcrtcDtls.profile(chrome = true)
+        ).yaml()
+        assertContains(chrome, "dtls:\n  profile: 'chrome-linux-138-compat-v1'\n")
+    }
+
+    // The bundled library's Check and Ping take no profile: a probe that needs
+    // one runs the binary, which reads it from its yaml.
+    @Test
+    fun aProbeWithAHandshakeProfileRunsTheBinary() {
+        for (os in DesktopOs.entries) {
+            assertNull(OlcRtcConnectionChecker.nativeLibFor(OlcrtcDtls.CHROME, os), "$os")
+        }
+        assertNull(OlcRtcConnectionChecker.nativeLibFor(OlcrtcDtls.OFF, DesktopOs.Linux))
     }
 
     /**

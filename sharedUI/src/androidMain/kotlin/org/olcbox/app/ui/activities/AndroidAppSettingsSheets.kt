@@ -237,6 +237,7 @@ import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.ui.components.SubscriptionSettingsScreen
+import org.olcbox.app.ui.components.OlcrtcHandshakeRow
 import org.olcbox.app.ui.components.RoutingSettingsScreen
 import org.olcbox.app.ui.components.hubSummary
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
@@ -397,7 +398,8 @@ internal fun AppSettingsSheet(
                         onProxySettingsClick = { route = AppSettingsRoute.SocksProxy },
                         routingSettings = routingSettings,
                         onRoutingClick = { route = AppSettingsRoute.Routing },
-                        onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling }
+                        onSplitTunnelingClick = { route = AppSettingsRoute.SplitTunneling },
+                        onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) }
                     )
 
                     AppSettingsRoute.ConnectionMode -> ConnectionModeSettingsContent(
@@ -571,7 +573,8 @@ private fun ConnectionSettingsContent(
     onProxySettingsClick: () -> Unit,
     routingSettings: RoutingSettings,
     onRoutingClick: () -> Unit,
-    onSplitTunnelingClick: () -> Unit
+    onSplitTunnelingClick: () -> Unit,
+    onChromeDtlsChanged: (Boolean) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -629,6 +632,11 @@ private fun ConnectionSettingsContent(
                 icon = PkIcons.Apps,
                 enabled = enabled,
                 onClick = onSplitTunnelingClick
+            )
+            OlcrtcHandshakeRow(
+                checked = routingSettings.olcrtcChromeDtls,
+                enabled = enabled,
+                onCheckedChange = onChromeDtlsChanged
             )
         }
     }

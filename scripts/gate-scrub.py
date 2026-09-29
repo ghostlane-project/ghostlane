@@ -9,8 +9,8 @@ The repository is public, and so is every workflow artifact and release asset
 it makes. What the gate uploads is the report, the plan and the logs of a leg;
 this runs over them first (spec section 10, engine plan A9):
 
-1. Secrets, longest first: every entry of GATE_TELEMOST_ROOMS and
-   GATE_WBSTREAM_ROOMS, its query-less form and its last path segment (a room
+1. Secrets, longest first: every entry of GATE_TELEMOST_ROOMS,
+   GATE_WBSTREAM_ROOMS and GATE_VKCALLS_ROOMS, its query-less form and its last path segment (a room
    link's id) become <room>; GATE_JITSI_HOSTS entries become <jitsi-host>;
    GATE_WBSTREAM_TOKEN becomes <token>. Each also in its JSON-escaped forms
    (Go escapes <, > and & as \\u003c, \\u003e, \\u0026) and percent-encoded, and
@@ -47,6 +47,7 @@ MIN = 6
 LISTS = (
     ("GATE_TELEMOST_ROOMS", b"<room>"),
     ("GATE_WBSTREAM_ROOMS", b"<room>"),
+    ("GATE_VKCALLS_ROOMS", b"<room>"),
     ("GATE_JITSI_HOSTS", b"<jitsi-host>"),
 )
 TOKEN = ("GATE_WBSTREAM_TOKEN", b"<token>")

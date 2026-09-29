@@ -393,9 +393,11 @@ fun ApplicationSettingsSheet(
                     modeSummary = connectionModeSummary,
                     socksProxySettings = socksProxySettings,
                     tunnelDaemonSummary = tunnelDaemonSummary,
+                    chromeDtls = routingSettings.olcrtcChromeDtls,
                     onConnectionModeClick = { route = SharedSettingsRoute.ConnectionMode },
                     onSocksProxyClick = { route = SharedSettingsRoute.SocksProxy },
                     onTunnelDaemonClick = onTunnelDaemonClick,
+                    onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) },
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
 
@@ -594,9 +596,11 @@ private fun SharedConnectionSettingsContent(
     modeSummary: String,
     socksProxySettings: ApplicationSocksProxySettings?,
     tunnelDaemonSummary: String?,
+    chromeDtls: Boolean,
     onConnectionModeClick: () -> Unit,
     onSocksProxyClick: () -> Unit,
     onTunnelDaemonClick: () -> Unit,
+    onChromeDtlsChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -647,6 +651,8 @@ private fun SharedConnectionSettingsContent(
                     onClick = onSocksProxyClick
                 )
             }
+
+            OlcrtcHandshakeRow(checked = chromeDtls, enabled = true, onCheckedChange = onChromeDtlsChanged)
 
             details
                 .filterNot { (title, _) -> title.equals("Mode", ignoreCase = true) }

@@ -64,6 +64,8 @@ on:
         required: false
       GATE_JITSI_HOSTS:
         required: false
+      GATE_VKCALLS_ROOMS:
+        required: false
   workflow_dispatch:
     inputs:
       engine_ref:
@@ -71,7 +73,7 @@ on:
         type: string
         default: ''
       providers:
-        description: Providers, comma-separated (jitsi, telemost, wbstream, salutejazz); empty = all four, fewer = a limited run
+        description: Providers, comma-separated (jitsi, telemost, wbstream, salutejazz, vkcalls); empty = all five, fewer = a limited run
         type: string
         default: ''
       transports:
@@ -226,7 +228,7 @@ jobs:
       # The checkout above holds no secret; this is the first step that does,
       # and all it does is register every value with the masker. Each leg gets
       # its own provider's secrets alone: the WB token reaches the wbstream leg
-      # and no other. The same four lines repeat on every step that needs them
+      # and no other. The same five lines repeat on every step that needs them
       # (never job env, never pasted into a script).
       - name: Mask the leg's secrets
         env:
@@ -234,6 +236,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+          GATE_VKCALLS_ROOMS: ${{ matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: olcbox/scripts/gate-mask.sh
 
       - name: Checkout olcrtc at the gated revision
@@ -266,6 +269,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+          GATE_VKCALLS_ROOMS: ${{ matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: olcbox/scripts/gate-resolve.sh check "$GATE_PROVIDER"
 
       - name: Run the cli flavour (default build)
@@ -275,6 +279,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+          GATE_VKCALLS_ROOMS: ${{ matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: olcbox/scripts/gate-run.sh run cli "$GATE_LEG_DIR/cli"
 
       # After the cli flavour whatever it found: a red cli cell must not hide
@@ -287,6 +292,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+          GATE_VKCALLS_ROOMS: ${{ matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: olcbox/scripts/gate-run.sh run mobile "$GATE_LEG_DIR/mobile"
 
       # The repository is public and so are its artifacts: nothing is uploaded
@@ -301,6 +307,7 @@ jobs:
           GATE_WBSTREAM_ROOMS: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_ROOMS || '' }}
           GATE_WBSTREAM_TOKEN: ${{ matrix.provider == 'wbstream' && secrets.GATE_WBSTREAM_TOKEN || '' }}
           GATE_JITSI_HOSTS: ${{ matrix.provider == 'jitsi' && secrets.GATE_JITSI_HOSTS || '' }}
+          GATE_VKCALLS_ROOMS: ${{ matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: python3 olcbox/scripts/gate-scrub.py "$GATE_ARTIFACTS"
 
       - name: Leg summary

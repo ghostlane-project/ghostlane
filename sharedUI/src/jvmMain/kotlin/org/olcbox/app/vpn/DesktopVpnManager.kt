@@ -31,6 +31,7 @@ import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OlcrtcDirectRules
+import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
 import org.olcbox.app.vpn.desktop.TunnelDaemonProtocol
 import org.olcbox.app.data.repository.LocationsRepository
@@ -246,7 +247,8 @@ class DesktopVpnManager private constructor(
         }
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
-            deviceId = locationsRepository.getDeviceIdentity()
+            deviceId = locationsRepository.getDeviceIdentity(),
+            dtlsProfile = OlcrtcDtls.profile(locationsRepository.getRoutingSettings().olcrtcChromeDtls)
         )
     }
 
@@ -282,7 +284,8 @@ class DesktopVpnManager private constructor(
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
-            deviceId = locationsRepository.getDeviceIdentity()
+            deviceId = locationsRepository.getDeviceIdentity(),
+            dtlsProfile = OlcrtcDtls.profile(locationsRepository.getRoutingSettings().olcrtcChromeDtls)
         )
     }
 
@@ -472,7 +475,8 @@ class DesktopVpnManager private constructor(
                     startupFailure = startupFailure,
                     logOutput = true,
                     privileged = desktopMode == DesktopMode.LinuxTun,
-                    directRulesFile = engineRules
+                    directRulesFile = engineRules,
+                    dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
                 )
                 val olcRtcProcess = process ?: error("olcRTC process is missing")
                 waitForOlcRtcReady(
@@ -1075,7 +1079,8 @@ class DesktopVpnManager private constructor(
         startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean,
-        directRulesFile: Path?
+        directRulesFile: Path?,
+        dtlsProfile: String
     ): Process {
         val binaries = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
         val dnsServer = DesktopDnsResolver.current()
@@ -1094,7 +1099,8 @@ class DesktopVpnManager private constructor(
                     logOutput = logOutput,
                     privileged = privileged,
                     dnsServer = dnsServer,
-                    directRulesFile = directRulesFile
+                    directRulesFile = directRulesFile,
+                    dtlsProfile = dtlsProfile
                 )
             } catch (e: Exception) {
                 lastException = e
@@ -1227,7 +1233,8 @@ class DesktopVpnManager private constructor(
         logOutput: Boolean,
         privileged: Boolean,
         dnsServer: String,
-        directRulesFile: Path?
+        directRulesFile: Path?,
+        dtlsProfile: String
     ): Process {
         val config = location.normalized()
         val provider = OlcRtcCommand.desktopProviderArg(config.bypassProvider)
@@ -1239,8 +1246,12 @@ class DesktopVpnManager private constructor(
             socksUser = socksSettings.username,
             socksPass = socksSettings.password,
             dnsServer = dnsServer,
-            directRulesFile = directRulesFile
+            directRulesFile = directRulesFile,
+            dtlsProfile = dtlsProfile
         )
+        if (dtlsProfile != OlcrtcDtls.OFF) {
+            addLog("olcRTC handshake: $dtlsProfile")
+        }
         val configPath = writeOlcRtcClientConfig(olcRtcCommand)
         val command = olcRtcCommand.args(configPath)
 

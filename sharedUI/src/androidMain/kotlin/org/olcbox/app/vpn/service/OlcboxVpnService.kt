@@ -72,6 +72,7 @@ import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OlcrtcDirectRules
+import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
@@ -1021,6 +1022,13 @@ class OlcboxVpnService : VpnService() {
         olcrtc.setUDP(
             OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport, directRules = directRules.isNotEmpty())
         )
+        // Set on every start too, "off" included: the Runtime keeps a profile
+        // across Starts, so switching the setting off would otherwise not stick.
+        val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
+        olcrtc.setDTLSProfile(dtlsProfile)
+        if (dtlsProfile != OlcrtcDtls.OFF) {
+            addLog("olcRTC handshake: $dtlsProfile")
+        }
     }
 
     private fun startTun2socks(pfd: ParcelFileDescriptor): Boolean {

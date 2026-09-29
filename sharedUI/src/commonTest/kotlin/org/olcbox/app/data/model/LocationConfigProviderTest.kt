@@ -31,4 +31,26 @@ class LocationConfigProviderTest {
         assertEquals(1, offered.count { LocationConfig.normalizeProvider(it) == LocationConfig.PROVIDER_SALUTEJAZZ })
         assertEquals(offered, offered.map { LocationConfig.normalizeProvider(it) }, "every entry is its own canonical name")
     }
+
+    /**
+     * Before VK Calls had a name here, `vkcalls` fell to the default carrier: a
+     * VK link imported as a WB Stream location, and the engine was sent into
+     * WB with a vk.ru join link for a room id.
+     */
+    @Test
+    fun vkCallsIsItsOwnCarrierOverVp8Only() {
+        for (name in listOf("vkcalls", "VKCalls", " vk ", "vk_calls", "vk-calls", "vkcall")) {
+            assertEquals(LocationConfig.PROVIDER_VKCALLS, LocationConfig.normalizeProvider(name), name)
+        }
+        assertEquals("VK Calls", LocationConfig.providerDisplayName("vk"))
+        assertEquals(
+            listOf(LocationConfig.TRANSPORT_VP8CHANNEL),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_VKCALLS)
+        )
+        assertEquals(
+            LocationConfig.TRANSPORT_VP8CHANNEL,
+            LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_DATACHANNEL, LocationConfig.PROVIDER_VKCALLS)
+        )
+        assertEquals(1, LocationConfig.supportedBypassProviders.count { it == LocationConfig.PROVIDER_VKCALLS })
+    }
 }

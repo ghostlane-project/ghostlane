@@ -168,6 +168,8 @@
     <string name="logs_copied">گزارش در کلیپ‌بورد کپی شد</string>
     <string name="logs_debug">گزارش اشکال‌زدایی مفصل</string>
     <string name="logs_debug_note">تصمیم‌های DNS، مسیریابی و اتصال ثبت می‌شود. تغییر آن، تونل فعال را دوباره وصل می‌کند.</string>
+    <string name="olcrtc_chrome_dtls">دست‌دهی olcRTC مانند Chrome</string>
+    <string name="olcrtc_chrome_dtls_note">آزمایشی. اتاق‌های olcRTC اتصال رمزگذاری‌شدهٔ خود را مانند Chrome برقرار می‌کنند، نه به روش کتابخانهٔ WebRTC خود. اگر اتاق‌ها در شبکهٔ شما وصل نمی‌شوند، آن را امتحان کنید. تغییر آن، تونل فعال را دوباره وصل می‌کند.</string>
     <string name="logs_no_entries">موردی ثبت نشده</string>
     <string name="logs_save_failed">ذخیرهٔ گزارش ناموفق بود</string>
     <string name="logs_saved">گزارش ذخیره شد</string>

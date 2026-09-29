@@ -289,13 +289,14 @@ jobs:
       # while the gate runs the local target only; fail is meant for when the
       # link target (a fleet node) is compared release to release.
       compare_severity: warn
-    # Named one by one, never `inherit`: the gate sees its own four secrets and
+    # Named one by one, never `inherit`: the gate sees its own five secrets and
     # none of the signing keys.
     secrets:
       GATE_TELEMOST_ROOMS: ${{ secrets.GATE_TELEMOST_ROOMS }}
       GATE_WBSTREAM_ROOMS: ${{ secrets.GATE_WBSTREAM_ROOMS }}
       GATE_WBSTREAM_TOKEN: ${{ secrets.GATE_WBSTREAM_TOKEN }}
       GATE_JITSI_HOSTS: ${{ secrets.GATE_JITSI_HOSTS }}
+      GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
 
   build-windows:
     needs: [release_version, plan, gate]

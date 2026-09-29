@@ -48,6 +48,7 @@ import org.olcbox.app.net.transportKind
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.OlcrtcDirectRules
+import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.TransportSpec
@@ -481,7 +482,8 @@ class IosVpnManager(
                     locationsRepository.getDeviceIdentity(),
                     settings,
                     directRules,
-                    subscriptionUrl
+                    subscriptionUrl,
+                    OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
                 ),
                 ruleSets = ruleSets
             )
@@ -610,7 +612,8 @@ class IosVpnManager(
             timeoutMillis = CHECK_TIMEOUT_MS,
             pingUrl = HTTP_PING_URL,
             vp8Fps = config.vp8Fps,
-            vp8BatchSize = config.vp8Batch
+            vp8BatchSize = config.vp8Batch,
+            dtlsProfile = OlcrtcDtls.profile(locationsRepository.getRoutingSettings().olcrtcChromeDtls)
         )
         val result = block(request)
         if (result.success && result.valueMillis >= 0L) result.valueMillis else null
@@ -937,7 +940,8 @@ class IosVpnManager(
         deviceId: String,
         settings: ApplicationSocksProxySettings,
         directRules: String = OlcrtcDirectRules.NONE,
-        subscriptionUrl: String? = null
+        subscriptionUrl: String? = null,
+        dtlsProfile: String = OlcrtcDtls.OFF
     ): IosOlcRtcStartRequest {
         val config = normalized()
         return IosOlcRtcStartRequest(
@@ -953,7 +957,8 @@ class IosVpnManager(
             vp8BatchSize = config.vp8Batch,
             directRules = directRules,
             failoverRooms = config.failoverRoomIds,
-            subscriptionUrl = subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() }
+            subscriptionUrl = subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() },
+            dtlsProfile = dtlsProfile
         )
     }
 

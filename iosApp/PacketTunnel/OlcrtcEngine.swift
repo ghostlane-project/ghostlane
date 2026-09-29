@@ -41,6 +41,9 @@ enum OlcrtcEngine {
         /// Where the room list came from, when it came from a subscription:
         /// RoomKeeper re-reads it through the tunnel after every handover.
         let subscriptionUrl: String?
+        /// The DTLS ClientHello profile (`chrome-linux-138-compat-v1`); absent
+        /// is `off`, the WebRTC library's own. Optional like `directRules`.
+        let dtlsProfile: String?
     }
 
     private static let log = Logger(subsystem: "org.proofkit.app", category: "olcrtc")
@@ -190,6 +193,11 @@ enum OlcrtcEngine {
         try runtime.setDirectRules(directRules)
         log.info("direct rules: \(directRules.utf8.count, privacy: .public) bytes")
         try runtime.setVP8Options(parameters.vp8Fps, batchSize: parameters.vp8BatchSize)
+        // Set on every launch, "off" included: the runtime is the process's and
+        // keeps a profile across starts.
+        let dtlsProfile = parameters.dtlsProfile ?? "off"
+        try runtime.setDTLSProfile(dtlsProfile)
+        log.info("dtls profile: \(dtlsProfile, privacy: .public)")
         // Loopback only. The port is fixed rather than user-set now: nothing
         // outside this process is meant to reach it.
         try runtime.setSocksListenHost("127.0.0.1")

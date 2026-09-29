@@ -66,6 +66,10 @@ enum RoomListTests {
         // `telemost`, a third-party line may say `yandex` or `JAZZ`.
         check(RoomList.parse("olcrtc://Yandex?vp8channel@R1#\(key)", keyHex: key, carrier: " TELEMOST ")?.primary == "R1", "carrier aliases and case")
         check(RoomList.parse("olcrtc://jazz?datachannel@S1#\(key)", keyHex: key, carrier: "salutejazz")?.primary == "S1", "jazz is SaluteJazz")
+        check(RoomList.parse("olcrtc://VK?vp8channel@https://vk.ru/call/join/V1#\(key)", keyHex: key, carrier: "vkcalls")?.primary == "https://vk.ru/call/join/V1",
+              "vk is VK Calls, and its room is the whole join link")
+        check(RoomList.parse("olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/V1#\(key)", keyHex: key, carrier: "wbstream") == nil,
+              "a VK Calls line is not WB Stream's")
 
         // A carrier this file does not know joins no known carrier's group,
         // where Kotlin's picker would have called it WB Stream.

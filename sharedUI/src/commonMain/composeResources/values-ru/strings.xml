@@ -168,6 +168,8 @@
     <string name="logs_copied">Журнал скопирован в буфер обмена</string>
     <string name="logs_debug">Подробный журнал отладки</string>
     <string name="logs_debug_note">Записывать решения DNS, маршрутизации и подключения. Изменение переподключает активный туннель.</string>
+    <string name="olcrtc_chrome_dtls">Рукопожатие olcRTC как у Chrome</string>
+    <string name="olcrtc_chrome_dtls_note">Экспериментально. Комнаты olcRTC открывают шифрованное соединение так же, как Chrome, а не так, как их библиотека WebRTC. Попробуйте, если в вашей сети комнаты не подключаются. Изменение переподключает активный туннель.</string>
     <string name="logs_no_entries">Записей нет</string>
     <string name="logs_save_failed">Не удалось сохранить журнал</string>
     <string name="logs_saved">Журнал сохранён</string>

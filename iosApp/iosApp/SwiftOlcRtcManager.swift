@@ -52,6 +52,7 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
             try runtime.setTransport(request.transportName)
             try runtime.setDNS("1.1.1.1:53")
             try runtime.setDirectRules(request.directRules)
+            try runtime.setDTLSProfile(request.dtlsProfile)
             try runtime.setVP8Options(Int(request.vp8Fps), batchSize: Int(request.vp8BatchSize))
             try runtime.setProvider(request.carrierName)
             try runtime.setRoom(request.roomId)
@@ -116,6 +117,8 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
 
         var value: Int64 = -1
         do {
+            // A probe copies the runtime's settings, the handshake profile included.
+            try runtime.setDTLSProfile(request.dtlsProfile)
             try runtime.ping(
                 request.carrierName,
                 transportName: request.transportName,
@@ -143,6 +146,7 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
 
         var value: Int64 = -1
         do {
+            try runtime.setDTLSProfile(request.dtlsProfile)
             try runtime.check(
                 request.carrierName,
                 transportName: request.transportName,
