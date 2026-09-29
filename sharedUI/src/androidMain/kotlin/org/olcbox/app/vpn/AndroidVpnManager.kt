@@ -28,6 +28,7 @@ import org.olcbox.app.net.AndroidCoreProcess
 import org.olcbox.app.net.TransportProbe
 import java.util.concurrent.atomic.AtomicInteger
 import org.olcbox.app.net.LocationKind
+import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.PathLatency
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
@@ -300,7 +301,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         }
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
-            deviceId = deviceIdentityProvider.hwid()
+            deviceId = deviceIdentityProvider.hwid(),
+            dtlsProfile = olcrtcDtlsProfile()
         )
     }
 
@@ -339,9 +341,14 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
-            deviceId = deviceIdentityProvider.hwid()
+            deviceId = deviceIdentityProvider.hwid(),
+            dtlsProfile = olcrtcDtlsProfile()
         )
     }
+
+    /** The handshake a probe uses: the one the service would, from the same setting. */
+    private suspend fun olcrtcDtlsProfile(): String =
+        OlcrtcDtls.profile(locationsDataSource.loadLocationBundle()?.routing?.olcrtcChromeDtls == true)
 
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }

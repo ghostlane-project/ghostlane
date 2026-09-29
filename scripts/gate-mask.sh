@@ -4,7 +4,8 @@
 #
 # GitHub masks a secret's whole value, and a pool is a whole comma list, so
 # none of its entries on its own is masked until this says so. For every entry
-# of GATE_TELEMOST_ROOMS, GATE_WBSTREAM_ROOMS and GATE_JITSI_HOSTS (commas or
+# of GATE_TELEMOST_ROOMS, GATE_WBSTREAM_ROOMS, GATE_VKCALLS_ROOMS and
+# GATE_JITSI_HOSTS (commas or
 # newlines separate, whitespace trimmed) it masks the entry, the entry without
 # its query or fragment, and its last path segment - a room URL's id, which is
 # what a log line that builds its own URL prints - and it masks
@@ -54,6 +55,7 @@ mask_list() {
 mask_list "${GATE_TELEMOST_ROOMS:-}"
 mask_list "${GATE_WBSTREAM_ROOMS:-}"
 mask_list "${GATE_JITSI_HOSTS:-}"
+mask_list "${GATE_VKCALLS_ROOMS:-}"
 token="${GATE_WBSTREAM_TOKEN:-}"
 token="${token#"${token%%[![:space:]]*}"}"
 token="${token%"${token##*[![:space:]]}"}"

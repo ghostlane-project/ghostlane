@@ -629,6 +629,7 @@ private fun roomIdPlaceholder(provider: String): String {
         LocationConfig.PROVIDER_WB_STREAM -> "123e4567-e89b-12d3-a456-426614174000"
         LocationConfig.PROVIDER_JITSI -> "https://meet.example.com/room"
         LocationConfig.PROVIDER_SALUTEJAZZ -> "code:password"
+        LocationConfig.PROVIDER_VKCALLS -> "https://vk.ru/call/join/…"
         else -> stringResource(Res.string.location_room_id_placeholder)
     }
 }
@@ -646,15 +647,21 @@ private fun fieldErrorText(error: FieldError, provider: String): String = when (
 
 @Composable
 private fun roomIdLabel(provider: String): String {
-    return stringResource(if (isJitsiProvider(provider)) Res.string.location_room_url else Res.string.location_room_id)
+    return stringResource(if (roomIsLink(provider)) Res.string.location_room_url else Res.string.location_room_id)
 }
 
 private fun roomKeyboardType(provider: String): KeyboardType {
-    return if (isJitsiProvider(provider)) KeyboardType.Uri else KeyboardType.Text
+    return if (roomIsLink(provider)) KeyboardType.Uri else KeyboardType.Text
 }
 
 private fun isJitsiProvider(provider: String): Boolean {
     return LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_JITSI
+}
+
+/** Jitsi and VK Calls name a room by its whole link, the others by an id. */
+private fun roomIsLink(provider: String): Boolean {
+    return isJitsiProvider(provider) ||
+        LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_VKCALLS
 }
 
 private enum class ConnectionType {

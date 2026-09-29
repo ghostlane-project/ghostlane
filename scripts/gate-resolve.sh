@@ -36,7 +36,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/gate-api.sh
 . "${here}/gate-api.sh"
 
-readonly PROVIDERS=(jitsi telemost wbstream salutejazz)
+readonly PROVIDERS=(jitsi telemost wbstream salutejazz vkcalls)
 # Masks shorter than this shred every log line they match (gate-mask.sh).
 readonly MIN=6
 readonly MIN_TOKEN=16
@@ -144,7 +144,7 @@ resolve() {
     for p in "${picked[@]}"; do
       case " ${PROVIDERS[*]} " in
         *" ${p} "*) ;;
-        *) die "unknown provider '${p}' (jitsi, telemost, wbstream, salutejazz)" ;;
+        *) die "unknown provider '${p}' (jitsi, telemost, wbstream, salutejazz, vkcalls)" ;;
       esac
     done
     for p in "${PROVIDERS[@]}"; do
@@ -214,6 +214,7 @@ describe() {
     GATE_WBSTREAM_ROOMS) echo "WB Stream room ids, comma-separated; the gate joins the first" ;;
     GATE_WBSTREAM_TOKEN) echo "a WB Stream account access token; WB refuses a guest as the first participant of an idle room" ;;
     GATE_JITSI_HOSTS) echo "Jitsi host names, comma-separated" ;;
+    GATE_VKCALLS_ROOMS) echo "VK Calls join links (https://vk.ru/call/join/<id>), comma-separated; the gate joins the first, which must already be a SERVER-topology call" ;;
   esac
 }
 
@@ -300,7 +301,11 @@ check() {
       echo "the salutejazz leg needs no secret: the suite makes its own rooms" >&2
       return 0
       ;;
-    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream|salutejazz>" ;;
+    vkcalls)
+      # Guests join by link, so no token; the room itself is the secret.
+      check_list vkcalls GATE_VKCALLS_ROOMS required room || bad=1
+      ;;
+    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream|salutejazz|vkcalls>" ;;
   esac
   [ "${bad}" -eq 0 ] || exit 1
   echo "the ${provider} leg's secrets are in place" >&2

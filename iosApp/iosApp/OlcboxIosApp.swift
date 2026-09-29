@@ -738,6 +738,8 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         // as optional.
         if !request.failoverRooms.isEmpty { fields["failoverRooms"] = request.failoverRooms }
         if let url = request.subscriptionUrl, !url.isEmpty { fields["subscriptionUrl"] = url }
+        // The DTLS ClientHello profile, left out at the default like the two above.
+        if request.dtlsProfile != "off" { fields["dtlsProfile"] = request.dtlsProfile }
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return nil }
         return String(data: data, encoding: .utf8)
     }

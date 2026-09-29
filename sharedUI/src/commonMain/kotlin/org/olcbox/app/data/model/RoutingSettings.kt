@@ -80,6 +80,15 @@ data class RoutingSettings(
     @SerialName("verbose_debug_logs")
     val verboseDebugLogs: Boolean = false,
     /**
+     * olcRTC rooms open their DTLS handshake with Chrome's ClientHello
+     * ([org.olcbox.app.net.OlcrtcDtls.CHROME]) instead of the WebRTC library's
+     * own. Experimental and off by default. It sits here for the reason
+     * [verboseDebugLogs] does: one persisted copy, read by every platform
+     * each time it starts a room or checks one.
+     */
+    @SerialName("olcrtc_chrome_dtls")
+    val olcrtcChromeDtls: Boolean = false,
+    /**
      * Your own "always direct" rules, each in [RoutingRule.text]'s spelling. They win
      * over the mode's lists, and in rooms they are what the engine is told to leave
      * out of the room.

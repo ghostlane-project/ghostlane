@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.OlcrtcDtls
 import java.nio.file.Path
 
 internal data class OlcRtcCommand(
@@ -16,7 +17,13 @@ internal data class OlcRtcCommand(
      * or null for none: the destinations the engine dials itself instead of through
      * the room. Named, not inlined: Russia's lists are 224 KB.
      */
-    val directRulesFile: Path? = null
+    val directRulesFile: Path? = null,
+    /**
+     * The DTLS ClientHello profile ([org.olcbox.app.net.OlcrtcDtls]); written
+     * only when it is not [org.olcbox.app.net.OlcrtcDtls.OFF], so the yaml of
+     * a default run is the one an engine without the setting reads.
+     */
+    val dtlsProfile: String = OlcrtcDtls.OFF
 ) {
     fun args(configPath: Path): List<String> {
         return listOf(binary.toString(), configPath.toString())
@@ -47,6 +54,10 @@ internal data class OlcRtcCommand(
             if (directRulesFile != null) {
                 appendLine("route:")
                 appendLine("  direct_file: ${directRulesFile.toAbsolutePath().toString().yamlValue()}")
+            }
+            if (dtlsProfile != OlcrtcDtls.OFF) {
+                appendLine("dtls:")
+                appendLine("  profile: ${dtlsProfile.yamlValue()}")
             }
             // The engine's UDP relay is opt-in from yaml; without this line
             // SOCKS5 UDP ASSOCIATE is refused and calls fall back to nothing.

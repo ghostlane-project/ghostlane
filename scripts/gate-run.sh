@@ -21,7 +21,8 @@
 #                                 -olcrtc.gate-dry              print the plan, run nothing
 #   build per flavour (A8)        cli: no tags; mobile: -tags olcrtc_lean
 #   environment (A2, A5, A7)      OLCRTC_GATE_TELEMOST_ROOMS, OLCRTC_GATE_WBSTREAM_ROOMS,
-#                                 OLCRTC_GATE_WBSTREAM_TOKEN, OLCRTC_GATE_JITSI_HOSTS
+#                                 OLCRTC_GATE_WBSTREAM_TOKEN, OLCRTC_GATE_JITSI_HOSTS,
+#                                 OLCRTC_GATE_VKCALLS_ROOMS
 #                                 (never argv), OLCRTC_GATE_ENGINE_COMMIT,
 #                                 OLCRTC_GATE_ENGINE_REF, OLCRTC_GATE_APP_VERSION
 #   the report                    <gate-dir>/gate-report.json, schema 1
@@ -47,10 +48,10 @@
 #   gate-run.sh compare <warn|fail> <prev> <cur>
 #   gate-run.sh merge <gate-merge-reports.py merge arguments>
 #
-# plan and run read GATE_PROVIDER (jitsi, telemost, wbstream or salutejazz), GATE_TRANSPORTS
+# plan and run read GATE_PROVIDER (jitsi, telemost, wbstream, salutejazz or vkcalls), GATE_TRANSPORTS
 # (optional), GATE_ENGINE_SHA, GATE_ENGINE_VERSION and GATE_APP_VERSION, and the
 # leg's secrets under the repository's names: GATE_TELEMOST_ROOMS,
-# GATE_WBSTREAM_ROOMS, GATE_WBSTREAM_TOKEN, GATE_JITSI_HOSTS. Nothing here
+# GATE_WBSTREAM_ROOMS, GATE_WBSTREAM_TOKEN, GATE_JITSI_HOSTS, GATE_VKCALLS_ROOMS. Nothing here
 # prints a secret.
 set -euo pipefail
 
@@ -129,8 +130,8 @@ go_timeout() {
 # suite_flags <client> <dir>: the flags every run of one leg's flavour shares.
 suite_flags() {
   case "${GATE_PROVIDER:-}" in
-    jitsi | telemost | wbstream | salutejazz) ;;
-    *) die "GATE_PROVIDER must be jitsi, telemost, wbstream or salutejazz" ;;
+    jitsi | telemost | wbstream | salutejazz | vkcalls) ;;
+    *) die "GATE_PROVIDER must be jitsi, telemost, wbstream, salutejazz or vkcalls" ;;
   esac
   suite=(-olcrtc.gate -olcrtc.gate-target=local
     "-olcrtc.gate-providers=${GATE_PROVIDER}"
@@ -172,8 +173,9 @@ cmd_plan() {
   absolute_dir "${dir}"
   suite_flags "${client}" "${dir}"
   # The dry run needs no room: it gets none, whatever the step's env holds.
-  unset GATE_TELEMOST_ROOMS GATE_WBSTREAM_ROOMS GATE_WBSTREAM_TOKEN GATE_JITSI_HOSTS
-  unset OLCRTC_GATE_TELEMOST_ROOMS OLCRTC_GATE_WBSTREAM_ROOMS OLCRTC_GATE_WBSTREAM_TOKEN OLCRTC_GATE_JITSI_HOSTS
+  unset GATE_TELEMOST_ROOMS GATE_WBSTREAM_ROOMS GATE_WBSTREAM_TOKEN GATE_JITSI_HOSTS GATE_VKCALLS_ROOMS
+  unset OLCRTC_GATE_TELEMOST_ROOMS OLCRTC_GATE_WBSTREAM_ROOMS OLCRTC_GATE_WBSTREAM_TOKEN OLCRTC_GATE_JITSI_HOSTS \
+    OLCRTC_GATE_VKCALLS_ROOMS
   # -v: in package-list mode go test prints a passing test's stdout only with it.
   (cd "${engine_dir}" && go test -count=1 "${build_flags[@]}" -run "${SUITE_RUN}" -v "${SUITE_PKG}" \
     "${suite[@]}" -olcrtc.gate-dry) 2>&1 | tee "${dir}/plan.log" ||
@@ -199,7 +201,8 @@ cmd_run() {
   export OLCRTC_GATE_ENGINE_COMMIT="${GATE_ENGINE_SHA}"
   export OLCRTC_GATE_ENGINE_REF="${GATE_ENGINE_VERSION:-}"
   export OLCRTC_GATE_APP_VERSION="${GATE_APP_VERSION:-}"
-  unset OLCRTC_GATE_TELEMOST_ROOMS OLCRTC_GATE_WBSTREAM_ROOMS OLCRTC_GATE_WBSTREAM_TOKEN OLCRTC_GATE_JITSI_HOSTS
+  unset OLCRTC_GATE_TELEMOST_ROOMS OLCRTC_GATE_WBSTREAM_ROOMS OLCRTC_GATE_WBSTREAM_TOKEN OLCRTC_GATE_JITSI_HOSTS \
+    OLCRTC_GATE_VKCALLS_ROOMS
   case "${GATE_PROVIDER}" in
     telemost)
       OLCRTC_GATE_TELEMOST_ROOMS="$(first_entry "${GATE_TELEMOST_ROOMS:-}")"
@@ -219,8 +222,13 @@ cmd_run() {
         export OLCRTC_GATE_JITSI_HOSTS
       fi
       ;;
+    vkcalls)
+      OLCRTC_GATE_VKCALLS_ROOMS="$(first_entry "${GATE_VKCALLS_ROOMS:-}")"
+      [ -n "${OLCRTC_GATE_VKCALLS_ROOMS}" ] || die "the vkcalls leg needs GATE_VKCALLS_ROOMS"
+      export OLCRTC_GATE_VKCALLS_ROOMS
+      ;;
   esac
-  unset GATE_TELEMOST_ROOMS GATE_WBSTREAM_ROOMS GATE_WBSTREAM_TOKEN GATE_JITSI_HOSTS
+  unset GATE_TELEMOST_ROOMS GATE_WBSTREAM_ROOMS GATE_WBSTREAM_TOKEN GATE_JITSI_HOSTS GATE_VKCALLS_ROOMS
 
   (cd "${engine_dir}" && go test -count=1 "${build_flags[@]}" -timeout "$(go_timeout "${client}")" \
     -run "${SUITE_RUN}" -v "${SUITE_PKG}" "${suite[@]}") 2>&1 | tee "${dir}/go-test.log"

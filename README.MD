@@ -80,11 +80,14 @@ A link that asks for something the app cannot carry — a Shadowsocks plugin or
 stream cipher, Trojan over Reality, VMess over mKCP or QUIC — is left out at
 import rather than added as a server that can never connect.
 
-olcRTC rides four meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz
-and Jitsi. A server list says which one each room is on, and a provider that
-offers one exit over several of them shows up as a server per service.
+olcRTC rides five meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz,
+VK Calls and Jitsi. A server list says which one each room is on, and a provider
+that offers one exit over several of them shows up as a server per service.
 SaluteJazz admits a guest to a call's data channels only, so its rooms always
-run over `datachannel`.
+run over `datachannel`; a VK Calls room is its call's join link, and runs over
+`vp8channel`. An experimental switch in the connection settings opens olcRTC's
+encrypted connection the way Chrome does, for networks that refuse the WebRTC
+library's own.
 
 One server list usually carries several. The app groups them by provider,
 filters by protocol, and remembers the exit last used.

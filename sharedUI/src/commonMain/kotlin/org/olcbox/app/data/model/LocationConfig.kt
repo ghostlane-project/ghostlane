@@ -141,6 +141,13 @@ data class LocationConfig(
          * 2026 and kept by olcbox's picker: [normalizeProvider] maps it here.
          */
         const val PROVIDER_SALUTEJAZZ = "salutejazz"
+        /**
+         * The fifth carrier (VK Calls, joined as a guest), merged into the
+         * engine 2026-09-29 (olcrtc#52). Forwarded verbatim like the others;
+         * the room is the call's join link, `https://vk.ru/call/join/<id>`
+         * (vk.com too), which the engine takes whole.
+         */
+        const val PROVIDER_VKCALLS = "vkcalls"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
@@ -155,7 +162,8 @@ data class LocationConfig(
             PROVIDER_TELEMOST,
             PROVIDER_WB_STREAM,
             PROVIDER_JITSI,
-            PROVIDER_SALUTEJAZZ
+            PROVIDER_SALUTEJAZZ,
+            PROVIDER_VKCALLS
         )
 
         val supportedTransports = listOf(
@@ -170,6 +178,9 @@ data class LocationConfig(
                 PROVIDER_JITSI -> listOf(TRANSPORT_DATACHANNEL)
                 // SaluteJazz guests get data channels only, no media track.
                 PROVIDER_SALUTEJAZZ -> listOf(TRANSPORT_DATACHANNEL)
+                // The engine gates VK Calls on vp8channel alone: its SFU
+                // forwards a guest's camera, and that is the lane.
+                PROVIDER_VKCALLS -> listOf(TRANSPORT_VP8CHANNEL)
                 else -> supportedTransports
             }
         }
@@ -180,6 +191,7 @@ data class LocationConfig(
                 PROVIDER_WB_STREAM, "wbstream", "wb-stream", "wildberries" -> PROVIDER_WB_STREAM
                 PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
                 PROVIDER_SALUTEJAZZ, "jazz", "sberjazz", "sber_jazz" -> PROVIDER_SALUTEJAZZ
+                PROVIDER_VKCALLS, "vk", "vkcall", "vk_calls", "vk-calls" -> PROVIDER_VKCALLS
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -213,6 +225,7 @@ data class LocationConfig(
                 PROVIDER_WB_STREAM -> "WB Stream"
                 PROVIDER_JITSI -> "Jitsi"
                 PROVIDER_SALUTEJAZZ -> "SaluteJazz"
+                PROVIDER_VKCALLS -> "VK Calls"
                 else -> "WB Stream"
             }
         }

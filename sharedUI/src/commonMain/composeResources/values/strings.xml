@@ -168,6 +168,8 @@
     <string name="logs_copied">Logs copied to clipboard</string>
     <string name="logs_debug">Detailed debug logs</string>
     <string name="logs_debug_note">Record DNS, routing and connection decisions. Changing this reconnects an active tunnel.</string>
+    <string name="olcrtc_chrome_dtls">Chrome-like olcRTC handshake</string>
+    <string name="olcrtc_chrome_dtls_note">Experimental. olcRTC rooms open their encrypted connection the way Chrome does, not the way their WebRTC library does. Try it if rooms fail to connect on your network. Changing this reconnects an active tunnel.</string>
     <string name="logs_no_entries">No entries</string>
     <string name="logs_save_failed">Failed to save logs</string>
     <string name="logs_saved">Logs saved</string>

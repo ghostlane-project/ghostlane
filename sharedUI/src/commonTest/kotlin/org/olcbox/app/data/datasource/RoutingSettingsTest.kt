@@ -108,6 +108,22 @@ class RoutingSettingsTest {
             Json.decodeFromString(RoutingSettings.serializer(), """{"mode":"bypass_russia"}""")
         )
     }
+
+    @Test fun theChromeHandshakeIsOffUntilSwitchedOnAndComesBackUnderItsName() = runTest {
+        // Off on every bundle written before the switch existed.
+        assertEquals(false, Json.decodeFromString(RoutingSettings.serializer(), """{"mode":"global"}""").olcrtcChromeDtls)
+        assertEquals(false, LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings().olcrtcChromeDtls)
+
+        val source = MemoryLocationsDataSource()
+        val repository = LocationsRepositoryImpl(source)
+        repository.saveRoutingSettings(RoutingSettings(olcrtcChromeDtls = true))
+        assertEquals(true, repository.getRoutingSettings().olcrtcChromeDtls)
+        assertEquals(
+            "true",
+            Json.encodeToJsonElement(RoutingSettings.serializer(), RoutingSettings(olcrtcChromeDtls = true))
+                .jsonObject["olcrtc_chrome_dtls"]!!.jsonPrimitive.content
+        )
+    }
 }
 
 /** The bundle in memory and nothing else; the repository's other collaborators keep their defaults. */

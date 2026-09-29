@@ -22,7 +22,7 @@ hand.
 | --- | --- | --- |
 | `resolve` | Resolves the engine revision to a full commit, checks that it carries `internal/gate` and `cmd/gate-report`, and decides the mode and the legs | none |
 | `unit` (x2) | `go test -race ./...` of the engine, default build and lean build | none |
-| `suite` (x4) | One leg per provider: `jitsi`, `telemost`, `wbstream`, `salutejazz` | that provider's own (`salutejazz` has none) |
+| `suite` (x5) | One leg per provider: `jitsi`, `telemost`, `wbstream`, `salutejazz`, `vkcalls` | that provider's own (`salutejazz` has none) |
 | `verdict` | Merges the legs, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
 
 Each suite leg runs the same steps:
@@ -45,7 +45,8 @@ The two flavours of a leg run one after the other in the same room. That is why
 one room per provider is enough. The `salutejazz` leg has no pool: the suite
 makes a fresh room per pair through Sber's anonymous create call, the one the
 engine's `salutejazz` auth provider makes, so it needs no secret and leaves its
-rooms behind (Sber has no delete).
+rooms behind (Sber has no delete). The `vkcalls` leg joins a VK Calls link as a
+guest, server and clients alike, so its one secret is the room.
 
 The target is **local**: the suite builds `cmd/olcrtc` and starts it as the
 server for each provider and transport pair, then points the client at it
@@ -65,7 +66,8 @@ report format belong to the engine. See `docs/gate.md` in
 `transports` is passed to every chosen provider. Pick transports each of them
 carries: Telemost has `vp8channel` and `videochannel`; WB Stream has
 `vp8channel`, `videochannel` and `seichannel`; SaluteJazz has `datachannel`
-alone (Sber admits a guest to data channels only); Jitsi has all four. Otherwise the
+alone (Sber admits a guest to data channels only); VK Calls has `vp8channel`
+alone; Jitsi has all four. Otherwise the
 engine refuses the plan. `videochannel` runs only when named here: the default
 plan leaves it out because it moves about 7.5 KiB/s, too little for the 5 MB
 transfers of S0, and the phone build does not link it.
@@ -86,7 +88,7 @@ transfers of S0, and the phone build does not link it.
     each flavour's plan, report and scrubbed logs, and the memory samples. It
     is kept for 14 days and is never a release asset. `Verdict` downloads
     every leg's artifact merged into one directory, so a run with one leg
-    lays out like a run with four.
+    lays out like a run with five.
 
 A cell is `platform/provider/transport/client/scenario`, for example
 `engine-linux/telemost/vp8channel/mobile/S2`. Nothing in a cell name, a report
@@ -170,6 +172,7 @@ would have hit.
 | `GATE_WBSTREAM_ROOMS` | wbstream | yes | WB Stream room ids. A room link works too: the engine keeps its last path segment. The gate joins the **first** |
 | `GATE_WBSTREAM_TOKEN` | wbstream | yes | A WB Stream account access token. WB refuses a guest as the first participant of an idle room (`403 guests cannot create rooms`), so the suite's server signs in with it. The client stays a guest, as the app is |
 | `GATE_JITSI_HOSTS` | jitsi | no | Bare Jitsi host names, for example `meet.example.org`: no scheme, no port, no path. When set, they replace the engine's `docs/jitsi.instances.yaml` |
+| `GATE_VKCALLS_ROOMS` | vkcalls | yes | VK Calls join links, `https://vk.ru/call/join/<id>`. The gate joins the **first**. VK hands a call's first lone guest a peer-to-peer (DIRECT) call, where the engine cannot run; a call that has had three guests at once is served through VK's SFU for good, so warm a new link that way before it goes in here, and only ever leave it as its organizer, never end it for everyone (that kills the link for guests) |
 
 The `salutejazz` leg has no secret. Its rooms are made at run time, so no mask
 can know them in advance: the engine's own scrubber withholds each room, its
@@ -216,6 +219,7 @@ Set them from standard input, never on a command line:
     gh secret set GATE_WBSTREAM_ROOMS --repo ghostlane-project/ghostlane
     gh secret set GATE_WBSTREAM_TOKEN --repo ghostlane-project/ghostlane
     gh secret set GATE_JITSI_HOSTS    --repo ghostlane-project/ghostlane   # optional
+    gh secret set GATE_VKCALLS_ROOMS  --repo ghostlane-project/ghostlane
 
 ### Disjoint from the engine repository
 
@@ -337,7 +341,8 @@ depends on:
 - **Builds.** cli has no tags. mobile has `-tags olcrtc_lean`, and asking for
   it in any other build is a plan error.
 - **Environment.** `OLCRTC_GATE_TELEMOST_ROOMS`, `OLCRTC_GATE_WBSTREAM_ROOMS`,
-  `OLCRTC_GATE_WBSTREAM_TOKEN` and `OLCRTC_GATE_JITSI_HOSTS`, never argv. The
+  `OLCRTC_GATE_WBSTREAM_TOKEN`, `OLCRTC_GATE_JITSI_HOSTS` and
+  `OLCRTC_GATE_VKCALLS_ROOMS`, never argv. The
   engine's `-olcrtc.gate-telemost-rooms`, `-olcrtc.gate-wbstream-rooms` and
   `-olcrtc.gate-jitsi-hosts` flags are deliberately unused. Report metadata goes
   in `OLCRTC_GATE_ENGINE_COMMIT`, `OLCRTC_GATE_ENGINE_REF` and

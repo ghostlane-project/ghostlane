@@ -6,16 +6,19 @@ import kotlinx.coroutines.withContext
 import mobile.Mobile
 import mobile.Runtime as OlcrtcRuntime
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.OlcrtcDtls
 import java.net.ServerSocket
 
 internal object OlcRtcConnectionChecker {
     // The checker's own engine, so a probe never touches the service's.
     private val runtime: OlcrtcRuntime by lazy { Mobile.new_() }
 
-    suspend fun check(locationConfig: LocationConfig, deviceId: String): Long? {
+    suspend fun check(locationConfig: LocationConfig, deviceId: String, dtlsProfile: String = OlcrtcDtls.OFF): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
+            // A probe takes the runtime's profile with the rest of its defaults.
+            runtime.setDTLSProfile(dtlsProfile)
 
             repeat(CONNECTION_CHECK_ATTEMPTS) {
                 val socksPort = allocateLocalPort()
@@ -43,10 +46,11 @@ internal object OlcRtcConnectionChecker {
         }
     }
 
-    suspend fun ping(locationConfig: LocationConfig, deviceId: String): Long? {
+    suspend fun ping(locationConfig: LocationConfig, deviceId: String, dtlsProfile: String = OlcrtcDtls.OFF): Long? {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
+            runtime.setDTLSProfile(dtlsProfile)
 
             repeat(HTTP_PING_ATTEMPTS) {
                 val socksPort = allocateLocalPort()
