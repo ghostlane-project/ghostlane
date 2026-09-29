@@ -1,7 +1,56 @@
-# Ghostlane
+<p align="center">
+  <img src="androidApp/src/main/res/playstore_icon.png" alt="Ghostlane" width="112" height="112">
+</p>
 
-A VPN client that can hide a tunnel inside a video call. Kotlin Multiplatform
-and Compose, one codebase for Android, iOS, macOS, Windows and Linux.
+<h1 align="center">Ghostlane</h1>
+
+<p align="center">
+  <b>A tunnel inside a video call.</b><br>
+  An open-source VPN client for Android, iOS, macOS, Windows and Linux.<br>
+  Free, with no account, no tracking and nothing to buy.
+</p>
+
+<!-- Store badges: the owners' official artwork, unmodified (docs/badges/). The App
+     Store badge comes first and in black, as Apple asks when other stores' badges
+     are beside it. Widths, not heights: GitHub sets height:auto on README images.
+     168 px shows Apple's badge 56 px tall; Google's PNG carries a transparent
+     margin, so 217 px shows its badge 56 px tall too, as Google asks (the same
+     size or larger). -->
+<p align="center">
+  <a href="https://apps.apple.com/app/id6795355210"><img src="docs/badges/app-store-badge.svg" alt="Download on the App Store" width="168" align="middle"></a>
+  &nbsp;
+  <a href="https://play.google.com/store/apps/details?id=org.proofkit.app"><img src="docs/badges/google-play-badge.png" alt="Get it on Google Play" width="217" align="middle"></a>
+</p>
+
+<p align="center">
+  macOS, Windows, Linux and Android APKs: <a href="https://github.com/ghostlane-project/ghostlane/releases">GitHub Releases</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ghostlane-project/ghostlane?color=b5f23d&labelColor=07080d" alt="License: MIT"></a>
+  <a href="https://github.com/ghostlane-project/ghostlane/releases"><img src="https://img.shields.io/github/v/release/ghostlane-project/ghostlane?include_prereleases&sort=semver&filter=v*&color=b5f23d&labelColor=07080d&label=release" alt="Latest release"></a>
+  <a href="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml"><img src="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml/badge.svg?branch=main" alt="PR checks"></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/00-intro.PNG" alt="Intro" width="200">
+  <img src="docs/screenshots/03-connected.PNG" alt="Connected, with session timer and traffic" width="200">
+  <img src="docs/screenshots/05-serverlistnotconnected.PNG" alt="A server list on the board, not connected" width="200">
+  <img src="docs/screenshots/04-settings.PNG" alt="Settings" width="200">
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#protocols">Protocols</a> ·
+  <a href="#routing">Routing</a> ·
+  <a href="#server-lists">Server lists</a> ·
+  <a href="#download">Download</a> ·
+  <a href="#getting-help">Help</a> ·
+  <a href="#building-from-source">Build</a>
+</p>
+
+Built with Kotlin Multiplatform and Compose: one codebase for Android, iOS,
+macOS, Windows and Linux.
 
 **olcRTC** is why this exists. Most tunnels are recognisable, and a network that
 inspects what crosses it drops them on shape rather than on content. olcRTC opens
@@ -26,13 +75,6 @@ It is a client, not a service: you bring a server list from your provider — a
 server-list URL, a QR code, or a pasted link — and the app turns it into
 servers you can connect to. It is free, there is no account, nothing to sign
 up for, and nothing to buy here.
-
-<p align="center">
-  <img src="docs/screenshots/00-intro.PNG" alt="Intro" width="200">
-  <img src="docs/screenshots/03-connected.PNG" alt="Connected, with session timer and traffic" width="200">
-  <img src="docs/screenshots/05-serverlistnotconnected.PNG" alt="A server list on the board, not connected" width="200">
-  <img src="docs/screenshots/04-settings.PNG" alt="Settings" width="200">
-</p>
 
 ## The project
 
@@ -62,6 +104,61 @@ developer accounts; that is its only role here. Project funding, if the
 application to Open Source Collective is accepted, is held by Open Source
 Collective as fiscal host, is spent in public, and is neither received nor
 controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
+
+## Features
+- One tap to connect, with the session's elapsed time and traffic on screen.
+- In English, Russian, Chinese and Persian, following the system's language;
+  Persian is laid out right to left on Android.
+- Server lists by link, QR code or file; grouped, foldable, and refreshed on
+  a schedule you choose. A `ghostlane://`, `proofkit://` or `proofkit.org/add`
+  link imports one without a paste.
+- What the provider says about your plan — quota, expiry, a short note, its own
+  support and web links — read from the server list's own headers, and a list
+  that survives its provider's blocked domain (see Server lists).
+- Smart connect: another transport when one is blocked, olcRTC in the same
+  country when nothing else gets through (Android and the desktop).
+- olcRTC rooms carry their occupancy on the board, and say out loud when one is
+  full or its key is no longer good rather than failing at connect.
+- olcRTC on a server that moves its clients between rooms: the next room is read
+  off the server list's `##rooms` header, handed to the engine while the session
+  is live, and re-read through the tunnel after every handover - on iOS by the
+  tunnel extension itself, since the app is asleep by then
+  (docs/ios-room-failover.md).
+- Latency where it can honestly be measured: through the tunnel for the
+  connection you are on; for a server you are not connected to, ICMP first and a
+  TCP connect to the port the link names where ICMP is filtered. An olcRTC room
+  has no address to probe, so it is timed only while you are in it, by a request
+  through the tunnel.
+- Sorting by ping or name, filtering by protocol, duplicate server lists
+  refreshed rather than added twice, and a location or a whole list removed from
+  the board itself.
+- A failure that says what failed: a link asking for a transport its provider
+  cannot carry, a dead key, an empty room, a tunnel that came up but carried
+  nothing.
+- Routing: everything through the tunnel; Russia, Iran or China and the local
+  network direct; or only blocked sites through the tunnel. Rules of your own on
+  top (see Routing).
+- Servers for your router: each server of a list as its link or a sing-box
+  outbound for Podkop on OpenWrt, or as an Xray outbound for XKeen on Keenetic.
+  Encrypted server lists do not offer it: their provider chose that their
+  servers are not read out of them.
+- Diagnostics log with export, and a failed connection that says why. Server
+  addresses are replaced by short tags before a line reaches the log, so the
+  file is safe to send to anyone and still says which hop failed.
+- TUN and proxy modes wherever the platform has both, SOCKS5 listen address and
+  credentials, Android split tunneling with a preset for Russian apps that
+  refuse to work through a VPN.
+- Android: always-on VPN (the connection comes up by itself after a restart),
+  and a quick-settings tile.
+- Android TV: a launcher entry, a focus mark you can see from the sofa, and a
+  server list sent from your phone. The TV shows a code, and the phone opens a
+  one-page form on the same home network.
+- On Android and iPhone, the local SOCKS ports between the tunnel and its
+  engine ask for a login only the app knows, so another app on the phone cannot
+  use them or learn the exit. On Android the port also changes with every
+  connect.
+- Network migration, reconnect handling, and watchdog recovery.
+- No account, no analytics, nothing collected.
 
 ## Protocols
 
@@ -186,14 +283,14 @@ Both are honoured only from an HTTPS answer and only to an HTTPS address: over
 plain HTTP anyone on the path could write them, and a moved list never comes
 back by itself.
 
-## Status
+## Download
 
 Shipping on every platform.
 
 | Platform | Where it comes from |
 | --- | --- |
-| iOS | [TestFlight](https://testflight.apple.com/join/sU7aTHQv) gets every release the day it is cut. The App Store, as [Ghostlane](https://apps.apple.com/us/app/proofkit-vpn/id6795355210) (listed under its former name until the rename is approved), follows after App Review, so it can be a few versions behind |
-| Android | Universal and `armeabi-v7a` APKs on the Releases page; the `play` flavor's App Bundle goes to Google Play, on the internal testing track for now. The same app installs on Android TV |
+| iOS | The [App Store](https://apps.apple.com/app/id6795355210). [TestFlight](https://testflight.apple.com/join/sU7aTHQv) gets every release the day it is cut; the App Store follows after App Review, so it can be a version or two behind |
+| Android | [Google Play](https://play.google.com/store/apps/details?id=org.proofkit.app), or the universal and `armeabi-v7a` APKs on the [Releases](https://github.com/ghostlane-project/ghostlane/releases) page. The same app installs on Android TV |
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
 | Linux | AppImage |
@@ -202,14 +299,6 @@ Everything except the App Store build is produced by the release workflow on
 public GitHub Actions runners and published with SHA256 sums and a build
 provenance attestation. The APKs are the channel nobody can revoke; the Play
 bundle is the one Play updates, and it carries no self-updater for that reason.
-
-## Credits
-
-A fork of [alananisimov/olcbox](https://github.com/alananisimov/olcbox), which
-is where the Kotlin Multiplatform configurator this grew out of came from. The
-iOS packet tunnel, the sing-box and Xray transports, and the current interface
-were added here; the original copyright stands alongside ours in `LICENSE`, as
-MIT requires and as it should.
 
 ## Getting help
 
@@ -244,76 +333,11 @@ hold themselves to when they are paid.
 > списки серверов, ни поддержка. Проект принимает только добровольное
 > финансирование и тратит его открыто: см. [FUNDING.md](FUNDING.md).
 
-## Legal Notice
-This software is intended for development, testing and research purposes only.
+## Building from source
 
-The project does not provide any guarantees regarding:
-- availability of network access
-- compatibility with specific services
-- compliance with any external restrictions
+Everything below is for building the app yourself; the downloads above need none of it.
 
-Users are solely responsible for how they use this software and must comply with applicable laws.
-
-## Usage Restrictions
-This software is not intended to be used for bypassing access restrictions or violating applicable laws.
-The project does not support or encourage such use.
-
-## Features
-- One tap to connect, with the session's elapsed time and traffic on screen.
-- In English, Russian, Chinese and Persian, following the system's language;
-  Persian is laid out right to left on Android.
-- Server lists by link, QR code or file; grouped, foldable, and refreshed on
-  a schedule you choose. A `ghostlane://`, `proofkit://` or `proofkit.org/add`
-  link imports one without a paste.
-- What the provider says about your plan — quota, expiry, a short note, its own
-  support and web links — read from the server list's own headers, and a list
-  that survives its provider's blocked domain (see Server lists).
-- Smart connect: another transport when one is blocked, olcRTC in the same
-  country when nothing else gets through (Android and the desktop).
-- olcRTC rooms carry their occupancy on the board, and say out loud when one is
-  full or its key is no longer good rather than failing at connect.
-- olcRTC on a server that moves its clients between rooms: the next room is read
-  off the server list's `##rooms` header, handed to the engine while the session
-  is live, and re-read through the tunnel after every handover - on iOS by the
-  tunnel extension itself, since the app is asleep by then
-  (docs/ios-room-failover.md).
-- Latency where it can honestly be measured: through the tunnel for the
-  connection you are on; for a server you are not connected to, ICMP first and a
-  TCP connect to the port the link names where ICMP is filtered. An olcRTC room
-  has no address to probe, so it is timed only while you are in it, by a request
-  through the tunnel.
-- Sorting by ping or name, filtering by protocol, duplicate subscriptions
-  refreshed rather than added twice, and a location or a whole list removed from
-  the board itself.
-- A failure that says what failed: a link asking for a transport its provider
-  cannot carry, a dead key, an empty room, a tunnel that came up but carried
-  nothing.
-- Routing: everything through the tunnel; Russia, Iran or China and the local
-  network direct; or only blocked sites through the tunnel. Rules of your own on
-  top (see Routing).
-- Servers for your router: each server of a list as its link or a sing-box
-  outbound for Podkop on OpenWrt, or as an Xray outbound for XKeen on Keenetic.
-  Encrypted server lists do not offer it: their provider chose that their
-  servers are not read out of them.
-- Diagnostics log with export, and a failed connection that says why. Server
-  addresses are replaced by short tags before a line reaches the log, so the
-  file is safe to send to anyone and still says which hop failed.
-- TUN and proxy modes wherever the platform has both, SOCKS5 listen address and
-  credentials, Android split tunneling with a preset for Russian apps that
-  refuse to work through a VPN.
-- Android: always-on VPN (the connection comes up by itself after a restart),
-  and a quick-settings tile.
-- Android TV: a launcher entry, a focus mark you can see from the sofa, and a
-  server list sent from your phone. The TV shows a code, and the phone opens a
-  one-page form on the same home network.
-- On Android and iPhone, the local SOCKS ports between the tunnel and its
-  engine ask for a login only the app knows, so another app on the phone cannot
-  use them or learn the exit. On Android the port also changes with every
-  connect.
-- Network migration, reconnect handling, and watchdog recovery.
-- No account, no analytics, nothing collected.
-
-## Platform Matrix
+### Platform Matrix
 
 | Platform | Modes | What carries the packets | Engines |
 | --- | --- | --- | --- |
@@ -334,7 +358,7 @@ owning the tun in front of a second Go engine buffers every connection twice and
 serves it with twice the goroutines; a speed test killed the extension outright.
 The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
 
-## Requirements
+### Requirements
 
 | Area | Requirement |
 | --- | --- |
@@ -368,7 +392,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 .\gradlew.bat :desktopApp:run
 ```
 
-## Commands
+### Commands
 
 | Task | Command |
 | --- | --- |
@@ -386,7 +410,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 The main checks are what PR checks run, in that order; `check-singbox-configs.sh`
 follows them there, starting the shapes rather than only checking them.
 
-## Build Outputs
+### Build Outputs
 
 | Target | Command | Output |
 | --- | --- | --- |
@@ -400,7 +424,7 @@ follows them there, starting the shapes rather than only checking them.
 | Windows portable zip | `.\gradlew.bat :desktopApp:packageReleasePortableZip` | `desktopApp\build\compose\binaries\main-release\portable\Ghostlane-<version>-windows-amd64-portable.zip` |
 | Linux AppImage | `./gradlew :desktopApp:packageReleaseLinuxAppImage` | `desktopApp/build/compose/binaries/main-release/appimage/Ghostlane-<version>-amd64.AppImage` |
 
-## Native Assets
+### Native Assets
 
 Built into `desktopApp/build/generated/desktopNativeResources/` by
 `buildDesktopNativeAssets`, which verifies the set the host actually needs:
@@ -419,7 +443,7 @@ Built into `desktopApp/build/generated/desktopNativeResources/` by
 a failed build rather than a warning: absent, the settings row for the system-wide
 tunnel simply does not appear, and nothing anywhere says why.
 
-## Notes
+### Notes
 
 - Android native ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64`, picked with
   `-Polcbox.android.abiFilters`. The release builds a universal APK and a
@@ -457,3 +481,34 @@ Linux privilege override:
 OLCBOX_LINUX_PRIVILEGE=sudo ./gradlew :desktopApp:run
 OLCBOX_LINUX_PRIVILEGE=pkexec ./gradlew :desktopApp:run
 ```
+
+## Credits
+
+A fork of [alananisimov/olcbox](https://github.com/alananisimov/olcbox), which
+is where the Kotlin Multiplatform configurator this grew out of came from. The
+iOS packet tunnel, the sing-box and Xray transports, and the current interface
+were added here; the original copyright stands alongside ours in `LICENSE`, as
+MIT requires and as it should.
+
+## Legal
+
+### Legal Notice
+This software is intended for development, testing and research purposes only.
+
+The project does not provide any guarantees regarding:
+- availability of network access
+- compatibility with specific services
+- compliance with any external restrictions
+
+Users are solely responsible for how they use this software and must comply with applicable laws.
+
+### Usage Restrictions
+This software is not intended to be used for bypassing access restrictions or violating applicable laws.
+The project does not support or encourage such use.
+
+### Trademarks
+
+App Store is a trademark of Apple Inc., registered in the U.S. and other
+countries. Google Play and the Google Play logo are trademarks of Google LLC.
+The store badges above are their owners' official artwork, used unmodified to
+link to this app's pages.
