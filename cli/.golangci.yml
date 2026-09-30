@@ -1,0 +1,35 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - with_utls
+    - with_quic
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - errorlint
+    - gocritic
+    - misspell
+    - unconvert
+    - bodyclose
+    - revive
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*os.File).Close
+        - (*net.UnixConn).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    revive:
+      rules:
+        - name: exported
+          disabled: true

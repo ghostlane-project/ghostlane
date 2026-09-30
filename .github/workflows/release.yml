@@ -13,6 +13,7 @@ on:
           - ios          # signed and uploaded to TestFlight when the iOS signing secrets are set, else an unsigned IPA
           - mobile       # Android and iOS together  [10x]
           - desktop      # macOS arm64 + Windows + Linux  [10x]
+          - cli          # Linux CLI packages only (deb/rpm/apk/arch + tarballs), no publish. Free runner
           - all          # every platform, and publish the release  [10x]
       play_track:
         description: 'Google Play track for the play-flavor bundle (uploads only when PLAY_SERVICE_ACCOUNT_JSON is set)'
@@ -93,6 +94,7 @@ jobs:
       android: ${{ steps.p.outputs.android }}
       ios: ${{ steps.p.outputs.ios }}
       publish: ${{ steps.p.outputs.publish }}
+      cli: ${{ steps.p.outputs.cli }}
       macos_any: ${{ steps.p.outputs.macos_any }}
       macos_matrix: ${{ steps.p.outputs.macos_matrix }}
     steps:
@@ -146,10 +148,10 @@ jobs:
           # more platforms.
           sel="${{ inputs.platforms }}"
           echo "selection: $sel"
-          mac_arm=false; mac_intel=false; win=false; lin=false; andr=false; ios=false; pub=false
+          mac_arm=false; mac_intel=false; win=false; lin=false; andr=false; ios=false; pub=false; cli=false
           case "$sel" in
             all)
-              mac_arm=true; mac_intel=true; win=true; lin=true; andr=true; ios=true; pub=true ;;
+              mac_arm=true; mac_intel=true; win=true; lin=true; andr=true; ios=true; pub=true; cli=true ;;
             desktop)
               mac_arm=true; win=true; lin=true ;;
             # `mobile` used to mean Android only, which read as "the mobile
@@ -164,6 +166,8 @@ jobs:
               andr=true ;;
             ios)
               ios=true ;;
+            cli)
+              cli=true ;;
             *)
               mac_arm=true ;;
           esac
@@ -177,6 +181,7 @@ jobs:
             echo "android=$andr"
             echo "ios=$ios"
             echo "publish=$pub"
+            echo "cli=$cli"
           } >> "$GITHUB_OUTPUT"
 
           # The macOS matrix is built here rather than filtered in the job: a
@@ -805,6 +810,50 @@ jobs:
         with:
           name: Ghostlane-linux-amd64-appimage
           path: olcbox/dist/Ghostlane-*-linux-amd64.AppImage
+
+  # The Linux CLI: one free runner cross-builds amd64/arm64/armv7, packages
+  # deb/rpm/apk/arch + tarballs, sums and signs them with the release key, and
+  # templates the installer with this version. The artifact name starts with
+  # Ghostlane- so the publish job picks it up like every other asset.
+  build-cli:
+    needs: [release_version, plan, gate]
+    if: needs.plan.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+      - name: Signing key is set
+        run: |
+          [ -n "${CLI_RELEASE_SIGNING_KEY}" ] || { echo "::error::CLI_RELEASE_SIGNING_KEY is not set; the CLI release is signed or not built"; exit 1; }
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: cli/go.sum
+      - name: Build, package, sum, sign
+        run: |
+          set -euo pipefail
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          make dist VERSION="${OLCBOX_VERSION}"
+          umask 077
+          printf '%s\n' "${CLI_RELEASE_SIGNING_KEY}" > "$RUNNER_TEMP/cli-signing.pem"
+          make sign VERSION="${OLCBOX_VERSION}" KEY="$RUNNER_TEMP/cli-signing.pem"
+          rm -f "$RUNNER_TEMP/cli-signing.pem"
+          rm -rf dist/linux-* dist/nfpm-*.yaml
+          ls -la dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Ghostlane-cli-linux
+          path: |
+            cli/dist/ghostlane-cli-*
+            cli/dist/install.sh
 
   build-android:
     needs: [release_version, plan, gate]

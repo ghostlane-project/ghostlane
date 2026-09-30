@@ -1,0 +1,64 @@
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3305071026#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8
+olcrtc://wbstream?vp8channel@room_z9dszi2t#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8 · WB
+olcrtc://salutejazz?datachannel@53a942:cb3gjji2#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/5092358972#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8
+olcrtc://wbstream?vp8channel@room_iqrp1h3w#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8 · WB
+olcrtc://salutejazz?datachannel@qaah9y:jbf5hgjx#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1479206118#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8
+olcrtc://wbstream?vp8channel@room_1myx2a8q#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8 · WB
+olcrtc://salutejazz?datachannel@kpbcjf:73mlmcj7#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/7726573424#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8
+olcrtc://wbstream?vp8channel@room_qezlm7nc#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8 · WB
+olcrtc://salutejazz?datachannel@c7y2hq:k333gqoj#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/8284684651#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8
+olcrtc://wbstream?vp8channel@room_trg45t7l#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8 · WB
+olcrtc://salutejazz?datachannel@xrofuo:w9mo3ku8#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/7860972460#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8
+olcrtc://wbstream?vp8channel@room_rqs59tre#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8 · WB
+olcrtc://salutejazz?datachannel@jq0wh5:570ux5e6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3124313155#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8
+olcrtc://wbstream?vp8channel@room_qxagfn74#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8 · WB
+olcrtc://salutejazz?datachannel@ebs34z:5yg0e1s6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3710284555#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8
+olcrtc://wbstream?vp8channel@room_tmtlkcr5#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8 · WB
+olcrtc://salutejazz?datachannel@j4ypsw:f4ekbwp1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1433455317#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8
+olcrtc://wbstream?vp8channel@room_gmyv3ukc#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8 · WB
+olcrtc://salutejazz?datachannel@ve0zyr:ouhyzvoa#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1362968118#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8
+olcrtc://wbstream?vp8channel@room_dh2hol34#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8 · WB
+olcrtc://salutejazz?datachannel@92pij0:xt23aw6k#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/0148559242#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8
+olcrtc://wbstream?vp8channel@room_zir8rbka#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8 · WB
+olcrtc://salutejazz?datachannel@344lkw:uyrec7fd#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/6896941565#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8
+olcrtc://wbstream?vp8channel@room_9oy42ukn#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8 · WB
+olcrtc://salutejazz?datachannel@zhbtyi:e13j45nk#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/9590177866#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8
+olcrtc://wbstream?vp8channel@room_dnkuf16f#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8 · WB
+olcrtc://salutejazz?datachannel@fqheke:l37860u6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1226672126#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8
+olcrtc://wbstream?vp8channel@room_cy10kecr#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8 · WB
+olcrtc://salutejazz?datachannel@xc21im:kd9xinc9#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1886803209#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8
+olcrtc://wbstream?vp8channel@room_vpk224hh#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8 · WB
+olcrtc://salutejazz?datachannel@qshjmi:996r8vct#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3079190576#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8
+olcrtc://wbstream?vp8channel@room_arzfifyz#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8 · WB
+olcrtc://salutejazz?datachannel@sytusq:yhgkg8l4#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · SJ
+olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8
