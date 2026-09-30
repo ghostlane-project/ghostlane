@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       shared_kotlin: ${{ steps.paths.outputs.shared_kotlin }}
+      cli: ${{ steps.paths.outputs.cli }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -91,6 +92,7 @@ jobs:
           fi
           if [ -z "$base" ]; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
+            echo 'cli=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -101,6 +103,13 @@ jobs:
           else
             echo 'shared_kotlin=false' >> "$GITHUB_OUTPUT"
             echo 'Apple compilation skipped: nothing under the shared Kotlin changed.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # The Linux CLI is its own Go module: built and tested only when it, its
+          # workflow, or the engine pin it must match changed.
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^scripts/cores-pins\.sh$'; then
+            echo 'cli=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'cli=false' >> "$GITHUB_OUTPUT"
           fi
 
   checks:
@@ -237,6 +246,45 @@ jobs:
   # public repository uploads, so they are tested offline on every push:
   # scripts/test_gate_scripts.py runs them against a local stand-in for the
   # GitHub API and a stub go. The gate itself runs in gate.yml.
+  # The Linux CLI (cli/): vet, lint, unit tests with the race detector, the
+  # netns tests as root (a fresh network namespace; the runner's own network
+  # is untouched), every package format, and an install smoke in containers.
+  cli:
+    if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.cli == 'true'
+    name: Linux CLI
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: cli/go.sum
+      - name: Vet and lint
+        run: |
+          go vet -tags with_utls,with_quic ./...
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          golangci-lint run ./...
+      - name: Unit tests
+        run: go test -race -tags with_utls,with_quic ./...
+      - name: netns tests (root)
+        run: |
+          sudo -E env "PATH=$PATH" GHOSTLANE_NETNS=1 go test -tags with_utls,with_quic -count=1 -run 'TestNetns' -v ./internal/routes/ ./internal/daemon/
+      - name: Packages
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          make dist VERSION=0.0.0
+          systemd-analyze verify packaging/ghostlane.service || true
+          ls -la dist
+      - name: Install smoke
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" debian:bookworm sh -c 'dpkg -i /dist/ghostlane-cli-0.0.0-linux-amd64.deb && ghostlane version && id ghostlane'
+          docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -c 'rpm -i /dist/ghostlane-cli-0.0.0-linux-amd64.rpm && ghostlane version && id ghostlane'
+
   gate-scripts:
     if: github.event_name != 'workflow_dispatch'
     name: Gate scripts
