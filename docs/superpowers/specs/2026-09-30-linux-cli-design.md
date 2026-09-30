@@ -277,3 +277,80 @@ Each package is testable alone; only `daemon` composes them.
 
 GUI; macOS and Windows builds of the CLI; IPv6 through the tunnel; per-app split
 tunnelling; kill switch; crypt1 lists; transport probing beyond the carrier loop; telemetry.
+
+## 15. Stage C — the rest of the CLI (added 2026-09-30, after PRs #78 and #79)
+
+The owner asked for everything left to be finished. Stage C is the last planned
+stage; the items below are designed here and implemented by
+`docs/superpowers/plans/2026-09-30-linux-cli-stage-c.md`.
+
+**Deferred minors of Stages A and B, all fixed.** `list` numbers entries across
+subscriptions and `connect <index>` resolves globally; `add` refuses `http://`
+lists (the token would travel in plaintext); a proxy `listen` of `localhost` is
+refused and an IPv6 listen is bracketed in `status`; a cache file that fails to
+parse counts as absent and is re-fetched; a selector that matches nothing is
+retried on the refresh cadence while the selection stands; after a full
+failover cycle the next attempt starts after the line that just failed; the
+same inline line is stored once; refresh fetches lists in parallel (four at a
+time) so a slow provider cannot exhaust the control socket's deadline; labels
+decode `+` as a space, as the app does; CI pins golangci-lint and nfpm and the
+CLI path filter includes `release.yml`; `install.sh --help` works under
+`curl | sh` and `--base-url` without `--version` says that a mirror needs the
+version; the mixed-kind failover test has a tun variant.
+
+**crypt1 lists.** The CLI decrypts what the app decrypts: `olcrtc://crypt1/<blob>`
+links (the blob is a URL or olcrtc lines) and encrypted `/sub` bodies. The
+format is the coordinator's `crypt_link.rs`: base64url without padding of
+`IV(16) | AES-256-CBC/PKCS7 ciphertext | HMAC-SHA256(IV | ciphertext)(32)`, keys
+`sha256("olcrtc-crypt-v1-enc" | master)` and `sha256("olcrtc-crypt-v1-mac" |
+master)`, master = 32 bytes given as base64 (standard or url-safe, padded or
+not). Decrypt only. The master key is baked at build time from the app's
+`OLCBOX_CRYPT_KEY_V1` secret (`-X main.cryptKeyV1=`); a build without it refuses
+crypt1 sources with the message it gives today, and `ghostlane version` says
+whether crypt1 is available.
+
+**Kill switch.** `connect --tun --kill-switch` (persisted with the selection,
+`kill_switch: true`). While the selection stands, traffic that is not for the
+tunnel is refused instead of leaking: policy rules at pref 9098 send the private
+and link-local ranges to `main` (LAN, Docker, the metadata address keep
+working), pref 9099 sends the daemon's own uid to `main` (it must reach the
+carriers and servers), and pref 9100 sends everything else to table 2023, whose
+only route is `unreachable default` (v4 and v6). sing-box's rules (9000–9010)
+come first while the tun is up, so tunnelled traffic is unaffected; between
+failovers, during a dead-server backoff and at boot before the first line is up,
+the box is closed rather than open. The own-address rule (8990) still keeps
+inbound services answering. `disconnect` and a clean daemon stop remove the
+switch (an administrator who stops the service gets the box back); a crash
+leaves the kernel state as it was, and the next start removes it with
+`CleanupStale` and re-installs it when the stored selection asks. Proxy mode has
+no kill switch (nothing is routed).
+
+**OpenRC.** The apk and the tarball ship `/etc/init.d/ghostlane`: `supervise-daemon`,
+`command_user ghostlane:ghostlane`, `capabilities ^cap_net_admin,^cap_net_bind_service`
+(OpenRC ≥ 0.45 sets ambient capabilities), `/run/ghostlane` made in `start_pre`.
+The postinstall enables and starts it where OpenRC is the init system.
+
+**apt and dnf repositories.** Hosted on GitHub Pages of the repository
+(`https://ghostlane-project.github.io/ghostlane/apt` and `/rpm`) from a
+`gh-pages` branch the release workflow updates: `reprepro` (deb, distribution
+`stable`, component `main`, amd64/arm64/armhf) and `createrepo_c` (rpm, one repo
+for all arches, packages signed with `rpm --addsign`), both under one GPG key
+(`packaging/repo/ghostlane-repo.gpg.asc` public; the private key is the
+repository secret `CLI_REPO_GPG_KEY`). Every published version stays in the
+repos. The job runs after `build-cli` only when the run publishes. The owner
+enables Pages once (source: `gh-pages`, root). `docs/cli.md` shows the two
+`sources` snippets; `install.sh` keeps installing the package directly.
+
+**Docker image.** `ghcr.io/ghostlane-project/ghostlane-cli:<version>` and
+`:latest`, multi-arch (amd64, arm64, arm/v7), from `gcr.io/distroless/static-debian12`
+(CA certificates and tzdata, nothing else) with the static binary; entrypoint
+`ghostlane run --state-dir /data`; `--subscription`/`--connect`/`--mode` as
+arguments. Proxy mode needs `-p 127.0.0.1:1080:1080` and a `proxy.listen` of
+`0.0.0.0` with credentials (the daemon refuses an unauthenticated non-loopback
+proxy), which the image sets through `GHOSTLANE_PROXY_LISTEN`/`_USER`/`_PASS`
+environment variables the daemon reads at start; tun mode needs `--cap-add
+NET_ADMIN --device /dev/net/tun`. Built and pushed by the release workflow with
+`GITHUB_TOKEN` (`packages: write`).
+
+**Out of scope, still.** VLESS over grpc/ws/httpupgrade, trojan, shadowsocks,
+vmess; IPv6 through the tunnel; per-application split tunnelling.
