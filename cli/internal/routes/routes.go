@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -25,7 +26,10 @@ const (
 	singBoxTable       = singbox.TableIndex
 )
 
-type Manager struct{ excludeIface string }
+type Manager struct {
+	excludeIface string
+	mu           sync.Mutex // one rule edit at a time: Sync, Clear and CleanupStale
+}
 
 func New(excludeIface string) *Manager { return &Manager{excludeIface: excludeIface} }
 
@@ -115,6 +119,12 @@ func (m *Manager) existing() ([]netip.Addr, error) {
 // Sync makes the set of own-address rules equal to addrs: missing ones added,
 // extra ones removed, nothing duplicated.
 func (m *Manager) Sync(addrs []netip.Addr) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.syncLocked(addrs)
+}
+
+func (m *Manager) syncLocked(addrs []netip.Addr) error {
 	have, err := m.existing()
 	if err != nil {
 		return err
@@ -139,8 +149,10 @@ func (m *Manager) Clear() error { return m.Sync(nil) }
 // CleanupStale removes what a crashed run left: our rules, sing-box's rules
 // (9000–9010) and every route of table 2022. The box has one tun, ours.
 func (m *Manager) CleanupStale() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var errs []error
-	if err := m.Clear(); err != nil {
+	if err := m.syncLocked(nil); err != nil {
 		errs = append(errs, err)
 	}
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
@@ -172,14 +184,19 @@ func (m *Manager) CleanupStale() error {
 }
 
 // WatchAddresses calls onChange, debounced, whenever an address is added or
-// removed on any interface, until ctx ends.
-func (m *Manager) WatchAddresses(ctx context.Context, onChange func()) error {
+// removed on any interface, until ctx ends or the returned stop is called.
+// stop waits for the watcher (and any onChange in flight) to finish, so a
+// caller that stops it before clearing the rules knows no Sync follows.
+func (m *Manager) WatchAddresses(ctx context.Context, onChange func()) (func(), error) {
 	ch := make(chan netlink.AddrUpdate, 64)
 	done := make(chan struct{})
 	if err := netlink.AddrSubscribe(ch, done); err != nil {
-		return err
+		return nil, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		defer close(done)
 		var timer *time.Timer
 		var fire <-chan time.Time
@@ -200,5 +217,5 @@ func (m *Manager) WatchAddresses(ctx context.Context, onChange func()) error {
 			}
 		}
 	}()
-	return nil
+	return func() { cancel(); <-finished }, nil
 }

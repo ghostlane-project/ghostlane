@@ -31,7 +31,9 @@ type Routes interface {
 	Sync([]netip.Addr) error
 	Clear() error
 	CleanupStale() error
-	WatchAddresses(context.Context, func()) error
+	// WatchAddresses runs onChange on address changes until ctx ends or the
+	// returned stop is called; stop waits for a callback in flight.
+	WatchAddresses(ctx context.Context, onChange func()) (stop func(), err error)
 }
 
 type Deps struct {
@@ -68,6 +70,13 @@ type live struct {
 
 type Daemon struct {
 	deps Deps
+
+	// connectMu serialises startConnect/stopConnect: Handle runs concurrently
+	// (one goroutine per control request) and a refresh reconnects too, and
+	// two of them interleaving left an engine nobody could stop.
+	connectMu sync.Mutex
+	// saveMu serialises the file writes (they share a .tmp path each).
+	saveMu sync.Mutex
 
 	mu       sync.Mutex
 	cfg      *store.Config
@@ -160,3 +169,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 func (d *Daemon) deviceIDPath() string { return filepath.Join(d.deps.StateDir, "device-id") }
+
+func (d *Daemon) saveConfig(cfg *store.Config) error {
+	d.saveMu.Lock()
+	defer d.saveMu.Unlock()
+	return store.Save(d.deps.ConfigPath, cfg)
+}
+
+func (d *Daemon) saveLastGood(m map[string]string) error {
+	d.saveMu.Lock()
+	defer d.saveMu.Unlock()
+	return store.SaveLastGood(d.deps.StateDir, m)
+}
+
+func (d *Daemon) saveCache(subURL string, c *store.Cache) error {
+	d.saveMu.Lock()
+	defer d.saveMu.Unlock()
+	return store.SaveCache(d.deps.StateDir, subURL, c)
+}

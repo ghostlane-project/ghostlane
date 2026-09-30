@@ -8,5 +8,9 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   else
     systemctl start ghostlane.service || true
   fi
+  echo "ghostlane installed and running. Next: ghostlane add <list-url>; ghostlane connect DE --tun (or --proxy)."
+else
+  echo "ghostlane installed. This system has no systemd: run the daemon yourself,"
+  echo "  ghostlane run   (as root, or as a user with CAP_NET_ADMIN for --tun)"
+  echo "or wrap that command in your init system; then: ghostlane add <list-url>; ghostlane connect DE --proxy"
 fi
-echo "ghostlane installed. Next: ghostlane add <list-url>; ghostlane connect DE --tun (or --proxy)."

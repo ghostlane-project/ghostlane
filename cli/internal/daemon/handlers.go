@@ -40,7 +40,7 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		d.cfg.Selection = nil
 		cfg := d.cfg.Clone()
 		d.mu.Unlock()
-		if err := store.Save(d.deps.ConfigPath, cfg); err != nil {
+		if err := d.saveConfig(cfg); err != nil {
 			return ipc.Fail("io", err.Error())
 		}
 		return ipc.Response{OK: true, Message: "disconnected"}
@@ -136,7 +136,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 			d.mu.Lock()
 			d.cfg.Subscriptions = d.cfg.Subscriptions[:len(d.cfg.Subscriptions)-1]
 			d.mu.Unlock()
-			return ipc.Fail("fetch", err.Error())
+			return ipc.Fail("fetch", Scrub(err.Error()))
 		}
 		entries := links.Entries(payload, links.DecodeBody(c.Body))
 		groups := links.GroupByCountry(entries)
@@ -162,7 +162,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 	d.mu.Lock()
 	cfg := d.cfg.Clone()
 	d.mu.Unlock()
-	if err := store.Save(d.deps.ConfigPath, cfg); err != nil {
+	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
 	}
 	return ipc.Response{OK: true, Message: msg}
@@ -204,7 +204,7 @@ func (d *Daemon) remove(needle string) ipc.Response {
 	d.mu.Lock()
 	cfg := d.cfg.Clone()
 	d.mu.Unlock()
-	if err := store.Save(d.deps.ConfigPath, cfg); err != nil {
+	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
 	}
 	return ipc.Response{OK: true, Message: fmt.Sprintf("removed %d", removed)}
@@ -256,7 +256,7 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 	d.cfg.Selection = &sel
 	cfg := d.cfg.Clone()
 	d.mu.Unlock()
-	if err := store.Save(d.deps.ConfigPath, cfg); err != nil {
+	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
 	}
 	d.startConnect(sel)

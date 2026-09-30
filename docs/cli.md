@@ -58,7 +58,9 @@ What stays as it was:
 - **Fail-open.** Stopping the service removes the tun and the rules; traffic
   flows directly again. A kill switch is not part of this version.
 - Nothing else is touched: not `/etc/resolv.conf`, not global sysctls, not
-  nftables. DNS from the host is answered through the tunnel while it is up.
+  nftables. DNS the host sends to a public resolver is answered through the
+  tunnel while it is up; a resolver on a private range (a home router) stays
+  direct, like the rest of the private ranges.
 
 ## The service
 
@@ -77,6 +79,25 @@ list tokens never appear in logs or in `status`.
 Lists refresh on the interval the provider announces (`profile-update-interval`,
 default 24 h) or on `ghostlane refresh`. A refresh never disconnects by itself;
 a rotated room or key reconnects the running line.
+
+**Proxy settings.** The proxy's address, port and credentials are the `proxy:`
+block of `/var/lib/ghostlane/config.yaml` (edit as root, then
+`systemctl restart ghostlane`):
+
+```yaml
+proxy:
+  listen: 127.0.0.1   # anything else needs user and pass
+  port: 1080
+  user: ""
+  pass: ""
+```
+
+**Systems without systemd** (Alpine with OpenRC, runit, s6): the packages ship
+the unit only. Run `ghostlane run` yourself, as root or as a user with
+`CAP_NET_ADMIN` for tun mode, or wrap that command in your init system; an
+OpenRC script is planned. Installing the `.apk` by hand needs
+`apk add --allow-untrusted` (the installer verifies the release signature
+itself; the package carries no apk signature).
 
 ## Containers
 

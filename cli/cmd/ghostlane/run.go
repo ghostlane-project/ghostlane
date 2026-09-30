@@ -69,7 +69,7 @@ func runDaemon(args []string, stderr io.Writer) int {
 			return links.Fetch(ctx, httpClient, url, ua)
 		},
 		StartEngine: func(ctx context.Context, p olcrtc.Params) (daemon.Engine, error) {
-			return olcrtc.Start(ctx, p, 60*time.Second)
+			return olcrtc.Start(ctx, p)
 		},
 		StartFront: func(ctx context.Context, p singbox.FrontParams) (daemon.Front, error) {
 			return singbox.Start(ctx, p)

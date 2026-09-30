@@ -54,7 +54,10 @@ type Params struct {
 	DNS          string
 	DirectRules  string
 	DeviceIDPath string
+	ReadyTimeout time.Duration // 0 = 60 s
 }
+
+const defaultReadyTimeout = 60 * time.Second
 
 type Session struct {
 	rt   Runtime
@@ -63,7 +66,14 @@ type Session struct {
 	pass string
 }
 
-func Start(_ context.Context, p Params, readyTimeout time.Duration) (*Session, error) {
+// Start applies the parameters, starts the runtime and waits for its SOCKS to
+// serve. A cancelled ctx stops the runtime and returns at once: a person who
+// changes their mind does not wait out the ready timeout.
+func Start(ctx context.Context, p Params) (*Session, error) {
+	readyTimeout := p.ReadyTimeout
+	if readyTimeout <= 0 {
+		readyTimeout = defaultReadyTimeout
+	}
 	rt := NewRuntime()
 	steps := []struct {
 		name string
@@ -95,9 +105,17 @@ func Start(_ context.Context, p Params, readyTimeout time.Duration) (*Session, e
 	if err := rt.Start(); err != nil {
 		return nil, fmt.Errorf("engine start: %w", err)
 	}
-	if err := rt.WaitReady(int(readyTimeout / time.Millisecond)); err != nil {
+	ready := make(chan error, 1)
+	go func() { ready <- rt.WaitReady(int(readyTimeout / time.Millisecond)) }()
+	select {
+	case err := <-ready:
+		if err != nil {
+			_ = rt.Stop(5000)
+			return nil, fmt.Errorf("engine not ready within %s: %w", readyTimeout, err)
+		}
+	case <-ctx.Done():
 		_ = rt.Stop(5000)
-		return nil, fmt.Errorf("engine not ready within %s: %w", readyTimeout, err)
+		return nil, fmt.Errorf("engine start cancelled: %w", ctx.Err())
 	}
 	return &Session{rt: rt, addr: net.JoinHostPort(p.SocksHost, strconv.Itoa(p.SocksPort)), user: p.SocksUser, pass: p.SocksPass}, nil
 }

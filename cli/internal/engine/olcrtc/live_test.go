@@ -26,7 +26,7 @@ func TestLiveLine(t *testing.T) {
 	u, p := RandomCredentials()
 	SetLogSink(func(s string) { t.Log("engine: " + s) })
 	s, err := Start(context.Background(), Params{Line: *line, SocksHost: "127.0.0.1", SocksPort: port, SocksUser: u, SocksPass: p,
-		DNS: HostResolvers("/etc/resolv.conf"), DirectRules: PrivateDirectRules, DeviceIDPath: t.TempDir() + "/device-id"}, 90*time.Second)
+		DNS: HostResolvers("/etc/resolv.conf"), DirectRules: PrivateDirectRules, DeviceIDPath: t.TempDir() + "/device-id", ReadyTimeout: 90 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

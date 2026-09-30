@@ -104,3 +104,37 @@ func TestInstallScriptTarball(t *testing.T) {
 		t.Fatalf("tampered tarball accepted: %v\n%s", err, out)
 	}
 }
+
+// Reviewer finding 4: rpm runs the old package's %preun after the new %post on
+// an upgrade ($1 = 1), deb runs prerm with "upgrade"; neither may stop the service.
+func TestPreremoveSkipsUpgrade(t *testing.T) {
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		t.Skip("the script only acts on systemd hosts")
+	}
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls.log")
+	fake := "#!/bin/sh\necho \"$*\" >> " + log + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(arg string) string {
+		_ = os.Remove(log)
+		cmd := exec.Command("sh", "../../packaging/scripts/preremove.sh", arg)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", arg, err, out)
+		}
+		b, _ := os.ReadFile(log)
+		return string(b)
+	}
+	for _, upgrade := range []string{"1", "upgrade"} {
+		if calls := run(upgrade); calls != "" {
+			t.Fatalf("preremove on upgrade (%s) must not touch the service: %q", upgrade, calls)
+		}
+	}
+	for _, removal := range []string{"0", "remove"} {
+		if calls := run(removal); !strings.Contains(calls, "stop ghostlane.service") || !strings.Contains(calls, "disable ghostlane.service") {
+			t.Fatalf("preremove on removal (%s) stops and disables: %q", removal, calls)
+		}
+	}
+}

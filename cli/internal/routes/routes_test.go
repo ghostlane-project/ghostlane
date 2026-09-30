@@ -1,9 +1,11 @@
 package routes
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -46,5 +48,20 @@ func TestDiff(t *testing.T) {
 	add, del = diff([]netip.Addr{a}, []netip.Addr{a})
 	if len(add) != 0 || len(del) != 0 {
 		t.Fatal("no change, no work")
+	}
+}
+
+func TestWatchAddressesStops(t *testing.T) {
+	m := New("ghostlane0")
+	stop, err := m.WatchAddresses(context.Background(), func() {})
+	if err != nil {
+		t.Skipf("netlink address subscription unavailable here: %v", err)
+	}
+	done := make(chan struct{})
+	go func() { stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop did not return")
 	}
 }

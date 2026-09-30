@@ -25,7 +25,7 @@ func fakeDaemon(t *testing.T, h ipc.Handler) string {
 
 func TestUsageAndExitCodes(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := run(nil, &out, &errb); code != 2 || !strings.Contains(errb.String(), "usage") {
+	if code := run(nil, &out, &errb); code != 2 || !strings.Contains(errb.String(), "Usage:") {
 		t.Fatalf("%d %s", code, errb.String())
 	}
 	if code := run([]string{"frobnicate"}, &out, &errb); code != 2 {
@@ -78,5 +78,33 @@ func TestStatusAndListRendering(t *testing.T) {
 	}
 	if code := run([]string{"connect", "--socket", sock}, &out, &errb); code != 2 {
 		t.Fatal("connect needs a selector")
+	}
+}
+
+func TestHelpIsUsable(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb); code != 0 {
+		t.Fatalf("%d %s", code, errb.String())
+	}
+	for _, want := range []string{"Quick start", "connect DE --tun", "ghostlane add", "docs/cli.md", "help [command]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help lacks %q:\n%s", want, out.String())
+		}
+	}
+	for _, cmd := range []string{"add", "list", "connect", "status", "disconnect", "refresh", "remove", "version", "run"} {
+		out.Reset()
+		if code := run([]string{"help", cmd}, &out, &errb); code != 0 || !strings.Contains(out.String(), "ghostlane "+cmd) {
+			t.Fatalf("help %s: %d\n%s", cmd, code, out.String())
+		}
+		out.Reset()
+		if code := run([]string{cmd, "--help"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "ghostlane "+cmd) {
+			t.Fatalf("%s --help: %d\n%s", cmd, code, out.String())
+		}
+	}
+	if !strings.Contains(commandHelp["connect"], "--tun") || !strings.Contains(commandHelp["connect"], "Examples:") {
+		t.Fatal("connect help explains the modes with examples")
+	}
+	if code := run([]string{"help", "frobnicate"}, &out, &errb); code != 2 {
+		t.Fatal("unknown command help fails")
 	}
 }

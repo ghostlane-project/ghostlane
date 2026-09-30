@@ -66,4 +66,7 @@ func TestMaskURL(t *testing.T) {
 	if got := MaskURL("https://x.org/list.txt"); got != "https://x.org/…" {
 		t.Fatalf("%q", got)
 	}
+	if got := MaskURL("https://p.example/api/sub?token=abc123&c=olcbox"); got != "https://p.example/…?token=…&c=olcbox" {
+		t.Fatalf("query values other than c are masked: %q", got)
+	}
 }

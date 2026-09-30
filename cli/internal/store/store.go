@@ -175,7 +175,17 @@ func MaskURL(u string) string {
 	}
 	out := p.Scheme + "://" + p.Host + "/" + strings.Join(segs, "/")
 	if p.RawQuery != "" {
-		out += "?" + p.RawQuery
+		// every query value but the list-variant selector is masked: tokens travel there too
+		var q []string
+		for _, kv := range strings.Split(p.RawQuery, "&") {
+			k, _, _ := strings.Cut(kv, "=")
+			if k == "c" {
+				q = append(q, kv)
+			} else {
+				q = append(q, k+"=…")
+			}
+		}
+		out += "?" + strings.Join(q, "&")
 	}
 	return out
 }

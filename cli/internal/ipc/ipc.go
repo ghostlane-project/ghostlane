@@ -18,7 +18,7 @@ import (
 
 const DefaultSocketPath = "/run/ghostlane/ghostlane.sock"
 
-var ErrDaemonDown = errors.New("the ghostlane daemon is not running (systemctl start ghostlane)")
+var ErrDaemonDown = errors.New("the ghostlane daemon is not running (systemctl start ghostlane, or run `ghostlane run` where there is no systemd)")
 
 type Request struct {
 	Verb         string `json:"verb"`

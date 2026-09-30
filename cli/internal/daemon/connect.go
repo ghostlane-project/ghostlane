@@ -16,7 +16,13 @@ var errNoSubscription = errors.New("no subscription holds that selector")
 
 // startConnect cancels any running connection and starts the loop for sel.
 func (d *Daemon) startConnect(sel store.Selection) {
-	d.stopConnect()
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
+	d.startConnectLocked(sel)
+}
+
+func (d *Daemon) startConnectLocked(sel store.Selection) {
+	d.stopConnectLocked()
 	d.mu.Lock()
 	base := d.runCtx
 	if base == nil {
@@ -36,6 +42,12 @@ func (d *Daemon) startConnect(sel store.Selection) {
 
 // stopConnect ends the loop and waits for it to tear the connection down.
 func (d *Daemon) stopConnect() {
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
+	d.stopConnectLocked()
+}
+
+func (d *Daemon) stopConnectLocked() {
 	d.mu.Lock()
 	cancel, done := d.cancel, d.loopDone
 	d.cancel, d.loopDone = nil, nil
@@ -56,7 +68,7 @@ func (d *Daemon) setState(state, lastErr string, entry *links.Entry) {
 	defer d.mu.Unlock()
 	d.state = state
 	if lastErr != "" {
-		d.lastErr = lastErr
+		d.lastErr = Scrub(lastErr)
 	}
 	d.pending = entry
 }
@@ -152,6 +164,7 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 	eng, err := d.deps.StartEngine(ctx, olcrtc.Params{
 		Line: *e.Olcrtc, SocksHost: "127.0.0.1", SocksPort: port, SocksUser: user, SocksPass: pass,
 		DNS: olcrtc.HostResolvers(d.deps.ResolvConf), DirectRules: olcrtc.PrivateDirectRules, DeviceIDPath: d.deviceIDPath(),
+		ReadyTimeout: d.deps.ReadyTimeout,
 	})
 	if err != nil {
 		return nil, err
@@ -219,23 +232,28 @@ func (d *Daemon) markUp(sel store.Selection, l *live) {
 		lg[k] = v
 	}
 	d.mu.Unlock()
-	if err := store.SaveLastGood(d.deps.StateDir, lg); err != nil {
+	if err := d.saveLastGood(lg); err != nil {
 		d.logf("last-good: %v", err)
 	}
 	d.logf("up: %s over %s", l.entry.Label, l.entry.Olcrtc.Provider)
 }
 
-// supervise probes every ProbeInterval; ProbeFailures in a row end the line.
+// supervise probes every ProbeInterval; ProbeFailures in a row, or a runtime
+// that is no longer running, end the line. The address watcher belongs to this
+// connection: it is stopped before the caller clears the rules.
 func (d *Daemon) supervise(ctx context.Context, l *live) string {
 	if l.mode == "tun" {
-		if err := d.deps.Routes.WatchAddresses(ctx, func() {
+		stop, err := d.deps.Routes.WatchAddresses(ctx, func() {
 			if addrs, err := d.deps.Routes.GlobalAddresses(); err == nil {
 				if err := d.deps.Routes.Sync(addrs); err != nil {
 					d.logf("policy rules: %v", err)
 				}
 			}
-		}); err != nil {
+		})
+		if err != nil {
 			d.logf("address watch: %v", err)
+		} else {
+			defer stop()
 		}
 	}
 	failures := 0
@@ -246,6 +264,9 @@ func (d *Daemon) supervise(ctx context.Context, l *live) string {
 		case <-ctx.Done():
 			return "stopped"
 		case <-t.C:
+			if st := l.engine.State(); st != "running" {
+				return "engine " + st
+			}
 			if err := d.deps.Probe(ctx, l.engine.SocksAddr(), l.user, l.pass); err != nil {
 				failures++
 				d.logf("probe %d/%d failed: %v", failures, d.deps.ProbeFailures, err)
@@ -305,7 +326,7 @@ func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, er
 	body, headers, err := d.deps.Fetch(ctx, subURL)
 	d.mu.Lock()
 	if err != nil {
-		d.subErr[subURL] = err.Error()
+		d.subErr[subURL] = Scrub(err.Error())
 	} else {
 		delete(d.subErr, subURL)
 	}
@@ -314,7 +335,7 @@ func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, er
 		return nil, err
 	}
 	c := &store.Cache{Body: body, Headers: headers, FetchedAt: d.deps.Now()}
-	if err := store.SaveCache(d.deps.StateDir, subURL, c); err != nil {
+	if err := d.saveCache(subURL, c); err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
@@ -326,7 +347,7 @@ func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, er
 	}
 	cfg := d.cfg.Clone()
 	d.mu.Unlock()
-	if err := store.Save(d.deps.ConfigPath, cfg); err != nil {
+	if err := d.saveConfig(cfg); err != nil {
 		d.logf("config: %v", err)
 	}
 	return c, nil
@@ -382,6 +403,10 @@ func (d *Daemon) refresh(ctx context.Context, force bool) {
 }
 
 func (d *Daemon) afterRefresh(subURL string, fresh []links.Entry) {
+	// Under connectMu: a control request must not slip in between reading the
+	// selection and restarting it.
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
 	d.mu.Lock()
 	cur, sel := d.cur, d.sel
 	d.mu.Unlock()
@@ -394,7 +419,7 @@ func (d *Daemon) afterRefresh(subURL string, fresh []links.Entry) {
 		}
 		if e.Olcrtc.Room != cur.entry.Olcrtc.Room || e.Olcrtc.Key != cur.entry.Olcrtc.Key {
 			d.logf("%s: room or key rotated, reconnecting", e.Label)
-			d.startConnect(*sel)
+			d.startConnectLocked(*sel)
 		}
 		return
 	}

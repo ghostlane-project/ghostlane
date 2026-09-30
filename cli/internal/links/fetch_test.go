@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +32,15 @@ func TestFetch(t *testing.T) {
 	}
 	if _, _, err = Fetch(context.Background(), srv.Client(), srv.URL+"/sub/a/b", "x"); err == nil {
 		t.Fatal("a 404 is an error")
+	}
+}
+
+func TestFetchErrorHidesURL(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	u := srv.URL + "/sub/partner/TOKEN456?c=olcbox"
+	srv.Close()
+	_, _, err := Fetch(context.Background(), &http.Client{}, u, "x")
+	if err == nil || strings.Contains(err.Error(), "TOKEN456") || strings.Contains(err.Error(), "/sub/") {
+		t.Fatalf("the error must not carry the URL: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,8 @@ type world struct {
 	engineErr map[string]error // carrier → error at start
 	probeErr  error
 	probes    int
+	stopDelay time.Duration // how long a fake engine takes to stop
+	engState  string        // "" = running
 }
 
 func (w *world) rec(s string) { w.mu.Lock(); w.log = append(w.log, s); w.mu.Unlock() }
@@ -45,8 +48,22 @@ type fakeEngine struct {
 
 func (e *fakeEngine) SocksAddr() string             { return e.addr }
 func (e *fakeEngine) Credentials() (string, string) { return "u", "p" }
-func (e *fakeEngine) State() string                 { return "running" }
-func (e *fakeEngine) Stop(time.Duration) error      { e.w.rec("engine-stop"); return nil }
+func (e *fakeEngine) State() string {
+	e.w.mu.Lock()
+	defer e.w.mu.Unlock()
+	if e.w.engState != "" {
+		return e.w.engState
+	}
+	return "running"
+}
+func (e *fakeEngine) Stop(time.Duration) error {
+	e.w.mu.Lock()
+	delay := e.w.stopDelay
+	e.w.mu.Unlock()
+	time.Sleep(delay)
+	e.w.rec("engine-stop")
+	return nil
+}
 
 type fakeFront struct{ w *world }
 
@@ -57,10 +74,13 @@ type fakeRoutes struct{ w *world }
 func (r *fakeRoutes) GlobalAddresses() ([]netip.Addr, error) {
 	return []netip.Addr{netip.MustParseAddr("203.0.113.5")}, nil
 }
-func (r *fakeRoutes) Sync([]netip.Addr) error                      { r.w.rec("routes:sync"); return nil }
-func (r *fakeRoutes) Clear() error                                 { r.w.rec("routes:clear"); return nil }
-func (r *fakeRoutes) CleanupStale() error                          { r.w.rec("routes:cleanup"); return nil }
-func (r *fakeRoutes) WatchAddresses(context.Context, func()) error { return nil }
+func (r *fakeRoutes) Sync([]netip.Addr) error { r.w.rec("routes:sync"); return nil }
+func (r *fakeRoutes) Clear() error            { r.w.rec("routes:clear"); return nil }
+func (r *fakeRoutes) CleanupStale() error     { r.w.rec("routes:cleanup"); return nil }
+func (r *fakeRoutes) WatchAddresses(context.Context, func()) (func(), error) {
+	r.w.rec("watch")
+	return func() { r.w.rec("watch-stop") }, nil
+}
 
 func newWorld(t *testing.T) (*world, *Daemon, string) {
 	t.Helper()
@@ -369,5 +389,142 @@ func TestRefusals(t *testing.T) {
 	}
 	if list := d.Handle(ctx, ipc.Request{Verb: "list"}); len(list.Entries) != 0 {
 		t.Fatalf("%+v", list.Entries)
+	}
+}
+
+func count(ev, token string) int { return strings.Count(" "+ev+" ", " "+token+" ") }
+
+// Reviewer finding 1: Handle is concurrent (ipc.Serve runs each request in its
+// own goroutine) and a refresh can call startConnect too. Two callers within a
+// slow engine stop must never leave an engine, a front or the rules behind.
+func TestTwoCallersDoNotOverlap(t *testing.T) {
+	w, d, _ := newWorld(t)
+	w.stopDelay = 60 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun"})
+	waitState(t, d, "up")
+	var wg sync.WaitGroup
+	for _, sel := range []string{"FR", "GB", "IT"} {
+		wg.Add(1)
+		go func(sel string) {
+			defer wg.Done()
+			d.Handle(ctx, ipc.Request{Verb: "connect", Selector: sel, Mode: "tun"})
+		}(sel)
+		time.Sleep(10 * time.Millisecond)
+	}
+	wg.Wait()
+	waitState(t, d, "up")
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	ev := w.events()
+	starts := strings.Count(ev, "engine:")
+	if stops := count(ev, "engine-stop"); stops != starts {
+		t.Fatalf("%d engines started, %d stopped: %s", starts, stops, ev)
+	}
+	if opens, closes := count(ev, "front:tun:u"), count(ev, "front-close"); opens != closes {
+		t.Fatalf("%d fronts, %d closed: %s", opens, closes, ev)
+	}
+	if syncs, clears := count(ev, "routes:sync"), count(ev, "routes:clear"); syncs != clears {
+		t.Fatalf("%d rule syncs, %d clears: %s", syncs, clears, ev)
+	}
+	if !strings.HasSuffix(ev, "routes:clear") {
+		t.Fatalf("the last thing to happen is the last teardown's clear: %s", ev)
+	}
+}
+
+// Reviewer finding 2: the address watcher belongs to one connection and stops
+// before that connection's rules are cleared.
+func TestWatcherStopsBeforeClear(t *testing.T) {
+	w, d, _ := newWorld(t)
+	w.engineErr["telemost"] = errors.New("room full")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun"})
+	waitState(t, d, "up")
+	w.mu.Lock()
+	w.probeErr = errors.New("dead")
+	w.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+		if st.State == "connecting" && st.Line != nil && st.Line.Carrier == "salutejazz" {
+			w.mu.Lock()
+			w.probeErr = nil
+			w.mu.Unlock()
+		}
+		if st.State == "up" && st.Line != nil && st.Line.Carrier == "salutejazz" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	ev := w.events()
+	if count(ev, "watch") != 2 || count(ev, "watch-stop") != 2 {
+		t.Fatalf("one watcher per connection, each stopped: %s", ev)
+	}
+	if strings.Count(ev, "watch-stop front-close engine-stop routes:clear") != 2 {
+		t.Fatalf("the watcher stops before the teardown clears the rules: %s", ev)
+	}
+}
+
+// Reviewer finding 9: an engine whose runtime is no longer running ends the
+// line at once, not after three probe intervals.
+func TestEngineStateEndsLine(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	waitState(t, d, "up")
+	w.mu.Lock()
+	w.engState = "stopped"
+	w.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.events(), "engine-stop engine:wbstream@") {
+			w.mu.Lock()
+			w.engState = ""
+			w.mu.Unlock()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("a stopped engine moves to the next carrier: %s", w.events())
+}
+
+// Reviewer finding 3: a fetch error carries the URL, and the URL carries the token.
+func TestFetchErrorNeverShowsToken(t *testing.T) {
+	w, d, _ := newWorld(t)
+	secret := listURL + "&token=SECRETTOKEN"
+	w.fetchErr = &url.Error{Op: "Get", URL: secret, Err: errors.New("dial tcp: i/o timeout")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: secret})
+	if resp.OK || strings.Contains(resp.Message, "SECRETTOKEN") || strings.Contains(resp.Message, "4gg96") {
+		t.Fatalf("add: %+v", resp)
+	}
+	cfg := store.Defaults()
+	cfg.Subscriptions = []store.Subscription{{URL: secret, IntervalHours: 1}}
+	cfg.Selection = &store.Selection{Subscription: secret, Selector: "DE", Mode: "proxy"}
+	d.mu.Lock()
+	d.cfg = cfg
+	d.mu.Unlock()
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	d.startConnect(*cfg.Selection)
+	st := waitState(t, d, "failed")
+	all := st.LastError
+	for _, s := range st.Subscriptions {
+		all += " " + s.Error + " " + s.URL
+	}
+	if strings.Contains(all, "SECRETTOKEN") {
+		t.Fatalf("token in status: %+v", st)
 	}
 }
