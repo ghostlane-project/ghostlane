@@ -172,11 +172,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if err := fs.Parse(rest); err != nil {
 			return 2
 		}
-		v := ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin}
+		v := ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin, Xray: xrayPin}
 		if *asJSON {
 			return printJSON(stdout, v)
 		}
-		fmt.Fprintf(stdout, "ghostlane %s\nengine %s\nsing-box %s\nrelease signing key sha256 %s\n", v.Version, v.Engine, v.SingBox, releasePubKeyFingerprint())
+		fmt.Fprintf(stdout, "ghostlane %s\nengine %s\nsing-box %s\nxray-core %s\nrelease signing key sha256 %s\n", v.Version, v.Engine, v.SingBox, v.Xray, releasePubKeyFingerprint())
 		return 0
 	case "add", "list", "connect", "disconnect", "status", "refresh", "remove":
 		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {

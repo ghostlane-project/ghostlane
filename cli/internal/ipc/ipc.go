@@ -69,6 +69,7 @@ type VersionInfo struct {
 	Version string `json:"version"`
 	Engine  string `json:"engine"`
 	SingBox string `json:"singbox"`
+	Xray    string `json:"xray"`
 }
 
 type Response struct {

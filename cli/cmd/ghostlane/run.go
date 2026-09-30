@@ -80,7 +80,7 @@ func runDaemon(args []string, stderr io.Writer) int {
 		UID:          os.Getuid(),
 		ReadyTimeout: 60 * time.Second, ConfirmTimeout: 45 * time.Second, ProbeInterval: 30 * time.Second,
 		ProbeFailures: 3, RetryMin: 10 * time.Second, RetryMax: 5 * time.Minute,
-		Version: ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin},
+		Version: ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin, Xray: xrayPin},
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
