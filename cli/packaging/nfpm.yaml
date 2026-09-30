@@ -1,0 +1,44 @@
+# One file, four package formats. VERSION and GOARCH come from the environment.
+name: ghostlane-cli
+arch: "${GOARCH}"
+platform: linux
+version: "${VERSION}"
+version_schema: semver
+release: "1"
+section: net
+priority: optional
+maintainer: "Ghostlane contributors <ghostlane-project@users.noreply.github.com>"
+description: |
+  Ghostlane tunnel for Linux servers and boxes.
+  Joins olcRTC rooms (a tunnel inside a video call) with carrier failover and
+  routes the machine through a tun, or serves a local SOCKS5/HTTP proxy.
+vendor: Ghostlane
+homepage: https://github.com/ghostlane-project/ghostlane
+license: GPL-3.0-or-later
+contents:
+  - src: dist/linux-${GOARCH}/ghostlane
+    dst: /usr/bin/ghostlane
+    file_info:
+      mode: 0755
+  - src: packaging/ghostlane.service
+    dst: /lib/systemd/system/ghostlane.service
+    packager: deb
+  - src: packaging/ghostlane.service
+    dst: /usr/lib/systemd/system/ghostlane.service
+    packager: rpm
+  - src: packaging/ghostlane.service
+    dst: /usr/lib/systemd/system/ghostlane.service
+    packager: archlinux
+  - src: packaging/ghostlane.service
+    dst: /usr/lib/systemd/system/ghostlane.service
+    packager: apk
+  - src: packaging/README.md
+    dst: /usr/share/doc/ghostlane-cli/README.md
+  - src: LICENSE
+    dst: /usr/share/doc/ghostlane-cli/LICENSE
+  - src: COPYRIGHT
+    dst: /usr/share/doc/ghostlane-cli/COPYRIGHT
+scripts:
+  preinstall: packaging/scripts/preinstall.sh
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
