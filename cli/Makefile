@@ -60,3 +60,9 @@ sign:
 	openssl pkeyutl -sign -inkey $(KEY) -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -out dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
 	openssl pkeyutl -verify -pubin -inkey packaging/cli-release.pub.pem -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -sigfile dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
 	sed "/^VERSION=/s/__VERSION__/$(VERSION)/" packaging/install.sh > dist/install.sh
+
+# An xray binary at the pinned module version, for the Reality end-to-end test
+# (XRAY_SERVER_BIN): the server side must be its own process.
+.PHONY: xray-server
+xray-server:
+	$(GO) build -trimpath -o dist/xray-server github.com/xtls/xray-core/main
