@@ -201,6 +201,3 @@ func printList(w io.Writer, entries []ipc.EntryView) {
 		fmt.Fprintln(w, "(no lines; ghostlane add <url>)")
 	}
 }
-
-// releasePubKeyFingerprint is replaced by pubkey.go once the release key exists.
-func releasePubKeyFingerprint() string { return "unset" }

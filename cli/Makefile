@@ -52,3 +52,10 @@ dist: package tarballs sums
 
 clean:
 	rm -rf dist
+
+.PHONY: sign
+sign:
+	test -n "$(KEY)" || (echo "KEY=<ed25519 private key pem> is required" && exit 1)
+	openssl pkeyutl -sign -inkey $(KEY) -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -out dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
+	openssl pkeyutl -verify -pubin -inkey packaging/cli-release.pub.pem -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -sigfile dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
+	sed "/^VERSION=/s/__VERSION__/$(VERSION)/" packaging/install.sh > dist/install.sh

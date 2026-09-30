@@ -1,0 +1,101 @@
+package packaging
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func tarball(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		mode := int64(0o644)
+		if name == "ghostlane" {
+			mode = 0o755
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: "./" + name, Mode: mode, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = tw.Write([]byte(body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+func TestInstallScriptTarball(t *testing.T) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl missing")
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	der, _ := x509.MarshalPKIXPublicKey(pub)
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	pubFile := filepath.Join(t.TempDir(), "pub.pem")
+	_ = os.WriteFile(pubFile, pubPEM, 0o644)
+
+	tgz := tarball(t, map[string]string{"ghostlane": "#!/bin/sh\necho ghostlane 0.0.1\n", "ghostlane.service": "[Unit]\nExecStart=/usr/bin/ghostlane run\n", "README.md": "x", "LICENSE": "y", "COPYRIGHT": "z"})
+	sum := sha256.Sum256(tgz)
+	sums := hex.EncodeToString(sum[:]) + "  ghostlane-cli-0.0.1-linux-amd64.tar.gz\n"
+	sig := ed25519.Sign(priv, []byte(sums))
+	assets := map[string][]byte{
+		"/ghostlane-cli-0.0.1-linux-amd64.tar.gz": tgz,
+		"/ghostlane-cli-0.0.1-SHA256SUMS":         []byte(sums),
+		"/ghostlane-cli-0.0.1-SHA256SUMS.sig":     sig,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, ok := assets[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	root := t.TempDir()
+	runInstall := func() (string, error) {
+		cmd := exec.Command("sh", "../../packaging/install.sh", "--version", "0.0.1", "--base-url", srv.URL, "--family", "tar", "--no-service")
+		cmd.Env = append(os.Environ(), "GHOSTLANE_INSTALL_ROOT="+root, "GHOSTLANE_PUBKEY_FILE="+pubFile, "GHOSTLANE_ARCH=amd64")
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := runInstall()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "usr/local/bin/ghostlane")); err != nil || !strings.Contains(string(b), "echo ghostlane") {
+		t.Fatalf("binary not installed: %v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "etc/systemd/system/ghostlane.service")); err != nil || !strings.Contains(string(b), "/usr/local/bin/ghostlane run") {
+		t.Fatalf("unit not installed with the tarball path: %v\n%s", err, out)
+	}
+	// A tampered sums file must be refused.
+	assets["/ghostlane-cli-0.0.1-SHA256SUMS"] = []byte(strings.Replace(sums, "0", "1", 1))
+	if out, err := runInstall(); err == nil || !strings.Contains(out, "signature") {
+		t.Fatalf("tampered SHA256SUMS accepted: %v\n%s", err, out)
+	}
+	assets["/ghostlane-cli-0.0.1-SHA256SUMS"] = []byte(sums)
+	// A tampered tarball must be refused.
+	bad := append([]byte{}, tgz...)
+	bad[10] ^= 0xff
+	assets["/ghostlane-cli-0.0.1-linux-amd64.tar.gz"] = bad
+	if out, err := runInstall(); err == nil || !strings.Contains(out, "checksum") {
+		t.Fatalf("tampered tarball accepted: %v\n%s", err, out)
+	}
+}
