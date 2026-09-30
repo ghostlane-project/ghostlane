@@ -42,7 +42,15 @@ type Entry struct {
 	Kind    Kind
 	Raw     string
 	Olcrtc  *OlcrtcLine
+	Vless   *VlessLine
+	Hy2     *Hy2Line
 	Problem string // why the line cannot be connected, for `list`
+}
+
+// Connectable says whether this version can connect the line: an olcRTC room,
+// a VLESS line over tcp (Reality) or xhttp, or a Hysteria2 line, parsed whole.
+func (e Entry) Connectable() bool {
+	return e.Problem == "" && (e.Olcrtc != nil || e.Vless != nil || e.Hy2 != nil)
 }
 
 // DecodeBody turns a subscription body into lines: base64 (whole body, wrapped or
@@ -150,9 +158,19 @@ func Entries(subURL string, lines []string) []Entry {
 				e.Kind, e.Olcrtc, e.Label = KindOlcrtc, l, l.Label
 			}
 		case strings.HasPrefix(raw, "vless://"):
-			e.Kind, e.Label, e.Problem = KindVless, fragmentLabel(raw), "VLESS lines come in the next version"
+			e.Kind, e.Label = KindVless, fragmentLabel(raw)
+			if l, err := ParseVless(raw); err != nil {
+				e.Problem = err.Error()
+			} else {
+				e.Vless, e.Label = l, l.Label
+			}
 		case strings.HasPrefix(raw, "hysteria2://"), strings.HasPrefix(raw, "hy2://"):
-			e.Kind, e.Label, e.Problem = KindHysteria2, fragmentLabel(raw), "Hysteria2 lines come in the next version"
+			e.Kind, e.Label = KindHysteria2, fragmentLabel(raw)
+			if l, err := ParseHy2(raw); err != nil {
+				e.Problem = err.Error()
+			} else {
+				e.Hy2, e.Label = l, l.Label
+			}
 		default:
 			scheme, _, _ := strings.Cut(raw, "://")
 			e.Kind, e.Label, e.Problem = KindUnsupported, raw, fmt.Sprintf("%s:// is not supported", scheme)
