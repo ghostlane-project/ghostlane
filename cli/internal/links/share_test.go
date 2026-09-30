@@ -82,3 +82,11 @@ func TestParseHy2(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A label with a literal + decodes as a space, as the app's urlDecode does.
+func TestLabelPlusIsSpace(t *testing.T) {
+	l, err := ParseVless("vless://" + uuid + "@h:443?type=tcp&security=reality&sni=s&pbk=P&sid=1#DE%20via+RU")
+	if err != nil || l.Label != "DE via RU" {
+		t.Fatalf("%+v %v", l, err)
+	}
+}

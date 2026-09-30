@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
@@ -15,10 +16,7 @@ import (
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
 )
 
-var (
-	errNoSubscription = errors.New("no subscription holds that selector")
-	errNotConnectable = errors.New("this line cannot be connected by this version")
-)
+var errNotConnectable = errors.New("this line cannot be connected by this version")
 
 // startConnect cancels any running connection and starts the loop for sel.
 func (d *Daemon) startConnect(sel store.Selection) {
@@ -36,12 +34,17 @@ func (d *Daemon) startConnectLocked(sel store.Selection) {
 	}
 	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
-	d.cancel, d.loopDone = cancel, done
+	d.cancel, d.loopDone, d.loopLive = cancel, done, true
 	d.sel = &sel
 	d.state, d.lastErr = "connecting", ""
 	d.mu.Unlock()
 	go func() {
-		defer close(done)
+		defer func() {
+			d.mu.Lock()
+			d.loopLive = false
+			d.mu.Unlock()
+			close(done)
+		}()
 		d.connectLoop(ctx, sel)
 	}()
 }
@@ -81,8 +84,10 @@ func (d *Daemon) setState(state, lastErr string, entry *links.Entry) {
 
 func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 	backoff := d.deps.RetryMin
+	round := 0
+	lastTried := "" // the id of the line the previous round ended on
 	for ctx.Err() == nil {
-		entries, err := d.entriesFor(ctx, sel.Subscription, false)
+		all, err := d.allEntries(ctx, sel.Subscription)
 		if err != nil {
 			d.setState("failed", err.Error(), nil)
 			if !sleepCtx(ctx, backoff) {
@@ -91,22 +96,30 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 			continue
 		}
-		cands, err := links.Select(entries, sel.Selector)
+		cands, err := links.Select(flatten(all), sel.Selector)
 		if err != nil {
+			// nothing matches today; the next refresh that changes a list retries
 			d.setState("failed", err.Error(), nil)
-			return // a selector that matches nothing is not retried
+			return
 		}
-		cands = d.orderCandidates(sel, connectable(cands))
+		cands = connectable(cands)
 		if len(cands) == 0 {
 			d.setState("failed", "no connectable line matches "+sel.Selector, nil)
 			return
 		}
+		if round == 0 {
+			cands = d.orderCandidates(sel, cands)
+		} else {
+			cands = rotateAfter(cands, lastTried)
+		}
+		round++
 		anyUp := false
 		for i := range cands {
 			cand := cands[i]
 			if ctx.Err() != nil {
 				return
 			}
+			lastTried = cand.ID
 			d.setState("connecting", "", &cand)
 			l, err := d.bringUp(ctx, cand, sel.Mode)
 			if err != nil {
@@ -132,6 +145,19 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 		}
 	}
+}
+
+// rotateAfter starts the next round after the line the last one ended on, so
+// the line that just failed is tried last, not first.
+func rotateAfter(cands []links.Entry, lastID string) []links.Entry {
+	for i, c := range cands {
+		if c.ID == lastID {
+			out := make([]links.Entry, 0, len(cands))
+			out = append(out, cands[i+1:]...)
+			return append(out, cands[:i+1]...)
+		}
+	}
+	return cands
 }
 
 func connectable(in []links.Entry) []links.Entry {
@@ -484,10 +510,14 @@ func (d *Daemon) refreshLoop(ctx context.Context) {
 	}
 }
 
+// refresh fetches the due lists, four at a time, and then lets afterRefresh
+// react to what changed.
 func (d *Daemon) refresh(ctx context.Context, force bool) {
 	d.mu.Lock()
 	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
 	d.mu.Unlock()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for _, s := range subs {
 		if _, inline := inlineBody(s.URL); inline {
 			continue
@@ -500,33 +530,56 @@ func (d *Daemon) refresh(ctx context.Context, force bool) {
 		if !force && cache != nil && d.deps.Now().Before(cache.FetchedAt.Add(time.Duration(hours)*time.Hour)) {
 			continue
 		}
-		fresh, err := d.fetchInto(ctx, s.URL)
-		if err != nil {
-			d.logf("refresh %s: %v", store.MaskURL(s.URL), err)
-			continue
-		}
-		d.afterRefresh(s.URL, links.Entries(s.URL, links.DecodeBody(fresh.Body)))
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := d.fetchInto(ctx, url); err != nil {
+				d.logf("refresh %s: %v", store.MaskURL(url), err)
+			}
+		}(s.URL)
 	}
+	wg.Wait()
+	d.afterRefresh(ctx)
 }
 
-func (d *Daemon) afterRefresh(subURL string, fresh []links.Entry) {
-	// Under connectMu: a control request must not slip in between reading the
-	// selection and restarting it.
+// afterRefresh reacts to refreshed lists: a stored selection with no loop
+// running (its selector matched nothing) is retried; a running line whose raw
+// text changed is reconnected; a vanished line is noted. Under connectMu: a
+// control request must not slip in between reading the selection and acting.
+func (d *Daemon) afterRefresh(ctx context.Context) {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
 	d.mu.Lock()
-	cur, sel := d.cur, d.sel
+	cur, live := d.cur, d.loopLive
+	var stored *store.Selection
+	if d.cfg != nil && d.cfg.Selection != nil {
+		s := *d.cfg.Selection
+		stored = &s
+	}
 	d.mu.Unlock()
-	if cur == nil || sel == nil || sel.Subscription != subURL {
+	if stored == nil {
 		return
 	}
-	for _, e := range fresh {
-		if e.ID != cur.entry.ID {
+	if !live {
+		d.startConnectLocked(*stored)
+		return
+	}
+	if cur == nil {
+		return
+	}
+	all, err := d.allEntries(ctx, stored.Subscription)
+	if err != nil {
+		return
+	}
+	for _, e := range all {
+		if e.entry.ID != cur.entry.ID {
 			continue
 		}
-		if e.Raw != cur.entry.Raw {
-			d.logf("%s: the line changed (room, key or server), reconnecting", e.Label)
-			d.startConnectLocked(*sel)
+		if e.entry.Raw != cur.entry.Raw {
+			d.logf("%s: the line changed (room, key or server), reconnecting", e.entry.Label)
+			d.startConnectLocked(*stored)
 		}
 		return
 	}

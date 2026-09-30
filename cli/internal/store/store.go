@@ -111,7 +111,9 @@ func LoadCache(dir, subURL string) (*Cache, error) {
 	}
 	var c Cache
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, err
+		// a corrupt file would otherwise never be re-fetched
+		_ = os.Remove(cachePath(dir, subURL))
+		return nil, nil //nolint:nilnil // absent
 	}
 	return &c, nil
 }

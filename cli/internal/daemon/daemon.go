@@ -93,7 +93,51 @@ type Daemon struct {
 	pending  *links.Entry // the line being tried while connecting
 	cancel   context.CancelFunc
 	loopDone chan struct{}
+	loopLive bool // a connect loop is running (it may be in backoff)
 	runCtx   context.Context
+}
+
+// indexed is one entry with the subscription it came from; the daemon numbers
+// entries continuously across subscriptions.
+type indexed struct {
+	sub   string
+	entry links.Entry
+}
+
+// allEntries returns every subscription's entries in config order, or only
+// those of the subscriptions matching only.
+func (d *Daemon) allEntries(ctx context.Context, only string) ([]indexed, error) {
+	d.mu.Lock()
+	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
+	d.mu.Unlock()
+	var out []indexed
+	var lastErr error
+	for _, s := range subs {
+		if only != "" && !matchesSub(s.URL, only) {
+			continue
+		}
+		entries, err := d.entriesFor(ctx, s.URL, false)
+		if err != nil {
+			lastErr = err
+			d.logf("list %s: %v", store.MaskURL(s.URL), err)
+			continue
+		}
+		for _, e := range entries {
+			out = append(out, indexed{sub: s.URL, entry: e})
+		}
+	}
+	if len(out) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return out, nil
+}
+
+func flatten(in []indexed) []links.Entry {
+	out := make([]links.Entry, 0, len(in))
+	for _, i := range in {
+		out = append(out, i.entry)
+	}
+	return out
 }
 
 func New(d Deps) *Daemon {
