@@ -12,6 +12,7 @@ import (
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
@@ -42,6 +43,7 @@ type Deps struct {
 	SocketPath  string
 	Fetch       func(ctx context.Context, url string) ([]byte, links.Headers, error)
 	StartEngine func(ctx context.Context, p olcrtc.Params) (Engine, error)
+	StartXray   func(ctx context.Context, p xray.Params) (Engine, error)
 	StartFront  func(ctx context.Context, p singbox.FrontParams) (Front, error)
 	Routes      Routes
 	Probe       func(ctx context.Context, socksAddr, user, pass string) error
@@ -60,12 +62,13 @@ type Deps struct {
 }
 
 type live struct {
-	entry  links.Entry
-	mode   string
-	engine Engine
-	front  Front
-	user   string
-	pass   string
+	entry     links.Entry
+	mode      string
+	engine    Engine // nil for a native line (the front is the engine)
+	front     Front
+	probeAddr string // the front's probe inbound, what supervise probes through
+	probeUser string
+	probePass string
 }
 
 type Daemon struct {

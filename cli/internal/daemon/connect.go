@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
 )
 
-var errNoSubscription = errors.New("no subscription holds that selector")
+var (
+	errNoSubscription = errors.New("no subscription holds that selector")
+	errNotConnectable = errors.New("this line cannot be connected by this version")
+)
 
 // startConnect cancels any running connection and starts the loop for sel.
 func (d *Daemon) startConnect(sel store.Selection) {
@@ -90,9 +96,9 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			d.setState("failed", err.Error(), nil)
 			return // a selector that matches nothing is not retried
 		}
-		cands = d.orderCandidates(sel, onlyOlcrtc(cands))
+		cands = d.orderCandidates(sel, connectable(cands))
 		if len(cands) == 0 {
-			d.setState("failed", "no olcRTC line matches "+sel.Selector, nil)
+			d.setState("failed", "no connectable line matches "+sel.Selector, nil)
 			return
 		}
 		anyUp := false
@@ -128,10 +134,10 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 	}
 }
 
-func onlyOlcrtc(in []links.Entry) []links.Entry {
+func connectable(in []links.Entry) []links.Entry {
 	var out []links.Entry
 	for _, e := range in {
-		if e.Kind == links.KindOlcrtc {
+		if e.Connectable() {
 			out = append(out, e)
 		}
 	}
@@ -155,26 +161,82 @@ func (d *Daemon) orderCandidates(sel store.Selection, cands []links.Entry) []lin
 	return cands
 }
 
-func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live, error) {
+// probeInbound picks the front's loopback probe inbound: a free port and
+// per-start credentials.
+func probeInbound() (addr, user, pass string, err error) {
 	port, err := olcrtc.FreePort()
 	if err != nil {
-		return nil, err
+		return "", "", "", err
 	}
-	user, pass := olcrtc.RandomCredentials()
-	eng, err := d.deps.StartEngine(ctx, olcrtc.Params{
-		Line: *e.Olcrtc, SocksHost: "127.0.0.1", SocksPort: port, SocksUser: user, SocksPass: pass,
-		DNS: olcrtc.HostResolvers(d.deps.ResolvConf), DirectRules: olcrtc.PrivateDirectRules, DeviceIDPath: d.deviceIDPath(),
-		ReadyTimeout: d.deps.ReadyTimeout,
-	})
-	if err != nil {
-		return nil, err
+	user, pass = olcrtc.RandomCredentials()
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), user, pass, nil
+}
+
+func (d *Daemon) frontParams(mode string, up singbox.Upstream, probeAddr, probeUser, probePass string) singbox.FrontParams {
+	d.mu.Lock()
+	proxy := d.cfg.Proxy
+	d.mu.Unlock()
+	return singbox.FrontParams{Mode: singbox.Mode(mode), Upstream: up,
+		ProxyListen: proxy.Listen, ProxyPort: proxy.Port, ProxyUser: proxy.User, ProxyPass: proxy.Pass,
+		ExcludeUID: d.deps.UID, InterfaceName: singbox.TunName,
+		ProbeListen: probeAddr, ProbeUser: probeUser, ProbePass: probePass}
+}
+
+// bringUp connects one entry by its kind:
+//   - olcRTC: the engine, confirmed through its SOCKS, then the front;
+//   - xhttp: an Xray instance, likewise;
+//   - Reality tcp / Hysteria2: the front's own outbound. In tun mode the line is
+//     first proven in a proxy-only front, so a dead server never gets a tun.
+//
+// Every kind is then confirmed once more through the front's probe inbound,
+// which supervise keeps probing.
+func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live, error) {
+	var eng Engine
+	var up singbox.Upstream
+	switch {
+	case e.Olcrtc != nil:
+		port, err := olcrtc.FreePort()
+		if err != nil {
+			return nil, err
+		}
+		user, pass := olcrtc.RandomCredentials()
+		eng, err = d.deps.StartEngine(ctx, olcrtc.Params{
+			Line: *e.Olcrtc, SocksHost: "127.0.0.1", SocksPort: port, SocksUser: user, SocksPass: pass,
+			DNS: olcrtc.HostResolvers(d.deps.ResolvConf), DirectRules: olcrtc.PrivateDirectRules, DeviceIDPath: d.deviceIDPath(),
+			ReadyTimeout: d.deps.ReadyTimeout,
+		})
+		if err != nil {
+			return nil, err
+		}
+	case e.Vless != nil && e.Vless.Transport.Kind == "xhttp":
+		port, err := olcrtc.FreePort()
+		if err != nil {
+			return nil, err
+		}
+		user, pass := olcrtc.RandomCredentials()
+		eng, err = d.deps.StartXray(ctx, xray.Params{Line: *e.Vless, SocksHost: "127.0.0.1", SocksPort: port, SocksUser: user, SocksPass: pass})
+		if err != nil {
+			return nil, err
+		}
+	case e.Vless != nil:
+		up = singbox.Upstream{Vless: e.Vless}
+	case e.Hy2 != nil:
+		up = singbox.Upstream{Hy2: e.Hy2}
+	default:
+		return nil, errNotConnectable
 	}
-	// From here on the engine's own credentials are the truth, not the ones
-	// handed to it: the front and the probes talk to what it reports.
-	user, pass = eng.Credentials()
-	if err := d.confirm(ctx, eng); err != nil {
-		_ = eng.Stop(5 * time.Second)
-		return nil, err
+	if eng != nil {
+		// the engine's own credentials are the truth from here on
+		user, pass := eng.Credentials()
+		up = singbox.Upstream{Socks: &singbox.SocksUpstream{Addr: eng.SocksAddr(), User: user, Pass: pass}}
+		if err := d.confirmVia(ctx, eng.SocksAddr(), user, pass); err != nil {
+			_ = eng.Stop(5 * time.Second)
+			return nil, err
+		}
+	} else if mode == "tun" {
+		if err := d.preflight(ctx, up); err != nil {
+			return nil, err
+		}
 	}
 	if mode == "tun" {
 		addrs, err := d.deps.Routes.GlobalAddresses()
@@ -182,39 +244,73 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 			err = d.deps.Routes.Sync(addrs)
 		}
 		if err != nil {
-			_ = eng.Stop(5 * time.Second)
+			stopEngine(eng)
 			return nil, fmt.Errorf("policy rules: %w", err)
 		}
 	}
-	d.mu.Lock()
-	proxy := d.cfg.Proxy
-	d.mu.Unlock()
-	fp := singbox.FrontParams{Mode: singbox.Mode(mode), Upstream: singbox.Upstream{Socks: &singbox.SocksUpstream{Addr: eng.SocksAddr(), User: user, Pass: pass}},
-		ProxyListen: proxy.Listen, ProxyPort: proxy.Port, ProxyUser: proxy.User, ProxyPass: proxy.Pass,
-		ExcludeUID: d.deps.UID, InterfaceName: singbox.TunName}
-	front, err := d.deps.StartFront(ctx, fp)
+	probeAddr, probeUser, probePass, err := probeInbound()
+	if err != nil {
+		stopEngine(eng)
+		return nil, err
+	}
+	front, err := d.deps.StartFront(ctx, d.frontParams(mode, up, probeAddr, probeUser, probePass))
 	if err != nil {
 		if mode == "tun" {
 			_ = d.deps.Routes.Clear()
 		}
-		_ = eng.Stop(5 * time.Second)
+		stopEngine(eng)
 		return nil, fmt.Errorf("front: %w", err)
 	}
-	return &live{entry: e, mode: mode, engine: eng, front: front, user: user, pass: pass}, nil
+	l := &live{entry: e, mode: mode, engine: eng, front: front, probeAddr: probeAddr, probeUser: probeUser, probePass: probePass}
+	if err := d.confirmVia(ctx, probeAddr, probeUser, probePass); err != nil {
+		d.tearDown(l)
+		return nil, err
+	}
+	return l, nil
 }
 
-// confirm probes through the engine until it answers or ConfirmTimeout passes:
-// WaitReady says the SOCKS listens, not that the room carries traffic.
-func (d *Daemon) confirm(ctx context.Context, eng Engine) error {
+// preflight proves a native line in a proxy-only front before the tun front
+// replaces it: the same outbound, a loopback probe inbound, nothing routed.
+func (d *Daemon) preflight(ctx context.Context, up singbox.Upstream) error {
+	probeAddr, probeUser, probePass, err := probeInbound()
+	if err != nil {
+		return err
+	}
+	port, err := olcrtc.FreePort()
+	if err != nil {
+		return err
+	}
+	fp := d.frontParams("proxy", up, probeAddr, probeUser, probePass)
+	fp.ProxyListen, fp.ProxyPort = "127.0.0.1", port
+	fp.ProxyUser, fp.ProxyPass = olcrtc.RandomCredentials()
+	front, err := d.deps.StartFront(ctx, fp)
+	if err != nil {
+		return fmt.Errorf("pre-flight front: %w", err)
+	}
+	err = d.confirmVia(ctx, probeAddr, probeUser, probePass)
+	_ = front.Close()
+	if err != nil {
+		return fmt.Errorf("pre-flight: %w", err)
+	}
+	return nil
+}
+
+func stopEngine(eng Engine) {
+	if eng != nil {
+		_ = eng.Stop(5 * time.Second)
+	}
+}
+
+// confirmVia probes through a SOCKS until it answers or ConfirmTimeout passes.
+func (d *Daemon) confirmVia(ctx context.Context, addr, user, pass string) error {
 	deadline := d.deps.Now().Add(d.deps.ConfirmTimeout)
-	user, pass := eng.Credentials()
 	for {
-		last := d.deps.Probe(ctx, eng.SocksAddr(), user, pass)
+		last := d.deps.Probe(ctx, addr, user, pass)
 		if last == nil {
 			return nil
 		}
 		if ctx.Err() != nil || !d.deps.Now().Before(deadline) {
-			return fmt.Errorf("room carries no traffic: %w", last)
+			return fmt.Errorf("no traffic through the line: %w", last)
 		}
 		if !sleepCtx(ctx, min(3*time.Second, d.deps.ConfirmTimeout/4)) {
 			return ctx.Err()
@@ -238,7 +334,7 @@ func (d *Daemon) markUp(sel store.Selection, l *live) {
 	d.cur = l
 	d.state, d.lastErr, d.since, d.pending = "up", "", d.deps.Now(), nil
 	d.mu.Unlock()
-	d.logf("up: %s over %s", l.entry.Label, l.entry.Olcrtc.Provider)
+	d.logf("up: %s (%s)", l.entry.Label, l.entry.Kind)
 }
 
 // supervise probes every ProbeInterval; ProbeFailures in a row, or a runtime
@@ -267,10 +363,12 @@ func (d *Daemon) supervise(ctx context.Context, l *live) string {
 		case <-ctx.Done():
 			return "stopped"
 		case <-t.C:
-			if st := l.engine.State(); st != "running" {
-				return "engine " + st
+			if l.engine != nil {
+				if st := l.engine.State(); st != "running" {
+					return "engine " + st
+				}
 			}
-			if err := d.deps.Probe(ctx, l.engine.SocksAddr(), l.user, l.pass); err != nil {
+			if err := d.deps.Probe(ctx, l.probeAddr, l.probeUser, l.probePass); err != nil {
 				failures++
 				d.logf("probe %d/%d failed: %v", failures, d.deps.ProbeFailures, err)
 				if failures >= d.deps.ProbeFailures {
@@ -285,7 +383,7 @@ func (d *Daemon) supervise(ctx context.Context, l *live) string {
 
 func (d *Daemon) tearDown(l *live) {
 	_ = l.front.Close()
-	_ = l.engine.Stop(5 * time.Second)
+	stopEngine(l.engine)
 	if l.mode == "tun" {
 		_ = d.deps.Routes.Clear()
 	}
@@ -417,11 +515,11 @@ func (d *Daemon) afterRefresh(subURL string, fresh []links.Entry) {
 		return
 	}
 	for _, e := range fresh {
-		if e.ID != cur.entry.ID || e.Olcrtc == nil {
+		if e.ID != cur.entry.ID {
 			continue
 		}
-		if e.Olcrtc.Room != cur.entry.Olcrtc.Room || e.Olcrtc.Key != cur.entry.Olcrtc.Key {
-			d.logf("%s: room or key rotated, reconnecting", e.Label)
+		if e.Raw != cur.entry.Raw {
+			d.logf("%s: the line changed (room, key or server), reconnecting", e.Label)
 			d.startConnectLocked(*sel)
 		}
 		return

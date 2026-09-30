@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
@@ -22,16 +24,21 @@ import (
 const listURL = "https://sub.example/sub/a/b?c=olcbox"
 
 type world struct {
-	mu        sync.Mutex
-	body      []byte
-	fetchErr  error
-	fetches   int
-	log       []string         // "engine:<carrier>@<room>", "engine-stop", "front:<mode>", "front-close", "routes:sync", "routes:clear", "routes:cleanup"
-	engineErr map[string]error // carrier → error at start
-	probeErr  error
-	probes    int
-	stopDelay time.Duration // how long a fake engine takes to stop
-	engState  string        // "" = running
+	mu         sync.Mutex
+	body       []byte
+	fetchErr   error
+	fetches    int
+	log        []string         // "engine:<carrier>@<room>", "engine-stop", "front:<mode>", "front-close", "routes:sync", "routes:clear", "routes:cleanup"
+	engineErr  map[string]error // carrier → error at start
+	probeErr   error
+	probes     int
+	stopDelay  time.Duration   // how long a fake engine takes to stop
+	engState   string          // "" = running
+	xrayErr    error           // error at StartXray
+	deadProbe  map[string]bool // probe addresses that fail; a front's is "front:<n>"
+	deadFrom   int             // every front numbered >= deadFrom fails its probe (0 = none)
+	fronts     int
+	frontProbe map[string]string // probe listen address → "front:<n>"
 }
 
 func (w *world) rec(s string) { w.mu.Lock(); w.log = append(w.log, s); w.mu.Unlock() }
@@ -44,6 +51,7 @@ func (w *world) events() string {
 type fakeEngine struct {
 	w    *world
 	addr string
+	name string
 }
 
 func (e *fakeEngine) SocksAddr() string             { return e.addr }
@@ -61,7 +69,11 @@ func (e *fakeEngine) Stop(time.Duration) error {
 	delay := e.w.stopDelay
 	e.w.mu.Unlock()
 	time.Sleep(delay)
-	e.w.rec("engine-stop")
+	if e.name == "xray" {
+		e.w.rec("xray-stop")
+	} else {
+		e.w.rec("engine-stop")
+	}
 	return nil
 }
 
@@ -88,7 +100,7 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{body: fixture, engineErr: map[string]error{}}
+	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}}
 	dir := t.TempDir()
 	deps := Deps{
 		ConfigPath: filepath.Join(dir, "config.yaml"), StateDir: dir, SocketPath: filepath.Join(dir, "s.sock"),
@@ -112,14 +124,48 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 			return &fakeEngine{w: w, addr: "127.0.0.1:1"}, nil
 		},
 		StartFront: func(_ context.Context, p singbox.FrontParams) (Front, error) {
-			w.rec("front:" + string(p.Mode) + ":" + p.Upstream.Socks.User)
+			kind := "socks"
+			switch {
+			case p.Upstream.Vless != nil:
+				kind = "vless"
+			case p.Upstream.Hy2 != nil:
+				kind = "hy2"
+			}
+			if p.ProbeListen == "" || p.ProbeUser == "" {
+				return nil, errors.New("front without a probe inbound")
+			}
+			w.mu.Lock()
+			w.fronts++
+			n := w.fronts
+			w.frontProbe[p.ProbeListen] = "front:" + strconv.Itoa(n)
+			if w.deadFrom > 0 && n >= w.deadFrom {
+				w.deadProbe["front:"+strconv.Itoa(n)] = true
+			}
+			w.mu.Unlock()
+			w.rec("front:" + string(p.Mode) + ":" + kind)
 			return &fakeFront{w: w}, nil
 		},
+		StartXray: func(_ context.Context, p xray.Params) (Engine, error) {
+			w.mu.Lock()
+			err := w.xrayErr
+			w.mu.Unlock()
+			w.rec("xray:" + p.Line.Host)
+			if err != nil {
+				return nil, err
+			}
+			return &fakeEngine{w: w, addr: "127.0.0.1:2", name: "xray"}, nil
+		},
 		Routes: &fakeRoutes{w: w},
-		Probe: func(context.Context, string, string, string) error {
+		Probe: func(_ context.Context, addr, _, _ string) error {
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			w.probes++
+			if name, ok := w.frontProbe[addr]; ok {
+				addr = name
+			}
+			if w.deadProbe[addr] {
+				return errors.New("dead probe " + addr)
+			}
 			return w.probeErr
 		},
 		Now: time.Now, Logf: t.Logf, UID: 977,
@@ -165,7 +211,7 @@ func TestAddListConnectStatusDisconnect(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 	// the front gets the credentials the engine reports, not ones remembered beside it
-	if ev := w.events(); !strings.HasPrefix(ev, "routes:cleanup engine:telemost@") || !strings.Contains(ev+" ", "front:proxy:u ") {
+	if ev := w.events(); !strings.HasPrefix(ev, "routes:cleanup engine:telemost@") || !strings.Contains(ev+" ", "front:proxy:socks ") {
 		t.Fatalf("%s", ev)
 	}
 	cfg, _ := store.Load(filepath.Join(d.deps.StateDir, "config.yaml"))
@@ -425,7 +471,7 @@ func TestTwoCallersDoNotOverlap(t *testing.T) {
 	if stops := count(ev, "engine-stop"); stops != starts {
 		t.Fatalf("%d engines started, %d stopped: %s", starts, stops, ev)
 	}
-	if opens, closes := count(ev, "front:tun:u"), count(ev, "front-close"); opens != closes {
+	if opens, closes := count(ev, "front:tun:socks"), count(ev, "front-close"); opens != closes {
 		t.Fatalf("%d fronts, %d closed: %s", opens, closes, ev)
 	}
 	if syncs, clears := count(ev, "routes:sync"), count(ev, "routes:clear"); syncs != clears {
@@ -527,5 +573,164 @@ func TestFetchErrorNeverShowsToken(t *testing.T) {
 	}
 	if strings.Contains(all, "SECRETTOKEN") {
 		t.Fatalf("token in status: %+v", st)
+	}
+}
+
+func unifiedWorld(t *testing.T) (*world, *Daemon, string) {
+	t.Helper()
+	w, d, dir := newWorld(t)
+	fixture, err := os.ReadFile("../links/testdata/proofkit-unified.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.body = fixture
+	return w, d, dir
+}
+
+func TestNativeLineProxyMode(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "1", Mode: "proxy"}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	st := waitState(t, d, "up")
+	if st.Line.Kind != "vless" {
+		t.Fatalf("%+v", st.Line)
+	}
+	ev := w.events()
+	if strings.Contains(ev, "engine:") || strings.Contains(ev, "xray:") {
+		t.Fatalf("a native line starts no engine: %s", ev)
+	}
+	if !strings.Contains(ev, "front:proxy:vless") {
+		t.Fatalf("%s", ev)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	if !strings.HasSuffix(w.events(), "front-close") {
+		t.Fatalf("%s", w.events())
+	}
+}
+
+// Review Focus 1: in tun mode a native line is proven in a proxy-only front
+// before the tun exists; a dead server never gets a tun.
+func TestNativeLineTunPreflight(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "2", Mode: "tun"}) // the hy2 line
+	waitState(t, d, "up")
+	ev := w.events()
+	if !strings.Contains(ev, "front:proxy:hy2 front-close routes:sync front:tun:hy2") {
+		t.Fatalf("pre-flight before the rules and the tun: %s", ev)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+
+	// now the server is dead: every pre-flight fails, no rules, no tun
+	w.mu.Lock()
+	w.deadFrom = 3 // the next front is the third one made
+	w.mu.Unlock()
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "2", Mode: "tun"})
+	st := waitState(t, d, "failed")
+	tail := w.events()[len(ev):]
+	if strings.Contains(tail, "routes:sync") || strings.Contains(tail, "front:tun") {
+		t.Fatalf("a dead server must not get a tun: %s", tail)
+	}
+	if st.LastError == "" {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestXhttpLineUsesXray(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "3", Mode: "proxy"})
+	waitState(t, d, "up")
+	ev := w.events()
+	if !strings.Contains(ev, "xray:203.0.113.9 front:proxy:socks") {
+		t.Fatalf("xhttp runs in Xray behind a socks front: %s", ev)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	if !strings.HasSuffix(w.events(), "front-close xray-stop") {
+		t.Fatalf("%s", w.events())
+	}
+}
+
+// Review Focus 4: one country, four kinds, list order, failover across kinds.
+func TestMixedCountryFailover(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	w.deadProbe["front:1"] = true // the Reality pre-flight/front fails
+	w.xrayErr = errors.New("xhttp server gone")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	st := waitState(t, d, "up")
+	if st.Line.Kind != "hysteria2" {
+		t.Fatalf("Reality failed, Hysteria2 next: %+v", st.Line)
+	}
+	ev := w.events()
+	if !strings.Contains(ev, "front:proxy:vless front-close front:proxy:hy2") {
+		t.Fatalf("list order, teardown between: %s", ev)
+	}
+	// now the hy2 line dies: XHTTP fails to start, olcRTC takes over
+	w.mu.Lock()
+	w.probeErr = errors.New("dead")
+	w.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st = d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+		if st.State == "connecting" && st.Line != nil && st.Line.Kind == "olcrtc" {
+			w.mu.Lock()
+			w.probeErr = nil
+			w.mu.Unlock()
+		}
+		if st.State == "up" && st.Line != nil && st.Line.Kind == "olcrtc" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st.Line == nil || st.Line.Kind != "olcrtc" {
+		t.Fatalf("across kinds: %+v\n%s", st.Line, w.events())
+	}
+	if !strings.Contains(w.events(), "xray:203.0.113.9 engine:telemost@") {
+		t.Fatalf("xhttp tried (and failed) before olcRTC: %s", w.events())
+	}
+}
+
+func TestListShowsKinds(t *testing.T) {
+	w, d, _ := newWorld(t)
+	plain, err := os.ReadFile("../links/testdata/partner-plain.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.body = plain
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	if !resp.OK || !strings.Contains(resp.Message, "17 entries (17 usable now)") {
+		t.Fatalf("%+v", resp)
+	}
+	list := d.Handle(ctx, ipc.Request{Verb: "list"})
+	kinds := map[string]int{}
+	for _, e := range list.Entries {
+		kinds[e.Kind]++
+		if e.Problem != "" {
+			t.Fatalf("%+v", e)
+		}
+	}
+	if kinds["vless"] != 9 || kinds["hysteria2"] != 8 {
+		t.Fatalf("%v", kinds)
 	}
 }

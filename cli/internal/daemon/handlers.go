@@ -144,7 +144,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 		for _, g := range groups {
 			countries = append(countries, g.Country)
 		}
-		usable := len(onlyOlcrtc(entries))
+		usable := len(connectable(entries))
 		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(payload)), len(entries), usable, strings.Join(countries, " "))
 	case strings.HasPrefix(payload, "olcrtc://"):
 		line, err := links.ParseOlcrtc(payload)
