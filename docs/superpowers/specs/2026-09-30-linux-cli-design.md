@@ -176,23 +176,27 @@ Each package is testable alone; only `daemon` composes them.
   CAP_NET_BIND_SERVICE`, `CapabilityBoundingSet=` the same, `NoNewPrivileges=yes`,
   `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `DeviceAllow=/dev/net/tun
   rw`, `RuntimeDirectory=ghostlane` (0750), `StateDirectory=ghostlane` (0700),
-  `ConfigurationDirectory=ghostlane` (0700), `Restart=on-failure`, `RestartSec=2`,
-  `After=network-online.target`, `Wants=network-online.target`.
+  `Restart=on-failure`, `RestartSec=2`, `After=network-online.target`,
+  `Wants=network-online.target`. No `ConfigurationDirectory`: `ProtectSystem=strict`
+  keeps `/etc` read-only, and the daemon owns its config, so it lives in the state dir.
 - **Control socket** `/run/ghostlane/ghostlane.sock`, 0660 `ghostlane:ghostlane`: root and
   members of group `ghostlane` drive the daemon. Newline-delimited JSON: a request
   `{"verb": …}` gets `{"ok": true, …}` or `{"ok": false, "error": "<code>", "message":
   …}`. Verbs: `version`, `status`, `list`, `add`, `remove`, `refresh`, `connect`
   `{selector, mode}`, `disconnect`. Keys are never returned; subscription URLs come back
   with the token masked.
-- **Files:** `/etc/ghostlane/config.yaml` 0600 — subscriptions (url, title, interval),
-  selection (subscription, selector, mode), proxy (listen, port, user, pass), options.
-  `/var/lib/ghostlane/` — the cached body and headers of each list with `fetched_at`, the
-  device id, the last good line per group.
-- **CLI:** `ghostlane add <source>`, `list`, `connect <selector> [--tun|--proxy]`,
-  `disconnect`, `status [--json]`, `refresh`, `remove <subscription>`, `version`, and
-  `run [--config <file>]` for containers (no socket needed: reads the config, connects,
-  stays in the foreground). In proxy mode `status` prints the `http_proxy` /
-  `ALL_PROXY` lines to paste. Exit codes: 0 ok, 1 failed, 2 usage, 3 daemon unreachable.
+- **Files:** `/var/lib/ghostlane/config.yaml` 0600 — subscriptions (url, title, interval;
+  a single pasted `olcrtc://` line is stored as an `inline:` subscription), selection
+  (subscription, selector, mode), proxy (listen, port, user, pass). Beside it: the cached
+  body and headers of each list with `fetched_at`, the device id, the last good line per
+  group. Every CLI command goes through the daemon; nothing else writes these files.
+- **CLI:** `ghostlane add <source>`, `list`, `connect <selector> [--tun|--proxy]`
+  (default `--proxy`: no privileges, no routing change), `disconnect`, `status [--json]`,
+  `refresh`, `remove <subscription>` (by URL, masked-URL prefix or title), `version`, and
+  `run [--subscription <url> --connect <selector> --mode tun|proxy]` for containers (the
+  flags store the list and selection at start, then the daemon connects). In proxy mode
+  `status` prints the `http_proxy` / `ALL_PROXY` lines to paste. Exit codes: 0 ok,
+  1 failed, 2 usage, 3 daemon unreachable.
 
 ## 9. Packaging and distribution
 
@@ -214,15 +218,15 @@ Each package is testable alone; only `daemon` composes them.
 - **install.sh** (POSIX sh): arch from `uname -m`; family from `/etc/os-release` (`ID`,
   `ID_LIKE` → deb | rpm | apk | pacman, else the tarball into `/usr/local/bin` with the
   unit); `--version`, `--base-url` (a mirror, for networks where GitHub is slow or
-  blocked — a partner can host one), `--no-service`. It verifies the signature of
+  blocked — a partner can host one), `--family` (force one), `--no-service`. It verifies the signature of
   `SHA256SUMS` and the file's sum before installing and refuses on any mismatch. Idempotent:
   re-running upgrades in place; the service restarts and reconnects the stored selection.
 - **apt/dnf repositories:** not in v1.
 
 ## 10. CI
 
-- `pr-checks.yml`: job `cli` on `cli/**` changes — `go vet`, golangci-lint (the engine's
-  configuration copied), `go test ./...` including the netns test (`sudo` on
+- `pr-checks.yml`: job `cli` on `cli/**` changes — `go vet`, golangci-lint (a curated v2
+  configuration in `cli/.golangci.yml`), `go test ./...` including the netns test (`sudo` on
   `ubuntu-latest`, which has `/dev/net/tun`), `nfpm package` for deb and rpm,
   `systemd-analyze verify` on the unit, install smoke in `debian:bookworm` and
   `rockylinux:9` containers (`dpkg -i` / `rpm -i`, then `ghostlane version`).
