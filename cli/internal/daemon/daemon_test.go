@@ -937,3 +937,26 @@ func TestRefreshIsParallel(t *testing.T) {
 		t.Fatalf("four lists refreshed serially: %s", el)
 	}
 }
+
+// Review Focus 4 in tun mode: the first kind's pre-flight fails, the next kind
+// gets the tun; no tun front for the failed kind.
+func TestMixedCountryFailoverTun(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	w.deadProbe["front:1"] = true // the Reality pre-flight
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun"})
+	st := waitState(t, d, "up")
+	if st.Line.Kind != "hysteria2" {
+		t.Fatalf("%+v", st.Line)
+	}
+	ev := w.events()
+	if !strings.Contains(ev, "front:proxy:vless front-close front:proxy:hy2 front-close routes:sync front:tun:hy2") {
+		t.Fatalf("pre-flights in order, rules and tun only for the line that passed: %s", ev)
+	}
+	if strings.Contains(ev, "front:tun:vless") {
+		t.Fatalf("no tun for the failed kind: %s", ev)
+	}
+}

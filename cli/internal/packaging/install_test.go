@@ -138,3 +138,27 @@ func TestPreremoveSkipsUpgrade(t *testing.T) {
 		}
 	}
 }
+
+// Under `curl … | sh` the script is stdin and $0 is "sh": --help must still print usage.
+func TestInstallHelpFromPipe(t *testing.T) {
+	script, err := os.ReadFile("../../packaging/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-s", "--", "--help")
+	cmd.Stdin = bytes.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--base-url") || !strings.Contains(string(out), "--version") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// A mirror serves one release: without --version there is nothing to look up.
+func TestMirrorNeedsVersion(t *testing.T) {
+	cmd := exec.Command("sh", "../../packaging/install.sh", "--base-url", "http://127.0.0.1:9", "--family", "tar", "--no-service")
+	cmd.Env = append(os.Environ(), "GHOSTLANE_INSTALL_ROOT="+t.TempDir(), "GHOSTLANE_ARCH=amd64")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "--version") {
+		t.Fatalf("a mirror without --version must fail at once and say so: %v\n%s", err, out)
+	}
+}

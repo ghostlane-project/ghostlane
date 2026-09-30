@@ -106,7 +106,7 @@ jobs:
           fi
           # The Linux CLI is its own Go module: built and tested only when it, its
           # workflow, or the engine pin it must match changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^scripts/cores-pins\.sh$'; then
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -267,7 +267,7 @@ jobs:
       - name: Vet and lint
         run: |
           go vet -tags with_utls,with_quic ./...
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           golangci-lint run ./...
       - name: Unit tests
         run: go test -race -tags with_utls,with_quic ./...
@@ -284,7 +284,7 @@ jobs:
           sudo -E env "PATH=$PATH" GHOSTLANE_NETNS=1 go test -tags with_utls,with_quic -count=1 -run 'TestNetns' -v ./internal/routes/ ./internal/daemon/
       - name: Packages
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           make dist VERSION=0.0.0
           systemd-analyze verify packaging/ghostlane.service || true
           ls -la dist

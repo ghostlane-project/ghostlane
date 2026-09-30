@@ -839,7 +839,7 @@ jobs:
       - name: Build, package, sum, sign
         run: |
           set -euo pipefail
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           make dist VERSION="${OLCBOX_VERSION}"
           umask 077
           printf '%s\n' "${CLI_RELEASE_SIGNING_KEY}" > "$RUNNER_TEMP/cli-signing.pem"

@@ -17,16 +17,19 @@ PUBKEY_PEM='-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAz252wYKYdbLzn/fyN1ZvGt7oTDNZTNJrWosR8/L+S/0=
 -----END PUBLIC KEY-----'
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --version) VERSION="$2"; shift 2 ;;
-    --base-url) BASE_URL="$2"; shift 2 ;;
-    --family) FAMILY="$2"; shift 2 ;;
-    --no-service) NO_SERVICE=1; shift ;;
-    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
-    *) echo "unknown flag $1" >&2; exit 2 ;;
-  esac
-done
+usage() {
+  cat <<'USAGE'
+ghostlane-cli installer for any Linux.
+  curl -fsSL https://github.com/ghostlane-project/ghostlane/releases/download/<tag>/install.sh | sh
+Flags:
+  --version V      the release to install (default: this script's release)
+  --base-url URL   a mirror serving that release's assets (needs --version)
+  --family F       deb | rpm | apk | pacman | tar (default: from /etc/os-release)
+  --no-service     do not enable or start the service
+Every download is checked against SHA256SUMS, and SHA256SUMS against the
+release signing key embedded in the script; a mismatch stops the install.
+USAGE
+}
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
@@ -36,6 +39,17 @@ fetch() { # url dest
   elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"
   else die "curl or wget is required"; fi
 }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) VERSION="$2"; shift 2 ;;
+    --base-url) BASE_URL="$2"; shift 2 ;;
+    --family) FAMILY="$2"; shift 2 ;;
+    --no-service) NO_SERVICE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown flag $1" >&2; exit 2 ;;
+  esac
+done
 
 arch="${GHOSTLANE_ARCH:-}"
 if [ -z "$arch" ]; then
@@ -61,6 +75,9 @@ if [ -z "$FAMILY" ]; then
   fi
 fi
 
+if [ "$VERSION" = "__VERSION__" ] && [ -n "$BASE_URL" ]; then
+  die "a mirror serves one release: pass --version with --base-url"
+fi
 if [ "$VERSION" = "__VERSION__" ]; then
   need curl
   VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=10" \
