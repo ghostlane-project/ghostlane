@@ -189,7 +189,7 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 	d.mu.Lock()
 	proxy := d.cfg.Proxy
 	d.mu.Unlock()
-	fp := singbox.FrontParams{Mode: singbox.Mode(mode), UpstreamAddr: eng.SocksAddr(), UpstreamUser: user, UpstreamPass: pass,
+	fp := singbox.FrontParams{Mode: singbox.Mode(mode), Upstream: singbox.Upstream{Socks: &singbox.SocksUpstream{Addr: eng.SocksAddr(), User: user, Pass: pass}},
 		ProxyListen: proxy.Listen, ProxyPort: proxy.Port, ProxyUser: proxy.User, ProxyPass: proxy.Pass,
 		ExcludeUID: d.deps.UID, InterfaceName: singbox.TunName}
 	front, err := d.deps.StartFront(ctx, fp)

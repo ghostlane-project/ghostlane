@@ -112,7 +112,7 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 			return &fakeEngine{w: w, addr: "127.0.0.1:1"}, nil
 		},
 		StartFront: func(_ context.Context, p singbox.FrontParams) (Front, error) {
-			w.rec("front:" + string(p.Mode) + ":" + p.UpstreamUser)
+			w.rec("front:" + string(p.Mode) + ":" + p.Upstream.Socks.User)
 			return &fakeFront{w: w}, nil
 		},
 		Routes: &fakeRoutes{w: w},

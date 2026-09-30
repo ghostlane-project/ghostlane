@@ -17,8 +17,10 @@ import (
 func TestProxyModeEndToEnd(t *testing.T) {
 	upstream := fakesocks.Serve(t, "u", "p", fakesocks.Answer204)
 	port, _ := olcrtc.FreePort()
+	probePort, _ := olcrtc.FreePort()
 	p := base(ModeProxy)
-	p.UpstreamAddr, p.ProxyPort = upstream, port
+	p.Upstream, p.ProxyPort = Upstream{Socks: &SocksUpstream{Addr: upstream, User: "u", Pass: "p"}}, port
+	p.ProbeListen = "127.0.0.1:" + strconv.Itoa(probePort)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f, err := Start(ctx, p)
@@ -46,4 +48,20 @@ func TestProxyModeEndToEnd(t *testing.T) {
 		t.Fatalf("http proxy: %v %v", resp, err)
 	}
 	resp.Body.Close()
+	// the probe inbound, with its own credentials
+	pd, _ := proxy.SOCKS5("tcp", p.ProbeListen, &proxy.Auth{User: "pu", Password: "pp"}, proxy.Direct)
+	pcd, _ := pd.(proxy.ContextDialer)
+	pc := &http.Client{Transport: &http.Transport{DialContext: pcd.DialContext}, Timeout: 5 * time.Second}
+	resp, err = pc.Get("http://203.0.113.12/probe")
+	if err != nil || resp.StatusCode != 204 {
+		t.Fatalf("probe inbound: %v %v", resp, err)
+	}
+	resp.Body.Close()
+	nd, _ := proxy.SOCKS5("tcp", p.ProbeListen, nil, proxy.Direct)
+	ncd, _ := nd.(proxy.ContextDialer)
+	nc := &http.Client{Transport: &http.Transport{DialContext: ncd.DialContext}, Timeout: 5 * time.Second}
+	if resp, err := nc.Get("http://203.0.113.12/probe"); err == nil {
+		resp.Body.Close()
+		t.Fatal("the probe inbound refuses clients without its credentials")
+	}
 }
