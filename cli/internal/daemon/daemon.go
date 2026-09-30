@@ -1,0 +1,162 @@
+// Package daemon is `ghostlane run`: it owns the engine, the front and the
+// policy rules, keeps the config and list cache, and answers the control socket.
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"net/netip"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
+	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
+	"github.com/ghostlane-project/ghostlane/cli/internal/links"
+	"github.com/ghostlane-project/ghostlane/cli/internal/store"
+)
+
+type Engine interface {
+	SocksAddr() string
+	Credentials() (string, string)
+	State() string
+	Stop(time.Duration) error
+}
+
+type Front interface{ Close() error }
+
+type Routes interface {
+	GlobalAddresses() ([]netip.Addr, error)
+	Sync([]netip.Addr) error
+	Clear() error
+	CleanupStale() error
+	WatchAddresses(context.Context, func()) error
+}
+
+type Deps struct {
+	ConfigPath  string
+	StateDir    string
+	SocketPath  string
+	Fetch       func(ctx context.Context, url string) ([]byte, links.Headers, error)
+	StartEngine func(ctx context.Context, p olcrtc.Params) (Engine, error)
+	StartFront  func(ctx context.Context, p singbox.FrontParams) (Front, error)
+	Routes      Routes
+	Probe       func(ctx context.Context, socksAddr, user, pass string) error
+	Now         func() time.Time
+	Logf        func(format string, args ...any)
+	UID         int
+	ResolvConf  string // "" = /etc/resolv.conf
+
+	ReadyTimeout   time.Duration // engine WaitReady
+	ConfirmTimeout time.Duration // probes after ready before the line counts as up
+	ProbeInterval  time.Duration
+	ProbeFailures  int
+	RetryMin       time.Duration
+	RetryMax       time.Duration
+	Version        ipc.VersionInfo
+}
+
+type live struct {
+	entry  links.Entry
+	mode   string
+	engine Engine
+	front  Front
+	user   string
+	pass   string
+}
+
+type Daemon struct {
+	deps Deps
+
+	mu       sync.Mutex
+	cfg      *store.Config
+	lastGood map[string]string
+	subErr   map[string]string
+	state    string
+	lastErr  string
+	since    time.Time
+	sel      *store.Selection
+	cur      *live
+	pending  *links.Entry // the line being tried while connecting
+	cancel   context.CancelFunc
+	loopDone chan struct{}
+	runCtx   context.Context
+}
+
+func New(d Deps) *Daemon {
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Logf == nil {
+		d.Logf = func(string, ...any) {}
+	}
+	if d.ResolvConf == "" {
+		d.ResolvConf = "/etc/resolv.conf"
+	}
+	return &Daemon{deps: d, state: "idle", subErr: map[string]string{}}
+}
+
+// ensureConfig loads the config and the last-good map once, whichever of Run
+// or Handle comes first; a missing file is the defaults.
+func (d *Daemon) ensureConfig() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cfg != nil {
+		return nil
+	}
+	cfg, err := store.Load(d.deps.ConfigPath)
+	if err != nil {
+		return err
+	}
+	lg, err := store.LoadLastGood(d.deps.StateDir)
+	if err != nil {
+		d.deps.Logf("last-good: %v", err)
+		lg = map[string]string{}
+	}
+	d.cfg, d.lastGood = cfg, lg
+	return nil
+}
+
+func (d *Daemon) logf(format string, args ...any) {
+	d.deps.Logf("%s", Scrub(fmt.Sprintf(format, args...)))
+}
+
+// Run serves until ctx ends. The control socket is optional (tests call Handle).
+func (d *Daemon) Run(ctx context.Context) error {
+	d.mu.Lock()
+	d.runCtx = ctx
+	d.mu.Unlock()
+	if err := d.deps.Routes.CleanupStale(); err != nil {
+		d.logf("stale rules: %v", err)
+	}
+	if err := d.ensureConfig(); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	d.mu.Lock()
+	sel := d.cfg.Selection
+	d.mu.Unlock()
+
+	var listener interface{ Close() error }
+	if d.deps.SocketPath != "" {
+		l, err := ipc.Listen(d.deps.SocketPath, 0o660)
+		if err != nil {
+			return fmt.Errorf("control socket: %w", err)
+		}
+		listener = l
+		go func() { _ = ipc.Serve(ctx, l, d.Handle) }()
+	}
+	NotifyReady()
+	go d.refreshLoop(ctx)
+	if sel != nil {
+		d.startConnect(*sel)
+	}
+	<-ctx.Done()
+	d.stopConnect()
+	if listener != nil {
+		_ = listener.Close()
+	}
+	return nil
+}
+
+func (d *Daemon) deviceIDPath() string { return filepath.Join(d.deps.StateDir, "device-id") }

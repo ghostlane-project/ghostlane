@@ -179,3 +179,14 @@ func MaskURL(u string) string {
 	}
 	return out
 }
+
+// Clone returns a deep copy, for saving outside the caller's lock.
+func (c *Config) Clone() *Config {
+	out := *c
+	out.Subscriptions = append([]Subscription(nil), c.Subscriptions...)
+	if c.Selection != nil {
+		s := *c.Selection
+		out.Selection = &s
+	}
+	return &out
+}
