@@ -14,7 +14,7 @@ machine through Ghostlane transports — the whole machine (`tun`) or one consum
 ## 2. Facts the design rests on
 
 - **The partner's list** (`https://sub.<partner>/sub/<id>/<token>?c=olcbox`): a base64 body of
-  68 `olcrtc://` lines = 17 countries × 4 carriers (telemost `vp8channel`, wbstream
+  64 `olcrtc://` lines = 16 countries × 4 carriers (telemost `vp8channel`, wbstream
   `vp8channel`, salutejazz `datachannel`, vkcalls `vp8channel`), labels like `🇩🇪 DE · VP8`,
   `🇩🇪 DE · VP8 · WB`, `🇩🇪 DE · SJ`; one key per country. Headers: `profile-title`
   (`base64:` prefix), `profile-update-interval` (hours), `subscription-userinfo`,

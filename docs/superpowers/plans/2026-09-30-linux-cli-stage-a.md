@@ -580,7 +580,7 @@ func firstRune(s string) (rune, int) {
 **Interfaces:**
 - Produces: `type Kind int` (`KindOlcrtc`, `KindVless`, `KindHysteria2`, `KindUnsupported`); `type Entry struct { ID, Label, Country, Raw, Problem string; Kind Kind; Olcrtc *OlcrtcLine }`; `func DecodeBody(body []byte) []string`; `type Headers struct { Title string; UpdateIntervalHours int; UserInfo *UserInfo; SupportURL, WebPageURL, Announce string }`; `type UserInfo struct { Upload, Download, Total int64; Expire int64 }`; `func ParseHeaders(h http.Header) Headers`; `func Entries(subURL string, lines []string) []Entry`; `type Group struct { Country string; Entries []Entry }`; `func GroupByCountry(entries []Entry) []Group`; `func Select(entries []Entry, selector string) ([]Entry, error)`; `func Fetch(ctx context.Context, client *http.Client, url, userAgent string) ([]byte, Headers, error)`; `const UserAgentPrefix = "Ghostlane-cli/"`.
 
-- [ ] **Step 1: Write the fixtures** — from the scratchpad decode of the partner list, `sed -E 's/#[0-9a-f]{64}/#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/'` into `testdata/partner-olcbox.txt` (68 lines); for `partner-plain.txt` replace the uuid before `@` with `00000000-0000-4000-8000-000000000000`, `obfs-password=` and `pinSHA256=` values with `x` repeated, `pbk=`/`sid=` values with `x`. Both files are plaintext (decoded).
+- [ ] **Step 1: Write the fixtures** — from the scratchpad decode of the partner list, `sed -E 's/#[0-9a-f]{64}/#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/'` into `testdata/partner-olcbox.txt` (64 lines); for `partner-plain.txt` replace the uuid before `@` with `00000000-0000-4000-8000-000000000000`, `obfs-password=` and `pinSHA256=` values with `x` repeated, `pbk=`/`sid=` values with `x`. Both files are plaintext (decoded).
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -628,7 +628,7 @@ func TestDecodeBodyBase64AndPlain(t *testing.T) {
 
 func TestEntriesPartnerOlcbox(t *testing.T) {
 	entries := Entries("https://sub.example/sub/a/b?c=olcbox", fixtureLines(t, "partner-olcbox.txt"))
-	if len(entries) != 68 {
+	if len(entries) != 64 {
 		t.Fatalf("%d entries", len(entries))
 	}
 	for _, e := range entries {
@@ -637,7 +637,7 @@ func TestEntriesPartnerOlcbox(t *testing.T) {
 		}
 	}
 	groups := GroupByCountry(entries)
-	if len(groups) != 17 || groups[0].Country != "CA" || len(groups[0].Entries) != 4 {
+	if len(groups) != 16 || groups[0].Country != "CA" || len(groups[0].Entries) != 4 {
 		t.Fatalf("groups: %d, first %+v", len(groups), groups[0])
 	}
 	want := []string{"telemost", "wbstream", "salutejazz", "vkcalls"}
