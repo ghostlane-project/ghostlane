@@ -156,6 +156,9 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 	if err != nil {
 		return nil, err
 	}
+	// From here on the engine's own credentials are the truth, not the ones
+	// handed to it: the front and the probes talk to what it reports.
+	user, pass = eng.Credentials()
 	if err := d.confirm(ctx, eng); err != nil {
 		_ = eng.Stop(5 * time.Second)
 		return nil, err

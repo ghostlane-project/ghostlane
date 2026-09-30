@@ -92,7 +92,7 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 			return &fakeEngine{w: w, addr: "127.0.0.1:1"}, nil
 		},
 		StartFront: func(_ context.Context, p singbox.FrontParams) (Front, error) {
-			w.rec("front:" + string(p.Mode))
+			w.rec("front:" + string(p.Mode) + ":" + p.UpstreamUser)
 			return &fakeFront{w: w}, nil
 		},
 		Routes: &fakeRoutes{w: w},
@@ -144,7 +144,8 @@ func TestAddListConnectStatusDisconnect(t *testing.T) {
 	if st.Line == nil || st.Line.Country != "DE" || st.Line.Carrier != "telemost" || st.Mode != "proxy" || st.Proxy == nil || st.Proxy.Socks != "127.0.0.1:1080" {
 		t.Fatalf("%+v", st)
 	}
-	if ev := w.events(); !strings.HasPrefix(ev, "routes:cleanup engine:telemost@") || !strings.Contains(ev, "front:proxy") {
+	// the front gets the credentials the engine reports, not ones remembered beside it
+	if ev := w.events(); !strings.HasPrefix(ev, "routes:cleanup engine:telemost@") || !strings.Contains(ev+" ", "front:proxy:u ") {
 		t.Fatalf("%s", ev)
 	}
 	cfg, _ := store.Load(filepath.Join(d.deps.StateDir, "config.yaml"))
