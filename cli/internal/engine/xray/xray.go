@@ -41,6 +41,8 @@ func Start(ctx context.Context, p Params) (*Session, error) {
 		return nil, fmt.Errorf("xray: %w", err)
 	}
 	if err := inst.Start(); err != nil {
+		// Start leaves the features it did start running: close them
+		_ = inst.Close()
 		return nil, fmt.Errorf("xray start: %w", err)
 	}
 	if ctx.Err() != nil {

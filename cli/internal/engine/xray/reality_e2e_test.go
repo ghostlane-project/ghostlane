@@ -33,17 +33,16 @@ import (
 
 // The Reality handshake mirrors a real TLS site; without a way to reach it the
 // server cannot answer, so the test skips offline. The server side runs as a
-// separate xray process (XRAY_SERVER_BIN, or `xray` on PATH; `make xray-server`
+// separate xray process (XRAY_SERVER_BIN; `make xray-server`
 // builds one from the pinned module): two Xray instances in one process share
 // globals and cannot talk to each other over XHTTP.
 const realityDest = "yandex.ru"
 
+// serverBinary is the xray of the pinned module only: an `xray` on PATH is
+// whatever the box runs (a different version answers differently).
 func serverBinary(t *testing.T) string {
 	t.Helper()
 	if b := os.Getenv("XRAY_SERVER_BIN"); b != "" {
-		return b
-	}
-	if b, err := exec.LookPath("xray"); err == nil {
 		return b
 	}
 	t.Skip("set XRAY_SERVER_BIN (make xray-server) for the Reality end-to-end test")

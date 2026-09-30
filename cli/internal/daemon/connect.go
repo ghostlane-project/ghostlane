@@ -161,6 +161,9 @@ func (d *Daemon) orderCandidates(sel store.Selection, cands []links.Entry) []lin
 	return cands
 }
 
+// newProbeInbound is swapped by tests.
+var newProbeInbound = probeInbound
+
 // probeInbound picks the front's loopback probe inbound: a free port and
 // per-start credentials.
 func probeInbound() (addr, user, pass string, err error) {
@@ -248,8 +251,11 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 			return nil, fmt.Errorf("policy rules: %w", err)
 		}
 	}
-	probeAddr, probeUser, probePass, err := probeInbound()
+	probeAddr, probeUser, probePass, err := newProbeInbound()
 	if err != nil {
+		if mode == "tun" {
+			_ = d.deps.Routes.Clear()
+		}
 		stopEngine(eng)
 		return nil, err
 	}
@@ -272,7 +278,7 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 // preflight proves a native line in a proxy-only front before the tun front
 // replaces it: the same outbound, a loopback probe inbound, nothing routed.
 func (d *Daemon) preflight(ctx context.Context, up singbox.Upstream) error {
-	probeAddr, probeUser, probePass, err := probeInbound()
+	probeAddr, probeUser, probePass, err := newProbeInbound()
 	if err != nil {
 		return err
 	}

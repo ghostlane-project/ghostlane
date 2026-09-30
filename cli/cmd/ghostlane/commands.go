@@ -24,7 +24,7 @@ Usage:
   ghostlane <command> [arguments] [flags]
 
 Commands:
-  add <source>         Add a subscription: a list URL, a ghostlane:// link, or one olcrtc:// line
+  add <source>         Add a subscription: a list URL, a ghostlane:// link, or one olcrtc://, vless:// or hysteria2:// line
   list                 Every line with its index, country and carrier
   connect <selector>   Connect a country (DE), a label ("DE · SJ") or an index (6); --tun or --proxy
   status               What is connected, since when, and the proxy lines to paste
@@ -36,7 +36,7 @@ Commands:
   help [command]       This text, or one command's details and examples
 
 Quick start:
-  ghostlane add 'https://…/sub/…'      # the URL your provider gave you
+  ghostlane add 'https://…/sub/…'      # the URL your provider gave you (or one vless:// / hy2:// / olcrtc:// line)
   ghostlane list
   ghostlane connect DE --proxy         # SOCKS5 + HTTP on 127.0.0.1:1080, no privileges
   ghostlane connect DE --tun           # the whole machine; SSH and your services keep working
@@ -55,7 +55,8 @@ var commandHelp = map[string]string{
 Adds a subscription and fetches it at once. <source> is one of:
   a list URL          https://provider.example/sub/…  (the ?c=olcbox variant of a partner list)
   a ghostlane:// link ghostlane://add?url=…  or  ghostlane://add/<url>
-  one room line       'olcrtc://telemost?vp8channel@…#<key>$DE · olcRTC'
+  one line            'olcrtc://telemost?vp8channel@…#<key>$DE · olcRTC', a vless:// or a
+                      hysteria2:// (hy2://) line, as a provider hands them out
 
 The list is refreshed on the interval the provider announces (default every
 24 h) and on 'ghostlane refresh'. The URL is a credential: it is stored
@@ -64,6 +65,7 @@ root-only under /var/lib/ghostlane and never printed in full.
 Examples:
   ghostlane add 'https://sub.example/sub/a1b2c3/token?c=olcbox'
   ghostlane add 'olcrtc://wbstream?vp8channel@room_x#<64 hex>$DE · VP8 · WB'
+  ghostlane add 'vless://<uuid>@203.0.113.9:443?type=tcp&security=reality&sni=…&pbk=…&sid=…&flow=xtls-rprx-vision#DE'
 `,
 	"list": `ghostlane list [--json]
 

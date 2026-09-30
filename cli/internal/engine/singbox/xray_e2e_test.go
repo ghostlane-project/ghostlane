@@ -1,5 +1,3 @@
-//go:build !race
-
 // These end-to-ends run an xray process as the server (XRAY_SERVER_BIN, built
 // by `make xray-server` from the pinned module — what ProofKit origins run)
 // and our sing-box front as the client: the vless-reality and hysteria2
@@ -63,13 +61,10 @@ func (b *syncBuffer) String() string {
 
 func xrayServer(t *testing.T, cfg map[string]any, port int) *syncBuffer {
 	t.Helper()
+	// the xray of the pinned module only: an `xray` on PATH is whatever the box runs
 	bin := os.Getenv("XRAY_SERVER_BIN")
 	if bin == "" {
-		if b, err := exec.LookPath("xray"); err == nil {
-			bin = b
-		} else {
-			t.Skip("set XRAY_SERVER_BIN (make xray-server) for the server end-to-ends")
-		}
+		t.Skip("set XRAY_SERVER_BIN (make xray-server) for the server end-to-ends")
 	}
 	raw, _ := json.Marshal(cfg)
 	path := filepath.Join(t.TempDir(), "server.json")

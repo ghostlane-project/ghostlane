@@ -25,7 +25,7 @@ sha256 of the public key every release is signed with.
 
 ## First connection
 
-    ghostlane add 'https://…/sub/…'      # a subscription URL, a ghostlane:// link, or one olcrtc:// line
+    ghostlane add 'https://…/sub/…'      # a subscription URL, a ghostlane:// link, or one olcrtc://, vless:// or hysteria2:// line
     ghostlane list                       # every line with its country and carrier
     ghostlane connect DE --proxy         # or --tun
     ghostlane status

@@ -146,18 +146,21 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 		}
 		usable := len(connectable(entries))
 		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(payload)), len(entries), usable, strings.Join(countries, " "))
-	case strings.HasPrefix(payload, "olcrtc://"):
-		line, err := links.ParseOlcrtc(payload)
-		if err != nil {
-			return ipc.Fail("bad_line", err.Error())
+	case strings.HasPrefix(payload, "olcrtc://"), strings.HasPrefix(payload, "vless://"),
+		strings.HasPrefix(payload, "hysteria2://"), strings.HasPrefix(payload, "hy2://"):
+		// one line becomes its own inline subscription; the parse says whether
+		// this version can connect it, and names the reason when it cannot
+		entry := links.Entries(inlinePrefix+payload, []string{payload})[0]
+		if entry.Problem != "" {
+			return ipc.Fail("bad_line", entry.Problem)
 		}
 		d.mu.Lock()
-		d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + payload, Title: line.Label, AddedAt: d.deps.Now()})
+		d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + payload, Title: entry.Label, AddedAt: d.deps.Now()})
 		d.mu.Unlock()
-		msg = "added " + line.Label
+		msg = "added " + entry.Label
 	default:
 		scheme, _, _ := strings.Cut(payload, "://")
-		return ipc.Fail("unsupported", scheme+":// lines are not supported by this version; add a list URL or an olcrtc:// line")
+		return ipc.Fail("unsupported", scheme+":// is not supported by this version; add a list URL, or one olcrtc://, vless:// or hysteria2:// line")
 	}
 	d.mu.Lock()
 	cfg := d.cfg.Clone()

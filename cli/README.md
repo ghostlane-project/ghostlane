@@ -8,7 +8,7 @@ box through the tunnel. Servers, VPS boxes, routers, anything without a screen.
 
 ```sh
 curl -fsSL https://github.com/ghostlane-project/ghostlane/releases/latest/download/install.sh | sh
-ghostlane add 'https://…/sub/…'      # the subscription URL your provider gave you
+ghostlane add 'https://…/sub/…'      # the subscription URL your provider gave you, or one vless:// / hy2:// / olcrtc:// line
 ghostlane connect DE --proxy         # SOCKS5 + HTTP on 127.0.0.1:1080, no privileges
 ghostlane connect DE --tun           # the whole machine; SSH and your services keep working
 ghostlane status

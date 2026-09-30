@@ -131,3 +131,25 @@ func TestStartStopLoopbackSocks(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// Reviewer finding 2: a start that fails half-way (the SOCKS port is taken)
+// closes what it started; the next attempt on a free port works.
+func TestStartFailsCleanlyOnTakenPort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	p := params(xhttpLine())
+	p.SocksPort = l.Addr().(*net.TCPAddr).Port
+	if _, err := Start(context.Background(), p); err == nil {
+		t.Fatal("a taken port must fail the start")
+	}
+	free, _ := olcrtc.FreePort()
+	p.SocksPort = free
+	s, err := Start(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Stop(time.Second)
+}

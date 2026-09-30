@@ -425,7 +425,7 @@ func TestRefusals(t *testing.T) {
 	if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "vpn"}); resp.OK || resp.Error != "bad_mode" {
 		t.Fatalf("%+v", resp)
 	}
-	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: "vless://u@h:443#x"}); resp.OK || resp.Error != "unsupported" {
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: "trojan://p@h:443#x"}); resp.OK || resp.Error != "unsupported" {
 		t.Fatalf("%+v", resp)
 	}
 	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: "olcrtc://crypt1/abc"}); resp.OK || !strings.Contains(resp.Message, "crypt1") {
@@ -732,5 +732,57 @@ func TestListShowsKinds(t *testing.T) {
 	}
 	if kinds["vless"] != 9 || kinds["hysteria2"] != 8 {
 		t.Fatalf("%v", kinds)
+	}
+}
+
+// Reviewer finding 3 (spec §5): a single vless:// or hysteria2:// line is a source too.
+func TestAddSingleShareLines(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	vless := "vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=yandex.ru&fp=chrome&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12&flow=xtls-rprx-vision#DE via RU"
+	hy2 := "hy2://pw@203.0.113.9:38443?sni=s.example&obfs=salamander&obfs-password=salt#DE hy2"
+	for _, src := range []string{vless, hy2} {
+		if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: src}); !resp.OK {
+			t.Fatalf("%s: %+v", src[:12], resp)
+		}
+	}
+	list := d.Handle(ctx, ipc.Request{Verb: "list"})
+	if len(list.Entries) != 2 || list.Entries[0].Kind != "vless" || list.Entries[0].Label != "DE via RU" || list.Entries[1].Kind != "hysteria2" || list.Entries[1].Label != "DE hy2" {
+		t.Fatalf("%+v", list.Entries)
+	}
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: "vless://x@h:443?type=grpc"}); resp.OK || !strings.Contains(resp.Message, "grpc") {
+		t.Fatalf("an unsupported single line is refused with the reason: %+v", resp)
+	}
+	// indices count per subscription (a deferred Stage A minor): pick the line by label
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE hy2", Mode: "proxy"})
+	if st := waitState(t, d, "up"); st.Line.Kind != "hysteria2" {
+		t.Fatalf("%+v", st.Line)
+	}
+}
+
+// Reviewer finding 4: a probe-inbound failure after the rules went in clears them.
+func TestTunRulesClearedWhenProbeInboundFails(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	orig := newProbeInbound
+	calls := 0
+	newProbeInbound = func() (string, string, string, error) {
+		calls++
+		if calls == 1 {
+			return "", "", "", errors.New("no free port")
+		}
+		return orig()
+	}
+	defer func() { newProbeInbound = orig }()
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun"})
+	waitState(t, d, "up")
+	ev := w.events()
+	if !strings.Contains(ev, "routes:sync routes:clear engine-stop") {
+		t.Fatalf("rules cleared when the probe inbound cannot be made: %s", ev)
 	}
 }
