@@ -4,7 +4,8 @@ TAGS    ?= with_utls,with_quic
 VERSION ?= dev
 ENGINE_PIN  := $(shell sed -n 's/^OLCRTC_VERSION="$${OLCRTC_VERSION:-\(.*\)}"$$/\1/p' ../scripts/cores-pins.sh)
 SINGBOX_PIN := $(shell grep -m1 'SINGBOX_VERSION:' ../.github/workflows/release.yml | sed 's/.*"\(.*\)".*/\1/')
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN)
+XRAY_PIN    := $(shell sed -n 's/^[[:space:]]*github.com\/xtls\/xray-core \([^ ]*\).*/\1/p' go.mod | head -1)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN)
 export CGO_ENABLED = 0
 
 .PHONY: build test vet lint
@@ -59,3 +60,9 @@ sign:
 	openssl pkeyutl -sign -inkey $(KEY) -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -out dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
 	openssl pkeyutl -verify -pubin -inkey packaging/cli-release.pub.pem -rawin -in dist/ghostlane-cli-$(VERSION)-SHA256SUMS -sigfile dist/ghostlane-cli-$(VERSION)-SHA256SUMS.sig
 	sed "/^VERSION=/s/__VERSION__/$(VERSION)/" packaging/install.sh > dist/install.sh
+
+# An xray binary at the pinned module version, for the Reality end-to-end test
+# (XRAY_SERVER_BIN): the server side must be its own process.
+.PHONY: xray-server
+xray-server:
+	$(GO) build -trimpath -o dist/xray-server github.com/xtls/xray-core/main

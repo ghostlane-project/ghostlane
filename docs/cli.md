@@ -2,7 +2,8 @@
 
 A headless Ghostlane for servers, VPS boxes, routers and anything else that runs
 Linux without a screen: one static binary, a systemd service, and the same
-subscription links the app takes. Source: `cli/` in this repository; its own
+subscription links the app takes — olcRTC rooms, VLESS Reality, Hysteria2 and
+XHTTP lines. Source: `cli/` in this repository; its own
 licence is GPL-3.0-or-later because the binary links sing-box (see
 `THIRD_PARTY_NOTICES.md`).
 
@@ -24,15 +25,22 @@ sha256 of the public key every release is signed with.
 
 ## First connection
 
-    ghostlane add 'https://…/sub/…'      # a subscription URL, a ghostlane:// link, or one olcrtc:// line
+    ghostlane add 'https://…/sub/…'      # a subscription URL, a ghostlane:// link, or one olcrtc://, vless:// or hysteria2:// line
     ghostlane list                       # every line with its country and carrier
     ghostlane connect DE --proxy         # or --tun
     ghostlane status
 
-`connect` takes a country (`DE`: all of that country's rooms, tried in the
-list's order with failover between carriers), an exact label from `list`
-(`"🇩🇪 DE · SJ"`: that one room), or an index (`6`). The selection is stored:
-the service reconnects it after a reboot; `disconnect` clears it.
+`connect` takes a country (`DE`: all of that country's lines, rooms and
+servers alike, tried in the list's order with failover between them), an
+exact label from `list` (`"🇩🇪 DE · SJ"`: that one line), or an index (`6`).
+Lists whose labels carry no country code (a partner's `🇷🇺 EKB · Hy2 → 🇪🇺`)
+are selected by label or index. The selection is stored: the service
+reconnects it after a reboot; `disconnect` clears it.
+
+**Which core carries what.** olcRTC rooms run in the olcRTC engine, XHTTP
+lines in Xray-core, VLESS Reality (tcp) and Hysteria2 in sing-box itself; all
+behind the same sing-box front. Lines this version does not connect (VLESS
+over grpc/ws/httpupgrade, trojan, shadowsocks, vmess) are listed with a note.
 
 ## Modes
 
@@ -57,6 +65,9 @@ What stays as it was:
   dual-stack hosts fall back to IPv4 through the tunnel.
 - **Fail-open.** Stopping the service removes the tun and the rules; traffic
   flows directly again. A kill switch is not part of this version.
+- **A dead server never gets the tun.** A Reality or Hysteria2 line is first
+  proven through a local proxy-only front; only then are the rules and the
+  tun created. Rooms and XHTTP lines are proven through their engine first.
 - Nothing else is touched: not `/etc/resolv.conf`, not global sysctls, not
   nftables. DNS the host sends to a public resolver is answered through the
   tunnel while it is up; a resolver on a private range (a home router) stays
@@ -118,10 +129,12 @@ at start. For `--mode tun` the container needs `--cap-add NET_ADMIN --device /de
   three in a row move to the next carrier of the group.
 - Partner lists that have been disabled answer 404: the cached lines stay,
   `status` shows the error against the list.
-- `ghostlane list` shows VLESS / Hysteria2 lines with a note: those transports
-  come in the next version; only olcRTC rooms connect today.
+- A partner's plain list (VLESS XHTTP + Hysteria2 on relays) and its
+  `?c=olcbox` variant (rooms) can both be added; `connect` picks by label or
+  index when the labels carry no country code.
 
 ## Not in this version
 
-VLESS Reality, Hysteria2 and XHTTP lines; encrypted (`olcrtc://crypt1/…`) lists;
-a kill switch; IPv6 through the tunnel; per-application split tunnelling.
+Encrypted (`olcrtc://crypt1/…`) lists; VLESS over grpc/ws/httpupgrade, trojan,
+shadowsocks, vmess; a kill switch; IPv6 through the tunnel; per-application
+split tunnelling; an OpenRC script.

@@ -67,20 +67,58 @@ func TestEntriesPartnerOlcbox(t *testing.T) {
 	}
 }
 
-func TestEntriesPlainListIsUnsupportedForNow(t *testing.T) {
+func TestEntriesPlainListIsConnectable(t *testing.T) {
 	entries := Entries("https://sub.example/sub/a/b", fixtureLines(t, "partner-plain.txt"))
 	if len(entries) != 17 {
 		t.Fatalf("%d entries", len(entries))
 	}
-	kinds := map[Kind]int{}
+	hy2, vless := 0, 0
 	for _, e := range entries {
-		kinds[e.Kind]++
-		if e.Problem == "" {
-			t.Fatalf("a line that cannot be connected says why: %+v", e)
+		if e.Hy2 != nil {
+			hy2++
+		}
+		if e.Vless != nil {
+			vless++
+		}
+		if !e.Connectable() || e.Problem != "" {
+			t.Fatalf("every partner line connects now: %+v", e)
+		}
+		if e.Country != "" {
+			t.Fatalf("partner labels carry cities, not country codes: %+v", e)
 		}
 	}
-	if kinds[KindHysteria2] != 8 || kinds[KindVless] != 9 {
-		t.Fatalf("kinds %v", kinds)
+	if hy2 != 8 || vless != 9 {
+		t.Fatalf("hy2=%d vless=%d", hy2, vless)
+	}
+	if g := GroupByCountry(entries); len(g) != 0 {
+		t.Fatalf("no country groups for that list: %+v", g)
+	}
+}
+
+func TestEntriesProofkitUnified(t *testing.T) {
+	entries := Entries("https://proofkit.org/sub/t/unified", fixtureLines(t, "proofkit-unified.txt"))
+	if len(entries) != 4 {
+		t.Fatalf("%d entries", len(entries))
+	}
+	for _, e := range entries {
+		if !e.Connectable() {
+			t.Fatalf("%+v", e)
+		}
+	}
+	groups := GroupByCountry(entries)
+	if len(groups) != 1 || groups[0].Country != "DE" || len(groups[0].Entries) != 4 {
+		t.Fatalf("%+v", groups)
+	}
+	kinds := []Kind{groups[0].Entries[0].Kind, groups[0].Entries[1].Kind, groups[0].Entries[2].Kind, groups[0].Entries[3].Kind}
+	if kinds[0] != KindVless || kinds[1] != KindHysteria2 || kinds[2] != KindVless || kinds[3] != KindOlcrtc {
+		t.Fatalf("list order kept: %v", kinds)
+	}
+	if groups[0].Entries[2].Vless.Transport.Kind != "xhttp" || groups[0].Entries[0].Vless.Transport.Kind != "tcp" {
+		t.Fatal("transports parsed")
+	}
+	unsupported := Entries("u", []string{"vless://" + uuid + "@h:443?type=grpc&serviceName=x"})
+	if unsupported[0].Connectable() || unsupported[0].Problem == "" || unsupported[0].Kind != KindVless {
+		t.Fatalf("%+v", unsupported[0])
 	}
 }
 

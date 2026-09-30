@@ -1,0 +1,4 @@
+vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=yandex.ru&fp=chrome&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12&flow=xtls-rprx-vision#DE via RU | 0.13TON/GB
+hysteria2://00000000-0000-4000-8000-000000000000@203.0.113.9:38443?sni=www.cloudflare.com&obfs=salamander&obfs-password=0badf00d0badf00d&insecure=0&pinSHA256=0000000000000000000000000000000000000000000000000000000000000000#DE via RU | 0.13TON/GB · Hysteria2
+vless://00000000-0000-4000-8000-000000000000@203.0.113.9:8444?type=xhttp&security=reality&encryption=none&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12&fp=chrome&sni=yandex.ru&path=/pk&host=yandex.ru&mode=packet-up#DE via RU | 0.13TON/GB · XHTTP
+olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/99#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC

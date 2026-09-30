@@ -27,7 +27,8 @@ modifies sing-box; the one patch carried against Xray-core is in
 | Component | Licence | How it is used |
 | --- | --- | --- |
 | [olcRTC](https://github.com/ghostlane-project/olcrtc) | Apache-2.0 | The tunnel engine, linked as a Go library (`mobile.Runtime`). |
-| [sing-box](https://github.com/SagerNet/sing-box) | **GPL-3.0-or-later** | Linked as a Go library: the tun and the local proxy in front of the engine. This is why `cli/` is GPL-3.0-or-later. |
+| [sing-box](https://github.com/SagerNet/sing-box) | **GPL-3.0-or-later** | Linked as a Go library: the tun and the local proxy in front of the engine, and the Reality and Hysteria2 outbounds. This is why `cli/` is GPL-3.0-or-later. |
+| [Xray-core](https://github.com/XTLS/Xray-core) | **MPL-2.0** | Linked as a Go library, unmodified: XHTTP outbounds behind a loopback SOCKS. Pinned to the version the iOS Cores link. |
 | [vishvananda/netlink](https://github.com/vishvananda/netlink), [netns](https://github.com/vishvananda/netns) | Apache-2.0 | Policy rules and the test namespaces. |
 | [gopkg.in/yaml.v3](https://github.com/go-yaml/yaml) | MIT and Apache-2.0 | The daemon's config file. |
 | golang.org/x/net, golang.org/x/sys | BSD-3-Clause | SOCKS dialing and the Linux syscall constants. |

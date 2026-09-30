@@ -104,6 +104,9 @@ func TestHelpIsUsable(t *testing.T) {
 	if !strings.Contains(commandHelp["connect"], "--tun") || !strings.Contains(commandHelp["connect"], "Examples:") {
 		t.Fatal("connect help explains the modes with examples")
 	}
+	if !strings.Contains(usage, "Hysteria2") || !strings.Contains(commandHelp["connect"], "Xray-core") {
+		t.Fatal("help names the kinds and which core carries them")
+	}
 	if code := run([]string{"help", "frobnicate"}, &out, &errb); code != 2 {
 		t.Fatal("unknown command help fails")
 	}

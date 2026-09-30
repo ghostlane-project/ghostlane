@@ -13,6 +13,7 @@ import (
 type Pins struct {
 	Engine  string // pseudo-version of the olcrtc engine
 	SingBox string // e.g. "1.13.14" from the repo, "v1.13.14" from go.mod
+	Xray    string // xray-core module version (go.mod only)
 }
 
 var (
@@ -20,6 +21,7 @@ var (
 	singboxRepoRe = regexp.MustCompile(`SINGBOX_VERSION:\s*"([^"]+)"`)
 	replaceRe     = regexp.MustCompile(`(?m)^replace github\.com/openlibrecommunity/olcrtc => github\.com/ghostlane-project/olcrtc (\S+)`)
 	singboxModRe  = regexp.MustCompile(`(?m)^\s*github\.com/sagernet/sing-box (\S+)`)
+	xrayModRe     = regexp.MustCompile(`(?m)^\s*github\.com/xtls/xray-core (\S+)`)
 )
 
 var errPinsNotFound = errors.New("pins: version markers not found")
@@ -48,8 +50,9 @@ func FromGoMod(path string) (Pins, error) {
 	}
 	r := replaceRe.FindSubmatch(b)
 	s := singboxModRe.FindSubmatch(b)
-	if r == nil || s == nil {
+	x := xrayModRe.FindSubmatch(b)
+	if r == nil || s == nil || x == nil {
 		return Pins{}, errPinsNotFound
 	}
-	return Pins{Engine: strings.TrimSpace(string(r[1])), SingBox: strings.TrimSpace(string(s[1]))}, nil
+	return Pins{Engine: strings.TrimSpace(string(r[1])), SingBox: strings.TrimSpace(string(s[1])), Xray: strings.TrimSpace(string(x[1]))}, nil
 }
