@@ -16,6 +16,7 @@ import (
 	"github.com/ghostlane-project/ghostlane/cli/internal/daemon"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
+	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/routes"
@@ -70,6 +71,9 @@ func runDaemon(args []string, stderr io.Writer) int {
 		},
 		StartEngine: func(ctx context.Context, p olcrtc.Params) (daemon.Engine, error) {
 			return olcrtc.Start(ctx, p)
+		},
+		StartXray: func(ctx context.Context, p xray.Params) (daemon.Engine, error) {
+			return xray.Start(ctx, p)
 		},
 		StartFront: func(ctx context.Context, p singbox.FrontParams) (daemon.Front, error) {
 			return singbox.Start(ctx, p)

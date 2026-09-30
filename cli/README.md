@@ -1,10 +1,10 @@
 # ghostlane — Ghostlane for Linux servers
 
-The headless Ghostlane: one static binary and a systemd service that join an
-olcRTC room — a tunnel inside an ordinary video call on Yandex Telemost,
-WB Stream, Sber SaluteJazz or VK Calls — with failover between carriers, and
-route a Linux box through it. Servers, VPS boxes, routers, anything without
-a screen.
+The headless Ghostlane: one static binary and a systemd service that connect
+the lines of your subscription — an olcRTC room (a tunnel inside an ordinary
+video call on Yandex Telemost, WB Stream, Sber SaluteJazz or VK Calls), VLESS
+Reality, Hysteria2 or XHTTP — with failover between them, and route a Linux
+box through the tunnel. Servers, VPS boxes, routers, anything without a screen.
 
 ```sh
 curl -fsSL https://github.com/ghostlane-project/ghostlane/releases/latest/download/install.sh | sh
@@ -20,8 +20,9 @@ release signed (`install.sh` verifies the signature and the checksum before it
 installs anything). `ghostlane help` and `ghostlane help <command>` explain every
 command with examples; the full guide is [docs/cli.md](../docs/cli.md).
 
-What it does today: olcRTC rooms over tun or proxy. What comes next: VLESS
-Reality, Hysteria2 and XHTTP lines from the same lists.
+What it connects: olcRTC rooms, VLESS Reality, Hysteria2 and XHTTP lines from
+the same lists, with failover between them, over tun or proxy. Not yet:
+encrypted (crypt1) lists, VLESS over grpc/ws, trojan, shadowsocks, vmess.
 
 Built from `cli/` in this repository (`make build`; Go 1.26). Licence:
 GPL-3.0-or-later — this binary links [sing-box](https://github.com/SagerNet/sing-box);

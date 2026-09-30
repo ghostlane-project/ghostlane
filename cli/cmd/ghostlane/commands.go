@@ -15,8 +15,9 @@ import (
 const docsURL = "https://github.com/ghostlane-project/ghostlane/blob/main/docs/cli.md"
 
 const usage = `ghostlane — Ghostlane for Linux servers and boxes.
-Joins an olcRTC room (a tunnel inside a video call) with failover between
-carriers and routes the machine through it: the whole box (tun) or a local
+Connects the lines of your subscription — olcRTC rooms (a tunnel inside a
+video call), VLESS Reality, Hysteria2, XHTTP — with failover between them,
+and routes the machine through the tunnel: the whole box (tun) or a local
 proxy (proxy).
 
 Usage:
@@ -67,8 +68,9 @@ Examples:
 	"list": `ghostlane list [--json]
 
 Shows every line of every subscription: its index (for 'connect <index>'),
-country, kind, carrier and label. Lines this version cannot connect
-(VLESS, Hysteria2, XHTTP) are listed with a note.
+country, kind (olcrtc, vless, hysteria2), carrier and label. A line this
+version cannot connect (VLESS over grpc/ws, trojan, shadowsocks, vmess) is
+listed with a note saying why.
 
 Example:
   ghostlane list
@@ -78,9 +80,15 @@ Example:
 `,
 	"connect": `ghostlane connect <selector> [--tun | --proxy] [--subscription <url-prefix>]
 
-<selector> is a country code (all of that country's rooms, tried in the
-list's order with failover between carriers), an exact label from 'list'
-(one room), or an index from 'list'.
+<selector> is a country code (all of that country's lines, tried in the
+list's order with failover between them — rooms and servers alike), an
+exact label from 'list' (one line), or an index from 'list'. Lists whose
+labels carry no country code (city names) are selected by label or index.
+
+Which core carries what: olcRTC rooms run in the engine, XHTTP lines in
+Xray-core, VLESS Reality and Hysteria2 in sing-box itself. In tun mode a
+Reality or Hysteria2 server is proven through a local proxy first, so a dead
+server never gets the tun.
 
   --proxy   (default) a local SOCKS5 + HTTP proxy on 127.0.0.1:1080; needs no
             privileges; 'status' prints the environment lines to paste.
@@ -90,8 +98,8 @@ list's order with failover between carriers), an exact label from 'list'
             service's CAP_NET_ADMIN (the installed unit has it).
 
 The selection is remembered: the service reconnects it after a reboot.
-A room that does not answer within a minute, or three failed liveness probes
-in a row, move the connection to the next carrier of the country.
+A line that does not answer within a minute, or three failed liveness probes
+in a row, moves the connection to the next line of the selection.
 
 Examples:
   ghostlane connect DE --tun

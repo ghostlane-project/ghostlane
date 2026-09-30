@@ -271,6 +271,10 @@ jobs:
           golangci-lint run ./...
       - name: Unit tests
         run: go test -race -tags with_utls,with_quic ./...
+      - name: Reality end-to-end (an xray server process from the pinned module)
+        run: |
+          make xray-server
+          XRAY_SERVER_BIN="$PWD/dist/xray-server" go test -count=1 -tags with_utls,with_quic -run TestRealityXhttpEndToEnd -v ./internal/engine/xray/
       - name: netns tests (root)
         run: |
           sudo -E env "PATH=$PATH" GHOSTLANE_NETNS=1 go test -tags with_utls,with_quic -count=1 -run 'TestNetns' -v ./internal/routes/ ./internal/daemon/

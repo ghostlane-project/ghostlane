@@ -118,7 +118,7 @@ func TestRealityXhttpEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Stop(time.Second)
+	defer func() { _ = client.Stop(time.Second) }()
 
 	d, _ := proxy.SOCKS5("tcp", "127.0.0.1:"+strconv.Itoa(socksPort), &proxy.Auth{User: "u", Password: "p"}, proxy.Direct)
 	cd, _ := d.(proxy.ContextDialer)
