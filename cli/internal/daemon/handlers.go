@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
@@ -108,6 +109,21 @@ func matchesSub(url, needle string) bool {
 
 func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 	payload := links.ImportPayload(source)
+	if crypt1.IsLink(payload) {
+		// the payload is a list URL or lines; either way it is added as what it is
+		if d.deps.Decrypt == nil {
+			return ipc.Fail("unsupported", links.ErrCrypt1.Error())
+		}
+		plain, ok := d.deps.Decrypt(strings.TrimPrefix(payload, crypt1.LinkPrefix))
+		if !ok {
+			return ipc.Fail("bad_line", "the crypt1 link does not verify (damaged, or made for another key)")
+		}
+		text := strings.TrimSpace(string(plain))
+		if strings.HasPrefix(text, "https://") || strings.HasPrefix(text, "http://") {
+			return d.add(ctx, text)
+		}
+		return d.addInline(text, "crypt1 link")
+	}
 	var msg string
 	switch {
 	case strings.HasPrefix(payload, "http://"):
@@ -129,7 +145,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 			d.mu.Unlock()
 			return ipc.Fail("fetch", Scrub(err.Error()))
 		}
-		entries := links.Entries(payload, links.DecodeBody(c.Body))
+		entries := links.Entries(payload, links.DecodeBodyWith(c.Body, d.deps.Decrypt))
 		groups := links.GroupByCountry(entries)
 		countries := make([]string, 0, len(groups))
 		for _, g := range groups {
@@ -139,22 +155,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(payload)), len(entries), usable, strings.Join(countries, " "))
 	case strings.HasPrefix(payload, "olcrtc://"), strings.HasPrefix(payload, "vless://"),
 		strings.HasPrefix(payload, "hysteria2://"), strings.HasPrefix(payload, "hy2://"):
-		// one line becomes its own inline subscription; the parse says whether
-		// this version can connect it, and names the reason when it cannot
-		entry := links.Entries(inlinePrefix+payload, []string{payload})[0]
-		if entry.Problem != "" {
-			return ipc.Fail("bad_line", entry.Problem)
-		}
-		d.mu.Lock()
-		for _, s := range d.cfg.Subscriptions {
-			if s.URL == inlinePrefix+payload {
-				d.mu.Unlock()
-				return ipc.Response{OK: true, Message: "already added"}
-			}
-		}
-		d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + payload, Title: entry.Label, AddedAt: d.deps.Now()})
-		d.mu.Unlock()
-		msg = "added " + entry.Label
+		return d.addInline(payload, "")
 	default:
 		scheme, _, _ := strings.Cut(payload, "://")
 		return ipc.Fail("unsupported", scheme+":// is not supported by this version; add a list URL, or one olcrtc://, vless:// or hysteria2:// line")
@@ -164,6 +165,41 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 	d.mu.Unlock()
 	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
+	}
+	return ipc.Response{OK: true, Message: msg}
+}
+
+// addInline stores one or more lines as their own inline subscription. The
+// parse says whether this version can connect each line, and names the reason
+// when it cannot; a single line that cannot be connected is refused.
+func (d *Daemon) addInline(text, title string) ipc.Response {
+	lines := links.DecodeBody([]byte(text))
+	if len(lines) == 0 {
+		return ipc.Fail("bad_line", "no lines")
+	}
+	entries := links.Entries(inlinePrefix+text, lines)
+	if len(entries) == 1 && entries[0].Problem != "" {
+		return ipc.Fail("bad_line", entries[0].Problem)
+	}
+	if title == "" {
+		title = entries[0].Label
+	}
+	d.mu.Lock()
+	for _, s := range d.cfg.Subscriptions {
+		if s.URL == inlinePrefix+text {
+			d.mu.Unlock()
+			return ipc.Response{OK: true, Message: "already added"}
+		}
+	}
+	d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + text, Title: title, AddedAt: d.deps.Now()})
+	cfg := d.cfg.Clone()
+	d.mu.Unlock()
+	if err := d.saveConfig(cfg); err != nil {
+		return ipc.Fail("io", err.Error())
+	}
+	msg := "added " + entries[0].Label
+	if len(entries) > 1 {
+		msg = fmt.Sprintf("%s: %d entries (%d usable now)", title, len(entries), len(connectable(entries)))
 	}
 	return ipc.Response{OK: true, Message: msg}
 }

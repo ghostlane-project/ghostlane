@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1/crypt1test"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
@@ -958,5 +960,59 @@ func TestMixedCountryFailoverTun(t *testing.T) {
 	}
 	if strings.Contains(ev, "front:tun:vless") {
 		t.Fatalf("no tun for the failed kind: %s", ev)
+	}
+}
+
+func crypt1World(t *testing.T) (*world, *Daemon, [32]byte) {
+	t.Helper()
+	w, d, _ := newWorld(t)
+	master := crypt1test.Master()
+	d.deps.Decrypt = func(blob string) ([]byte, bool) { return crypt1.Decrypt(master, blob) }
+	return w, d, master
+}
+
+// Review Focus 3: a crypt1 link whose payload is a URL becomes a subscription;
+// one whose payload is lines becomes an inline subscription.
+func TestCrypt1Links(t *testing.T) {
+	_, d, master := crypt1World(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	link := crypt1.LinkPrefix + crypt1test.Encrypt(master, []byte(listURL))
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: link}); !resp.OK || !strings.Contains(resp.Message, "64 entries") {
+		t.Fatalf("%+v", resp)
+	}
+	lines := "olcrtc://wbstream?vp8channel@room_q#" + strings.Repeat("cd", 32) + "$JP · WB\nolcrtc://salutejazz?datachannel@a:b#" + strings.Repeat("cd", 32) + "$JP · SJ\n"
+	link = crypt1.LinkPrefix + crypt1test.Encrypt(master, []byte(lines))
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: link}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	if list := d.Handle(ctx, ipc.Request{Verb: "list"}); len(list.Entries) != 66 || list.Entries[65].Label != "JP · SJ" {
+		t.Fatalf("%d entries, last %+v", len(list.Entries), list.Entries[len(list.Entries)-1])
+	}
+	bad := crypt1.LinkPrefix + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: bad}); resp.OK || resp.Error != "bad_line" {
+		t.Fatalf("a blob that does not verify is refused: %+v", resp)
+	}
+}
+
+func TestCrypt1Body(t *testing.T) {
+	w, d, master := crypt1World(t)
+	w.body = []byte(crypt1test.Encrypt(master, w.body))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL}); !resp.OK || !strings.Contains(resp.Message, "64 entries") {
+		t.Fatalf("an encrypted body is a list: %+v", resp)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	waitState(t, d, "up")
+}
+
+func TestCrypt1WithoutKey(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx := context.Background()
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: crypt1.LinkPrefix + "abc"}); resp.OK || !strings.Contains(resp.Message, "crypt1") {
+		t.Fatalf("%+v", resp)
 	}
 }

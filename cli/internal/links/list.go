@@ -55,7 +55,16 @@ func (e Entry) Connectable() bool {
 
 // DecodeBody turns a subscription body into lines: base64 (whole body, wrapped or
 // unpadded) when the decode yields text with a scheme in it, else the text itself.
-func DecodeBody(body []byte) []string {
+func DecodeBody(body []byte) []string { return DecodeBodyWith(body, nil) }
+
+// Decryptor decrypts an encrypted (crypt1) body or link blob; false = not one.
+type Decryptor func(blob string) ([]byte, bool)
+
+// DecodeBodyWith is DecodeBody with a decryptor for an encrypted body: a body
+// with no scheme in it that the decryptor verifies (its MAC, so a base64 list
+// never passes) is replaced by the decrypted text. A plaintext body is never
+// handed to it.
+func DecodeBodyWith(body []byte, decrypt Decryptor) []string {
 	text := string(body)
 	compact := strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
@@ -63,8 +72,13 @@ func DecodeBody(body []byte) []string {
 		}
 		return r
 	}, text)
-	if decoded, ok := tryBase64(compact); ok && strings.Contains(decoded, "://") {
-		text = decoded
+	switch {
+	case strings.Contains(text, "://"):
+	case decrypt != nil && tryDecrypt(compact, decrypt, &text):
+	default:
+		if decoded, ok := tryBase64(compact); ok && strings.Contains(decoded, "://") {
+			text = decoded
+		}
 	}
 	var lines []string
 	for _, l := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
@@ -74,6 +88,14 @@ func DecodeBody(body []byte) []string {
 		}
 	}
 	return lines
+}
+
+func tryDecrypt(compact string, decrypt Decryptor, text *string) bool {
+	plain, ok := decrypt(compact)
+	if ok {
+		*text = string(plain)
+	}
+	return ok
 }
 
 func tryBase64(s string) (string, bool) {

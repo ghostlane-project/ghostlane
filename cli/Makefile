@@ -5,7 +5,9 @@ VERSION ?= dev
 ENGINE_PIN  := $(shell sed -n 's/^OLCRTC_VERSION="$${OLCRTC_VERSION:-\(.*\)}"$$/\1/p' ../scripts/cores-pins.sh)
 SINGBOX_PIN := $(shell grep -m1 'SINGBOX_VERSION:' ../.github/workflows/release.yml | sed 's/.*"\(.*\)".*/\1/')
 XRAY_PIN    := $(shell sed -n 's/^[[:space:]]*github.com\/xtls\/xray-core \([^ ]*\).*/\1/p' go.mod | head -1)
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN)
+# CRYPT_KEY_V1: the app's OLCBOX_CRYPT_KEY_V1 (base64 master key of crypt1 lists); empty = crypt1 unavailable
+CRYPT_KEY_V1 ?=
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN) -X main.cryptKeyV1=$(CRYPT_KEY_V1)
 export CGO_ENABLED = 0
 
 .PHONY: build test vet lint

@@ -173,3 +173,29 @@ func TestParseHeaders(t *testing.T) {
 		t.Fatalf("defaults: %+v", def)
 	}
 }
+
+func TestDecodeBodyWithDecryptor(t *testing.T) {
+	plain := "olcrtc://telemost?vp8channel@r#" + key + "$DE · olcRTC\n"
+	blob := "QkxPQg\nQkxPQg" // stands in for a wrapped crypt1 blob; the decryptor knows it
+	dec := func(s string) ([]byte, bool) {
+		if s == "QkxPQgQkxPQg" {
+			return []byte(plain), true
+		}
+		return nil, false
+	}
+	if got := DecodeBodyWith([]byte(blob), dec); len(got) != 1 || !strings.HasPrefix(got[0], "olcrtc://") {
+		t.Fatalf("decrypted body: %v", got)
+	}
+	if got := DecodeBodyWith([]byte(blob), nil); len(got) != 2 || got[0] != "QkxPQg" {
+		t.Fatalf("without a decryptor the text is taken as it is: %v", got)
+	}
+	// a base64 list is handed to the decryptor (it fails the MAC) and still decodes
+	b64 := base64.StdEncoding.EncodeToString([]byte(plain))
+	if got := DecodeBodyWith([]byte(b64), func(string) ([]byte, bool) { return nil, false }); len(got) != 1 || !strings.HasPrefix(got[0], "olcrtc://") {
+		t.Fatalf("%v", got)
+	}
+	// a plaintext body is never handed to the decryptor
+	if got := DecodeBodyWith([]byte(plain), func(string) ([]byte, bool) { t.Fatal("called"); return nil, false }); len(got) != 1 {
+		t.Fatalf("%v", got)
+	}
+}

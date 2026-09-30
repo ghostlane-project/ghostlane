@@ -440,7 +440,7 @@ func sleepCtx(ctx context.Context, dur time.Duration) bool {
 // its own body.
 func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]links.Entry, error) {
 	if body, ok := inlineBody(subURL); ok {
-		return links.Entries(subURL, links.DecodeBody(body)), nil
+		return links.Entries(subURL, links.DecodeBodyWith(body, d.deps.Decrypt)), nil
 	}
 	cache, err := store.LoadCache(d.deps.StateDir, subURL)
 	if err != nil {
@@ -452,7 +452,7 @@ func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]l
 			return nil, err
 		}
 	}
-	return links.Entries(subURL, links.DecodeBody(cache.Body)), nil
+	return links.Entries(subURL, links.DecodeBodyWith(cache.Body, d.deps.Decrypt)), nil
 }
 
 func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, error) {

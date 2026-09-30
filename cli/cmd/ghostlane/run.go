@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
 	"github.com/ghostlane-project/ghostlane/cli/internal/daemon"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
@@ -84,7 +85,8 @@ func runDaemon(args []string, stderr io.Writer) int {
 		UID:          os.Getuid(),
 		ReadyTimeout: 60 * time.Second, ConfirmTimeout: 45 * time.Second, ProbeInterval: 30 * time.Second,
 		ProbeFailures: 3, RetryMin: 10 * time.Second, RetryMax: 5 * time.Minute,
-		Version: ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin, Xray: xrayPin},
+		Version: versionInfo(),
+		Decrypt: decryptor(),
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -94,4 +96,17 @@ func runDaemon(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func versionInfo() ipc.VersionInfo {
+	return ipc.VersionInfo{Version: version, Engine: enginePin, SingBox: singboxPin, Xray: xrayPin, Crypt1: decryptor() != nil}
+}
+
+// decryptor is the crypt1 decryptor of this build, nil without a key.
+func decryptor() links.Decryptor {
+	master, ok := crypt1.ParseKey(cryptKeyV1)
+	if !ok {
+		return nil
+	}
+	return func(blob string) ([]byte, bool) { return crypt1.Decrypt(master, blob) }
 }

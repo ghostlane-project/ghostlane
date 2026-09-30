@@ -13,6 +13,7 @@ var (
 	enginePin  = "unknown"
 	singboxPin = "unknown"
 	xrayPin    = "unknown"
+	cryptKeyV1 = "" // base64 master key of crypt1 lists (the app's OLCBOX_CRYPT_KEY_V1); empty = unavailable
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }

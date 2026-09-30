@@ -70,6 +70,7 @@ type VersionInfo struct {
 	Engine  string `json:"engine"`
 	SingBox string `json:"singbox"`
 	Xray    string `json:"xray"`
+	Crypt1  bool   `json:"crypt1"` // this build decrypts crypt1 lists and links
 }
 
 type Response struct {

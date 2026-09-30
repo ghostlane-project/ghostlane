@@ -42,6 +42,7 @@ type Deps struct {
 	StateDir    string
 	SocketPath  string
 	Fetch       func(ctx context.Context, url string) ([]byte, links.Headers, error)
+	Decrypt     links.Decryptor // crypt1 lists and links; nil = this build has no key
 	StartEngine func(ctx context.Context, p olcrtc.Params) (Engine, error)
 	StartXray   func(ctx context.Context, p xray.Params) (Engine, error)
 	StartFront  func(ctx context.Context, p singbox.FrontParams) (Front, error)

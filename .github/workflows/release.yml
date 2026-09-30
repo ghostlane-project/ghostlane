@@ -824,6 +824,7 @@ jobs:
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
+      OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
     defaults:
       run:
         working-directory: cli
@@ -840,7 +841,8 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
-          make dist VERSION="${OLCBOX_VERSION}"
+          [ -n "${OLCBOX_CRYPT_KEY_V1}" ] || echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this CLI build cannot read crypt1 lists"
+          make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}"
           umask 077
           printf '%s\n' "${CLI_RELEASE_SIGNING_KEY}" > "$RUNNER_TEMP/cli-signing.pem"
           make sign VERSION="${OLCBOX_VERSION}" KEY="$RUNNER_TEMP/cli-signing.pem"
