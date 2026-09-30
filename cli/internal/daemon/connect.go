@@ -224,17 +224,20 @@ func (d *Daemon) confirm(ctx context.Context, eng Engine) error {
 
 func (d *Daemon) markUp(sel store.Selection, l *live) {
 	d.mu.Lock()
-	d.cur = l
-	d.state, d.lastErr, d.since, d.pending = "up", "", d.deps.Now(), nil
 	d.lastGood[lastGoodKey(sel)] = l.entry.ID
 	lg := make(map[string]string, len(d.lastGood))
 	for k, v := range d.lastGood {
 		lg[k] = v
 	}
 	d.mu.Unlock()
+	// persisted before the state says "up": whoever reads "up" finds the file
 	if err := d.saveLastGood(lg); err != nil {
 		d.logf("last-good: %v", err)
 	}
+	d.mu.Lock()
+	d.cur = l
+	d.state, d.lastErr, d.since, d.pending = "up", "", d.deps.Now(), nil
+	d.mu.Unlock()
 	d.logf("up: %s over %s", l.entry.Label, l.entry.Olcrtc.Provider)
 }
 

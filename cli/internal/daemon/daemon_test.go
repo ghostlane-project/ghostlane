@@ -216,9 +216,10 @@ func TestCarrierFailoverAndLastGood(t *testing.T) {
 	if st.Line == nil || st.Line.Carrier != "salutejazz" {
 		t.Fatalf("three probe failures move to the next carrier: %+v", st.Line)
 	}
+	// the file is written before the state reads "up", so no polling is needed
 	lg, _ := store.LoadLastGood(dir)
 	if lg[listURL+"|DE"] != st.Line.ID {
-		t.Fatalf("last good %v", lg)
+		t.Fatalf("last good %v, line %s", lg, st.Line.ID)
 	}
 	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
 	waitState(t, d, "idle")
