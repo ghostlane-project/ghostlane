@@ -294,6 +294,7 @@ Shipping on every platform.
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
 | Linux | AppImage |
+| Linux servers | `ghostlane-cli`: deb, rpm, apk, Arch and tarballs for amd64/arm64/armv7 with a signed installer — a headless daemon with tun and proxy modes, see [docs/cli.md](docs/cli.md) |
 
 Everything except the App Store build is produced by the release workflow on
 public GitHub Actions runners and published with SHA256 sums and a build

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -58,8 +59,11 @@ func TestInstallScriptTarball(t *testing.T) {
 		"/ghostlane-cli-0.0.1-SHA256SUMS":         []byte(sums),
 		"/ghostlane-cli-0.0.1-SHA256SUMS.sig":     sig,
 	}
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		b, ok := assets[r.URL.Path]
+		mu.Unlock()
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -85,16 +89,17 @@ func TestInstallScriptTarball(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(root, "etc/systemd/system/ghostlane.service")); err != nil || !strings.Contains(string(b), "/usr/local/bin/ghostlane run") {
 		t.Fatalf("unit not installed with the tarball path: %v\n%s", err, out)
 	}
+	set := func(k string, v []byte) { mu.Lock(); assets[k] = v; mu.Unlock() }
 	// A tampered sums file must be refused.
-	assets["/ghostlane-cli-0.0.1-SHA256SUMS"] = []byte(strings.Replace(sums, "0", "1", 1))
+	set("/ghostlane-cli-0.0.1-SHA256SUMS", []byte(strings.Replace(sums, "0", "1", 1)))
 	if out, err := runInstall(); err == nil || !strings.Contains(out, "signature") {
 		t.Fatalf("tampered SHA256SUMS accepted: %v\n%s", err, out)
 	}
-	assets["/ghostlane-cli-0.0.1-SHA256SUMS"] = []byte(sums)
+	set("/ghostlane-cli-0.0.1-SHA256SUMS", []byte(sums))
 	// A tampered tarball must be refused.
 	bad := append([]byte{}, tgz...)
 	bad[10] ^= 0xff
-	assets["/ghostlane-cli-0.0.1-linux-amd64.tar.gz"] = bad
+	set("/ghostlane-cli-0.0.1-linux-amd64.tar.gz", bad)
 	if out, err := runInstall(); err == nil || !strings.Contains(out, "checksum") {
 		t.Fatalf("tampered tarball accepted: %v\n%s", err, out)
 	}

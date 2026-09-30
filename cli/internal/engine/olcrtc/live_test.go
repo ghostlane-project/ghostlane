@@ -30,13 +30,18 @@ func TestLiveLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Stop(10 * time.Second)
+	defer func() { _ = s.Stop(10 * time.Second) }()
 	d, _ := proxy.SOCKS5("tcp", s.SocksAddr(), &proxy.Auth{User: u, Password: p}, proxy.Direct)
-	c := &http.Client{Transport: &http.Transport{Dial: d.Dial}, Timeout: 60 * time.Second}
+	cd, ok := d.(proxy.ContextDialer)
+	if !ok {
+		t.Fatal("socks dialer without DialContext")
+	}
+	c := &http.Client{Transport: &http.Transport{DialContext: cd.DialContext}, Timeout: 60 * time.Second}
 	var resp *http.Response
 	for i := 0; i < 10; i++ {
 		resp, err = c.Get("http://cp.cloudflare.com/generate_204")
 		if err == nil {
+			resp.Body.Close()
 			break
 		}
 		t.Logf("attempt %d: %v", i+1, err)

@@ -25,14 +25,19 @@ func TestProxyModeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	addr := p.ProxyListen + ":" + strconv.Itoa(port)
 	d, _ := proxy.SOCKS5("tcp", addr, nil, proxy.Direct)
-	c := &http.Client{Transport: &http.Transport{Dial: d.Dial}, Timeout: 5 * time.Second}
+	cd, ok := d.(proxy.ContextDialer)
+	if !ok {
+		t.Fatal("socks dialer without DialContext")
+	}
+	c := &http.Client{Transport: &http.Transport{DialContext: cd.DialContext}, Timeout: 5 * time.Second}
 	resp, err := c.Get("http://203.0.113.10/anything")
 	if err != nil || resp.StatusCode != 204 {
 		t.Fatalf("through the front: %v %v", resp, err)
 	}
+	resp.Body.Close()
 	// the HTTP half of the mixed inbound
 	pu, _ := url.Parse("http://" + addr)
 	hc := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}, Timeout: 5 * time.Second}
@@ -40,4 +45,5 @@ func TestProxyModeEndToEnd(t *testing.T) {
 	if err != nil || resp.StatusCode != 204 {
 		t.Fatalf("http proxy: %v %v", resp, err)
 	}
+	resp.Body.Close()
 }

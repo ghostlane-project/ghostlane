@@ -21,6 +21,10 @@ need no ceremony: send the pull request.
 - **No user-visible state that does not work.** A screen, a toggle or a label
   that says "not available yet" does not ship. Either it works or it is not
   shown.
+- **The Linux CLI parses the same lines.** A change to the Kotlin link or list
+  parsers (`LocationsDatasource`, `LinkParser`, `ImportLink`) lands with the
+  same case in `cli/internal/links`, so the app and the CLI never read one
+  subscription differently.
 - **Never commit credentials.** Not a server list, not a subscription URL, not a
   token, not a keystore, not a room id. The history is public and permanent.
 

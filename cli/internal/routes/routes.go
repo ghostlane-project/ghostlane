@@ -47,7 +47,7 @@ func filterGlobal(addrs []netlink.Addr, excludeIndex int) []netip.Addr {
 		if a.Scope != unix.RT_SCOPE_UNIVERSE || a.LinkIndex == excludeIndex || a.IPNet == nil {
 			continue
 		}
-		ip, ok := netip.AddrFromSlice(a.IPNet.IP)
+		ip, ok := netip.AddrFromSlice(a.IP)
 		if !ok {
 			continue
 		}
