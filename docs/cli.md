@@ -20,8 +20,32 @@ blocked), `--family deb|rpm|apk|pacman|tar`, `--no-service`.
 
 Packages and tarballs are also on the release page as
 `ghostlane-cli-<version>-linux-<amd64|arm64|arm7>.<deb|rpm|apk|pkg.tar.zst|tar.gz>`.
-`ghostlane version` prints the version, the engine and sing-box pins, and the
-sha256 of the public key every release is signed with.
+`ghostlane version` prints the version, the engine, sing-box and Xray-core
+pins, whether this build reads encrypted (crypt1) lists, and the sha256 of
+the public key every release is signed with.
+
+**Package repositories** (updates with the system's package manager; signed
+with the key in `cli/packaging/repo/ghostlane-repo.gpg.asc`, fingerprint
+`862C 1829 3437 3928 03AD BF47 E168 6027 7F51 A4DE`):
+
+Debian, Ubuntu and derivatives (amd64, arm64, armhf):
+
+    curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane-repo.gpg.asc | sudo gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg
+    sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.list -o /etc/apt/sources.list.d/ghostlane.list
+    sudo apt-get update && sudo apt-get install ghostlane-cli
+
+Fedora, RHEL, Rocky, Alma (x86_64, aarch64, armv7hl):
+
+    sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.repo -o /etc/yum.repos.d/ghostlane.repo
+    sudo dnf install ghostlane-cli
+
+The apt repository serves the newest version; the dnf repository keeps every
+version (`dnf install ghostlane-cli-<version>`); older debs stay on the
+release page. Alpine (apk), Arch and the tarballs come from the release page
+or `install.sh`.
+
+**Docker:** `ghcr.io/ghostlane-project/ghostlane-cli` (amd64, arm64, arm/v7;
+distroless, the released binary and nothing else), see [Containers](#containers).
 
 ## First connection
 
@@ -32,10 +56,19 @@ sha256 of the public key every release is signed with.
 
 `connect` takes a country (`DE`: all of that country's lines, rooms and
 servers alike, tried in the list's order with failover between them), an
-exact label from `list` (`"🇩🇪 DE · SJ"`: that one line), or an index (`6`).
-Lists whose labels carry no country code (a partner's `🇷🇺 EKB · Hy2 → 🇪🇺`)
-are selected by label or index. The selection is stored: the service
-reconnects it after a reboot; `disconnect` clears it.
+exact label from `list` (`"🇩🇪 DE · SJ"`: that one line), or an index (`6`;
+`list` numbers the lines of every subscription continuously). Lists whose
+labels carry no country code (a partner's `🇷🇺 EKB · Hy2 → 🇪🇺`) are selected
+by label or index. The selection is stored: the service reconnects it after a
+reboot; `disconnect` clears it. A selector that matches nothing today (the
+country is not in the list yet) is retried when a refresh changes the list.
+
+`add` takes an `https://` list (an `http://` list is refused: its token would
+travel in plaintext), a `ghostlane://add?url=…` link, one `olcrtc://`,
+`vless://` or `hysteria2://` line, and — when `ghostlane version` says
+`crypt1 lists available` — an encrypted `olcrtc://crypt1/…` link (its payload is
+a list URL or lines) or a list whose body is encrypted, as the app does. A
+release build carries the key; a build without it says so and refuses those.
 
 **Which core carries what.** olcRTC rooms run in the olcRTC engine, XHTTP
 lines in Xray-core, VLESS Reality (tcp) and Hysteria2 in sing-box itself; all
@@ -63,8 +96,18 @@ What stays as it was:
   service runs as user `ghostlane` and the tun excludes that uid.
 - **IPv6 is refused, not leaked**: the tun claims IPv6 and rejects it, so
   dual-stack hosts fall back to IPv4 through the tunnel.
-- **Fail-open.** Stopping the service removes the tun and the rules; traffic
-  flows directly again. A kill switch is not part of this version.
+- **Fail-open by default, closed with `--kill-switch`.** Stopping the service
+  or `disconnect` removes the tun and the rules; traffic flows directly again.
+  `connect DE --tun --kill-switch` adds a kill switch to the selection: while
+  it stands and no line is up (at boot before the first room answers, between
+  failovers, during a dead-server backoff), connections that are not for the
+  tunnel are refused at once (`EHOSTUNREACH`) instead of leaking. What `main`
+  routes specifically keeps working (the LAN, Docker networks, link-local,
+  static routes), inbound services keep answering, and the daemon reaches the
+  carriers. `disconnect` and a clean stop of the service open the box again;
+  after a crash the next start replaces the leftover rules at once. A
+  connection opened directly before the switch keeps its path. `status`
+  shows `kill switch on`.
 - **A dead server never gets the tun.** A Reality or Hysteria2 line is first
   proven through a local proxy-only front; only then are the rules and the
   tun created. Rooms and XHTTP lines are proven through their engine first.
@@ -103,19 +146,49 @@ proxy:
   pass: ""
 ```
 
-**Systems without systemd** (Alpine with OpenRC, runit, s6): the packages ship
-the unit only. Run `ghostlane run` yourself, as root or as a user with
-`CAP_NET_ADMIN` for tun mode, or wrap that command in your init system; an
-OpenRC script is planned. Installing the `.apk` by hand needs
-`apk add --allow-untrusted` (the installer verifies the release signature
-itself; the package carries no apk signature).
+**Alpine / OpenRC.** The apk and the tarball ship `/etc/init.d/ghostlane`
+(`supervise-daemon`, user `ghostlane` with ambient `cap_net_admin` and
+`cap_net_bind_service`, log in `/var/log/ghostlane.log`); the package enables
+and starts it, the tarball installer does where `openrc-run` exists:
+
+    rc-service ghostlane status
+    rc-update show default | grep ghostlane
+
+Installing the `.apk` by hand needs `apk add --allow-untrusted` (the installer
+verifies the release signature itself; the package carries no apk signature).
+**Other init systems** (runit, s6): run `ghostlane run` yourself, as root or as
+a user with `CAP_NET_ADMIN` for tun mode, or wrap that command in your init.
 
 ## Containers
 
-    ghostlane run --state-dir /data --subscription 'https://…' --connect DE --mode proxy
+The image `ghcr.io/ghostlane-project/ghostlane-cli:<version>` (and `:latest`;
+amd64, arm64, arm/v7) is the released binary on a distroless base; its state
+lives on `/data`. A local proxy for the host:
 
-`run` is the daemon in the foreground; the flags store the list and selection
-at start. For `--mode tun` the container needs `--cap-add NET_ADMIN --device /dev/net/tun`.
+    docker run -d --name ghostlane --restart unless-stopped \
+      -p 127.0.0.1:1080:1080 \
+      -e GHOSTLANE_PROXY_LISTEN=0.0.0.0 -e GHOSTLANE_PROXY_USER=u -e GHOSTLANE_PROXY_PASS=p \
+      -v ghostlane:/data \
+      ghcr.io/ghostlane-project/ghostlane-cli \
+      run --subscription 'https://…' --connect DE --mode proxy
+    curl -x socks5h://u:p@127.0.0.1:1080 https://api.ipify.org
+    docker exec ghostlane ghostlane status
+
+The proxy is set through the environment: `GHOSTLANE_PROXY_LISTEN` (`0.0.0.0`
+to publish the port), `GHOSTLANE_PROXY_PORT`, `GHOSTLANE_PROXY_USER`,
+`GHOSTLANE_PROXY_PASS`. A listen that is not loopback without credentials is
+refused at start: a published proxy without a password is open to whoever
+reaches the port. The list and selection given once are stored on the volume;
+a restart with no arguments reconnects them. For `--mode tun` (route the
+container's network namespace, or another container's with
+`--network container:ghostlane`) add `--cap-add NET_ADMIN --device /dev/net/tun`
+and, if wanted, `--kill-switch`. The image runs as root (Docker grants the
+capability to root); the daemon's own traffic, and that of any other root
+process in the same namespace, stays outside the tun.
+
+`ghostlane run` is the daemon in the foreground, usable in any container or
+init: `--state-dir` (or `GHOSTLANE_STATE_DIR`), `--socket`, `--subscription`,
+`--connect`, `--mode tun|proxy`, `--kill-switch`, `--probe-url`.
 
 ## Troubleshooting
 
@@ -135,6 +208,6 @@ at start. For `--mode tun` the container needs `--cap-add NET_ADMIN --device /de
 
 ## Not in this version
 
-Encrypted (`olcrtc://crypt1/…`) lists; VLESS over grpc/ws/httpupgrade, trojan,
-shadowsocks, vmess; a kill switch; IPv6 through the tunnel; per-application
-split tunnelling; an OpenRC script.
+VLESS over grpc/ws/httpupgrade, trojan, shadowsocks, vmess; IPv6 through the
+tunnel; per-application split tunnelling. Encrypted (crypt1) lists need a
+release build (`ghostlane version` says whether this one reads them).

@@ -17,12 +17,16 @@ ghostlane status
 Packages: deb, rpm, apk, Arch and tarballs for amd64, arm64 and armv7, on the
 [Releases](https://github.com/ghostlane-project/ghostlane/releases) page, each
 release signed (`install.sh` verifies the signature and the checksum before it
-installs anything). `ghostlane help` and `ghostlane help <command>` explain every
-command with examples; the full guide is [docs/cli.md](../docs/cli.md).
+installs anything); signed apt and dnf repositories at
+`https://ghostlane-project.github.io/ghostlane/` for updates with the package
+manager; a Docker image, `ghcr.io/ghostlane-project/ghostlane-cli`. `ghostlane help`
+and `ghostlane help <command>` explain every command with examples; the full
+guide is [docs/cli.md](../docs/cli.md).
 
 What it connects: olcRTC rooms, VLESS Reality, Hysteria2 and XHTTP lines from
-the same lists, with failover between them, over tun or proxy. Not yet:
-encrypted (crypt1) lists, VLESS over grpc/ws, trojan, shadowsocks, vmess.
+the same lists — plain or encrypted (crypt1) — with failover between them,
+over tun (with an optional kill switch) or a local proxy; systemd and OpenRC.
+Not yet: VLESS over grpc/ws, trojan, shadowsocks, vmess.
 
 Built from `cli/` in this repository (`make build`; Go 1.26). Licence:
 GPL-3.0-or-later — this binary links [sing-box](https://github.com/SagerNet/sing-box);
