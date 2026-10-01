@@ -638,7 +638,9 @@ func (d *Daemon) afterRefresh(ctx context.Context) {
 		return
 	}
 	if !live {
-		d.startConnectLocked(*stored)
+		if err := d.startConnectLocked(*stored); err != nil {
+			d.logf("%v", err)
+		}
 		return
 	}
 	if cur == nil {
@@ -654,7 +656,9 @@ func (d *Daemon) afterRefresh(ctx context.Context) {
 		}
 		if e.entry.Raw != cur.entry.Raw {
 			d.logf("%s: the line changed (room, key or server), reconnecting", e.entry.Label)
-			d.startConnectLocked(*stored)
+			if err := d.startConnectLocked(*stored); err != nil {
+				d.logf("%v", err)
+			}
 		}
 		return
 	}

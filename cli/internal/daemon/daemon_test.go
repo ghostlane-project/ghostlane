@@ -582,7 +582,7 @@ func TestFetchErrorNeverShowsToken(t *testing.T) {
 	d.cfg = cfg
 	d.mu.Unlock()
 	d.Handle(ctx, ipc.Request{Verb: "refresh"})
-	d.startConnect(*cfg.Selection)
+	_ = d.startConnect(*cfg.Selection)
 	st := waitState(t, d, "failed")
 	all := st.LastError
 	for _, s := range st.Subscriptions {
