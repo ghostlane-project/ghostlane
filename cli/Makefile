@@ -22,7 +22,7 @@ ARCHES  := amd64 arm64 arm7
 FORMATS := deb rpm apk archlinux
 NFPM    ?= nfpm
 
-.PHONY: build-all package tarballs sums dist clean
+.PHONY: build-all package tarballs sums dist docker-stage docker-image clean
 build-all:
 	@for a in $(ARCHES); do \
 	  goarch=$$a; goarm=; if [ "$$a" = arm7 ]; then goarch=arm; goarm=7; fi; \
@@ -53,6 +53,15 @@ sums:
 	cd dist && sha256sum ghostlane-cli-$(VERSION)-linux-* > ghostlane-cli-$(VERSION)-SHA256SUMS
 
 dist: package tarballs sums
+
+# The Docker image holds the released tarballs' binaries (stage.sh), nothing
+# built separately. docker-image builds and loads this machine's platform as
+# ghostlane-cli:dev; the release pushes every platform.
+docker-stage: tarballs
+	sh packaging/docker/stage.sh dist $(VERSION)
+
+docker-image: docker-stage
+	docker buildx build --load -t ghostlane-cli:dev -f packaging/docker/Dockerfile .
 
 clean:
 	rm -rf dist

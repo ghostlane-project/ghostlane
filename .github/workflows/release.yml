@@ -1683,6 +1683,7 @@ jobs:
       - build-macos
       - staple-macos
       - build-linux
+      - build-cli
       - build-android
       - build-ios
     # Only a full build publishes. A partial run would otherwise replace the nightly
@@ -1931,3 +1932,44 @@ jobs:
 
           gh release edit "$OLCBOX_NIGHTLY_TAG" --draft=false --prerelease
 
+
+  # The CLI's Docker image: the released tarballs' binaries (stage.sh) on
+  # distroless, every platform, pushed to ghcr.io once the release is out.
+  publish-cli-docker:
+    runs-on: ubuntu-latest
+    needs: [plan, release_version, build-cli, publish-nightly]
+    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/ghostlane-cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: Ghostlane-cli-linux
+          path: cli/dist
+      - name: Stage the released binaries
+        run: sh cli/packaging/docker/stage.sh cli/dist "${OLCBOX_VERSION}"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: cli
+          file: cli/packaging/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.OLCBOX_VERSION }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.OLCBOX_VERSION }}
+            org.opencontainers.image.licenses=GPL-3.0-or-later

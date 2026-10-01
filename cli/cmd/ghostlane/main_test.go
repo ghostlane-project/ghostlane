@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
+	"github.com/ghostlane-project/ghostlane/cli/internal/store"
 )
 
 func fakeDaemon(t *testing.T, h ipc.Handler) string {
@@ -109,5 +111,53 @@ func TestHelpIsUsable(t *testing.T) {
 	}
 	if code := run([]string{"help", "frobnicate"}, &out, &errb); code != 2 {
 		t.Fatal("unknown command help fails")
+	}
+}
+
+// A container sets the proxy through the environment; a listen that is not
+// loopback needs credentials, or the proxy is open to the network.
+func TestProxyEnv(t *testing.T) {
+	cfg := store.Defaults()
+	env := map[string]string{}
+	get := func(k string) string { return env[k] }
+	if changed, err := applyProxyEnv(cfg, get); err != nil || changed {
+		t.Fatalf("no env, no change: %v %v", changed, err)
+	}
+	env["GHOSTLANE_PROXY_LISTEN"] = "0.0.0.0"
+	if _, err := applyProxyEnv(cfg, get); err == nil || !strings.Contains(err.Error(), "GHOSTLANE_PROXY_USER") {
+		t.Fatalf("0.0.0.0 without credentials: %v", err)
+	}
+	env["GHOSTLANE_PROXY_USER"], env["GHOSTLANE_PROXY_PASS"], env["GHOSTLANE_PROXY_PORT"] = "u", "p", "1085"
+	changed, err := applyProxyEnv(cfg, get)
+	if err != nil || !changed || cfg.Proxy.Listen != "0.0.0.0" || cfg.Proxy.Port != 1085 || cfg.Proxy.User != "u" || cfg.Proxy.Pass != "p" {
+		t.Fatalf("%+v %v", cfg.Proxy, err)
+	}
+	env["GHOSTLANE_PROXY_PORT"] = "nope"
+	if _, err := applyProxyEnv(cfg, get); err == nil {
+		t.Fatal("a bad port is refused")
+	}
+	env["GHOSTLANE_PROXY_PORT"], env["GHOSTLANE_PROXY_LISTEN"] = "1080", "localhost"
+	if _, err := applyProxyEnv(cfg, get); err == nil {
+		t.Fatal("listen must be an IP")
+	}
+}
+
+func TestRunFlagChecks(t *testing.T) {
+	var stderr bytes.Buffer
+	if code := run([]string{"run", "--state-dir", t.TempDir(), "--connect", "DE", "--mode", "proxy", "--kill-switch"}, io.Discard, &stderr); code != 2 || !strings.Contains(stderr.String(), "--mode tun") {
+		t.Fatalf("kill switch needs tun: %d %s", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := run([]string{"run", "--state-dir", t.TempDir(), "--mode", "sideways"}, io.Discard, &stderr); code != 2 {
+		t.Fatalf("bad mode: %d %s", code, stderr.String())
+	}
+}
+
+func TestDefaultStateDir(t *testing.T) {
+	if got := defaultStateDir(func(string) string { return "" }); got != "/var/lib/ghostlane" {
+		t.Fatal(got)
+	}
+	if got := defaultStateDir(func(k string) string { return map[string]string{"GHOSTLANE_STATE_DIR": "/data"}[k] }); got != "/data" {
+		t.Fatal(got)
 	}
 }

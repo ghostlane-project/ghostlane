@@ -145,15 +145,19 @@ Example:
 Prints the version, the pinned engine and sing-box versions, and the sha256
 of the public key every release is signed with (install.sh verifies against it).
 `,
-	"run": `ghostlane run [--state-dir <dir>] [--socket <path>] [--subscription <url> --connect <selector> --mode tun|proxy]
+	"run": `ghostlane run [--state-dir <dir>] [--socket <path>] [--subscription <url> --connect <selector> --mode tun|proxy [--kill-switch]]
 
-The daemon, in the foreground. systemd runs it as user ghostlane with
-CAP_NET_ADMIN; in a container run it yourself:
+The daemon, in the foreground. systemd (or OpenRC) runs it as user ghostlane
+with CAP_NET_ADMIN; in a container run it yourself:
 
   ghostlane run --state-dir /data --subscription 'https://…' --connect DE --mode proxy
 
+The proxy is set through the environment in a container: GHOSTLANE_PROXY_LISTEN
+(0.0.0.0 to publish the port), GHOSTLANE_PROXY_PORT, GHOSTLANE_PROXY_USER and
+GHOSTLANE_PROXY_PASS — a listen that is not loopback needs the credentials.
 For --mode tun the container needs --cap-add NET_ADMIN --device /dev/net/tun.
 Other flags: --probe-url <url> (liveness probe through the tunnel).
+Image: ghcr.io/ghostlane-project/ghostlane-cli (see docs/cli.md).
 `,
 }
 
