@@ -5,7 +5,9 @@ VERSION ?= dev
 ENGINE_PIN  := $(shell sed -n 's/^OLCRTC_VERSION="$${OLCRTC_VERSION:-\(.*\)}"$$/\1/p' ../scripts/cores-pins.sh)
 SINGBOX_PIN := $(shell grep -m1 'SINGBOX_VERSION:' ../.github/workflows/release.yml | sed 's/.*"\(.*\)".*/\1/')
 XRAY_PIN    := $(shell sed -n 's/^[[:space:]]*github.com\/xtls\/xray-core \([^ ]*\).*/\1/p' go.mod | head -1)
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN)
+# CRYPT_KEY_V1: the app's OLCBOX_CRYPT_KEY_V1 (base64 master key of crypt1 lists); empty = crypt1 unavailable
+CRYPT_KEY_V1 ?=
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN) -X main.cryptKeyV1=$(CRYPT_KEY_V1)
 export CGO_ENABLED = 0
 
 .PHONY: build test vet lint
@@ -20,7 +22,7 @@ ARCHES  := amd64 arm64 arm7
 FORMATS := deb rpm apk archlinux
 NFPM    ?= nfpm
 
-.PHONY: build-all package tarballs sums dist clean
+.PHONY: build-all package tarballs sums dist docker-stage docker-image clean
 build-all:
 	@for a in $(ARCHES); do \
 	  goarch=$$a; goarm=; if [ "$$a" = arm7 ]; then goarch=arm; goarm=7; fi; \
@@ -43,6 +45,7 @@ tarballs: build-all
 	@for a in $(ARCHES); do \
 	  stage=dist/stage-$$a; rm -rf $$stage; mkdir -p $$stage; \
 	  command cp -f dist/linux-$$a/ghostlane packaging/ghostlane.service packaging/README.md LICENSE COPYRIGHT $$stage/; \
+	  command cp -f packaging/openrc/ghostlane $$stage/ghostlane.openrc; \
 	  tar -C $$stage -czf dist/ghostlane-cli-$(VERSION)-linux-$$a.tar.gz .; rm -rf $$stage; \
 	done
 
@@ -50,6 +53,15 @@ sums:
 	cd dist && sha256sum ghostlane-cli-$(VERSION)-linux-* > ghostlane-cli-$(VERSION)-SHA256SUMS
 
 dist: package tarballs sums
+
+# The Docker image holds the released tarballs' binaries (stage.sh), nothing
+# built separately. docker-image builds and loads this machine's platform as
+# ghostlane-cli:dev; the release pushes every platform.
+docker-stage: tarballs
+	sh packaging/docker/stage.sh dist $(VERSION)
+
+docker-image: docker-stage
+	docker buildx build --load -t ghostlane-cli:dev -f packaging/docker/Dockerfile .
 
 clean:
 	rm -rf dist

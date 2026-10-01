@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Ghostlane tunnel daemon for OpenRC hosts (Alpine). Shipped in the apk and
+# the tarball; the systemd unit is the equivalent elsewhere.
+name="ghostlane"
+description="Ghostlane tunnel: olcRTC rooms and VPN lines over a tun or a local proxy"
+supervisor=supervise-daemon
+command=/usr/bin/ghostlane
+command_args="run"
+command_user="ghostlane:ghostlane"
+# ambient capabilities (OpenRC >= 0.45 / libcap): the tun and the policy rules
+capabilities="^cap_net_admin,^cap_net_bind_service"
+respawn_delay=2
+respawn_max=0
+output_log="/var/log/ghostlane.log"
+error_log="/var/log/ghostlane.log"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath -d -m 0750 -o ghostlane:ghostlane /run/ghostlane
+	checkpath -d -m 0700 -o ghostlane:ghostlane /var/lib/ghostlane
+	checkpath -f -m 0640 -o ghostlane:ghostlane /var/log/ghostlane.log
+}

@@ -66,7 +66,8 @@ func splitShare(s, scheme string) (*shareParts, error) {
 	tag := ""
 	if i := strings.IndexByte(body, '#'); i >= 0 {
 		tag = body[i+1:]
-		if t, err := url.PathUnescape(tag); err == nil {
+		// QueryUnescape, as the app's urlDecode: a + is a space
+		if t, err := url.QueryUnescape(tag); err == nil {
 			tag = t
 		}
 		body = body[:i]

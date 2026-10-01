@@ -24,6 +24,15 @@ const (
 	singBoxRuleFirst   = singbox.RuleIndex
 	singBoxRuleLast    = singbox.RuleIndex + 10
 	singBoxTable       = singbox.TableIndex
+
+	// The kill switch sits behind sing-box's rules: while the tun is up they
+	// take everything; while it is down, main answers only for what it routes
+	// specifically (LAN, Docker, link-local: suppress_prefixlength 0) and for
+	// the daemon's own uid (carriers, servers), and all else is unreachable.
+	KillSwitchLAN   = 9098
+	KillSwitchSelf  = 9099
+	KillSwitchDrop  = 9100
+	KillSwitchTable = 2023
 )
 
 type Manager struct {
@@ -146,13 +155,123 @@ func (m *Manager) syncLocked(addrs []netip.Addr) error {
 
 func (m *Manager) Clear() error { return m.Sync(nil) }
 
+func killSwitchRules(family, uid int) []*netlink.Rule {
+	lan := netlink.NewRule()
+	lan.Family, lan.Priority, lan.Table, lan.SuppressPrefixlen = family, KillSwitchLAN, unix.RT_TABLE_MAIN, 0
+	self := netlink.NewRule()
+	self.Family, self.Priority, self.Table = family, KillSwitchSelf, unix.RT_TABLE_MAIN
+	self.UIDRange = netlink.NewRuleUIDRange(uint32(uid), uint32(uid))
+	drop := netlink.NewRule()
+	drop.Family, drop.Priority, drop.Table = family, KillSwitchDrop, KillSwitchTable
+	return []*netlink.Rule{lan, self, drop}
+}
+
+func unreachableDefault(family int) *netlink.Route {
+	dst := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
+	if family == unix.AF_INET6 {
+		dst = &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}
+	}
+	return &netlink.Route{Family: family, Table: KillSwitchTable, Type: unix.RTN_UNREACHABLE, Dst: dst}
+}
+
+// tolerableV6 reports an error that means the kernel has no IPv6 (booted
+// with ipv6.disable=1, common on hardened servers): there is nothing to kill
+// on that family, so the v6 half of the switch is skipped, nothing else.
+func tolerableV6(err error) bool {
+	return err != nil && (errors.Is(err, unix.EAFNOSUPPORT) || errors.Is(err, unix.EPFNOSUPPORT) ||
+		errors.Is(err, unix.EPROTONOSUPPORT) || errors.Is(err, unix.ENOTSUP))
+}
+
+// InstallKillSwitch puts the kill switch in for a daemon running as uid,
+// replacing whatever a previous run left at its priorities.
+func (m *Manager) InstallKillSwitch(uid int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var errs []error
+	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
+		if err := m.removeKillSwitchRules(fam); err != nil && (fam != unix.AF_INET6 || !tolerableV6(err)) {
+			errs = append(errs, err)
+		}
+		if err := netlink.RouteReplace(unreachableDefault(fam)); err != nil {
+			if fam == unix.AF_INET6 && tolerableV6(err) {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("unreachable default (family %d): %w", fam, err))
+			continue
+		}
+		for _, r := range killSwitchRules(fam, uid) {
+			if err := netlink.RuleAdd(r); err != nil {
+				if fam == unix.AF_INET6 && tolerableV6(err) {
+					break
+				}
+				errs = append(errs, fmt.Errorf("rule %d (family %d): %w", r.Priority, fam, err))
+			}
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		_ = m.removeKillSwitchLocked()
+		return err
+	}
+	return nil
+}
+
+// RemoveKillSwitch takes the kill switch out: its rules and table 2023.
+func (m *Manager) RemoveKillSwitch() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.removeKillSwitchLocked()
+}
+
+func (m *Manager) removeKillSwitchLocked() error {
+	var errs []error
+	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
+		if err := m.removeKillSwitchRules(fam); err != nil && (fam != unix.AF_INET6 || !tolerableV6(err)) {
+			errs = append(errs, err)
+		}
+		routes, err := netlink.RouteListFiltered(fam, &netlink.Route{Table: KillSwitchTable}, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			if fam != unix.AF_INET6 || !tolerableV6(err) {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		for i := range routes {
+			if e := netlink.RouteDel(&routes[i]); e != nil {
+				errs = append(errs, fmt.Errorf("table %d route: %w", KillSwitchTable, e))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) removeKillSwitchRules(family int) error {
+	rules, err := netlink.RuleList(family)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for i := range rules {
+		r := rules[i]
+		if r.Priority >= KillSwitchLAN && r.Priority <= KillSwitchDrop {
+			if e := netlink.RuleDel(&r); e != nil {
+				errs = append(errs, fmt.Errorf("rule %d: %w", r.Priority, e))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // CleanupStale removes what a crashed run left: our rules, sing-box's rules
-// (9000–9010) and every route of table 2022. The box has one tun, ours.
+// (9000–9010), every route of table 2022 and the kill switch (the daemon puts
+// it back at once when the stored selection asks). The box has one tun, ours.
 func (m *Manager) CleanupStale() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var errs []error
 	if err := m.syncLocked(nil); err != nil {
+		errs = append(errs, err)
+	}
+	if err := m.removeKillSwitchLocked(); err != nil {
 		errs = append(errs, err)
 	}
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {

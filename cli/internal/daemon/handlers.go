@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
 	"github.com/ghostlane-project/ghostlane/cli/internal/ipc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
@@ -35,9 +37,8 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 	case "connect":
 		return d.connect(ctx, req)
 	case "disconnect":
-		d.stopConnect()
+		d.stopAll(true)
 		d.mu.Lock()
-		d.cfg.Selection = nil
 		cfg := d.cfg.Clone()
 		d.mu.Unlock()
 		if err := d.saveConfig(cfg); err != nil {
@@ -61,7 +62,7 @@ func (d *Daemon) status() *ipc.Status {
 	defer d.mu.Unlock()
 	st := &ipc.Status{State: d.state, LastError: d.lastErr}
 	if d.sel != nil {
-		st.Mode, st.Selector = d.sel.Mode, d.sel.Selector
+		st.Mode, st.Selector, st.KillSwitch = d.sel.Mode, d.sel.Selector, d.sel.KillSwitch
 	}
 	switch {
 	case d.cur != nil:
@@ -70,7 +71,7 @@ func (d *Daemon) status() *ipc.Status {
 		st.Line = &v
 		st.Since = d.since.UTC().Format(time.RFC3339)
 		if d.cur.mode == "proxy" {
-			addr := d.cfg.Proxy.Listen + ":" + strconv.Itoa(d.cfg.Proxy.Port)
+			addr := net.JoinHostPort(d.cfg.Proxy.Listen, strconv.Itoa(d.cfg.Proxy.Port))
 			st.Proxy = &ipc.ProxyView{Socks: addr, HTTP: addr}
 		}
 	case d.pending != nil:
@@ -93,22 +94,10 @@ func (d *Daemon) status() *ipc.Status {
 }
 
 func (d *Daemon) list(ctx context.Context, only string) ipc.Response {
-	d.mu.Lock()
-	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
-	d.mu.Unlock()
+	all, _ := d.allEntries(ctx, only)
 	out := []ipc.EntryView{}
-	for _, s := range subs {
-		if only != "" && !matchesSub(s.URL, only) {
-			continue
-		}
-		entries, err := d.entriesFor(ctx, s.URL, false)
-		if err != nil {
-			d.logf("list %s: %v", store.MaskURL(s.URL), err)
-			continue
-		}
-		for i, e := range entries {
-			out = append(out, entryView(i, e))
-		}
+	for i, e := range all {
+		out = append(out, entryView(i, e.entry))
 	}
 	return ipc.Response{OK: true, Entries: out}
 }
@@ -119,9 +108,26 @@ func matchesSub(url, needle string) bool {
 
 func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 	payload := links.ImportPayload(source)
+	if crypt1.IsLink(payload) {
+		// the payload is a list URL or lines; either way it is added as what it is
+		if d.deps.Decrypt == nil {
+			return ipc.Fail("unsupported", links.ErrCrypt1.Error())
+		}
+		plain, ok := d.deps.Decrypt(strings.TrimPrefix(payload, crypt1.LinkPrefix))
+		if !ok {
+			return ipc.Fail("bad_line", "the crypt1 link does not verify (damaged, or made for another key)")
+		}
+		text := strings.TrimSpace(string(plain))
+		if strings.HasPrefix(text, "https://") || strings.HasPrefix(text, "http://") {
+			return d.add(ctx, text)
+		}
+		return d.addInline(text, "crypt1 link")
+	}
 	var msg string
 	switch {
-	case strings.HasPrefix(payload, "https://") || strings.HasPrefix(payload, "http://"):
+	case strings.HasPrefix(payload, "http://"):
+		return ipc.Fail("insecure", "an http:// list carries its token in plaintext; use https://")
+	case strings.HasPrefix(payload, "https://"):
 		d.mu.Lock()
 		for _, s := range d.cfg.Subscriptions {
 			if s.URL == payload {
@@ -138,7 +144,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 			d.mu.Unlock()
 			return ipc.Fail("fetch", Scrub(err.Error()))
 		}
-		entries := links.Entries(payload, links.DecodeBody(c.Body))
+		entries := links.Entries(payload, links.DecodeBodyWith(c.Body, d.deps.Decrypt))
 		groups := links.GroupByCountry(entries)
 		countries := make([]string, 0, len(groups))
 		for _, g := range groups {
@@ -148,16 +154,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(payload)), len(entries), usable, strings.Join(countries, " "))
 	case strings.HasPrefix(payload, "olcrtc://"), strings.HasPrefix(payload, "vless://"),
 		strings.HasPrefix(payload, "hysteria2://"), strings.HasPrefix(payload, "hy2://"):
-		// one line becomes its own inline subscription; the parse says whether
-		// this version can connect it, and names the reason when it cannot
-		entry := links.Entries(inlinePrefix+payload, []string{payload})[0]
-		if entry.Problem != "" {
-			return ipc.Fail("bad_line", entry.Problem)
-		}
-		d.mu.Lock()
-		d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + payload, Title: entry.Label, AddedAt: d.deps.Now()})
-		d.mu.Unlock()
-		msg = "added " + entry.Label
+		return d.addInline(payload, "")
 	default:
 		scheme, _, _ := strings.Cut(payload, "://")
 		return ipc.Fail("unsupported", scheme+":// is not supported by this version; add a list URL, or one olcrtc://, vless:// or hysteria2:// line")
@@ -167,6 +164,41 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 	d.mu.Unlock()
 	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
+	}
+	return ipc.Response{OK: true, Message: msg}
+}
+
+// addInline stores one or more lines as their own inline subscription. The
+// parse says whether this version can connect each line, and names the reason
+// when it cannot; a single line that cannot be connected is refused.
+func (d *Daemon) addInline(text, title string) ipc.Response {
+	lines := links.DecodeBody([]byte(text))
+	if len(lines) == 0 {
+		return ipc.Fail("bad_line", "no lines")
+	}
+	entries := links.Entries(inlinePrefix+text, lines)
+	if len(entries) == 1 && entries[0].Problem != "" {
+		return ipc.Fail("bad_line", entries[0].Problem)
+	}
+	if title == "" {
+		title = entries[0].Label
+	}
+	d.mu.Lock()
+	for _, s := range d.cfg.Subscriptions {
+		if s.URL == inlinePrefix+text {
+			d.mu.Unlock()
+			return ipc.Response{OK: true, Message: "already added"}
+		}
+	}
+	d.cfg.Subscriptions = append(d.cfg.Subscriptions, store.Subscription{URL: inlinePrefix + text, Title: title, AddedAt: d.deps.Now()})
+	cfg := d.cfg.Clone()
+	d.mu.Unlock()
+	if err := d.saveConfig(cfg); err != nil {
+		return ipc.Fail("io", err.Error())
+	}
+	msg := "added " + entries[0].Label
+	if len(entries) > 1 {
+		msg = fmt.Sprintf("%s: %d entries (%d usable now)", title, len(entries), len(connectable(entries)))
 	}
 	return ipc.Response{OK: true, Message: msg}
 }
@@ -199,10 +231,7 @@ func (d *Daemon) remove(needle string) ipc.Response {
 		return ipc.Fail("no_match", "no subscription matches "+needle)
 	}
 	if dropSelection {
-		d.stopConnect()
-		d.mu.Lock()
-		d.cfg.Selection = nil
-		d.mu.Unlock()
+		d.stopAll(true)
 	}
 	d.mu.Lock()
 	cfg := d.cfg.Clone()
@@ -222,39 +251,29 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Fail("bad_mode", "mode must be tun or proxy")
 	}
 	d.mu.Lock()
-	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
+	nsubs := len(d.cfg.Subscriptions)
+	listen := d.cfg.Proxy.Listen
 	d.mu.Unlock()
-	if len(subs) == 0 {
+	if nsubs == 0 {
 		return ipc.Fail("no_subscription", "add a list first: ghostlane add <url>")
 	}
-	var chosen string
-	var lastErr error
-	for _, s := range subs {
-		if req.Subscription != "" && !matchesSub(s.URL, req.Subscription) {
-			continue
-		}
-		entries, err := d.entriesFor(ctx, s.URL, false)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if _, err := links.Select(entries, req.Selector); err == nil {
-			chosen = s.URL
-			break
-		} else {
-			lastErr = err
-		}
+	if mode == "proxy" && net.ParseIP(listen) == nil {
+		return ipc.Fail("bad_listen", "proxy.listen must be an IP address (127.0.0.1, ::1 or 0.0.0.0), not "+listen)
 	}
-	if chosen == "" {
-		if lastErr == nil {
-			lastErr = errNoSubscription
-		}
-		if errors.Is(lastErr, links.ErrNoMatch) {
-			return ipc.Fail("no_match", lastErr.Error())
-		}
-		return ipc.Fail("no_subscription", lastErr.Error())
+	if req.KillSwitch && mode != "tun" {
+		return ipc.Fail("bad_mode", "the kill switch needs --tun: a proxy routes nothing to kill")
 	}
-	sel := store.Selection{Subscription: chosen, Selector: req.Selector, Mode: mode}
+	all, err := d.allEntries(ctx, req.Subscription)
+	if err != nil {
+		return ipc.Fail("no_subscription", err.Error())
+	}
+	if _, err := links.Select(flatten(all), req.Selector); err != nil {
+		if errors.Is(err, links.ErrNoMatch) {
+			return ipc.Fail("no_match", err.Error())
+		}
+		return ipc.Fail("no_subscription", err.Error())
+	}
+	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode, KillSwitch: req.KillSwitch}
 	d.mu.Lock()
 	d.cfg.Selection = &sel
 	cfg := d.cfg.Clone()
@@ -262,6 +281,12 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
 	}
-	d.startConnect(sel)
-	return ipc.Response{OK: true, Message: fmt.Sprintf("connecting to %s in %s mode", req.Selector, mode)}
+	if err := d.startConnect(sel); err != nil {
+		return ipc.Fail("kill_switch", err.Error())
+	}
+	msg := fmt.Sprintf("connecting to %s in %s mode", req.Selector, mode)
+	if sel.KillSwitch {
+		msg += " with the kill switch"
+	}
+	return ipc.Response{OK: true, Message: msg}
 }

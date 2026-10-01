@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
+	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1/crypt1test"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/singbox"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/xray"
@@ -39,6 +41,9 @@ type world struct {
 	deadFrom   int             // every front numbered >= deadFrom fails its probe (0 = none)
 	fronts     int
 	frontProbe map[string]string // probe listen address → "front:<n>"
+	fetchDelay time.Duration
+	bodies     map[string][]byte // per-URL bodies; "" = w.body
+	fetchErrs  map[string]error  // per-URL fetch errors
 }
 
 func (w *world) rec(s string) { w.mu.Lock(); w.log = append(w.log, s); w.mu.Unlock() }
@@ -89,6 +94,11 @@ func (r *fakeRoutes) GlobalAddresses() ([]netip.Addr, error) {
 func (r *fakeRoutes) Sync([]netip.Addr) error { r.w.rec("routes:sync"); return nil }
 func (r *fakeRoutes) Clear() error            { r.w.rec("routes:clear"); return nil }
 func (r *fakeRoutes) CleanupStale() error     { r.w.rec("routes:cleanup"); return nil }
+func (r *fakeRoutes) InstallKillSwitch(uid int) error {
+	r.w.rec("routes:killswitch:" + strconv.Itoa(uid))
+	return nil
+}
+func (r *fakeRoutes) RemoveKillSwitch() error { r.w.rec("routes:killswitch-off"); return nil }
 func (r *fakeRoutes) WatchAddresses(context.Context, func()) (func(), error) {
 	r.w.rec("watch")
 	return func() { r.w.rec("watch-stop") }, nil
@@ -100,18 +110,28 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}}
+	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}, bodies: map[string][]byte{}, fetchErrs: map[string]error{}}
 	dir := t.TempDir()
 	deps := Deps{
 		ConfigPath: filepath.Join(dir, "config.yaml"), StateDir: dir, SocketPath: filepath.Join(dir, "s.sock"),
 		Fetch: func(_ context.Context, url string) ([]byte, links.Headers, error) {
 			w.mu.Lock()
-			defer w.mu.Unlock()
-			w.fetches++
-			if w.fetchErr != nil {
-				return nil, links.Headers{}, w.fetchErr
+			delay, body, err := w.fetchDelay, w.body, w.fetchErr
+			if b, ok := w.bodies[url]; ok {
+				body = b
 			}
-			return w.body, links.Headers{Title: "Partner", UpdateIntervalHours: 1}, nil
+			if e, ok := w.fetchErrs[url]; ok {
+				err = e
+			}
+			w.fetches++
+			w.mu.Unlock()
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			if err != nil {
+				return nil, links.Headers{}, err
+			}
+			return body, links.Headers{Title: "Partner", UpdateIntervalHours: 1}, nil
 		},
 		StartEngine: func(_ context.Context, p olcrtc.Params) (Engine, error) {
 			w.mu.Lock()
@@ -263,8 +283,9 @@ func TestCarrierFailoverAndLastGood(t *testing.T) {
 		t.Fatalf("three probe failures move to the next carrier: %+v", st.Line)
 	}
 	// the file is written before the state reads "up", so no polling is needed
+	// the selection is global (no --subscription), so the key has no list
 	lg, _ := store.LoadLastGood(dir)
-	if lg[listURL+"|DE"] != st.Line.ID {
+	if lg["|DE"] != st.Line.ID {
 		t.Fatalf("last good %v, line %s", lg, st.Line.ID)
 	}
 	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
@@ -565,7 +586,7 @@ func TestFetchErrorNeverShowsToken(t *testing.T) {
 	d.cfg = cfg
 	d.mu.Unlock()
 	d.Handle(ctx, ipc.Request{Verb: "refresh"})
-	d.startConnect(*cfg.Selection)
+	_ = d.startConnect(*cfg.Selection)
 	st := waitState(t, d, "failed")
 	all := st.LastError
 	for _, s := range st.Subscriptions {
@@ -784,5 +805,383 @@ func TestTunRulesClearedWhenProbeInboundFails(t *testing.T) {
 	ev := w.events()
 	if !strings.Contains(ev, "routes:sync routes:clear engine-stop") {
 		t.Fatalf("rules cleared when the probe inbound cannot be made: %s", ev)
+	}
+}
+
+// Review Focus 4: indices are continuous across subscriptions.
+func TestGlobalIndices(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	line := "vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=s&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12#solo"
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: line})
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	list := d.Handle(ctx, ipc.Request{Verb: "list"})
+	if len(list.Entries) != 65 || list.Entries[0].Index != 1 || list.Entries[1].Index != 2 || list.Entries[64].Index != 65 {
+		t.Fatalf("continuous numbering: %d entries, %d %d %d", len(list.Entries), list.Entries[0].Index, list.Entries[1].Index, list.Entries[len(list.Entries)-1].Index)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "2", Mode: "proxy"})
+	st := waitState(t, d, "up")
+	if st.Line.Country != "CA" || st.Line.Carrier != "telemost" {
+		t.Fatalf("global index 2 is the rooms list's first line: %+v", st.Line)
+	}
+}
+
+func TestHttpListRefused(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx := context.Background()
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: "http://sub.example/sub/a/b"}); resp.OK || resp.Error != "insecure" {
+		t.Fatalf("%+v", resp)
+	}
+}
+
+func TestListenChecks(t *testing.T) {
+	_, d, dir := newWorld(t)
+	cfg := store.Defaults()
+	cfg.Proxy.Listen = "localhost"
+	_ = store.Save(filepath.Join(dir, "config.yaml"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"}); resp.OK || resp.Error != "bad_listen" {
+		t.Fatalf("localhost is not an address sing-box takes: %+v", resp)
+	}
+	d.mu.Lock()
+	d.cfg.Proxy.Listen = "::1"
+	d.mu.Unlock()
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	if st := waitState(t, d, "up"); st.Proxy == nil || st.Proxy.Socks != "[::1]:1080" {
+		t.Fatalf("an IPv6 listen is bracketed: %+v", st.Proxy)
+	}
+}
+
+func TestInlineLineAddedOnce(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx := context.Background()
+	line := "olcrtc://wbstream?vp8channel@room_q#" + strings.Repeat("cd", 32) + "$JP"
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: line})
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: line}); !resp.OK || resp.Message != "already added" {
+		t.Fatalf("%+v", resp)
+	}
+	if list := d.Handle(ctx, ipc.Request{Verb: "list"}); len(list.Entries) != 1 {
+		t.Fatalf("%d", len(list.Entries))
+	}
+}
+
+// A selector that matches nothing today is retried when the list changes.
+func TestSelectorRetriedOnRefresh(t *testing.T) {
+	w, d, dir := newWorld(t)
+	var withoutFR []string
+	for _, l := range strings.Split(string(w.body), "\n") {
+		if !strings.Contains(l, "FR") {
+			withoutFR = append(withoutFR, l)
+		}
+	}
+	full := w.body
+	w.body = []byte(strings.Join(withoutFR, "\n"))
+	cfg := store.Defaults()
+	cfg.Subscriptions = []store.Subscription{{URL: listURL, IntervalHours: 1}}
+	cfg.Selection = &store.Selection{Subscription: listURL, Selector: "FR", Mode: "proxy"}
+	_ = store.Save(filepath.Join(dir, "config.yaml"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	waitState(t, d, "failed")
+	w.mu.Lock()
+	w.body = full
+	w.mu.Unlock()
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	if st := waitState(t, d, "up"); st.Line.Country != "FR" {
+		t.Fatalf("%+v", st.Line)
+	}
+}
+
+// After every line of a round failed, the next round starts after the one
+// that failed last, not with the last-good line that just died.
+func TestFailoverContinuesAfterWrap(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	// every line comes up, then its own front's probes die (later fronts stay alive)
+	var order []string
+	killed := map[int]bool{}
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) && len(order) < 6 {
+		st := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+		if st.State == "up" && st.Line != nil {
+			w.mu.Lock()
+			n := w.fronts
+			if !killed[n] {
+				killed[n] = true
+				order = append(order, st.Line.Carrier)
+				w.deadProbe["front:"+strconv.Itoa(n)] = true
+			}
+			w.mu.Unlock()
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	want := []string{"telemost", "wbstream", "salutejazz", "vkcalls", "telemost", "wbstream"}
+	if strings.Join(order, " ") != strings.Join(want, " ") {
+		t.Fatalf("order of lines brought up: %v, want %v", order, want)
+	}
+}
+
+func TestRefreshIsParallel(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	for _, u := range []string{"https://a.example/sub/1/x", "https://b.example/sub/1/x", "https://c.example/sub/1/x", "https://d.example/sub/1/x"} {
+		d.Handle(ctx, ipc.Request{Verb: "add", Source: u})
+	}
+	w.mu.Lock()
+	w.fetchDelay = 100 * time.Millisecond
+	w.mu.Unlock()
+	start := time.Now()
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	if el := time.Since(start); el > 250*time.Millisecond {
+		t.Fatalf("four lists refreshed serially: %s", el)
+	}
+}
+
+// Review Focus 4 in tun mode: the first kind's pre-flight fails, the next kind
+// gets the tun; no tun front for the failed kind.
+func TestMixedCountryFailoverTun(t *testing.T) {
+	w, d, _ := unifiedWorld(t)
+	w.deadProbe["front:1"] = true // the Reality pre-flight
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun"})
+	st := waitState(t, d, "up")
+	if st.Line.Kind != "hysteria2" {
+		t.Fatalf("%+v", st.Line)
+	}
+	ev := w.events()
+	if !strings.Contains(ev, "front:proxy:vless front-close front:proxy:hy2 front-close routes:sync front:tun:hy2") {
+		t.Fatalf("pre-flights in order, rules and tun only for the line that passed: %s", ev)
+	}
+	if strings.Contains(ev, "front:tun:vless") {
+		t.Fatalf("no tun for the failed kind: %s", ev)
+	}
+}
+
+func crypt1World(t *testing.T) (*world, *Daemon, [32]byte) {
+	t.Helper()
+	w, d, _ := newWorld(t)
+	master := crypt1test.Master()
+	d.deps.Decrypt = func(blob string) ([]byte, bool) { return crypt1.Decrypt(master, blob) }
+	return w, d, master
+}
+
+// Review Focus 3: a crypt1 link whose payload is a URL becomes a subscription;
+// one whose payload is lines becomes an inline subscription.
+func TestCrypt1Links(t *testing.T) {
+	_, d, master := crypt1World(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	link := crypt1.LinkPrefix + crypt1test.Encrypt(master, []byte(listURL))
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: link}); !resp.OK || !strings.Contains(resp.Message, "64 entries") {
+		t.Fatalf("%+v", resp)
+	}
+	lines := "olcrtc://wbstream?vp8channel@room_q#" + strings.Repeat("cd", 32) + "$JP · WB\nolcrtc://salutejazz?datachannel@a:b#" + strings.Repeat("cd", 32) + "$JP · SJ\n"
+	link = crypt1.LinkPrefix + crypt1test.Encrypt(master, []byte(lines))
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: link}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	if list := d.Handle(ctx, ipc.Request{Verb: "list"}); len(list.Entries) != 66 || list.Entries[65].Label != "JP · SJ" {
+		t.Fatalf("%d entries, last %+v", len(list.Entries), list.Entries[len(list.Entries)-1])
+	}
+	bad := crypt1.LinkPrefix + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: bad}); resp.OK || resp.Error != "bad_line" {
+		t.Fatalf("a blob that does not verify is refused: %+v", resp)
+	}
+}
+
+func TestCrypt1Body(t *testing.T) {
+	w, d, master := crypt1World(t)
+	w.body = []byte(crypt1test.Encrypt(master, w.body))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL}); !resp.OK || !strings.Contains(resp.Message, "64 entries") {
+		t.Fatalf("an encrypted body is a list: %+v", resp)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	waitState(t, d, "up")
+}
+
+func TestCrypt1WithoutKey(t *testing.T) {
+	_, d, _ := newWorld(t)
+	ctx := context.Background()
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: crypt1.LinkPrefix + "abc"}); resp.OK || !strings.Contains(resp.Message, "crypt1") {
+		t.Fatalf("%+v", resp)
+	}
+}
+
+// The kill switch goes in before the first engine start, stays across a
+// failover (the box is closed between lines, not open) and goes away on
+// disconnect; the own-address rules stay with it, not with the line.
+func TestKillSwitchLifecycle(t *testing.T) {
+	w, d, dir := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy", KillSwitch: true}); resp.OK || resp.Error != "bad_mode" {
+		t.Fatalf("proxy mode has nothing to kill: %+v", resp)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun", KillSwitch: true})
+	st := waitState(t, d, "up")
+	if !st.KillSwitch {
+		t.Fatalf("status shows it: %+v", st)
+	}
+	cfg, _ := store.Load(filepath.Join(dir, "config.yaml"))
+	if cfg.Selection == nil || !cfg.Selection.KillSwitch {
+		t.Fatalf("persisted with the selection: %+v", cfg.Selection)
+	}
+	ev := w.events()
+	if i, j := strings.Index(ev, "routes:killswitch:977 routes:sync watch"), strings.Index(ev, "engine"); i < 0 || j < i {
+		t.Fatalf("installed, with the own-address rules, before any engine: %s", ev)
+	}
+	// failover: the first line's probes die
+	w.mu.Lock()
+	w.deadProbe["front:1"] = true
+	w.mu.Unlock()
+	waitFor(t, func() bool {
+		s := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+		return s.State == "up" && s.Line != nil && s.Line.Carrier != "telemost"
+	})
+	ev = w.events()
+	if strings.Contains(ev, "killswitch-off") || strings.Contains(ev, "routes:clear") || strings.Count(ev, "routes:sync") != 1 {
+		t.Fatalf("between lines the switch and the own rules stay: %s", ev)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	ev = w.events()
+	if !strings.HasSuffix(strings.TrimSpace(ev), "watch-stop routes:clear routes:killswitch-off") {
+		t.Fatalf("disconnect removes the rules after the line: %s", ev)
+	}
+}
+
+// A stored selection with the switch installs it at start (before the first
+// engine start) and a clean stop removes it.
+func TestKillSwitchRestoredAtStartRemovedAtStop(t *testing.T) {
+	w, d, dir := newWorld(t)
+	cfg := store.Defaults()
+	cfg.Subscriptions = []store.Subscription{{URL: listURL, IntervalHours: 1}}
+	cfg.Selection = &store.Selection{Selector: "DE", Mode: "tun", KillSwitch: true}
+	_ = store.Save(filepath.Join(dir, "config.yaml"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitState(t, d, "up")
+	ev := w.events()
+	if i, j := strings.Index(ev, "routes:cleanup"), strings.Index(ev, "routes:killswitch:977"); i < 0 || j < i || strings.Index(ev, "engine") < j {
+		t.Fatalf("cleanup, then the switch, then the engine: %s", ev)
+	}
+	cancel()
+	<-done
+	if ev := w.events(); !strings.Contains(ev, "routes:killswitch-off") {
+		t.Fatalf("a clean stop gives the box back: %s", ev)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met in time")
+}
+
+// Review finding I1: removing the subscription a kill-switch selection was
+// made for drops the selection and the switch with it.
+func TestRemoveSubscriptionRemovesKillSwitch(t *testing.T) {
+	w, d, dir := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun", KillSwitch: true, Subscription: listURL})
+	waitState(t, d, "up")
+	if resp := d.Handle(ctx, ipc.Request{Verb: "remove", Subscription: listURL}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	st := waitState(t, d, "idle")
+	if st.KillSwitch || d.killSwitchOn() {
+		t.Fatalf("the switch must go with the selection: %+v on=%v", st, d.killSwitchOn())
+	}
+	if ev := w.events(); !strings.HasSuffix(strings.TrimSpace(ev), "routes:killswitch-off") {
+		t.Fatalf("%s", ev)
+	}
+	cfg, _ := store.Load(filepath.Join(dir, "config.yaml"))
+	if cfg.Selection != nil || len(cfg.Subscriptions) != 0 {
+		t.Fatalf("%+v", cfg)
+	}
+}
+
+// Review finding I4: a connect that arrives before Run reaches its stored
+// selection must not be restarted by Run (one loop, one engine start).
+func TestConnectBeforeRunStartsOneLoop(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	waitState(t, d, "up")
+	go func() { _ = d.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+	st := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+	ev := w.events()
+	if st.State != "up" || strings.Count(ev, "engine:") != 1 || strings.Contains(ev, "engine-stop") {
+		t.Fatalf("Run restarted a live selection: %s / %s", st.State, ev)
+	}
+}
+
+// Review minor re-graded: a numeric selection names a line, not a position.
+// When an earlier list cannot be read later, the stored selection still
+// reconnects the same line instead of whatever now sits at that index.
+func TestNumericSelectionSticksToItsLine(t *testing.T) {
+	w, d, dir := newWorld(t)
+	urlA, urlB := "https://a.example/sub/1/x", listURL
+	w.bodies[urlA] = []byte("vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=s&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12#solo\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: urlA})
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: urlB})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "2", Mode: "proxy"})
+	first := waitState(t, d, "up")
+	if first.Line.Carrier != "telemost" {
+		t.Fatalf("index 2 is B's first line: %+v", first.Line)
+	}
+	cancel()
+	<-done
+	// list A vanishes: no cache, its fetch fails; B is fine
+	if err := os.RemoveAll(filepath.Join(dir, "lists")); err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	w.fetchErrs[urlA] = errors.New("503")
+	w.mu.Unlock()
+	d2 := New(d.deps)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go func() { _ = d2.Run(ctx2) }()
+	again := waitState(t, d2, "up")
+	if again.Line.ID != first.Line.ID {
+		t.Fatalf("the stored selection moved to another line: was %s (%s), now %s (%s)", first.Line.ID, first.Line.Label, again.Line.ID, again.Line.Label)
 	}
 }

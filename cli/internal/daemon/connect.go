@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
@@ -15,20 +17,30 @@ import (
 	"github.com/ghostlane-project/ghostlane/cli/internal/store"
 )
 
-var (
-	errNoSubscription = errors.New("no subscription holds that selector")
-	errNotConnectable = errors.New("this line cannot be connected by this version")
-)
+var errNotConnectable = errors.New("this line cannot be connected by this version")
 
 // startConnect cancels any running connection and starts the loop for sel.
-func (d *Daemon) startConnect(sel store.Selection) {
+// The only error is a kill switch that could not be installed: the loop is
+// not started then (closed rather than open), and the state says why.
+func (d *Daemon) startConnect(sel store.Selection) error {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
-	d.startConnectLocked(sel)
+	return d.startConnectLocked(sel)
 }
 
-func (d *Daemon) startConnectLocked(sel store.Selection) {
+func (d *Daemon) startConnectLocked(sel store.Selection) error {
 	d.stopConnectLocked()
+	if sel.Mode == "tun" && sel.KillSwitch {
+		if err := d.installKillSwitch(); err != nil {
+			d.mu.Lock()
+			d.sel = &sel
+			d.state, d.lastErr = "failed", "kill switch: "+err.Error()
+			d.mu.Unlock()
+			return fmt.Errorf("kill switch: %w", err)
+		}
+	} else {
+		d.removeKillSwitch()
+	}
 	d.mu.Lock()
 	base := d.runCtx
 	if base == nil {
@@ -36,21 +48,124 @@ func (d *Daemon) startConnectLocked(sel store.Selection) {
 	}
 	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
-	d.cancel, d.loopDone = cancel, done
+	d.cancel, d.loopDone, d.loopLive = cancel, done, true
 	d.sel = &sel
 	d.state, d.lastErr = "connecting", ""
 	d.mu.Unlock()
 	go func() {
-		defer close(done)
+		defer func() {
+			d.mu.Lock()
+			d.loopLive = false
+			d.mu.Unlock()
+			close(done)
+		}()
 		d.connectLoop(ctx, sel)
 	}()
+	return nil
 }
 
-// stopConnect ends the loop and waits for it to tear the connection down.
-func (d *Daemon) stopConnect() {
+// installKillSwitch puts the switch in with the own-address rules and their
+// watcher, which then belong to the switch (a line's teardown leaves them).
+func (d *Daemon) installKillSwitch() error {
+	if d.killSwitchOn() {
+		return nil
+	}
+	if err := d.deps.Routes.InstallKillSwitch(d.deps.UID); err != nil {
+		return err
+	}
+	if err := d.syncOwnRules(); err != nil {
+		_ = d.deps.Routes.RemoveKillSwitch()
+		return fmt.Errorf("policy rules: %w", err)
+	}
+	d.mu.Lock()
+	base := d.runCtx
+	d.mu.Unlock()
+	if base == nil {
+		base = context.Background()
+	}
+	stop, err := d.deps.Routes.WatchAddresses(base, func() {
+		if err := d.syncOwnRules(); err != nil {
+			d.logf("policy rules: %v", err)
+		}
+	})
+	if err != nil {
+		d.logf("address watch: %v", err)
+		stop = func() {}
+	}
+	d.mu.Lock()
+	d.ksOn, d.ksStop = true, stop
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *Daemon) removeKillSwitch() {
+	d.mu.Lock()
+	on, stop := d.ksOn, d.ksStop
+	d.ksOn, d.ksStop = false, nil
+	d.mu.Unlock()
+	if !on {
+		return
+	}
+	stop()
+	if err := d.deps.Routes.Clear(); err != nil {
+		d.logf("policy rules: %v", err)
+	}
+	if err := d.deps.Routes.RemoveKillSwitch(); err != nil {
+		d.logf("kill switch: %v", err)
+	}
+}
+
+func (d *Daemon) killSwitchOn() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ksOn
+}
+
+func (d *Daemon) syncOwnRules() error {
+	addrs, err := d.deps.Routes.GlobalAddresses()
+	if err != nil {
+		return err
+	}
+	return d.deps.Routes.Sync(addrs)
+}
+
+// stopAll ends the loop, removes the kill switch and, when asked, forgets the
+// stored selection — all under connectMu, so no control request or refresh
+// sees the selection without its switch or revives it in between.
+func (d *Daemon) stopAll(forgetSelection bool) {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
 	d.stopConnectLocked()
+	d.removeKillSwitch()
+	if forgetSelection {
+		d.mu.Lock()
+		if d.cfg != nil {
+			d.cfg.Selection = nil
+		}
+		d.mu.Unlock()
+	}
+}
+
+// startStored starts the stored selection at daemon start unless a control
+// request already started a loop (a connect that arrived before this point
+// stored its own selection, and that loop stands).
+func (d *Daemon) startStored() {
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
+	d.mu.Lock()
+	live := d.loopLive
+	var sel *store.Selection
+	if d.cfg != nil && d.cfg.Selection != nil {
+		s := *d.cfg.Selection
+		sel = &s
+	}
+	d.mu.Unlock()
+	if sel == nil || live {
+		return
+	}
+	if err := d.startConnectLocked(*sel); err != nil {
+		d.logf("%v", err)
+	}
 }
 
 func (d *Daemon) stopConnectLocked() {
@@ -81,8 +196,10 @@ func (d *Daemon) setState(state, lastErr string, entry *links.Entry) {
 
 func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 	backoff := d.deps.RetryMin
+	round := 0
+	lastTried := "" // the id of the line the previous round ended on
 	for ctx.Err() == nil {
-		entries, err := d.entriesFor(ctx, sel.Subscription, false)
+		all, err := d.allEntries(ctx, sel.Subscription)
 		if err != nil {
 			d.setState("failed", err.Error(), nil)
 			if !sleepCtx(ctx, backoff) {
@@ -91,22 +208,30 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 			continue
 		}
-		cands, err := links.Select(entries, sel.Selector)
+		cands, err := d.resolve(all, &sel)
 		if err != nil {
+			// nothing matches today; the next refresh that changes a list retries
 			d.setState("failed", err.Error(), nil)
-			return // a selector that matches nothing is not retried
+			return
 		}
-		cands = d.orderCandidates(sel, connectable(cands))
+		cands = connectable(cands)
 		if len(cands) == 0 {
 			d.setState("failed", "no connectable line matches "+sel.Selector, nil)
 			return
 		}
+		if round == 0 {
+			cands = d.orderCandidates(sel, cands)
+		} else {
+			cands = rotateAfter(cands, lastTried)
+		}
+		round++
 		anyUp := false
 		for i := range cands {
 			cand := cands[i]
 			if ctx.Err() != nil {
 				return
 			}
+			lastTried = cand.ID
 			d.setState("connecting", "", &cand)
 			l, err := d.bringUp(ctx, cand, sel.Mode)
 			if err != nil {
@@ -132,6 +257,51 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 		}
 	}
+}
+
+// resolve turns the selection into candidates. A numeric selector names a
+// line, not a position: the first resolution remembers the line's id with the
+// selection, and later ones (another round, the next start, a list that
+// cannot be read today) find that line wherever it sits; only a line that is
+// gone falls back to the index.
+func (d *Daemon) resolve(all []indexed, sel *store.Selection) ([]links.Entry, error) {
+	if sel.EntryID != "" {
+		for _, e := range all {
+			if e.entry.ID == sel.EntryID {
+				return []links.Entry{e.entry}, nil
+			}
+		}
+	}
+	cands, err := links.Select(flatten(all), sel.Selector)
+	if err != nil {
+		return nil, err
+	}
+	if _, numeric := strconv.Atoi(strings.TrimSpace(sel.Selector)); numeric == nil && len(cands) == 1 && sel.EntryID != cands[0].ID {
+		sel.EntryID = cands[0].ID
+		d.mu.Lock()
+		if d.cfg != nil && d.cfg.Selection != nil && d.cfg.Selection.Selector == sel.Selector && d.cfg.Selection.Subscription == sel.Subscription {
+			d.cfg.Selection.EntryID = sel.EntryID
+		}
+		cfg := d.cfg.Clone()
+		d.mu.Unlock()
+		if err := d.saveConfig(cfg); err != nil {
+			d.logf("config: %v", err)
+		}
+	}
+	return cands, nil
+}
+
+// rotateAfter starts the next round after the line the last one ended on, so
+// the line that just failed is tried last, not first.
+func rotateAfter(cands []links.Entry, lastID string) []links.Entry {
+	for i, c := range cands {
+		if c.ID == lastID {
+			out := make([]links.Entry, 0, len(cands))
+			out = append(out, cands[i+1:]...)
+			return append(out, cands[:i+1]...)
+		}
+	}
+	return cands
 }
 
 func connectable(in []links.Entry) []links.Entry {
@@ -241,19 +411,17 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 			return nil, err
 		}
 	}
-	if mode == "tun" {
-		addrs, err := d.deps.Routes.GlobalAddresses()
-		if err == nil {
-			err = d.deps.Routes.Sync(addrs)
-		}
-		if err != nil {
+	// the own-address rules ride the line unless the kill switch holds them
+	ownRules := mode == "tun" && !d.killSwitchOn()
+	if ownRules {
+		if err := d.syncOwnRules(); err != nil {
 			stopEngine(eng)
 			return nil, fmt.Errorf("policy rules: %w", err)
 		}
 	}
 	probeAddr, probeUser, probePass, err := newProbeInbound()
 	if err != nil {
-		if mode == "tun" {
+		if ownRules {
 			_ = d.deps.Routes.Clear()
 		}
 		stopEngine(eng)
@@ -261,13 +429,13 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 	}
 	front, err := d.deps.StartFront(ctx, d.frontParams(mode, up, probeAddr, probeUser, probePass))
 	if err != nil {
-		if mode == "tun" {
+		if ownRules {
 			_ = d.deps.Routes.Clear()
 		}
 		stopEngine(eng)
 		return nil, fmt.Errorf("front: %w", err)
 	}
-	l := &live{entry: e, mode: mode, engine: eng, front: front, probeAddr: probeAddr, probeUser: probeUser, probePass: probePass}
+	l := &live{entry: e, mode: mode, engine: eng, front: front, probeAddr: probeAddr, probeUser: probeUser, probePass: probePass, ownRules: ownRules}
 	if err := d.confirmVia(ctx, probeAddr, probeUser, probePass); err != nil {
 		d.tearDown(l)
 		return nil, err
@@ -347,12 +515,10 @@ func (d *Daemon) markUp(sel store.Selection, l *live) {
 // that is no longer running, end the line. The address watcher belongs to this
 // connection: it is stopped before the caller clears the rules.
 func (d *Daemon) supervise(ctx context.Context, l *live) string {
-	if l.mode == "tun" {
+	if l.ownRules {
 		stop, err := d.deps.Routes.WatchAddresses(ctx, func() {
-			if addrs, err := d.deps.Routes.GlobalAddresses(); err == nil {
-				if err := d.deps.Routes.Sync(addrs); err != nil {
-					d.logf("policy rules: %v", err)
-				}
+			if err := d.syncOwnRules(); err != nil {
+				d.logf("policy rules: %v", err)
 			}
 		})
 		if err != nil {
@@ -390,7 +556,7 @@ func (d *Daemon) supervise(ctx context.Context, l *live) string {
 func (d *Daemon) tearDown(l *live) {
 	_ = l.front.Close()
 	stopEngine(l.engine)
-	if l.mode == "tun" {
+	if l.ownRules {
 		_ = d.deps.Routes.Clear()
 	}
 	d.mu.Lock()
@@ -414,7 +580,7 @@ func sleepCtx(ctx context.Context, dur time.Duration) bool {
 // its own body.
 func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]links.Entry, error) {
 	if body, ok := inlineBody(subURL); ok {
-		return links.Entries(subURL, links.DecodeBody(body)), nil
+		return links.Entries(subURL, links.DecodeBodyWith(body, d.deps.Decrypt)), nil
 	}
 	cache, err := store.LoadCache(d.deps.StateDir, subURL)
 	if err != nil {
@@ -426,7 +592,7 @@ func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]l
 			return nil, err
 		}
 	}
-	return links.Entries(subURL, links.DecodeBody(cache.Body)), nil
+	return links.Entries(subURL, links.DecodeBodyWith(cache.Body, d.deps.Decrypt)), nil
 }
 
 func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, error) {
@@ -484,10 +650,14 @@ func (d *Daemon) refreshLoop(ctx context.Context) {
 	}
 }
 
+// refresh fetches the due lists, four at a time, and then lets afterRefresh
+// react to what changed.
 func (d *Daemon) refresh(ctx context.Context, force bool) {
 	d.mu.Lock()
 	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
 	d.mu.Unlock()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for _, s := range subs {
 		if _, inline := inlineBody(s.URL); inline {
 			continue
@@ -500,33 +670,60 @@ func (d *Daemon) refresh(ctx context.Context, force bool) {
 		if !force && cache != nil && d.deps.Now().Before(cache.FetchedAt.Add(time.Duration(hours)*time.Hour)) {
 			continue
 		}
-		fresh, err := d.fetchInto(ctx, s.URL)
-		if err != nil {
-			d.logf("refresh %s: %v", store.MaskURL(s.URL), err)
-			continue
-		}
-		d.afterRefresh(s.URL, links.Entries(s.URL, links.DecodeBody(fresh.Body)))
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := d.fetchInto(ctx, url); err != nil {
+				d.logf("refresh %s: %v", store.MaskURL(url), err)
+			}
+		}(s.URL)
 	}
+	wg.Wait()
+	d.afterRefresh(ctx)
 }
 
-func (d *Daemon) afterRefresh(subURL string, fresh []links.Entry) {
-	// Under connectMu: a control request must not slip in between reading the
-	// selection and restarting it.
+// afterRefresh reacts to refreshed lists: a stored selection with no loop
+// running (its selector matched nothing) is retried; a running line whose raw
+// text changed is reconnected; a vanished line is noted. Under connectMu: a
+// control request must not slip in between reading the selection and acting.
+func (d *Daemon) afterRefresh(ctx context.Context) {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
 	d.mu.Lock()
-	cur, sel := d.cur, d.sel
+	cur, live := d.cur, d.loopLive
+	var stored *store.Selection
+	if d.cfg != nil && d.cfg.Selection != nil {
+		s := *d.cfg.Selection
+		stored = &s
+	}
 	d.mu.Unlock()
-	if cur == nil || sel == nil || sel.Subscription != subURL {
+	if stored == nil {
 		return
 	}
-	for _, e := range fresh {
-		if e.ID != cur.entry.ID {
+	if !live {
+		if err := d.startConnectLocked(*stored); err != nil {
+			d.logf("%v", err)
+		}
+		return
+	}
+	if cur == nil {
+		return
+	}
+	all, err := d.allEntries(ctx, stored.Subscription)
+	if err != nil {
+		return
+	}
+	for _, e := range all {
+		if e.entry.ID != cur.entry.ID {
 			continue
 		}
-		if e.Raw != cur.entry.Raw {
-			d.logf("%s: the line changed (room, key or server), reconnecting", e.Label)
-			d.startConnectLocked(*sel)
+		if e.entry.Raw != cur.entry.Raw {
+			d.logf("%s: the line changed (room, key or server), reconnecting", e.entry.Label)
+			if err := d.startConnectLocked(*stored); err != nil {
+				d.logf("%v", err)
+			}
 		}
 		return
 	}

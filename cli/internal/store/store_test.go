@@ -70,3 +70,21 @@ func TestMaskURL(t *testing.T) {
 		t.Fatalf("query values other than c are masked: %q", got)
 	}
 }
+
+func TestCorruptCacheIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveCache(dir, "https://s/sub/x", &Cache{Body: []byte("x"), FetchedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	path := cachePath(dir, "https://s/sub/x")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCache(dir, "https://s/sub/x")
+	if err != nil || c != nil {
+		t.Fatalf("a corrupt cache counts as absent: %v %v", c, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("the corrupt file is removed so the next fetch replaces it")
+	}
+}

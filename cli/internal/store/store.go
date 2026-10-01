@@ -27,7 +27,9 @@ type Subscription struct {
 type Selection struct {
 	Subscription string `yaml:"subscription"`
 	Selector     string `yaml:"selector"`
-	Mode         string `yaml:"mode"` // "tun" | "proxy"
+	Mode         string `yaml:"mode"`                  // "tun" | "proxy"
+	KillSwitch   bool   `yaml:"kill_switch,omitempty"` // tun only: refuse traffic outside the tunnel while no line is up
+	EntryID      string `yaml:"entry_id,omitempty"`    // a numeric selector names a line, not a position: its id once resolved
 }
 
 type Proxy struct {
@@ -111,7 +113,9 @@ func LoadCache(dir, subURL string) (*Cache, error) {
 	}
 	var c Cache
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, err
+		// a corrupt file would otherwise never be re-fetched
+		_ = os.Remove(cachePath(dir, subURL))
+		return nil, nil //nolint:nilnil // absent
 	}
 	return &c, nil
 }

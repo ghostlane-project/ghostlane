@@ -32,6 +32,10 @@ type Routes interface {
 	Sync([]netip.Addr) error
 	Clear() error
 	CleanupStale() error
+	// InstallKillSwitch puts the kill switch in for a daemon running as uid
+	// (idempotent); RemoveKillSwitch takes it out.
+	InstallKillSwitch(uid int) error
+	RemoveKillSwitch() error
 	// WatchAddresses runs onChange on address changes until ctx ends or the
 	// returned stop is called; stop waits for a callback in flight.
 	WatchAddresses(ctx context.Context, onChange func()) (stop func(), err error)
@@ -42,6 +46,7 @@ type Deps struct {
 	StateDir    string
 	SocketPath  string
 	Fetch       func(ctx context.Context, url string) ([]byte, links.Headers, error)
+	Decrypt     links.Decryptor // crypt1 lists and links; nil = this build has no key
 	StartEngine func(ctx context.Context, p olcrtc.Params) (Engine, error)
 	StartXray   func(ctx context.Context, p xray.Params) (Engine, error)
 	StartFront  func(ctx context.Context, p singbox.FrontParams) (Front, error)
@@ -69,6 +74,7 @@ type live struct {
 	probeAddr string // the front's probe inbound, what supervise probes through
 	probeUser string
 	probePass string
+	ownRules  bool // this line put the own-address rules in (not the kill switch)
 }
 
 type Daemon struct {
@@ -93,7 +99,53 @@ type Daemon struct {
 	pending  *links.Entry // the line being tried while connecting
 	cancel   context.CancelFunc
 	loopDone chan struct{}
+	loopLive bool // a connect loop is running (it may be in backoff)
 	runCtx   context.Context
+	ksOn     bool   // the kill switch is in; the own-address rules belong to it, not to the line
+	ksStop   func() // its address watcher
+}
+
+// indexed is one entry with the subscription it came from; the daemon numbers
+// entries continuously across subscriptions.
+type indexed struct {
+	sub   string
+	entry links.Entry
+}
+
+// allEntries returns every subscription's entries in config order, or only
+// those of the subscriptions matching only.
+func (d *Daemon) allEntries(ctx context.Context, only string) ([]indexed, error) {
+	d.mu.Lock()
+	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
+	d.mu.Unlock()
+	var out []indexed
+	var lastErr error
+	for _, s := range subs {
+		if only != "" && !matchesSub(s.URL, only) {
+			continue
+		}
+		entries, err := d.entriesFor(ctx, s.URL, false)
+		if err != nil {
+			lastErr = err
+			d.logf("list %s: %v", store.MaskURL(s.URL), err)
+			continue
+		}
+		for _, e := range entries {
+			out = append(out, indexed{sub: s.URL, entry: e})
+		}
+	}
+	if len(out) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return out, nil
+}
+
+func flatten(in []indexed) []links.Entry {
+	out := make([]links.Entry, 0, len(in))
+	for _, i := range in {
+		out = append(out, i.entry)
+	}
+	return out
 }
 
 func New(d Deps) *Daemon {
@@ -145,9 +197,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureConfig(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d.mu.Lock()
-	sel := d.cfg.Selection
-	d.mu.Unlock()
 
 	var listener interface{ Close() error }
 	if d.deps.SocketPath != "" {
@@ -160,11 +209,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	NotifyReady()
 	go d.refreshLoop(ctx)
-	if sel != nil {
-		d.startConnect(*sel)
-	}
+	d.startStored()
 	<-ctx.Done()
-	d.stopConnect()
+	d.stopAll(false) // a clean stop gives the box back; the selection stays for the next start
 	if listener != nil {
 		_ = listener.Close()
 	}

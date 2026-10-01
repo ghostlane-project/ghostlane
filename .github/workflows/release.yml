@@ -824,6 +824,7 @@ jobs:
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
+      OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
     defaults:
       run:
         working-directory: cli
@@ -839,8 +840,9 @@ jobs:
       - name: Build, package, sum, sign
         run: |
           set -euo pipefail
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-          make dist VERSION="${OLCBOX_VERSION}"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          [ -n "${OLCBOX_CRYPT_KEY_V1}" ] || echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this CLI build cannot read crypt1 lists"
+          make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}"
           umask 077
           printf '%s\n' "${CLI_RELEASE_SIGNING_KEY}" > "$RUNNER_TEMP/cli-signing.pem"
           make sign VERSION="${OLCBOX_VERSION}" KEY="$RUNNER_TEMP/cli-signing.pem"
@@ -1681,6 +1683,7 @@ jobs:
       - build-macos
       - staple-macos
       - build-linux
+      - build-cli
       - build-android
       - build-ios
     # Only a full build publishes. A partial run would otherwise replace the nightly
@@ -1929,3 +1932,108 @@ jobs:
 
           gh release edit "$OLCBOX_NIGHTLY_TAG" --draft=false --prerelease
 
+
+  # The CLI's Docker image: the released tarballs' binaries (stage.sh) on
+  # distroless, every platform, pushed to ghcr.io once the release is out.
+  publish-cli-docker:
+    runs-on: ubuntu-latest
+    needs: [plan, release_version, build-cli, publish-nightly]
+    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/ghostlane-cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: Ghostlane-cli-linux
+          path: cli/dist
+      - name: Stage the released binaries
+        run: sh cli/packaging/docker/stage.sh cli/dist "${OLCBOX_VERSION}"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: cli
+          file: cli/packaging/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.OLCBOX_VERSION }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.OLCBOX_VERSION }}
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+
+  # The apt and dnf repositories on GitHub Pages (gh-pages: /apt, /rpm, the
+  # public key and the two sources snippets at the root), updated in place
+  # from the released packages and signed with CLI_REPO_GPG_KEY. Pages must
+  # be enabled once (source: gh-pages, root) — see docs/cli.md.
+  publish-cli-repo:
+    runs-on: ubuntu-latest
+    needs: [plan, release_version, build-cli, publish-nightly]
+    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    permissions:
+      contents: write
+    concurrency:
+      group: cli-repo-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      CLI_REPO_GPG_KEY: ${{ secrets.CLI_REPO_GPG_KEY }}
+    steps:
+      - name: Repository key is set
+        run: |
+          [ -n "${CLI_REPO_GPG_KEY}" ] || { echo "::error::CLI_REPO_GPG_KEY is not set; the apt/dnf repositories are signed or not published"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          path: src
+      - name: Checkout gh-pages (or start it)
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: pages
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+        continue-on-error: true
+        id: pages
+      - name: Start gh-pages
+        if: steps.pages.outcome != 'success'
+        run: |
+          rm -rf pages && mkdir pages && cd pages
+          git init -q -b gh-pages
+          git remote add origin "https://x-access-token:${{ secrets.RELEASE_TOKEN || github.token }}@github.com/${{ github.repository }}.git"
+      - uses: actions/download-artifact@v8
+        with:
+          name: Ghostlane-cli-linux
+          path: dist
+      - name: Build the repositories
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends reprepro createrepo-c rpm gnupg >/dev/null
+          umask 077
+          printf '%s\n' "${CLI_REPO_GPG_KEY}" > "$RUNNER_TEMP/repo-key.asc"
+          sh src/cli/packaging/repo/build-repos.sh dist pages "$RUNNER_TEMP/repo-key.asc" "${OLCBOX_VERSION}"
+          rm -f "$RUNNER_TEMP/repo-key.asc"
+          du -sh pages/apt pages/rpm
+      # One commit, the current tree: packages are ~25 MB each, so a branch with
+      # history would grow the repository by ~150 MB per release for ever.
+      - name: Push gh-pages (one commit, no history)
+        run: |
+          set -euo pipefail
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan gh-pages-next
+          git add -A
+          git commit -q -m "cli repositories: ${OLCBOX_VERSION}"
+          git push -q --force origin HEAD:gh-pages

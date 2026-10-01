@@ -106,7 +106,7 @@ jobs:
           fi
           # The Linux CLI is its own Go module: built and tested only when it, its
           # workflow, or the engine pin it must match changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^scripts/cores-pins\.sh$'; then
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -267,7 +267,7 @@ jobs:
       - name: Vet and lint
         run: |
           go vet -tags with_utls,with_quic ./...
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           golangci-lint run ./...
       - name: Unit tests
         run: go test -race -tags with_utls,with_quic ./...
@@ -284,7 +284,7 @@ jobs:
           sudo -E env "PATH=$PATH" GHOSTLANE_NETNS=1 go test -tags with_utls,with_quic -count=1 -run 'TestNetns' -v ./internal/routes/ ./internal/daemon/
       - name: Packages
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           make dist VERSION=0.0.0
           systemd-analyze verify packaging/ghostlane.service || true
           ls -la dist
@@ -292,6 +292,27 @@ jobs:
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" debian:bookworm sh -c 'dpkg -i /dist/ghostlane-cli-0.0.0-linux-amd64.deb && ghostlane version && id ghostlane'
           docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -c 'rpm -i /dist/ghostlane-cli-0.0.0-linux-amd64.rpm && ghostlane version && id ghostlane'
+          docker run --rm -v "$PWD/dist:/dist:ro" alpine:3.20 sh -c 'apk add --no-cache openrc >/dev/null && apk add --allow-untrusted /dist/ghostlane-cli-0.0.0-linux-amd64.apk && ghostlane version && id ghostlane && test -x /etc/init.d/ghostlane && rc-service ghostlane describe'
+      # The apt and dnf repositories the release publishes, built here with a
+      # throwaway key (natively: reprepro, createrepo_c and rpmsign are apt
+      # packages), then installed from with signature checks on (the package's
+      # header signature is RSA with whatever digest the runner's gpg picks).
+      - name: Repositories
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends reprepro createrepo-c rpm gnupg >/dev/null
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          printf '%%no-protection\nKey-Type: RSA\nKey-Length: 2048\nKey-Usage: sign\nName-Real: CI throwaway\nName-Email: ci@example.invalid\nExpire-Date: 1d\n%%commit\n' > "$RUNNER_TEMP/batch"
+          gpg --batch --gen-key "$RUNNER_TEMP/batch" 2>/dev/null
+          gpg --batch --armor --export-secret-keys > "$RUNNER_TEMP/repo-key.asc"
+          unset GNUPGHOME
+          sh packaging/repo/build-repos.sh dist "$RUNNER_TEMP/repo" "$RUNNER_TEMP/repo-key.asc" 0.0.0
+          # the CI key, not the release key, verifies here
+          gpg --batch --no-default-keyring --keyring "$RUNNER_TEMP/kr.gpg" --import "$RUNNER_TEMP/repo-key.asc" 2>/dev/null
+          gpg --batch --no-default-keyring --keyring "$RUNNER_TEMP/kr.gpg" --armor --export > "$RUNNER_TEMP/repo/ghostlane-repo.gpg.asc"
+          docker run --rm -v "$RUNNER_TEMP/repo:/repo:ro" debian:bookworm sh -c 'apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends gnupg >/dev/null 2>&1; install -d /etc/apt/keyrings; gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg < /repo/ghostlane-repo.gpg.asc; echo "deb [signed-by=/etc/apt/keyrings/ghostlane.gpg] file:///repo/apt stable main" > /etc/apt/sources.list.d/ghostlane.list; apt-get update 2>&1 | { ! grep -E "NO_PUBKEY|^E:|^W: GPG"; }; apt-get install -y ghostlane-cli >/dev/null && ghostlane version'
+          docker run --rm -v "$RUNNER_TEMP/repo:/repo:ro" rockylinux:9 sh -c 'printf "[ghostlane]\nname=Ghostlane CLI\nbaseurl=file:///repo/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///repo/ghostlane-repo.gpg.asc\n" > /etc/yum.repos.d/ghostlane.repo; dnf install -y -q ghostlane-cli >/dev/null && ghostlane version && rpm -q --qf "%{RSAHEADER:pgpsig}\n" ghostlane-cli | grep -q "^RSA/"'
 
   gate-scripts:
     if: github.event_name != 'workflow_dispatch'

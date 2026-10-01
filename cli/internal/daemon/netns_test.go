@@ -3,11 +3,13 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -255,4 +257,180 @@ func TestNetnsTunEndToEnd(t *testing.T) {
 	if len(rt) != 0 {
 		t.Fatalf("table 2022 left: %+v", rt)
 	}
+}
+
+// Review Focus 1 and 2: with the kill switch stored, the box is closed while no
+// line is up (at boot, between lines), open only through the tun, inbound and
+// the LAN keep working; disconnect and a clean stop give the box back; a
+// crash's leftovers are replaced at the next start. Three answers tell the
+// three states apart: the switch's own EHOSTUNREACH (synchronous, from the
+// unreachable route), "204" from the fake upstream behind the tun, and
+// "direct" from a listener on the internet address in the peer namespace.
+func TestNetnsKillSwitch(t *testing.T) {
+	if !netnstest.Enter(t) {
+		return
+	}
+	peer := topology(t)
+	ln, err := net.Listen("tcp", hostAddr+":2222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go answer(ln, "hi\n")
+	// the "internet" host lives in the peer namespace
+	ph, err := netlink.NewHandleAt(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pv1, _ := ph.LinkByName("gl-veth1")
+	ia, _ := netlink.ParseAddr("203.0.113.10/32")
+	if err := ph.AddrAdd(pv1, ia); err != nil {
+		t.Fatal(err)
+	}
+	var far net.Listener
+	inNamespace(peer, func() { far, err = net.Listen("tcp", "203.0.113.10:80") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer far.Close()
+	go answer(far, "direct\n")
+
+	upstream := fakesocks.Serve(t, "u", "p", fakesocks.Answer204)
+	dir := t.TempDir()
+	line := "olcrtc://telemost?vp8channel@room#" + strings.Repeat("ab", 32) + "$DE · olcRTC"
+	cfg := store.Defaults()
+	cfg.Subscriptions = []store.Subscription{{URL: "inline:" + line}}
+	cfg.Selection = &store.Selection{Selector: "1", Mode: "tun", KillSwitch: true}
+	if err := store.Save(filepath.Join(dir, "config.yaml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	alive := false
+	engWorld := &world{}
+	deps := Deps{
+		ConfigPath: filepath.Join(dir, "config.yaml"), StateDir: dir,
+		StartEngine: func(context.Context, olcrtc.Params) (Engine, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !alive {
+				return nil, errors.New("carrier down")
+			}
+			return &fakeEngine{w: engWorld, addr: upstream}, nil
+		},
+		StartFront:   func(ctx context.Context, p singbox.FrontParams) (Front, error) { return singbox.Start(ctx, p) },
+		Routes:       routes.New(singbox.TunName),
+		Probe:        HTTPProbe("http://203.0.113.10/probe"),
+		Logf:         t.Logf,
+		UID:          65534, // the test's own dials run as root: they are subject to the switch
+		ReadyTimeout: 5 * time.Second, ConfirmTimeout: 5 * time.Second, ProbeInterval: 300 * time.Millisecond,
+		ProbeFailures: 2, RetryMin: 200 * time.Millisecond, RetryMax: 500 * time.Millisecond,
+	}
+	d := New(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitState(t, d, "failed")
+
+	closed := func(what string) {
+		t.Helper()
+		start := time.Now()
+		_, err := dialRead("203.0.113.10:80")
+		if !errors.Is(err, unix.EHOSTUNREACH) || time.Since(start) > 2*time.Second {
+			t.Fatalf("%s: the box must be closed, at once: %v after %s", what, err, time.Since(start))
+		}
+	}
+	// 1. boot with the line down: closed, but inbound and the LAN work
+	closed("at boot")
+	if got, err := dialFromFar(peer, hostAddr+":2222", 3*time.Second); err != nil || got != "hi" {
+		t.Fatalf("inbound under the switch: %q %v", got, err)
+	}
+	if _, err := net.DialTimeout("tcp", peerAddr+":9", 2*time.Second); !errors.Is(err, unix.ECONNREFUSED) {
+		t.Fatalf("the LAN (a specific route in main) is not killed: %v", err)
+	}
+	// 2. the line comes up: open through the tun only
+	mu.Lock()
+	alive = true
+	mu.Unlock()
+	waitState(t, d, "up")
+	if got, err := dialRead("203.0.113.10:80"); err != nil || !strings.Contains(got, "204") {
+		t.Fatalf("through the tun: %q %v", got, err)
+	}
+	if got := rulesWithPriority(t, unix.AF_INET, routes.KillSwitchDrop); len(got) != 1 {
+		t.Fatalf("the switch stays while up: %+v", got)
+	}
+	// 3. the line dies (engine gone, restart refused): closed again between attempts
+	mu.Lock()
+	alive = false
+	mu.Unlock()
+	engWorld.mu.Lock()
+	engWorld.engState = "stopped"
+	engWorld.mu.Unlock()
+	waitFor(t, func() bool { return d.Handle(ctx, ipc.Request{Verb: "status"}).Status.State != "up" })
+	closed("between lines")
+	if got, err := dialFromFar(peer, hostAddr+":2222", 3*time.Second); err != nil || got != "hi" {
+		t.Fatalf("inbound between lines: %q %v", got, err)
+	}
+	// 4. disconnect gives the box back: the SYN reaches the internet host directly
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	if got, err := dialRead("203.0.113.10:80"); err != nil || got != "direct" {
+		t.Fatalf("after disconnect traffic goes direct: %q %v", got, err)
+	}
+	for _, prio := range []int{routes.KillSwitchLAN, routes.KillSwitchSelf, routes.KillSwitchDrop, routes.OwnAddressPriority} {
+		if got := rulesWithPriority(t, unix.AF_INET, prio); len(got) != 0 {
+			t.Fatalf("rule %d left: %+v", prio, got)
+		}
+	}
+	cancel()
+	<-done
+	// 5. a crash left the rules (with another uid); the next start with the
+	// selection still stored replaces them, and a clean stop removes them
+	if err := routes.New(singbox.TunName).InstallKillSwitch(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(filepath.Join(dir, "config.yaml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	d2 := New(deps)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() { _ = d2.Run(ctx2); close(done2) }()
+	waitState(t, d2, "failed")
+	closed("after a restart")
+	if got := rulesWithPriority(t, unix.AF_INET, routes.KillSwitchSelf); len(got) != 1 || got[0].UIDRange.Start != 65534 {
+		t.Fatalf("the stale uid rule is replaced by ours: %+v", got)
+	}
+	cancel2()
+	<-done2
+	if got := rulesWithPriority(t, unix.AF_INET, routes.KillSwitchDrop); len(got) != 0 {
+		t.Fatalf("a clean stop removes the switch: %+v", got)
+	}
+	if got, err := dialRead("203.0.113.10:80"); err != nil || got != "direct" {
+		t.Fatalf("after a clean stop traffic goes direct: %q %v", got, err)
+	}
+}
+
+func answer(ln net.Listener, line string) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = c.Write([]byte(line))
+		c.Close()
+	}
+}
+
+// dialRead dials from the host namespace, sends a request and returns the
+// first line of the answer.
+func dialRead(target string) (string, error) {
+	c, err := net.DialTimeout("tcp", target, 3*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	_, _ = c.Write([]byte("GET / HTTP/1.0\r\nHost: x\r\n\r\n"))
+	line, err := bufio.NewReader(c).ReadString('\n')
+	return strings.TrimSpace(line), err
 }
