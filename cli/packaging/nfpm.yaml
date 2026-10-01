@@ -32,6 +32,11 @@ contents:
   - src: packaging/ghostlane.service
     dst: /usr/lib/systemd/system/ghostlane.service
     packager: apk
+  - src: packaging/openrc/ghostlane
+    dst: /etc/init.d/ghostlane
+    packager: apk
+    file_info:
+      mode: 0755
   - src: packaging/README.md
     dst: /usr/share/doc/ghostlane-cli/README.md
   - src: LICENSE

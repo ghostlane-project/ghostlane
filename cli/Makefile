@@ -45,6 +45,7 @@ tarballs: build-all
 	@for a in $(ARCHES); do \
 	  stage=dist/stage-$$a; rm -rf $$stage; mkdir -p $$stage; \
 	  command cp -f dist/linux-$$a/ghostlane packaging/ghostlane.service packaging/README.md LICENSE COPYRIGHT $$stage/; \
+	  command cp -f packaging/openrc/ghostlane $$stage/ghostlane.openrc; \
 	  tar -C $$stage -czf dist/ghostlane-cli-$(VERSION)-linux-$$a.tar.gz .; rm -rf $$stage; \
 	done
 

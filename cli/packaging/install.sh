@@ -132,12 +132,20 @@ case "$FAMILY" in
     for f in README.md LICENSE COPYRIGHT; do
       [ -f "$stage/$f" ] && as_root install -m 0644 "$stage/$f" "$ROOT/usr/local/share/doc/ghostlane-cli/$f"
     done
+    # an OpenRC host (Alpine) gets the init script, pointed at the installed binary
+    if command -v openrc-run >/dev/null 2>&1 && [ -f "$stage/ghostlane.openrc" ]; then
+      sed 's#command=/usr/bin/ghostlane#command=/usr/local/bin/ghostlane#' "$stage/ghostlane.openrc" > "$tmp/openrc"
+      as_root install -d "$ROOT/etc/init.d"
+      as_root install -m 0755 "$tmp/openrc" "$ROOT/etc/init.d/ghostlane"
+    fi
     if [ -z "$ROOT" ]; then
       getent group ghostlane >/dev/null 2>&1 || as_root groupadd -r ghostlane 2>/dev/null || as_root addgroup -S ghostlane
       getent passwd ghostlane >/dev/null 2>&1 || as_root useradd -r -g ghostlane -d /var/lib/ghostlane -s /sbin/nologin ghostlane 2>/dev/null \
         || as_root adduser -S -G ghostlane -h /var/lib/ghostlane -s /sbin/nologin ghostlane
       if [ "$NO_SERVICE" -eq 0 ] && [ -d /run/systemd/system ]; then
         as_root systemctl daemon-reload; as_root systemctl enable --now ghostlane.service
+      elif [ "$NO_SERVICE" -eq 0 ] && [ -d /run/openrc ] && [ -f /etc/init.d/ghostlane ]; then
+        as_root rc-update add ghostlane default; as_root rc-service ghostlane start
       fi
     fi
     ;;

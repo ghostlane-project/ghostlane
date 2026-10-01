@@ -292,6 +292,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" debian:bookworm sh -c 'dpkg -i /dist/ghostlane-cli-0.0.0-linux-amd64.deb && ghostlane version && id ghostlane'
           docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -c 'rpm -i /dist/ghostlane-cli-0.0.0-linux-amd64.rpm && ghostlane version && id ghostlane'
+          docker run --rm -v "$PWD/dist:/dist:ro" alpine:3.20 sh -c 'apk add --no-cache openrc >/dev/null && apk add --allow-untrusted /dist/ghostlane-cli-0.0.0-linux-amd64.apk && ghostlane version && id ghostlane && test -x /etc/init.d/ghostlane && rc-service ghostlane describe'
 
   gate-scripts:
     if: github.event_name != 'workflow_dispatch'
