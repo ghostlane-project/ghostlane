@@ -1,0 +1,5 @@
+# Ghostlane CLI apt repository (Debian, Ubuntu and derivatives; amd64, arm64, armhf)
+#   curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane-repo.gpg.asc | sudo gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg
+#   sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.list -o /etc/apt/sources.list.d/ghostlane.list
+#   sudo apt-get update && sudo apt-get install ghostlane-cli
+deb [signed-by=/etc/apt/keyrings/ghostlane.gpg] https://ghostlane-project.github.io/ghostlane/apt stable main

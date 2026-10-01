@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Ghostlane CLI packages</title>
+<pre>
+Ghostlane CLI for Linux — package repositories (signed; key: ghostlane-repo.gpg.asc)
+
+apt (Debian, Ubuntu; amd64 arm64 armhf):
+  curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane-repo.gpg.asc | sudo gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg
+  sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.list -o /etc/apt/sources.list.d/ghostlane.list
+  sudo apt-get update && sudo apt-get install ghostlane-cli
+
+dnf (Fedora, RHEL, Rocky, Alma; x86_64 aarch64 armv7hl):
+  sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.repo -o /etc/yum.repos.d/ghostlane.repo
+  sudo dnf install ghostlane-cli
+
+Everything else (Alpine apk, Arch, tarballs, the installer): https://github.com/ghostlane-project/ghostlane/releases
+Docs: https://github.com/ghostlane-project/ghostlane/blob/main/docs/cli.md
+</pre>

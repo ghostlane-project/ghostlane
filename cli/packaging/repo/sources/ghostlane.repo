@@ -1,0 +1,10 @@
+# Ghostlane CLI dnf/yum repository (Fedora, RHEL, Rocky, Alma, openSUSE with zypper; x86_64, aarch64, armv7hl)
+#   sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.repo -o /etc/yum.repos.d/ghostlane.repo
+#   sudo dnf install ghostlane-cli
+[ghostlane]
+name=Ghostlane CLI
+baseurl=https://ghostlane-project.github.io/ghostlane/rpm
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://ghostlane-project.github.io/ghostlane/ghostlane-repo.gpg.asc

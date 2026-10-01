@@ -1973,3 +1973,64 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ env.OLCBOX_VERSION }}
             org.opencontainers.image.licenses=GPL-3.0-or-later
+
+  # The apt and dnf repositories on GitHub Pages (gh-pages: /apt, /rpm, the
+  # public key and the two sources snippets at the root), updated in place
+  # from the released packages and signed with CLI_REPO_GPG_KEY. Pages must
+  # be enabled once (source: gh-pages, root) — see docs/cli.md.
+  publish-cli-repo:
+    runs-on: ubuntu-latest
+    needs: [plan, release_version, build-cli, publish-nightly]
+    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    permissions:
+      contents: write
+    concurrency:
+      group: cli-repo-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
+      CLI_REPO_GPG_KEY: ${{ secrets.CLI_REPO_GPG_KEY }}
+    steps:
+      - name: Repository key is set
+        run: |
+          [ -n "${CLI_REPO_GPG_KEY}" ] || { echo "::error::CLI_REPO_GPG_KEY is not set; the apt/dnf repositories are signed or not published"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          path: src
+      - name: Checkout gh-pages (or start it)
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: pages
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+        continue-on-error: true
+        id: pages
+      - name: Start gh-pages
+        if: steps.pages.outcome != 'success'
+        run: |
+          rm -rf pages && mkdir pages && cd pages
+          git init -q -b gh-pages
+          git remote add origin "https://x-access-token:${{ secrets.RELEASE_TOKEN || github.token }}@github.com/${{ github.repository }}.git"
+      - uses: actions/download-artifact@v8
+        with:
+          name: Ghostlane-cli-linux
+          path: dist
+      - name: Build the repositories
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends reprepro createrepo-c rpm gnupg >/dev/null
+          umask 077
+          printf '%s\n' "${CLI_REPO_GPG_KEY}" > "$RUNNER_TEMP/repo-key.asc"
+          sh src/cli/packaging/repo/build-repos.sh dist pages "$RUNNER_TEMP/repo-key.asc" "${OLCBOX_VERSION}"
+          rm -f "$RUNNER_TEMP/repo-key.asc"
+          rm -rf pages/apt/db pages/apt/conf
+      - name: Push gh-pages
+        run: |
+          set -euo pipefail
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "cli repositories: ${OLCBOX_VERSION}" || { echo "nothing changed"; exit 0; }
+          git push -q origin HEAD:gh-pages
