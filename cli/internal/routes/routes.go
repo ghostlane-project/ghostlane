@@ -189,7 +189,7 @@ func (m *Manager) InstallKillSwitch(uid int) error {
 	defer m.mu.Unlock()
 	var errs []error
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
-		if err := m.removeKillSwitchRules(fam); err != nil && !(fam == unix.AF_INET6 && tolerableV6(err)) {
+		if err := m.removeKillSwitchRules(fam); err != nil && (fam != unix.AF_INET6 || !tolerableV6(err)) {
 			errs = append(errs, err)
 		}
 		if err := netlink.RouteReplace(unreachableDefault(fam)); err != nil {
@@ -225,12 +225,12 @@ func (m *Manager) RemoveKillSwitch() error {
 func (m *Manager) removeKillSwitchLocked() error {
 	var errs []error
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
-		if err := m.removeKillSwitchRules(fam); err != nil && !(fam == unix.AF_INET6 && tolerableV6(err)) {
+		if err := m.removeKillSwitchRules(fam); err != nil && (fam != unix.AF_INET6 || !tolerableV6(err)) {
 			errs = append(errs, err)
 		}
 		routes, err := netlink.RouteListFiltered(fam, &netlink.Route{Table: KillSwitchTable}, netlink.RT_FILTER_TABLE)
 		if err != nil {
-			if !(fam == unix.AF_INET6 && tolerableV6(err)) {
+			if fam != unix.AF_INET6 || !tolerableV6(err) {
 				errs = append(errs, err)
 			}
 			continue

@@ -129,13 +129,6 @@ func (d *Daemon) syncOwnRules() error {
 	return d.deps.Routes.Sync(addrs)
 }
 
-// stopConnect ends the loop and waits for it to tear the connection down.
-func (d *Daemon) stopConnect() {
-	d.connectMu.Lock()
-	defer d.connectMu.Unlock()
-	d.stopConnectLocked()
-}
-
 // stopAll ends the loop, removes the kill switch and, when asked, forgets the
 // stored selection — all under connectMu, so no control request or refresh
 // sees the selection without its switch or revives it in between.
