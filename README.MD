@@ -10,6 +10,11 @@
   Free, with no account, no tracking and nothing to buy.
 </p>
 
+<!-- The release badge takes no include_prereleases/sort/filter: with any of them
+     shields.io lists every release of this repository (about 150, 30 assets each)
+     and answers 408, which the GitHub app shows as a broken image. The plain
+     endpoint reads GitHub's own "latest" release, which the release workflow
+     marks. -->
 <!-- Store badges: the owners' official artwork, unmodified (docs/badges/). The App
      Store badge comes first and in black, as Apple asks when other stores' badges
      are beside it. Widths, not heights: GitHub sets height:auto on README images.
@@ -23,12 +28,13 @@
 </p>
 
 <p align="center">
-  macOS, Windows, Linux and Android APKs: <a href="https://github.com/ghostlane-project/ghostlane/releases">GitHub Releases</a>
+  macOS, Windows, Linux and Android APKs: <a href="https://github.com/ghostlane-project/ghostlane/releases">GitHub Releases</a><br>
+  Linux servers: the <code>ghostlane</code> command — apt and dnf repositories, a Docker image, or the signed installer on the release page; see <a href="docs/cli.md">docs/cli.md</a>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/ghostlane-project/ghostlane?color=b5f23d&labelColor=07080d" alt="License: MIT"></a>
-  <a href="https://github.com/ghostlane-project/ghostlane/releases"><img src="https://img.shields.io/github/v/release/ghostlane-project/ghostlane?include_prereleases&sort=semver&filter=v*&color=b5f23d&labelColor=07080d&label=release" alt="Latest release"></a>
+  <a href="https://github.com/ghostlane-project/ghostlane/releases"><img src="https://img.shields.io/github/v/release/ghostlane-project/ghostlane?color=b5f23d&labelColor=07080d&label=release" alt="Latest release"></a>
   <a href="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml"><img src="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml/badge.svg?branch=main" alt="PR checks"></a>
 </p>
 
@@ -294,7 +300,7 @@ Shipping on every platform.
 | macOS | Signed and notarised DMG, one per architecture |
 | Windows | EXE, MSI and a portable zip |
 | Linux | AppImage |
-| Linux servers | `ghostlane-cli`: deb, rpm, apk, Arch and tarballs for amd64/arm64/armv7 with a signed installer — a headless daemon with tun and proxy modes, see [docs/cli.md](docs/cli.md) |
+| Linux servers | `ghostlane-cli`: deb, rpm, apk, Arch and tarballs for amd64/arm64/armv7 with a signed installer, signed [apt and dnf repositories](https://ghostlane-project.github.io/ghostlane/) and a Docker image (`ghcr.io/ghostlane-project/ghostlane-cli`) — a headless daemon with tun (optional kill switch) and proxy modes, see [docs/cli.md](docs/cli.md) |
 
 Everything except the App Store build is produced by the release workflow on
 public GitHub Actions runners and published with SHA256 sums and a build
