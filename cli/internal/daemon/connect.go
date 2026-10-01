@@ -19,14 +19,27 @@ import (
 var errNotConnectable = errors.New("this line cannot be connected by this version")
 
 // startConnect cancels any running connection and starts the loop for sel.
-func (d *Daemon) startConnect(sel store.Selection) {
+// The only error is a kill switch that could not be installed: the loop is
+// not started then (closed rather than open), and the state says why.
+func (d *Daemon) startConnect(sel store.Selection) error {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
-	d.startConnectLocked(sel)
+	return d.startConnectLocked(sel)
 }
 
-func (d *Daemon) startConnectLocked(sel store.Selection) {
+func (d *Daemon) startConnectLocked(sel store.Selection) error {
 	d.stopConnectLocked()
+	if sel.Mode == "tun" && sel.KillSwitch {
+		if err := d.installKillSwitch(); err != nil {
+			d.mu.Lock()
+			d.sel = &sel
+			d.state, d.lastErr = "failed", "kill switch: "+err.Error()
+			d.mu.Unlock()
+			return fmt.Errorf("kill switch: %w", err)
+		}
+	} else {
+		d.removeKillSwitch()
+	}
 	d.mu.Lock()
 	base := d.runCtx
 	if base == nil {
@@ -47,6 +60,72 @@ func (d *Daemon) startConnectLocked(sel store.Selection) {
 		}()
 		d.connectLoop(ctx, sel)
 	}()
+	return nil
+}
+
+// installKillSwitch puts the switch in with the own-address rules and their
+// watcher, which then belong to the switch (a line's teardown leaves them).
+func (d *Daemon) installKillSwitch() error {
+	if d.killSwitchOn() {
+		return nil
+	}
+	if err := d.deps.Routes.InstallKillSwitch(d.deps.UID); err != nil {
+		return err
+	}
+	if err := d.syncOwnRules(); err != nil {
+		_ = d.deps.Routes.RemoveKillSwitch()
+		return fmt.Errorf("policy rules: %w", err)
+	}
+	d.mu.Lock()
+	base := d.runCtx
+	d.mu.Unlock()
+	if base == nil {
+		base = context.Background()
+	}
+	stop, err := d.deps.Routes.WatchAddresses(base, func() {
+		if err := d.syncOwnRules(); err != nil {
+			d.logf("policy rules: %v", err)
+		}
+	})
+	if err != nil {
+		d.logf("address watch: %v", err)
+		stop = func() {}
+	}
+	d.mu.Lock()
+	d.ksOn, d.ksStop = true, stop
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *Daemon) removeKillSwitch() {
+	d.mu.Lock()
+	on, stop := d.ksOn, d.ksStop
+	d.ksOn, d.ksStop = false, nil
+	d.mu.Unlock()
+	if !on {
+		return
+	}
+	stop()
+	if err := d.deps.Routes.Clear(); err != nil {
+		d.logf("policy rules: %v", err)
+	}
+	if err := d.deps.Routes.RemoveKillSwitch(); err != nil {
+		d.logf("kill switch: %v", err)
+	}
+}
+
+func (d *Daemon) killSwitchOn() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ksOn
+}
+
+func (d *Daemon) syncOwnRules() error {
+	addrs, err := d.deps.Routes.GlobalAddresses()
+	if err != nil {
+		return err
+	}
+	return d.deps.Routes.Sync(addrs)
 }
 
 // stopConnect ends the loop and waits for it to tear the connection down.
@@ -267,19 +346,17 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 			return nil, err
 		}
 	}
-	if mode == "tun" {
-		addrs, err := d.deps.Routes.GlobalAddresses()
-		if err == nil {
-			err = d.deps.Routes.Sync(addrs)
-		}
-		if err != nil {
+	// the own-address rules ride the line unless the kill switch holds them
+	ownRules := mode == "tun" && !d.killSwitchOn()
+	if ownRules {
+		if err := d.syncOwnRules(); err != nil {
 			stopEngine(eng)
 			return nil, fmt.Errorf("policy rules: %w", err)
 		}
 	}
 	probeAddr, probeUser, probePass, err := newProbeInbound()
 	if err != nil {
-		if mode == "tun" {
+		if ownRules {
 			_ = d.deps.Routes.Clear()
 		}
 		stopEngine(eng)
@@ -287,13 +364,13 @@ func (d *Daemon) bringUp(ctx context.Context, e links.Entry, mode string) (*live
 	}
 	front, err := d.deps.StartFront(ctx, d.frontParams(mode, up, probeAddr, probeUser, probePass))
 	if err != nil {
-		if mode == "tun" {
+		if ownRules {
 			_ = d.deps.Routes.Clear()
 		}
 		stopEngine(eng)
 		return nil, fmt.Errorf("front: %w", err)
 	}
-	l := &live{entry: e, mode: mode, engine: eng, front: front, probeAddr: probeAddr, probeUser: probeUser, probePass: probePass}
+	l := &live{entry: e, mode: mode, engine: eng, front: front, probeAddr: probeAddr, probeUser: probeUser, probePass: probePass, ownRules: ownRules}
 	if err := d.confirmVia(ctx, probeAddr, probeUser, probePass); err != nil {
 		d.tearDown(l)
 		return nil, err
@@ -373,12 +450,10 @@ func (d *Daemon) markUp(sel store.Selection, l *live) {
 // that is no longer running, end the line. The address watcher belongs to this
 // connection: it is stopped before the caller clears the rules.
 func (d *Daemon) supervise(ctx context.Context, l *live) string {
-	if l.mode == "tun" {
+	if l.ownRules {
 		stop, err := d.deps.Routes.WatchAddresses(ctx, func() {
-			if addrs, err := d.deps.Routes.GlobalAddresses(); err == nil {
-				if err := d.deps.Routes.Sync(addrs); err != nil {
-					d.logf("policy rules: %v", err)
-				}
+			if err := d.syncOwnRules(); err != nil {
+				d.logf("policy rules: %v", err)
 			}
 		})
 		if err != nil {
@@ -416,7 +491,7 @@ func (d *Daemon) supervise(ctx context.Context, l *live) string {
 func (d *Daemon) tearDown(l *live) {
 	_ = l.front.Close()
 	stopEngine(l.engine)
-	if l.mode == "tun" {
+	if l.ownRules {
 		_ = d.deps.Routes.Clear()
 	}
 	d.mu.Lock()

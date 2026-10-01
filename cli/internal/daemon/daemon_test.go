@@ -93,6 +93,11 @@ func (r *fakeRoutes) GlobalAddresses() ([]netip.Addr, error) {
 func (r *fakeRoutes) Sync([]netip.Addr) error { r.w.rec("routes:sync"); return nil }
 func (r *fakeRoutes) Clear() error            { r.w.rec("routes:clear"); return nil }
 func (r *fakeRoutes) CleanupStale() error     { r.w.rec("routes:cleanup"); return nil }
+func (r *fakeRoutes) InstallKillSwitch(uid int) error {
+	r.w.rec("routes:killswitch:" + strconv.Itoa(uid))
+	return nil
+}
+func (r *fakeRoutes) RemoveKillSwitch() error { r.w.rec("routes:killswitch-off"); return nil }
 func (r *fakeRoutes) WatchAddresses(context.Context, func()) (func(), error) {
 	r.w.rec("watch")
 	return func() { r.w.rec("watch-stop") }, nil
@@ -1015,4 +1020,84 @@ func TestCrypt1WithoutKey(t *testing.T) {
 	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: crypt1.LinkPrefix + "abc"}); resp.OK || !strings.Contains(resp.Message, "crypt1") {
 		t.Fatalf("%+v", resp)
 	}
+}
+
+// The kill switch goes in before the first engine start, stays across a
+// failover (the box is closed between lines, not open) and goes away on
+// disconnect; the own-address rules stay with it, not with the line.
+func TestKillSwitchLifecycle(t *testing.T) {
+	w, d, dir := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy", KillSwitch: true}); resp.OK || resp.Error != "bad_mode" {
+		t.Fatalf("proxy mode has nothing to kill: %+v", resp)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun", KillSwitch: true})
+	st := waitState(t, d, "up")
+	if !st.KillSwitch {
+		t.Fatalf("status shows it: %+v", st)
+	}
+	cfg, _ := store.Load(filepath.Join(dir, "config.yaml"))
+	if cfg.Selection == nil || !cfg.Selection.KillSwitch {
+		t.Fatalf("persisted with the selection: %+v", cfg.Selection)
+	}
+	ev := w.events()
+	if i, j := strings.Index(ev, "routes:killswitch:977 routes:sync watch"), strings.Index(ev, "engine"); i < 0 || j < i {
+		t.Fatalf("installed, with the own-address rules, before any engine: %s", ev)
+	}
+	// failover: the first line's probes die
+	w.mu.Lock()
+	w.deadProbe["front:1"] = true
+	w.mu.Unlock()
+	waitFor(t, func() bool {
+		s := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+		return s.State == "up" && s.Line != nil && s.Line.Carrier != "telemost"
+	})
+	ev = w.events()
+	if strings.Contains(ev, "killswitch-off") || strings.Contains(ev, "routes:clear") || strings.Count(ev, "routes:sync") != 1 {
+		t.Fatalf("between lines the switch and the own rules stay: %s", ev)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "disconnect"})
+	waitState(t, d, "idle")
+	ev = w.events()
+	if !strings.HasSuffix(strings.TrimSpace(ev), "watch-stop routes:clear routes:killswitch-off") {
+		t.Fatalf("disconnect removes the rules after the line: %s", ev)
+	}
+}
+
+// A stored selection with the switch installs it at start (before the first
+// engine start) and a clean stop removes it.
+func TestKillSwitchRestoredAtStartRemovedAtStop(t *testing.T) {
+	w, d, dir := newWorld(t)
+	cfg := store.Defaults()
+	cfg.Subscriptions = []store.Subscription{{URL: listURL, IntervalHours: 1}}
+	cfg.Selection = &store.Selection{Selector: "DE", Mode: "tun", KillSwitch: true}
+	_ = store.Save(filepath.Join(dir, "config.yaml"), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitState(t, d, "up")
+	ev := w.events()
+	if i, j := strings.Index(ev, "routes:cleanup"), strings.Index(ev, "routes:killswitch:977"); i < 0 || j < i || strings.Index(ev, "engine") < j {
+		t.Fatalf("cleanup, then the switch, then the engine: %s", ev)
+	}
+	cancel()
+	<-done
+	if ev := w.events(); !strings.Contains(ev, "routes:killswitch-off") {
+		t.Fatalf("a clean stop gives the box back: %s", ev)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met in time")
 }

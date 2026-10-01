@@ -38,6 +38,7 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return d.connect(ctx, req)
 	case "disconnect":
 		d.stopConnect()
+		d.removeKillSwitch()
 		d.mu.Lock()
 		d.cfg.Selection = nil
 		cfg := d.cfg.Clone()
@@ -63,7 +64,7 @@ func (d *Daemon) status() *ipc.Status {
 	defer d.mu.Unlock()
 	st := &ipc.Status{State: d.state, LastError: d.lastErr}
 	if d.sel != nil {
-		st.Mode, st.Selector = d.sel.Mode, d.sel.Selector
+		st.Mode, st.Selector, st.KillSwitch = d.sel.Mode, d.sel.Selector, d.sel.KillSwitch
 	}
 	switch {
 	case d.cur != nil:
@@ -264,6 +265,9 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 	if mode == "proxy" && net.ParseIP(listen) == nil {
 		return ipc.Fail("bad_listen", "proxy.listen must be an IP address (127.0.0.1, ::1 or 0.0.0.0), not "+listen)
 	}
+	if req.KillSwitch && mode != "tun" {
+		return ipc.Fail("bad_mode", "the kill switch needs --tun: a proxy routes nothing to kill")
+	}
 	all, err := d.allEntries(ctx, req.Subscription)
 	if err != nil {
 		return ipc.Fail("no_subscription", err.Error())
@@ -274,7 +278,7 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 		}
 		return ipc.Fail("no_subscription", err.Error())
 	}
-	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode}
+	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode, KillSwitch: req.KillSwitch}
 	d.mu.Lock()
 	d.cfg.Selection = &sel
 	cfg := d.cfg.Clone()
@@ -282,6 +286,12 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 	if err := d.saveConfig(cfg); err != nil {
 		return ipc.Fail("io", err.Error())
 	}
-	d.startConnect(sel)
-	return ipc.Response{OK: true, Message: fmt.Sprintf("connecting to %s in %s mode", req.Selector, mode)}
+	if err := d.startConnect(sel); err != nil {
+		return ipc.Fail("kill_switch", err.Error())
+	}
+	msg := fmt.Sprintf("connecting to %s in %s mode", req.Selector, mode)
+	if sel.KillSwitch {
+		msg += " with the kill switch"
+	}
+	return ipc.Response{OK: true, Message: msg}
 }

@@ -311,11 +311,15 @@ whether crypt1 is available.
 
 **Kill switch.** `connect --tun --kill-switch` (persisted with the selection,
 `kill_switch: true`). While the selection stands, traffic that is not for the
-tunnel is refused instead of leaking: policy rules at pref 9098 send the private
-and link-local ranges to `main` (LAN, Docker, the metadata address keep
-working), pref 9099 sends the daemon's own uid to `main` (it must reach the
-carriers and servers), and pref 9100 sends everything else to table 2023, whose
-only route is `unreachable default` (v4 and v6). sing-box's rules (9000–9010)
+tunnel is refused instead of leaking: a policy rule at pref 9098 sends what
+`main` routes specifically to `main` (`lookup main suppress_prefixlength 0`,
+the same rule sing-box's tun uses: the LAN, Docker networks, link-local, static
+routes keep working; only default-route traffic is affected), pref 9099 sends
+the daemon's own uid to `main` (it must reach the carriers and servers), and
+pref 9100 sends everything else to table 2023, whose only route is `unreachable
+default` (v4 and v6; a refused connection gets EHOSTUNREACH at once). The
+own-address rules (8990) go in with the switch and stay with it, so inbound
+services keep answering while no line is up. sing-box's rules (9000–9010)
 come first while the tun is up, so tunnelled traffic is unaffected; between
 failovers, during a dead-server backoff and at boot before the first line is up,
 the box is closed rather than open. The own-address rule (8990) still keeps
@@ -323,7 +327,9 @@ inbound services answering. `disconnect` and a clean daemon stop remove the
 switch (an administrator who stops the service gets the box back); a crash
 leaves the kernel state as it was, and the next start removes it with
 `CleanupStale` and re-installs it when the stored selection asks. Proxy mode has
-no kill switch (nothing is routed).
+no kill switch (nothing is routed). Residual: a connection opened directly
+before the switch keeps its path (its packets carry the host's own address,
+which rule 8990 sends to `main`).
 
 **OpenRC.** The apk and the tarball ship `/etc/init.d/ghostlane`: `supervise-daemon`,
 `command_user ghostlane:ghostlane`, `capabilities ^cap_net_admin,^cap_net_bind_service`

@@ -26,7 +26,7 @@ Usage:
 Commands:
   add <source>         Add a subscription: a list URL, a ghostlane:// link, or one olcrtc://, vless:// or hysteria2:// line
   list                 Every line with its index, country and carrier
-  connect <selector>   Connect a country (DE), a label ("DE · SJ") or an index (6); --tun or --proxy
+  connect <selector>   Connect a country (DE), a label ("DE · SJ") or an index (6); --tun [--kill-switch] or --proxy
   status               What is connected, since when, and the proxy lines to paste
   disconnect           Stop the tunnel and forget the selection
   refresh              Re-fetch every list now
@@ -80,7 +80,7 @@ Example:
    1   DE       olcrtc  telemost    🇩🇪 DE · VP8
    2   DE       olcrtc  wbstream    🇩🇪 DE · VP8 · WB
 `,
-	"connect": `ghostlane connect <selector> [--tun | --proxy] [--subscription <url-prefix>]
+	"connect": `ghostlane connect <selector> [--tun [--kill-switch] | --proxy] [--subscription <url-prefix>]
 
 <selector> is a country code (all of that country's lines, tried in the
 list's order with failover between them — rooms and servers alike), an
@@ -98,6 +98,12 @@ server never gets the tun.
             (SSH, web, databases) keep answering on the public address; private
             ranges stay direct; IPv6 is refused rather than leaked. Needs the
             service's CAP_NET_ADMIN (the installed unit has it).
+  --kill-switch  with --tun: while the selection stands and no line is up
+            (boot, a failover, a dead server), traffic that is not for the
+            tunnel is refused instead of leaking. The LAN, Docker networks and
+            inbound services keep working; 'disconnect' or stopping the service
+            opens the box again. Connections opened before the switch keep
+            their path.
 
 The selection is remembered: the service reconnects it after a reboot.
 A line that does not answer within a minute, or three failed liveness probes
@@ -222,6 +228,7 @@ func client(cmd string, args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	tun := fs.Bool("tun", false, "route the whole machine (needs the service's CAP_NET_ADMIN)")
 	proxyMode := fs.Bool("proxy", false, "local SOCKS5/HTTP proxy only")
+	killSwitch := fs.Bool("kill-switch", false, "with --tun: refuse traffic outside the tunnel while no line is up")
 	sub := fs.String("subscription", "", "restrict to one subscription")
 	// flags may follow the positional argument: `connect DE --tun`
 	var positional []string
@@ -253,8 +260,12 @@ func client(cmd string, args []string, stdout, stderr io.Writer) int {
 			case *tun && *proxyMode:
 				fmt.Fprintln(stderr, "pick one of --tun and --proxy")
 				return 2
+			case *killSwitch && !*tun:
+				fmt.Fprintln(stderr, "the kill switch needs --tun")
+				return 2
 			case *tun:
 				req.Mode = "tun"
+				req.KillSwitch = *killSwitch
 			case *proxyMode:
 				req.Mode = "proxy"
 			}
@@ -309,7 +320,11 @@ func printStatus(w io.Writer, st *ipc.Status) {
 	}
 	fmt.Fprintf(w, "State:     %s\n", st.State)
 	if st.Selector != "" {
-		fmt.Fprintf(w, "Selection: %s (%s mode)\n", st.Selector, st.Mode)
+		mode := st.Mode + " mode"
+		if st.KillSwitch {
+			mode += ", kill switch on"
+		}
+		fmt.Fprintf(w, "Selection: %s (%s)\n", st.Selector, mode)
 	}
 	if st.Line != nil {
 		fmt.Fprintf(w, "Line:      %s", st.Line.Label)

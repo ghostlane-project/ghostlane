@@ -32,6 +32,10 @@ type Routes interface {
 	Sync([]netip.Addr) error
 	Clear() error
 	CleanupStale() error
+	// InstallKillSwitch puts the kill switch in for a daemon running as uid
+	// (idempotent); RemoveKillSwitch takes it out.
+	InstallKillSwitch(uid int) error
+	RemoveKillSwitch() error
 	// WatchAddresses runs onChange on address changes until ctx ends or the
 	// returned stop is called; stop waits for a callback in flight.
 	WatchAddresses(ctx context.Context, onChange func()) (stop func(), err error)
@@ -70,6 +74,7 @@ type live struct {
 	probeAddr string // the front's probe inbound, what supervise probes through
 	probeUser string
 	probePass string
+	ownRules  bool // this line put the own-address rules in (not the kill switch)
 }
 
 type Daemon struct {
@@ -96,6 +101,8 @@ type Daemon struct {
 	loopDone chan struct{}
 	loopLive bool // a connect loop is running (it may be in backoff)
 	runCtx   context.Context
+	ksOn     bool   // the kill switch is in; the own-address rules belong to it, not to the line
+	ksStop   func() // its address watcher
 }
 
 // indexed is one entry with the subscription it came from; the daemon numbers
@@ -206,10 +213,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	NotifyReady()
 	go d.refreshLoop(ctx)
 	if sel != nil {
-		d.startConnect(*sel)
+		if err := d.startConnect(*sel); err != nil {
+			d.logf("%v", err)
+		}
 	}
 	<-ctx.Done()
 	d.stopConnect()
+	d.removeKillSwitch() // a clean stop gives the box back
 	if listener != nil {
 		_ = listener.Close()
 	}

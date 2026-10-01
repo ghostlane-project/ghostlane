@@ -27,7 +27,8 @@ type Subscription struct {
 type Selection struct {
 	Subscription string `yaml:"subscription"`
 	Selector     string `yaml:"selector"`
-	Mode         string `yaml:"mode"` // "tun" | "proxy"
+	Mode         string `yaml:"mode"`                  // "tun" | "proxy"
+	KillSwitch   bool   `yaml:"kill_switch,omitempty"` // tun only: refuse traffic outside the tunnel while no line is up
 }
 
 type Proxy struct {

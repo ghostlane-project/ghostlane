@@ -26,6 +26,7 @@ type Request struct {
 	Selector     string `json:"selector,omitempty"`
 	Mode         string `json:"mode,omitempty"`
 	Subscription string `json:"subscription,omitempty"`
+	KillSwitch   bool   `json:"kill_switch,omitempty"`
 }
 
 type EntryView struct {
@@ -57,6 +58,7 @@ type SubscriptionView struct {
 type Status struct {
 	State         string             `json:"state"` // idle | connecting | up | failed
 	Mode          string             `json:"mode,omitempty"`
+	KillSwitch    bool               `json:"kill_switch,omitempty"`
 	Selector      string             `json:"selector,omitempty"`
 	Since         string             `json:"since,omitempty"`
 	LastError     string             `json:"last_error,omitempty"`
