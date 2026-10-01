@@ -2024,13 +2024,16 @@ jobs:
           printf '%s\n' "${CLI_REPO_GPG_KEY}" > "$RUNNER_TEMP/repo-key.asc"
           sh src/cli/packaging/repo/build-repos.sh dist pages "$RUNNER_TEMP/repo-key.asc" "${OLCBOX_VERSION}"
           rm -f "$RUNNER_TEMP/repo-key.asc"
-          rm -rf pages/apt/db pages/apt/conf
-      - name: Push gh-pages
+          du -sh pages/apt pages/rpm
+      # One commit, the current tree: packages are ~25 MB each, so a branch with
+      # history would grow the repository by ~150 MB per release for ever.
+      - name: Push gh-pages (one commit, no history)
         run: |
           set -euo pipefail
           cd pages
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan gh-pages-next
           git add -A
-          git commit -q -m "cli repositories: ${OLCBOX_VERSION}" || { echo "nothing changed"; exit 0; }
-          git push -q origin HEAD:gh-pages
+          git commit -q -m "cli repositories: ${OLCBOX_VERSION}"
+          git push -q --force origin HEAD:gh-pages

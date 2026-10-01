@@ -29,6 +29,7 @@ type Selection struct {
 	Selector     string `yaml:"selector"`
 	Mode         string `yaml:"mode"`                  // "tun" | "proxy"
 	KillSwitch   bool   `yaml:"kill_switch,omitempty"` // tun only: refuse traffic outside the tunnel while no line is up
+	EntryID      string `yaml:"entry_id,omitempty"`    // a numeric selector names a line, not a position: its id once resolved
 }
 
 type Proxy struct {

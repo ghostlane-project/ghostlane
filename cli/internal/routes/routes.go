@@ -174,6 +174,14 @@ func unreachableDefault(family int) *netlink.Route {
 	return &netlink.Route{Family: family, Table: KillSwitchTable, Type: unix.RTN_UNREACHABLE, Dst: dst}
 }
 
+// tolerableV6 reports an error that means the kernel has no IPv6 (booted
+// with ipv6.disable=1, common on hardened servers): there is nothing to kill
+// on that family, so the v6 half of the switch is skipped, nothing else.
+func tolerableV6(err error) bool {
+	return err != nil && (errors.Is(err, unix.EAFNOSUPPORT) || errors.Is(err, unix.EPFNOSUPPORT) ||
+		errors.Is(err, unix.EPROTONOSUPPORT) || errors.Is(err, unix.ENOTSUP))
+}
+
 // InstallKillSwitch puts the kill switch in for a daemon running as uid,
 // replacing whatever a previous run left at its priorities.
 func (m *Manager) InstallKillSwitch(uid int) error {
@@ -181,13 +189,21 @@ func (m *Manager) InstallKillSwitch(uid int) error {
 	defer m.mu.Unlock()
 	var errs []error
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
-		errs = append(errs, m.removeKillSwitchRules(fam))
+		if err := m.removeKillSwitchRules(fam); err != nil && !(fam == unix.AF_INET6 && tolerableV6(err)) {
+			errs = append(errs, err)
+		}
 		if err := netlink.RouteReplace(unreachableDefault(fam)); err != nil {
+			if fam == unix.AF_INET6 && tolerableV6(err) {
+				continue
+			}
 			errs = append(errs, fmt.Errorf("unreachable default (family %d): %w", fam, err))
 			continue
 		}
 		for _, r := range killSwitchRules(fam, uid) {
 			if err := netlink.RuleAdd(r); err != nil {
+				if fam == unix.AF_INET6 && tolerableV6(err) {
+					break
+				}
 				errs = append(errs, fmt.Errorf("rule %d (family %d): %w", r.Priority, fam, err))
 			}
 		}
@@ -209,10 +225,14 @@ func (m *Manager) RemoveKillSwitch() error {
 func (m *Manager) removeKillSwitchLocked() error {
 	var errs []error
 	for _, fam := range []int{unix.AF_INET, unix.AF_INET6} {
-		errs = append(errs, m.removeKillSwitchRules(fam))
+		if err := m.removeKillSwitchRules(fam); err != nil && !(fam == unix.AF_INET6 && tolerableV6(err)) {
+			errs = append(errs, err)
+		}
 		routes, err := netlink.RouteListFiltered(fam, &netlink.Route{Table: KillSwitchTable}, netlink.RT_FILTER_TABLE)
 		if err != nil {
-			errs = append(errs, err)
+			if !(fam == unix.AF_INET6 && tolerableV6(err)) {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		for i := range routes {

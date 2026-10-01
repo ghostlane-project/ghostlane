@@ -8,16 +8,22 @@
 # key and the two sources snippets go to the repo root. Runs natively where
 # reprepro and createrepo_c exist (the release runner), else in containers
 # (debian:bookworm, rockylinux:9) with the same code, re-invoking itself with
-# --inner. reprepro (5.3 everywhere) serves the newest version of a package;
-# the rpm repository holds every version; older debs are on the release page.
+# --inner. reprepro (5.3 everywhere) serves the newest version of a package,
+# so the apt repository is rebuilt from scratch each time (no database to
+# carry, no orphaned pool files); the rpm repository keeps the newest
+# RPM_VERSIONS_KEPT versions (packages are ~25 MB each and GitHub Pages is
+# 1 GB in all); older packages are on the release page.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+RPM_VERSIONS_KEPT="${RPM_VERSIONS_KEPT:-2}"
 
 usage() { echo "usage: $0 <dist> <repo> <private-key.asc> <version>" >&2; exit 2; }
 
 setup_gpg() { # a private GNUPGHOME with the key; sets fpr (no subshell: the export must stick)
   GNUPGHOME=$(mktemp -d)
   export GNUPGHOME
+  # the imported private key leaves with the process, whatever happens
+  trap 'gpgconf --kill all >/dev/null 2>&1 || true; rm -rf "$GNUPGHOME"' EXIT INT TERM
   chmod 700 "$GNUPGHOME"
   gpg --batch --quiet --import "$KEY" 2>/dev/null
   fpr=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
@@ -26,6 +32,7 @@ setup_gpg() { # a private GNUPGHOME with the key; sets fpr (no subshell: the exp
 
 inner_apt() {
   setup_gpg
+  rm -rf "$REPO/apt"
   mkdir -p "$REPO/apt/conf"
   cat > "$REPO/apt/conf/distributions" <<DIST
 Origin: Ghostlane
@@ -42,11 +49,13 @@ DIST
   done
   reprepro -b "$REPO/apt" export stable
   reprepro -b "$REPO/apt" list stable
+  rm -rf "$REPO/apt/db" "$REPO/apt/conf" # the published tree is dists/ and pool/ only
 }
 
 inner_rpm() {
   setup_gpg
   export GPG_TTY=""
+  HOME="$GNUPGHOME/home"; mkdir -p "$HOME" # rpm's macros, nowhere near the caller's
   mkdir -p "$REPO/rpm"
   cat > "$HOME/.rpmmacros" <<MACROS
 %_signature gpg
@@ -64,10 +73,25 @@ MACROS
     rpmsign --addsign "$REPO/rpm/$(basename "$rpm")" >/dev/null 2>&1
     rpm --dbpath "$GNUPGHOME/rpmdb" -K "$REPO/rpm/$(basename "$rpm")" | grep -qi 'signatures OK' || { rpm --dbpath "$GNUPGHOME/rpmdb" -Kv "$REPO/rpm/$(basename "$rpm")"; exit 1; }
   done
+  prune_rpms
   createrepo_c --update --quiet "$REPO/rpm"
   rm -f "$REPO/rpm/repodata/repomd.xml.asc"
   gpg --batch --detach-sign --armor "$REPO/rpm/repodata/repomd.xml"
   ls "$REPO/rpm"
+}
+
+# prune_rpms keeps the newest RPM_VERSIONS_KEPT versions (by version sort).
+prune_rpms() {
+  ls "$REPO/rpm"/ghostlane-cli-*-linux-*.rpm 2>/dev/null | sed 's#.*/ghostlane-cli-##; s#-linux-.*##' | sort -uV > "$GNUPGHOME/versions"
+  keep=$(tail -n "$RPM_VERSIONS_KEPT" "$GNUPGHOME/versions")
+  while read -r v; do
+    [ -n "$v" ] || continue
+    case "
+$keep
+" in *"
+$v
+"*) ;; *) rm -f "$REPO/rpm"/ghostlane-cli-"$v"-linux-*.rpm; echo "pruned $v" ;; esac
+  done < "$GNUPGHOME/versions"
 }
 
 if [ "${1:-}" = "--inner" ]; then

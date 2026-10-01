@@ -342,10 +342,13 @@ The postinstall enables and starts it where OpenRC is the init system.
 `stable`, component `main`, amd64/arm64/armhf) and `createrepo_c` (rpm, one repo
 for all arches, packages signed with `rpm --addsign`), both under one GPG key
 (`packaging/repo/ghostlane-repo.gpg.asc` public; the private key is the
-repository secret `CLI_REPO_GPG_KEY`). The dnf repository holds every published
-version; the apt repository serves the newest (reprepro 5.3, the version every
-distribution packages, keeps one version per package), and older debs stay on
-the release page. The job runs after `build-cli` only when the run publishes. The owner
+repository secret `CLI_REPO_GPG_KEY`). Packages are ~25 MB each and GitHub
+Pages holds 1 GB in all, so the repositories are bounded: the apt repository is
+rebuilt from scratch at every release and serves the newest version (reprepro
+5.3, the version every distribution packages, keeps one version per package),
+the dnf repository keeps the newest two versions, and the `gh-pages` branch is
+one commit holding the current tree (force-pushed, no history). Older packages
+stay on the release page. The job runs after `build-cli` only when the run publishes. The owner
 enables Pages once (source: `gh-pages`, root). `docs/cli.md` shows the two
 `sources` snippets; `install.sh` keeps installing the package directly.
 

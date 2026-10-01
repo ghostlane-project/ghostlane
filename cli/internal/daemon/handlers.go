@@ -37,10 +37,8 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 	case "connect":
 		return d.connect(ctx, req)
 	case "disconnect":
-		d.stopConnect()
-		d.removeKillSwitch()
+		d.stopAll(true)
 		d.mu.Lock()
-		d.cfg.Selection = nil
 		cfg := d.cfg.Clone()
 		d.mu.Unlock()
 		if err := d.saveConfig(cfg); err != nil {
@@ -233,10 +231,7 @@ func (d *Daemon) remove(needle string) ipc.Response {
 		return ipc.Fail("no_match", "no subscription matches "+needle)
 	}
 	if dropSelection {
-		d.stopConnect()
-		d.mu.Lock()
-		d.cfg.Selection = nil
-		d.mu.Unlock()
+		d.stopAll(true)
 	}
 	d.mu.Lock()
 	cfg := d.cfg.Clone()

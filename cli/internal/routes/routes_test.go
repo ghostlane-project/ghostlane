@@ -2,6 +2,8 @@ package routes
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"testing"
@@ -63,5 +65,20 @@ func TestWatchAddressesStops(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("stop did not return")
+	}
+}
+
+// A kernel booted with ipv6.disable=1 refuses the v6 half of the kill switch;
+// there is nothing to kill there, so that half is skipped, nothing else is.
+func TestTolerableV6(t *testing.T) {
+	for _, err := range []error{unix.EAFNOSUPPORT, unix.EPFNOSUPPORT, unix.EPROTONOSUPPORT, unix.ENOTSUP, fmt.Errorf("rule add: %w", unix.EAFNOSUPPORT)} {
+		if !tolerableV6(err) {
+			t.Fatalf("%v should be tolerated", err)
+		}
+	}
+	for _, err := range []error{unix.EPERM, unix.EINVAL, errors.New("x"), nil} {
+		if tolerableV6(err) {
+			t.Fatalf("%v must not be tolerated", err)
+		}
 	}
 }

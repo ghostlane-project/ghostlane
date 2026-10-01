@@ -197,9 +197,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureConfig(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	d.mu.Lock()
-	sel := d.cfg.Selection
-	d.mu.Unlock()
 
 	var listener interface{ Close() error }
 	if d.deps.SocketPath != "" {
@@ -212,14 +209,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	NotifyReady()
 	go d.refreshLoop(ctx)
-	if sel != nil {
-		if err := d.startConnect(*sel); err != nil {
-			d.logf("%v", err)
-		}
-	}
+	d.startStored()
 	<-ctx.Done()
-	d.stopConnect()
-	d.removeKillSwitch() // a clean stop gives the box back
+	d.stopAll(false) // a clean stop gives the box back; the selection stays for the next start
 	if listener != nil {
 		_ = listener.Close()
 	}

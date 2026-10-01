@@ -43,6 +43,7 @@ type world struct {
 	frontProbe map[string]string // probe listen address → "front:<n>"
 	fetchDelay time.Duration
 	bodies     map[string][]byte // per-URL bodies; "" = w.body
+	fetchErrs  map[string]error  // per-URL fetch errors
 }
 
 func (w *world) rec(s string) { w.mu.Lock(); w.log = append(w.log, s); w.mu.Unlock() }
@@ -109,7 +110,7 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}, bodies: map[string][]byte{}}
+	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}, bodies: map[string][]byte{}, fetchErrs: map[string]error{}}
 	dir := t.TempDir()
 	deps := Deps{
 		ConfigPath: filepath.Join(dir, "config.yaml"), StateDir: dir, SocketPath: filepath.Join(dir, "s.sock"),
@@ -118,6 +119,9 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 			delay, body, err := w.fetchDelay, w.body, w.fetchErr
 			if b, ok := w.bodies[url]; ok {
 				body = b
+			}
+			if e, ok := w.fetchErrs[url]; ok {
+				err = e
 			}
 			w.fetches++
 			w.mu.Unlock()
@@ -1100,4 +1104,84 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met in time")
+}
+
+// Review finding I1: removing the subscription a kill-switch selection was
+// made for drops the selection and the switch with it.
+func TestRemoveSubscriptionRemovesKillSwitch(t *testing.T) {
+	w, d, dir := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "tun", KillSwitch: true, Subscription: listURL})
+	waitState(t, d, "up")
+	if resp := d.Handle(ctx, ipc.Request{Verb: "remove", Subscription: listURL}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	st := waitState(t, d, "idle")
+	if st.KillSwitch || d.killSwitchOn() {
+		t.Fatalf("the switch must go with the selection: %+v on=%v", st, d.killSwitchOn())
+	}
+	if ev := w.events(); !strings.HasSuffix(strings.TrimSpace(ev), "routes:killswitch-off") {
+		t.Fatalf("%s", ev)
+	}
+	cfg, _ := store.Load(filepath.Join(dir, "config.yaml"))
+	if cfg.Selection != nil || len(cfg.Subscriptions) != 0 {
+		t.Fatalf("%+v", cfg)
+	}
+}
+
+// Review finding I4: a connect that arrives before Run reaches its stored
+// selection must not be restarted by Run (one loop, one engine start).
+func TestConnectBeforeRunStartsOneLoop(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	waitState(t, d, "up")
+	go func() { _ = d.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+	st := d.Handle(ctx, ipc.Request{Verb: "status"}).Status
+	ev := w.events()
+	if st.State != "up" || strings.Count(ev, "engine:") != 1 || strings.Contains(ev, "engine-stop") {
+		t.Fatalf("Run restarted a live selection: %s / %s", st.State, ev)
+	}
+}
+
+// Review minor re-graded: a numeric selection names a line, not a position.
+// When an earlier list cannot be read later, the stored selection still
+// reconnects the same line instead of whatever now sits at that index.
+func TestNumericSelectionSticksToItsLine(t *testing.T) {
+	w, d, dir := newWorld(t)
+	urlA, urlB := "https://a.example/sub/1/x", listURL
+	w.bodies[urlA] = []byte("vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=s&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12#solo\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: urlA})
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: urlB})
+	d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "2", Mode: "proxy"})
+	first := waitState(t, d, "up")
+	if first.Line.Carrier != "telemost" {
+		t.Fatalf("index 2 is B's first line: %+v", first.Line)
+	}
+	cancel()
+	<-done
+	// list A vanishes: no cache, its fetch fails; B is fine
+	if err := os.RemoveAll(filepath.Join(dir, "lists")); err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	w.fetchErrs[urlA] = errors.New("503")
+	w.mu.Unlock()
+	d2 := New(d.deps)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go func() { _ = d2.Run(ctx2) }()
+	again := waitState(t, d2, "up")
+	if again.Line.ID != first.Line.ID {
+		t.Fatalf("the stored selection moved to another line: was %s (%s), now %s (%s)", first.Line.ID, first.Line.Label, again.Line.ID, again.Line.Label)
+	}
 }

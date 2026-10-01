@@ -30,6 +30,7 @@ with the key in `cli/packaging/repo/ghostlane-repo.gpg.asc`, fingerprint
 
 Debian, Ubuntu and derivatives (amd64, arm64, armhf):
 
+    sudo install -d -m 0755 /etc/apt/keyrings
     curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane-repo.gpg.asc | sudo gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg
     sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.list -o /etc/apt/sources.list.d/ghostlane.list
     sudo apt-get update && sudo apt-get install ghostlane-cli
@@ -39,8 +40,8 @@ Fedora, RHEL, Rocky, Alma (x86_64, aarch64, armv7hl):
     sudo curl -fsSL https://ghostlane-project.github.io/ghostlane/ghostlane.repo -o /etc/yum.repos.d/ghostlane.repo
     sudo dnf install ghostlane-cli
 
-The apt repository serves the newest version; the dnf repository keeps every
-version (`dnf install ghostlane-cli-<version>`); older debs stay on the
+The apt repository serves the newest version; the dnf repository keeps the
+newest two (`dnf install ghostlane-cli-<version>`); older packages stay on the
 release page. Alpine (apk), Arch and the tarballs come from the release page
 or `install.sh`.
 
@@ -182,9 +183,15 @@ reaches the port. The list and selection given once are stored on the volume;
 a restart with no arguments reconnects them. For `--mode tun` (route the
 container's network namespace, or another container's with
 `--network container:ghostlane`) add `--cap-add NET_ADMIN --device /dev/net/tun`
-and, if wanted, `--kill-switch`. The image runs as root (Docker grants the
-capability to root); the daemon's own traffic, and that of any other root
-process in the same namespace, stays outside the tun.
+and, if wanted, `--kill-switch`.
+
+**Tun mode in a container routes non-root processes and forwarded traffic
+only.** The image runs as root (Docker grants `NET_ADMIN` to root), and the
+tun excludes the daemon's uid — which is root's. So a root process in the same
+namespace (the default user of most images, including a sidecar on
+`--network container:ghostlane`) goes **direct**, outside the tun and outside
+the kill switch. Run the workload as a non-root user (`--user 1000` or the
+image's own), or use proxy mode, which routes exactly what you point at it.
 
 `ghostlane run` is the daemon in the foreground, usable in any container or
 init: `--state-dir` (or `GHOSTLANE_STATE_DIR`), `--socket`, `--subscription`,

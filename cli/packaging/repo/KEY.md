@@ -11,8 +11,8 @@ release workflow imports it into a throwaway GNUPGHOME for `reprepro` and
 `rpmsign`. It is a different key from the release signing key
 (`cli-release.pub.pem`, ed25519) that signs SHA256SUMS for `install.sh`.
 
-Rotation or expiry: generate a new key, put its public half here (the apt
-and dnf clients fetch `ghostlane-repo.gpg.asc` from the repo root, so an
-already configured client picks the new key up on its next key refresh —
-`apt-key`-less setups need the keyring file re-downloaded), set the secret,
-run a release.
+Rotation or expiry: generate a new key, put its public half here, set the
+secret, run a release. A dnf client re-imports the key from `gpgkey=` (it
+asks once); an apt client verifies against the keyring file it downloaded
+(`/etc/apt/keyrings/ghostlane.gpg`) and must download it again — say so in
+the release notes.

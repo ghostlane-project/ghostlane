@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,6 +136,45 @@ func (d *Daemon) stopConnect() {
 	d.stopConnectLocked()
 }
 
+// stopAll ends the loop, removes the kill switch and, when asked, forgets the
+// stored selection — all under connectMu, so no control request or refresh
+// sees the selection without its switch or revives it in between.
+func (d *Daemon) stopAll(forgetSelection bool) {
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
+	d.stopConnectLocked()
+	d.removeKillSwitch()
+	if forgetSelection {
+		d.mu.Lock()
+		if d.cfg != nil {
+			d.cfg.Selection = nil
+		}
+		d.mu.Unlock()
+	}
+}
+
+// startStored starts the stored selection at daemon start unless a control
+// request already started a loop (a connect that arrived before this point
+// stored its own selection, and that loop stands).
+func (d *Daemon) startStored() {
+	d.connectMu.Lock()
+	defer d.connectMu.Unlock()
+	d.mu.Lock()
+	live := d.loopLive
+	var sel *store.Selection
+	if d.cfg != nil && d.cfg.Selection != nil {
+		s := *d.cfg.Selection
+		sel = &s
+	}
+	d.mu.Unlock()
+	if sel == nil || live {
+		return
+	}
+	if err := d.startConnectLocked(*sel); err != nil {
+		d.logf("%v", err)
+	}
+}
+
 func (d *Daemon) stopConnectLocked() {
 	d.mu.Lock()
 	cancel, done := d.cancel, d.loopDone
@@ -175,7 +215,7 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 			continue
 		}
-		cands, err := links.Select(flatten(all), sel.Selector)
+		cands, err := d.resolve(all, &sel)
 		if err != nil {
 			// nothing matches today; the next refresh that changes a list retries
 			d.setState("failed", err.Error(), nil)
@@ -224,6 +264,38 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 			backoff = min(backoff*2, d.deps.RetryMax)
 		}
 	}
+}
+
+// resolve turns the selection into candidates. A numeric selector names a
+// line, not a position: the first resolution remembers the line's id with the
+// selection, and later ones (another round, the next start, a list that
+// cannot be read today) find that line wherever it sits; only a line that is
+// gone falls back to the index.
+func (d *Daemon) resolve(all []indexed, sel *store.Selection) ([]links.Entry, error) {
+	if sel.EntryID != "" {
+		for _, e := range all {
+			if e.entry.ID == sel.EntryID {
+				return []links.Entry{e.entry}, nil
+			}
+		}
+	}
+	cands, err := links.Select(flatten(all), sel.Selector)
+	if err != nil {
+		return nil, err
+	}
+	if _, numeric := strconv.Atoi(strings.TrimSpace(sel.Selector)); numeric == nil && len(cands) == 1 && sel.EntryID != cands[0].ID {
+		sel.EntryID = cands[0].ID
+		d.mu.Lock()
+		if d.cfg != nil && d.cfg.Selection != nil && d.cfg.Selection.Selector == sel.Selector && d.cfg.Selection.Subscription == sel.Subscription {
+			d.cfg.Selection.EntryID = sel.EntryID
+		}
+		cfg := d.cfg.Clone()
+		d.mu.Unlock()
+		if err := d.saveConfig(cfg); err != nil {
+			d.logf("config: %v", err)
+		}
+	}
+	return cands, nil
 }
 
 // rotateAfter starts the next round after the line the last one ended on, so
