@@ -6,13 +6,13 @@ compose-multiplatform = "1.12.0-beta03"
 material3 = "1.12.0-alpha03"
 agp = "9.4.1"
 androidx-activityCompose = "1.13.0"
-androidx-core = "1.19.0"
+androidx-core = "1.19.1"
 androidx-camera = "1.6.1"
 # Pinned directly: camera-view 1.6.1 declares appcompat 1.1.0, which drags
 # fragment 1.1.0 (2019) into the app and gets flagged by Play as outdated and
 # as the source of deprecated edge-to-edge window calls.
 androidx-appcompat = "1.8.0"
-androidx-fragment = "1.9.0"
+androidx-fragment = "1.9.1"
 kermit = "2.2.0"
 kotlinx-coroutines = "1.11.0"
 ktor = "3.6.0"
