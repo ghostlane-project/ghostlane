@@ -7,7 +7,9 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // The location bundle has two readers on Android, the app and the VPN service,
 // and one of them reads without waiting for the other's lock. A bundle read
@@ -28,6 +30,32 @@ class AtomicTextTest {
 
         assertEquals("two", target.readText())
         assertEquals(listOf("bundle.json"), dir.list().orEmpty().toList())
+    }
+
+    // A process that dies between writing and renaming leaves a whole copy
+    // beside the target. The next write sweeps it, but not a file young enough
+    // to be another writer's.
+    @Test
+    fun whatADeadProcessLeftBesideIsSweptOnceItIsOld() {
+        if (!posix) return
+        val dir = Files.createTempDirectory("olcbox-atomic-text").toFile()
+        val target = File(dir, "bundle.json")
+        val stale = File(dir, "bundle.json.123.tmp").apply {
+            writeText("half")
+            setLastModified(System.currentTimeMillis() - 10 * 60_000L)
+        }
+        val young = File(dir, "bundle.json.456.tmp").apply { writeText("another writer's") }
+        val unrelated = File(dir, "other.json.789.tmp").apply {
+            writeText("not ours")
+            setLastModified(System.currentTimeMillis() - 10 * 60_000L)
+        }
+
+        AtomicText.write(target, "one")
+
+        assertEquals("one", target.readText())
+        assertFalse(stale.exists())
+        assertTrue(young.exists())
+        assertTrue(unrelated.exists())
     }
 
     @Test
