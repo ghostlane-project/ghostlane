@@ -261,6 +261,8 @@ final class PacketTunnelController: ObservableObject {
     nonisolated(unsafe) private(set) static var systemConnectedSinceMs: Int64 = 0
 
     private var manager: NETunnelProviderManager?
+    /// A stop that is still on its way; see `stopInOrder`.
+    private var stopping: Task<Void, Never>?
     // Touched from deinit, which is not actor-isolated, so it cannot be either.
     private nonisolated(unsafe) var observer: NSObjectProtocol?
     private nonisolated(unsafe) var foregroundObserver: NSObjectProtocol?
@@ -404,6 +406,31 @@ final class PacketTunnelController: ObservableObject {
         log.info("stopVPNTunnel requested")
     }
 
+    /// `stop()`, remembered until it has finished, so that a start asked for
+    /// right behind it can wait for it (`awaitPendingStop`).
+    ///
+    /// A stop used to be one call into the system and nothing could overtake
+    /// it. Since the kill switch it first switches on-demand off and saves the
+    /// profile, which takes a moment. Kotlin sends a stop just ahead of every
+    /// restart and does not wait for it, so this one could reach
+    /// `stopVPNTunnel()` after the start behind it had brought its tunnel up,
+    /// and stop that one.
+    ///
+    /// Only a start waits. A stop asked for while a start is under way goes
+    /// ahead at once: that is Cancel, and it has to cancel now.
+    func stopInOrder() {
+        let before = stopping
+        stopping = Task { @MainActor in
+            _ = await before?.value
+            await self.stop()
+        }
+    }
+
+    /// Waits for a stop that was asked for before this moment.
+    func awaitPendingStop() async {
+        _ = await stopping?.value
+    }
+
     /// The kill switch, as far as iOS has one an app can ask for.
     ///
     /// `includeAllNetworks` sends every route into the tunnel, so that with the
@@ -491,8 +518,13 @@ final class PacketTunnelController: ObservableObject {
     func waitUntilUp(timeout: TimeInterval = 45) async -> String? {
         guard let manager else { return "no VPN configuration" }
         var sawAttempt = false
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        // Counted in polls, not by the clock. iOS suspends the app in the
+        // background, and one that was waiting here woke up minutes later
+        // with its deadline long gone: it left the loop without looking, and
+        // reported the stage of a tunnel that had been up the whole time as
+        // its death. Kotlin then stopped that tunnel.
+        let polls = Int((timeout / 0.25).rounded())
+        for _ in 0..<polls {
             switch manager.connection.status {
             case .connected:
                 return nil
@@ -509,6 +541,9 @@ final class PacketTunnelController: ObservableObject {
             }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
+        // The status once more: what it says now is the answer, whatever the
+        // wait was like.
+        if manager.connection.status == .connected { return nil }
         return Self.lastStage() ?? "timed out waiting for the tunnel"
     }
 
@@ -728,7 +763,9 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             // itself, which is false on every fresh launch — including a launch
             // over a tunnel that is very much running, now that the app adopts
             // one. The old tunnel then survived the start, or, worse, the stop
-            // Kotlin had already sent landed midway through it.
+            // Kotlin had already sent landed midway through it. That stop is
+            // waited for first: it saves the profile before it stops anything.
+            await Self.controller.awaitPendingStop()
             await Self.controller.stop()
             // Waited for, not slept through. A fixed 700 ms was a guess about
             // how long a teardown takes; this asks.
@@ -806,7 +843,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     func stop() {
-        Task { @MainActor in await Self.controller.stop() }
+        Task { @MainActor in Self.controller.stopInOrder() }
     }
 
     /// The room list, to a running tunnel. The shape `PacketTunnelProvider`

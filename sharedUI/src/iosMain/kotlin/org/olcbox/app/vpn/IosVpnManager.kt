@@ -873,6 +873,8 @@ class IosVpnManager(
             setStatus(VpnStatus.Reconnecting)
             addLog("Auto-reconnect requested ($reason)")
 
+            if (systemBringsTunnelBack()) return@launch
+
             // Keep retrying with exponential backoff until we reconnect or the user
             // turns the connection off. A single failed attempt (e.g. no network yet)
             // must not give up — that is what left the transport dead before.
@@ -896,6 +898,53 @@ class IosVpnManager(
                 if (_status.value !is VpnStatus.Reconnecting) setStatus(VpnStatus.Reconnecting)
             }
         }
+    }
+
+    /**
+     * With the kill switch on, a tunnel that went down has two owners: iOS,
+     * which brings it back by itself (the on-demand rule the kill switch
+     * writes into the VPN profile) and holds traffic until it is back, and
+     * this app's own reconnect, which begins by stopping whatever tunnel
+     * there is. Left to race, the reconnect stopped the tunnel iOS had just
+     * brought up, 0.66 s after it came up on the phone this was found on, and
+     * started another. So with the switch on the system goes first: this waits
+     * for the tunnel it is bringing back and takes it as the session's. The
+     * app's own restart is what follows only when the system has not managed.
+     *
+     * Not for a tunnel that is up: a reconnect asked for because a room was
+     * lost has a running tunnel to replace, and that is the app's to do.
+     *
+     * The wait is counted in polls and not by the clock. iOS suspends the app
+     * in the background, and a wait measured by the clock is over the moment
+     * the app wakes, before it has looked at anything.
+     *
+     * True when nothing is left for the app's own restart to do.
+     */
+    private suspend fun systemBringsTunnelBack(): Boolean {
+        if (packetTunnelBridge.isRunning()) return false
+        val killSwitch = try {
+            locationsRepository.getRoutingSettings().killSwitch
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+        if (!killSwitch) return false
+
+        addLog("The kill switch is on, so iOS brings the tunnel back by itself; waiting for it")
+        repeat(SYSTEM_RESTART_POLLS) {
+            if (!desiredConnected) return true
+            if (packetTunnelBridge.isRunning()) {
+                reconnectAttempt = 0
+                lastReadyMark = timeSource.markNow()
+                setStatus(VpnStatus.Connected)
+                addLog("iOS brought the packet tunnel back")
+                return true
+            }
+            delay(SYSTEM_RESTART_POLL_MS)
+        }
+        addLog("iOS has not brought the tunnel back; restarting it from the app")
+        return false
     }
 
     private fun nextReconnectDelay(): Long {
@@ -1030,6 +1079,13 @@ class IosVpnManager(
         const val SYSTEM_SYNC_INTERVAL_MS = 3_000L
         const val ADOPT_AFTER_STOP_GRACE_MS = 10_000L
         const val RECONNECT_BASE_DELAY_MS = 2_000L
+        /**
+         * How long the system is given to bring a tunnel back under the kill
+         * switch: half a minute of the app being awake. An olcRTC room takes
+         * about eight seconds to open once iOS has started the extension.
+         */
+        const val SYSTEM_RESTART_POLLS = 60
+        const val SYSTEM_RESTART_POLL_MS = 500L
         const val RECONNECT_MAX_DELAY_MS = 30_000L
         const val MAX_RECONNECT_BACKOFF_POWER = 3
         const val POST_CONNECT_GRACE_MS = 4_000L
