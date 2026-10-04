@@ -23,9 +23,9 @@ import multiplatform_app.sharedui.generated.resources.Res
  * apiVersion with an `env` map, and the extension bundle is laid out by
  * Xcode. Rules in the config need no file, cost the same memory once parsed,
  * and are checked by `xray -test` like the rest of the document. The IPv6
- * prefixes are left out: the iOS tunnel claims no IPv6 route, so no IPv6
- * destination ever reaches these rules, and they were more bytes than
- * everything else together.
+ * prefixes are left out: on this path the tun is hev's, which is given no
+ * IPv6 address and drops the family, so no IPv6 destination ever reaches
+ * these rules, and they were more bytes than everything else together.
  */
 object XrayGeodata {
     class File(val name: String, val sha256: String)

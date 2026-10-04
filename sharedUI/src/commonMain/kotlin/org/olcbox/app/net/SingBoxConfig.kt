@@ -443,8 +443,9 @@ object SingBoxConfig {
     /**
      * The fake-address range for names bound for the tunnel. RFC 2544's
      * benchmarking block, which nothing on the internet answers from, so a
-     * leaked fake can only fail; IPv4 only, because the tun on iOS claims no
-     * IPv6 and a fake IPv6 would leave through the physical interface.
+     * leaked fake can only fail. IPv4 only: one family is enough to carry a
+     * name to the exit, and the iOS tun, which claims IPv6 only so that it
+     * cannot go around the tunnel, has nothing to gain from a second.
      */
     private const val FAKE_IP_RANGE = "198.18.0.0/15"
 

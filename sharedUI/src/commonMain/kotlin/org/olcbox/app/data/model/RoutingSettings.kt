@@ -97,7 +97,19 @@ data class RoutingSettings(
     val directRules: List<String> = emptyList(),
     /** Your own "always through the tunnel" rules; they win over the mode's lists too. */
     @SerialName("tunnel_rules")
-    val tunnelRules: List<String> = emptyList()
+    val tunnelRules: List<String> = emptyList(),
+    /**
+     * The kill switch, where the platform has one the app can ask for. On iOS
+     * that is every route sent into the tunnel (`includeAllNetworks`) and the
+     * system told to bring the tunnel back whenever it is not up (on-demand):
+     * with the tunnel gone, traffic is dropped rather than sent directly. Off
+     * by default because of what it costs: with the tunnel gone and unable to
+     * come back, the phone has no network until the VPN is switched off in
+     * Settings. It sits here for the reason [verboseDebugLogs] does: one
+     * persisted copy, read at every start.
+     */
+    @SerialName("kill_switch")
+    val killSwitch: Boolean = false
 ) {
     /** Whether anything here asks for rules at all: a mode other than Global, or a rule of your own. */
     val needsRules: Boolean

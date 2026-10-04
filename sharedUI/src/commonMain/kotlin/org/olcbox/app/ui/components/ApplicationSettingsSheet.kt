@@ -33,6 +33,7 @@ import multiplatform_app.sharedui.generated.resources.https_sources
 import multiplatform_app.sharedui.generated.resources.https_sources_none
 import multiplatform_app.sharedui.generated.resources.kill_switch
 import multiplatform_app.sharedui.generated.resources.kill_switch_note
+import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
 import multiplatform_app.sharedui.generated.resources.lan_choose_interface
 import multiplatform_app.sharedui.generated.resources.lan_connect_first
 import multiplatform_app.sharedui.generated.resources.lan_endpoint
@@ -178,6 +179,7 @@ import org.olcbox.app.ui.components.kit.pkVersionLine
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.ui.theme.LocalPkPalette
 import org.olcbox.app.update.AppUpdateInfo
+import org.olcbox.app.update.currentUpdatePlatform
 import org.olcbox.app.update.AppUpdateSettings
 import kotlin.time.Instant
 
@@ -265,9 +267,11 @@ fun ApplicationSettingsSheet(
     tunnelDaemonSummary: String? = null,
     onTunnelDaemonClick: () -> Unit = {},
     /**
-     * The platform's own kill switch, where the app has one to offer: today the
-     * Linux desktop's tunnel. Null everywhere else, and the row is then absent,
-     * as the tunnel component's is.
+     * The platform's own kill switch, where the caller has one to offer: today
+     * the Linux desktop's tunnel. Null everywhere else. iOS has a kill switch
+     * too and hands in nothing here: its switch is the VPN profile's and is
+     * carried by [routingSettings] ([RoutingSettings.killSwitch]). With
+     * neither, the row is absent, as the tunnel component's is.
      */
     killSwitch: Boolean? = null,
     onKillSwitchChanged: (Boolean) -> Unit = {},
@@ -402,12 +406,23 @@ fun ApplicationSettingsSheet(
                     modeSummary = connectionModeSummary,
                     socksProxySettings = socksProxySettings,
                     tunnelDaemonSummary = tunnelDaemonSummary,
-                    killSwitch = killSwitch,
+                    // One row, and two platforms that have a kill switch to
+                    // put in it, never both at once. The Linux desktop's is
+                    // its tunnel's and comes from the caller. iOS's is the VPN
+                    // profile's and lives in the routing settings.
+                    killSwitch = killSwitch
+                        ?: routingSettings.killSwitch.takeIf { currentUpdatePlatform().os == "ios" },
                     chromeDtls = routingSettings.olcrtcChromeDtls,
                     onConnectionModeClick = { route = SharedSettingsRoute.ConnectionMode },
                     onSocksProxyClick = { route = SharedSettingsRoute.SocksProxy },
                     onTunnelDaemonClick = onTunnelDaemonClick,
-                    onKillSwitchChanged = onKillSwitchChanged,
+                    onKillSwitchChanged = { enabled ->
+                        if (killSwitch != null) {
+                            onKillSwitchChanged(enabled)
+                        } else {
+                            onRoutingSettingsChanged(routingSettings.copy(killSwitch = enabled))
+                        }
+                    },
                     onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) },
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
@@ -667,11 +682,19 @@ private fun SharedConnectionSettingsContent(
 
             // Here, beside the other things that decide how traffic leaves, and
             // not behind the admin gate: it is the user's own choice, and its
-            // note is where they learn what the choice costs.
+            // note is where they learn what the choice costs. The cost is the
+            // platform's: what iOS does with a tunnel that cannot come back is
+            // not what the Linux tunnel's block does.
             if (killSwitch != null) {
                 ConnectionSwitchRow(
                     title = stringResource(Res.string.kill_switch),
-                    note = stringResource(Res.string.kill_switch_note),
+                    note = stringResource(
+                        if (currentUpdatePlatform().os == "ios") {
+                            Res.string.kill_switch_note_ios
+                        } else {
+                            Res.string.kill_switch_note
+                        }
+                    ),
                     checked = killSwitch,
                     onCheckedChange = onKillSwitchChanged
                 )

@@ -22,6 +22,11 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     enum Tun {
         static let address = "172.19.0.1"
         static let mask = "255.255.255.252"
+        // The same unique-local address the desktop tun carries. It is here for
+        // one reason: an interface that has an IPv6 address can claim the IPv6
+        // default route, and one that has none cannot.
+        static let address6 = "fdfe:dcba:9876::1"
+        static let prefix6 = 126
         static let mtu = 9000
         // An address only our own sing-box answers — every query to it is
         // hijacked on port 53. It used to be 1.1.1.1 and 8.8.8.8, which iOS
@@ -87,6 +92,26 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         let ipv4 = NEIPv4Settings(addresses: [Tun.address], subnetMasks: [Tun.mask])
         ipv4.includedRoutes = [NEIPv4Route.default()]
         settings.ipv4Settings = ipv4
+        // IPv6 is claimed too, so that it cannot go around the tunnel.
+        //
+        // With IPv4 alone the phone kept its IPv6 default route on the physical
+        // interface. On a network that hands out IPv6, and Russian mobile
+        // networks do, every connection to an AAAA address then left directly,
+        // at the phone's own address, with the VPN shown as connected. That is
+        // the leak the desktop tun had and closed the same way
+        // (docs/macos-tunnel-daemon.md, "The tun claims IPv6"). On the hev paths
+        // the resolver is a public one and answers AAAA as it finds them, so
+        // there it was the ordinary case, not a corner.
+        //
+        // What happens to the packets once they are here is the engine's
+        // business: sing-box carries them to the exit like any other, and hev,
+        // which is given no IPv6 address, drops them, so a client falls back to
+        // IPv4 through the tunnel. Either way they no longer leave by another
+        // door. The engines' own sockets are unaffected: they are pinned to the
+        // physical interface per family (bindToPhysicalInterface).
+        let ipv6 = NEIPv6Settings(addresses: [Tun.address6], networkPrefixLengths: [NSNumber(value: Tun.prefix6)])
+        ipv6.includedRoutes = [NEIPv6Route.default()]
+        settings.ipv6Settings = ipv6
         settings.mtu = NSNumber(value: Tun.mtu)
 
         let dnsSettings = NEDNSSettings(servers: dns)
@@ -110,8 +135,14 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     /// while its inbound side was happily receiving the same connection.
     func usePlatformAutoDetectControl() -> Bool { true }
 
-    /// Only meaningful with a multipath configuration we do not use.
-    func includeAllNetworks() -> Bool { false }
+    /// Whether the VPN profile sends every route into the tunnel, which is the
+    /// kill switch (`PacketTunnelController.apply(killSwitch:)`). sing-tun has
+    /// to hear the same answer the system was given: in that mode only its
+    /// gVisor stack works, which is the one the config asks for anyway, and it
+    /// refuses the others outright.
+    func includeAllNetworks() -> Bool {
+        (provider?.protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
+    }
 
     // The command server owns sing-box logs in 1.13. Interface diagnostics
     // also go to a dedicated shared-container file, independent of Go startup.
