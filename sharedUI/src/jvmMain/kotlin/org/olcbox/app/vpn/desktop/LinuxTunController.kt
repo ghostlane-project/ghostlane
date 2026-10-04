@@ -191,7 +191,7 @@ internal class LinuxTunController(
      */
     suspend fun findLeftoverBlock(): Boolean {
         if (routesInstalled) return false
-        held = blockLeftStanding() || (blockStands() && tunnelLeadsNowhere())
+        held = blockLeftStanding()
         if (held) {
             addLog(
                 "Linux TUN: a kill switch block from a previous run is still in place and holds this machine's " +
@@ -349,15 +349,21 @@ internal class LinuxTunController(
     private suspend fun blockStands(): Boolean = routeRuleExists() && killSwitchRouteExists()
 
     /**
-     * Whether the block stands with nothing in front of it but, at most, a hev
-     * of this controller's own that could not be ended. A tun that is there
-     * without one is somebody's running tunnel, a second window of this app
-     * or a hev that outlived the app: saying "the tunnel is down" over it
+     * Whether the block stands with nothing in front of it that carries: no
+     * tun at all, a hev of this controller's own that could not be ended, or
+     * a tun that hands what it takes to nobody ([tunnelLeadsNowhere]). A tun
+     * whose port answers is somebody's running tunnel, a second window of
+     * this app or cores that outlived it: saying "the tunnel is down" over it
      * would be wrong, and offering to remove the block would take a live
      * tunnel's rules away.
+     *
+     * Asked when the app starts and after every stop. After a stop too: a
+     * hold found at the start behind a tunnel from an earlier run has no hev
+     * of this controller's, and a cleanup whose dialog was then closed left
+     * the app saying "disconnected" over a machine that was still blocked.
      */
     private suspend fun blockLeftStanding(): Boolean =
-        blockStands() && (ownTunnel?.isAlive == true || !interfaceExists())
+        blockStands() && (ownTunnel?.isAlive == true || !interfaceExists() || tunnelLeadsNowhere())
 
     /**
      * Whether the tun that is there hands what it takes to nobody. hev runs
