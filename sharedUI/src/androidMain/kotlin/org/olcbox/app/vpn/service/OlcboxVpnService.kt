@@ -739,6 +739,10 @@ class OlcboxVpnService : VpnService() {
         requestedGeneration: Long
     ) {
         addLog("$what is up but no traffic reached the internet through it")
+        // The core's own account, before anything stops it: this line alone says
+        // that nothing came back, never why, and the core's log is a file only
+        // root can read.
+        if (activeCorePort != null) addLog(activeCoreDiagnostics())
         if (isMigration) {
             updateUnderlyingNetwork(null)
             setStatus(VpnStatus.Reconnecting)
@@ -770,7 +774,7 @@ class OlcboxVpnService : VpnService() {
             activeCoreLogin = null
             startMobile(location, upstream, requestedGeneration, setErrorOnFailure, routing)
         } else {
-            startCore(location, setErrorOnFailure, routing)
+            startCore(location, setErrorOnFailure, routing, upstream)
         }
     }
 
@@ -790,7 +794,8 @@ class OlcboxVpnService : VpnService() {
     private suspend fun startCore(
         location: LocationConfig,
         setErrorOnFailure: Boolean,
-        routing: Routing
+        routing: Routing,
+        upstream: Network
     ): Boolean {
         val tun = connectionMode == AndroidConnectionMode.Tun
         val port = if (tun) sessionCorePort.acquire() else socksListenPort
@@ -854,7 +859,10 @@ class OlcboxVpnService : VpnService() {
                         socksPort = port,
                         routing = routing,
                         verboseLogs = verboseDebugLogs,
-                        login = login
+                        login = login,
+                        // A server named by hostname: the core has no system
+                        // resolver to ask on Android, so it is given the network's.
+                        serverResolver = DirectDns.Servers(upstreamDnsAddresses(upstream))
                     )
                 )
                 label = "sing-box/${location.kind}"

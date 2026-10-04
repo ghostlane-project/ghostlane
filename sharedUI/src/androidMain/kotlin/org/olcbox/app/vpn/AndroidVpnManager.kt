@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import androidx.core.content.ContextCompat
@@ -25,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.AndroidCoreProcess
+import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.TransportProbe
 import java.util.concurrent.atomic.AtomicInteger
 import org.olcbox.app.net.LocationKind
@@ -318,7 +320,10 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     // Smart connect: the location's core, alone, in a work dir of its own so the
     // service's core is never touched (AndroidCoreProcess keys its dir by label).
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
-        TransportProbe.passes(locationConfig) { spec, config ->
+        TransportProbe.passes(
+            locationConfig,
+            serverResolver = DirectDns.Servers(activeNetworkResolvers())
+        ) { spec, config ->
             val label = "probe-${probeSerial.incrementAndGet()}"
             val core = AndroidCoreProcess(
                 context = appContext,
@@ -337,6 +342,21 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         }
 
     private val probeSerial = AtomicInteger()
+
+    /**
+     * The resolvers of the network the phone is on, for a probe whose server is
+     * named by hostname: a core on Android has no system resolver to fall back
+     * on (see SingBoxConfig.build). Asked before the VPN is up, so the active
+     * network is the physical one; an empty answer leaves DirectDns its public
+     * fallback.
+     */
+    private fun activeNetworkResolvers(): List<String> = runCatching {
+        val connectivity = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivity.activeNetwork
+            ?.let { connectivity.getLinkProperties(it)?.dnsServers }
+            ?.mapNotNull { it.hostAddress }
+            .orEmpty()
+    }.getOrDefault(emptyList())
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(

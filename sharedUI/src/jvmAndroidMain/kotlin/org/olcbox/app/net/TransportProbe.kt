@@ -40,20 +40,25 @@ internal object TransportProbe {
     /** xhttp is Xray's; everything else a probe sees is sing-box's. */
     fun usesXray(spec: OutboundSpec): Boolean = spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp
 
-    fun coreConfig(spec: OutboundSpec, port: Int, login: SocksLogin): String =
+    /** [serverResolver]: see [SingBoxConfig.build]; Android passes the network's own resolvers. */
+    fun coreConfig(spec: OutboundSpec, port: Int, login: SocksLogin, serverResolver: DirectDns? = null): String =
         if (spec is OutboundSpec.Vless && usesXray(spec)) {
             XrayConfig.buildXhttp(spec, socksPort = port, login = login)
         } else {
-            SingBoxConfig.build(spec, socksPort = port, login = login)
+            SingBoxConfig.build(spec, socksPort = port, login = login, serverResolver = serverResolver)
         }
 
-    suspend fun passes(location: LocationConfig, starter: Starter): Boolean = withContext(Dispatchers.IO) {
+    suspend fun passes(
+        location: LocationConfig,
+        serverResolver: DirectDns? = null,
+        starter: Starter
+    ): Boolean = withContext(Dispatchers.IO) {
         val spec = location.rawLink?.let { LinkParser.parse(it) } ?: return@withContext false
         val port = freeLoopbackPort() ?: return@withContext false
         val login = SocksLogin(token(), token())
         var core: Core? = null
         try {
-            val started = starter.start(spec, coreConfig(spec, port, login)).also { core = it }
+            val started = starter.start(spec, coreConfig(spec, port, login, serverResolver)).also { core = it }
             if (!waitForPort(port, started)) return@withContext false
             val proxy = SubscriptionFetchProxy(LOOPBACK, port, login.username, login.password)
             val client = createProxyHttpClient(

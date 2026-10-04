@@ -112,6 +112,21 @@ class SingBoxConfigDumpTest {
     // xhttp is NOT a sing-box transport — it's handled by Xray-core (see
     // XrayConfigDumpTest). sing-box covers reality (tcp) + hy2 + olcrtc-socks.
 
+    // A server named by hostname under Global routing, with the resolver Android
+    // hands the core: a `dns` section with one server and a route that names it.
+    @Test fun dumpVlessNamedByHostnameWithAResolver() {
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@vpn.example.com:443" +
+                "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+                "&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#N"
+        )
+        assertNotNull(spec)
+        dump(
+            "vless-hostname-resolver",
+            SingBoxConfig.build(spec, serverResolver = DirectDns.Servers(listOf("192.168.1.1")))
+        )
+    }
+
     @Test fun dumpHysteria2() {
         val link = "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#RU-hy2"
         val spec = LinkParser.parse(link)
