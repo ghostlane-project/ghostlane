@@ -7,6 +7,8 @@ import multiplatform_app.sharedui.generated.resources.Res
 import multiplatform_app.sharedui.generated.resources.blocked_no_location
 import multiplatform_app.sharedui.generated.resources.notification_connecting
 import multiplatform_app.sharedui.generated.resources.notification_connection_failed
+import multiplatform_app.sharedui.generated.resources.notification_holding
+import multiplatform_app.sharedui.generated.resources.notification_lists_not_applied
 import multiplatform_app.sharedui.generated.resources.notification_protecting
 import multiplatform_app.sharedui.generated.resources.notification_proxy_connected
 import multiplatform_app.sharedui.generated.resources.notification_reconnecting
@@ -89,7 +91,9 @@ import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
 import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.SessionPort
+import org.olcbox.app.vpn.TunSpec
 import org.olcbox.app.vpn.TunnelBridge
+import org.olcbox.app.vpn.TunnelSession
 import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
@@ -198,6 +202,16 @@ class OlcboxVpnService : VpnService() {
      */
     private val sessionCorePort = SessionPort(::freeLoopbackPort)
     private var bridgeTarget: BridgeTarget? = null
+
+    /**
+     * What the interface that is up was established with, whether what runs
+     * behind it has been verified once (from then on the interface is the
+     * session's and is held), and whether Android itself asked for this VPN
+     * (always-on). See [TunnelSession].
+     */
+    private var tunSpec: TunSpec? = null
+    private var sessionVerified = false
+    private var startedBySystem = false
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
@@ -364,13 +378,15 @@ class OlcboxVpnService : VpnService() {
             }
         }
 
+        val bySystem = startIntent.action == SERVICE_INTERFACE
         val options = loadStartOptions(startIntent)
         // Always-on is a VPN by definition: a saved proxy mode never establishes
         // the tun the system is waiting for.
-        applyStartOptions(
-            if (startIntent.action == SERVICE_INTERFACE) options.copy(connectionMode = AndroidConnectionMode.Tun) else options
-        )
+        applyStartOptions(if (bySystem) options.copy(connectionMode = AndroidConnectionMode.Tun) else options)
         val isRestart = shouldRestartForStartCommand()
+        // Android's claim lasts the session: a restart the app asks for inside
+        // it (another location, an edited app list) is not a first connect again.
+        startedBySystem = bySystem || (startedBySystem && isRestart)
         if (isRestart) {
             addLog("Restarting ${activeModeLabel()} for selected location")
         }
@@ -534,9 +550,35 @@ class OlcboxVpnService : VpnService() {
                     coroutineContext.ensureActive()
                     if (requestedGeneration != generation) return@withLock
 
+                    val tunMode = connectionMode == AndroidConnectionMode.Tun
+                    // The network arriving under a first connect that began
+                    // without one is still that first connect.
+                    val migrates = TunnelSession.migrates(isMigration, tunMode, sessionVerified, startedBySystem)
+                    val behindTunnel = TunnelSession.runsBehindTunnel(
+                        tunMode = tunMode,
+                        interfaceHeld = TunnelSession.holdsInterface(
+                            interfaceUp = vpnInterface != null,
+                            verified = sessionVerified,
+                            startedBySystem = startedBySystem
+                        ),
+                        isMigration = isMigration,
+                        isRestart = isRestart
+                    )
                     val active = repository.getActiveLocation()
                     val location = active?.location?.normalized()
                     if (location == null || !location.isComplete()) {
+                        if (behindTunnel) {
+                            // Inside a session a missing location is a reason to
+                            // wait, not to let traffic out: the interface stays and
+                            // the notification says what is missing. Nothing is
+                            // retried; picking a location starts it again.
+                            addLog("No active location; keeping the tunnel")
+                            stopMobileAndWait()
+                            stopBridgeForHold()
+                            setStatus(VpnStatus.Reconnecting)
+                            updateNotification("Add a location first")
+                            return@withLock
+                        }
                         setStatus(VpnStatus.Error("No active location"))
                         updateNotification("Add a location first")
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
@@ -548,12 +590,36 @@ class OlcboxVpnService : VpnService() {
                     this@OlcboxVpnService.routingSettings = routingSettings
                     verboseDebugLogs = routingSettings.verboseDebugLogs
 
-                    if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
-                        reconnectTransport(location, requestedGeneration)
-                    } else {
-                        startFullTunnel(location, requestedGeneration, isMigration, isRestart)
+                    when {
+                        // A tun session: whatever restarts, restarts behind the
+                        // interface. What used to be a full restart (tun2socks
+                        // dead, RTC lost, another location) only adds a restart of
+                        // tun2socks; the interface is replaced, by handover, only
+                        // when what it was built with changed. That is asked at
+                        // every start, not only at the one that carried the
+                        // change: that one may end before it reaches the
+                        // interface (no network, superseded), and the change is
+                        // still owed.
+                        behindTunnel -> reconnectTransport(
+                            location,
+                            requestedGeneration,
+                            restartBridge = forceFullRestart,
+                            replaceInterface = TunnelSession.needsHandover(tunSpec, currentTunSpec())
+                        )
+
+                        migrates && !forceFullRestart && canReconnectTransportInPlace() ->
+                            reconnectTransport(location, requestedGeneration)
+
+                        else -> startFullTunnel(location, requestedGeneration, migrates, isRestart)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Nothing a start throws may end the process: the interface
+                // would go with it, and the hold with the interface.
+                addLog("Start failed unexpectedly: ${e.message ?: e}")
+                if (requestedGeneration == generation) afterUnexpectedFailure(requestedGeneration, e)
             } finally {
                 if (requestedGeneration == generation) {
                     releaseWakeLock()
@@ -562,15 +628,54 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
-    private suspend fun reconnectTransport(location: LocationConfig, requestedGeneration: Long) {
+    /**
+     * A start threw something nothing expected (a rule file that would not be
+     * written, a store that would not be read). Inside a session that is a
+     * reconnect that failed, and is retried behind the interface; outside one
+     * it is a connect that failed, and says so.
+     */
+    private suspend fun afterUnexpectedFailure(requestedGeneration: Long, error: Exception) {
+        val held = connectionMode == AndroidConnectionMode.Tun && TunnelSession.holdsInterface(
+            interfaceUp = vpnInterface != null,
+            verified = sessionVerified,
+            startedBySystem = startedBySystem
+        )
+        if (held) {
+            setStatus(VpnStatus.Reconnecting)
+            updateNotification(reconnectingText())
+            scheduleTransportRetry(requestedGeneration, "an unexpected failure")
+        } else {
+            stopTransportProcesses(closeTun = true, waitForSocksPort = false)
+            setStatus(VpnStatus.Error(error.message ?: "Connection failed"))
+            updateNotification("Connection failed")
+        }
+    }
+
+    /**
+     * Brings the transport back behind what is already up: the VPN interface in a
+     * tun session, the SOCKS listener in proxy mode.
+     *
+     * [restartBridge] also restarts tun2socks, for the cases that used to close
+     * the interface to get a clean one. [replaceInterface] swaps the interface
+     * itself by handover. Neither leaves a moment with no interface.
+     */
+    private suspend fun reconnectTransport(
+        location: LocationConfig,
+        requestedGeneration: Long,
+        restartBridge: Boolean = false,
+        replaceInterface: Boolean = false
+    ) {
         setStatus(VpnStatus.Reconnecting)
-        updateNotification("Reconnecting...")
+        updateNotification(reconnectingText())
         val upstream = findActiveUpstreamNetwork()
         if (upstream == null) {
             updateUnderlyingNetwork(null)
             unbindProcessFromNetwork()
             updateNotification("Waiting for network...")
             addLog("No upstream network; keeping tunnel alive")
+            // Offline with the transport gone as well (a core that died):
+            // nothing listens where tun2socks points for as long as that lasts.
+            if (!isActiveTransportRunning()) stopBridgeForHold()
             scheduleTransportRetry(requestedGeneration, "no upstream network", NETWORK_RETRY_BASE_DELAY_MS)
             return
         }
@@ -580,14 +685,32 @@ class OlcboxVpnService : VpnService() {
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return
 
+        if ((restartBridge || replaceInterface) && !stopBridge()) {
+            if (requestedGeneration != generation) return
+            // tun2socks would not stop. It is one instance per process and reads
+            // a descriptor of its own, so nothing can be started beside it and
+            // replacing the interface would not take that descriptor from it.
+            // The interface holds, and the next attempt finds out whether it
+            // has gone.
+            scheduleTransportRetry(requestedGeneration, "tun2socks did not stop")
+            return
+        }
+        // An interface that cannot be replaced stays, with what it was built
+        // with. That is said once the session is back, because the settings
+        // now show lists the interface does not have.
+        val listsNotApplied = if (replaceInterface) handOverInterface(requestedGeneration) else null
+        coroutineContext.ensureActive()
+        if (requestedGeneration != generation) return
+
         if (startTransport(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
             if (!ensureBridge()) {
                 if (requestedGeneration != generation) return
-                // The transport is up and tun2socks cannot reach it. A full
-                // restart closes the descriptor, which ends a tun2socks that
-                // would not stop when asked, and starts both again.
+                // The transport is up and tun2socks does not reach it. Nothing
+                // is given up: the interface holds, and the next attempt comes
+                // after the usual backoff rather than at once.
                 setStatus(VpnStatus.Reconnecting)
-                requestTransportRecovery("tun2socks could not follow the transport", fullRestart = true)
+                updateNotification(reconnectingText())
+                scheduleTransportRetry(requestedGeneration, "tun2socks did not restart")
                 return
             }
             val exit = verifyTunnel()
@@ -602,10 +725,17 @@ class OlcboxVpnService : VpnService() {
             }
             setStatus(VpnStatus.Connected)
             resetRecoveryState()
-            updateNotification(connectedNotificationText())
+            if (listsNotApplied != null) {
+                updateNotification(LISTS_NOT_APPLIED_TEXT)
+                addLog("The new app lists were not applied, the VPN keeps the previous ones: $listsNotApplied")
+            } else {
+                updateNotification(connectedNotificationText())
+            }
             addLog("${activeModeLabel()} transport reconnected — exit ${exit.label()}")
             startWatchdog()
         } else {
+            if (requestedGeneration != generation) return
+            stopBridgeForHold()
             updateUnderlyingNetwork(null)
             setStatus(VpnStatus.Reconnecting)
             updateNotification("Waiting for transport...")
@@ -619,6 +749,9 @@ class OlcboxVpnService : VpnService() {
         isMigration: Boolean,
         isRestart: Boolean
     ) {
+        // Whether a failure here is retried rather than shown: always inside a
+        // migration, and when Android itself asked for the VPN.
+        val retries = !TunnelSession.mayFailOpen(behindTunnel = false, isMigration = isMigration, startedBySystem = startedBySystem)
         setStatus(if (isMigration || isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
         updateNotification("Connecting...")
         stopTransportProcesses(closeTun = true, waitForSocksPort = true)
@@ -632,15 +765,17 @@ class OlcboxVpnService : VpnService() {
             addLog("No upstream network")
             setStatus(VpnStatus.Reconnecting)
             updateNotification("Waiting for network...")
-            if (isMigration) {
+            if (retries) {
                 scheduleTransportRetry(requestedGeneration, "no upstream network", NETWORK_RETRY_BASE_DELAY_MS)
             }
             return
         }
         updateUnderlyingNetwork(upstream)
 
-        if (!startTransport(location, upstream, requestedGeneration, setErrorOnFailure = !isMigration)) {
-            if (isMigration) {
+        if (!startTransport(location, upstream, requestedGeneration, setErrorOnFailure = !retries)) {
+            // Not for a start that a stop has ended: the stop has said
+            // Disconnected by now, and this would say Reconnecting after it.
+            if (retries && requestedGeneration == generation) {
                 updateUnderlyingNetwork(null)
                 setStatus(VpnStatus.Reconnecting)
                 updateNotification("Waiting for transport...")
@@ -660,7 +795,7 @@ class OlcboxVpnService : VpnService() {
             val proxyExit = verifyTunnel()
             if (requestedGeneration != generation) return
             if (proxyExit == null) {
-                failUnverifiedTunnel("Proxy mode", isMigration, requestedGeneration)
+                failUnverifiedTunnel("Proxy mode", retries, requestedGeneration)
                 return
             }
             setStatus(VpnStatus.Connected)
@@ -677,15 +812,51 @@ class OlcboxVpnService : VpnService() {
         delay(TUNNEL_HANDOFF_DELAY_MS)
         coroutineContext.ensureActive()
 
-        val pfd = establishSystemVpnTunnel()
-        if (pfd == null) {
-            stopMobileAndWait()
-            return
+        // From here on a failure is shown only where a first connect may fail
+        // open. A start Android asked for retries instead, as it does for every
+        // other failure of that start.
+        val spec = currentTunSpec()
+        val pfd = when (val established = establishSystemVpnTunnel(spec)) {
+            is Established.Up -> established.pfd
+
+            is Established.BadLists -> {
+                // Shown whoever asked for the VPN, and not retried. A retry
+                // would start and stop the transport every half minute over a
+                // list only the user can mend, behind a notification that says
+                // nothing. The error names what to mend, and the Connect that
+                // follows starts it.
+                stopMobileAndWait()
+                if (requestedGeneration == generation) {
+                    setStatus(VpnStatus.Error(established.message))
+                    updateNotification("Split tunneling error")
+                }
+                return
+            }
+
+            is Established.Refused -> {
+                stopMobileAndWait()
+                if (requestedGeneration == generation) {
+                    if (retries) {
+                        setStatus(VpnStatus.Reconnecting)
+                        updateNotification("Waiting for transport...")
+                        scheduleTransportRetry(requestedGeneration, "VPN interface not established")
+                    } else {
+                        setStatus(VpnStatus.Error(established.message))
+                        updateNotification("VPN tunnel error")
+                    }
+                }
+                return
+            }
         }
 
-        vpnInterface = pfd
-        if (!startTun2socks(pfd)) {
+        if (!adoptInterface(pfd, spec, requestedGeneration)) return
+        if (!startTun2socks(pfd, reportError = !retries)) {
             stopTransportProcesses(closeTun = true)
+            if (retries && requestedGeneration == generation) {
+                setStatus(VpnStatus.Reconnecting)
+                updateNotification("Waiting for transport...")
+                scheduleTransportRetry(requestedGeneration, "tun2socks did not start")
+            }
             return
         }
 
@@ -695,7 +866,7 @@ class OlcboxVpnService : VpnService() {
         val exit = verifyTunnel()
         if (requestedGeneration != generation) return
         if (exit == null) {
-            failUnverifiedTunnel("VPN tunnel", isMigration, requestedGeneration)
+            failUnverifiedTunnel("VPN tunnel", retries, requestedGeneration)
             return
         }
 
@@ -778,6 +949,10 @@ class OlcboxVpnService : VpnService() {
             activeCoreLogin = null
             startMobile(location, upstream, requestedGeneration, setErrorOnFailure, routing)
         } else {
+            // A core is a process of its own and needs no binding. One left from
+            // an olcRTC room on mobile data would keep this process's own
+            // requests on that network after the session has moved off it.
+            unbindProcessFromNetwork()
             startCore(location, setErrorOnFailure, routing, upstream)
         }
     }
@@ -1069,12 +1244,21 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
-    private fun startTun2socks(pfd: ParcelFileDescriptor): Boolean {
+    /**
+     * [reportError]: whether a failure becomes the status. Only a first connect
+     * may show one. Behind an interface that is held the failure goes to the
+     * log and the status stays Reconnecting: an Error there says "disconnected"
+     * on a phone that has no network, and the screens that react to an Error
+     * (a stop, among them) would act on it.
+     */
+    private fun startTun2socks(pfd: ParcelFileDescriptor, reportError: Boolean): Boolean {
         return try {
             if (!ensureNativeLibrariesLoaded()) {
                 addLog("tun2socks native libraries are unavailable")
-                setStatus(VpnStatus.Error("tun2socks native libraries are unavailable"))
-                updateNotification("Tunnel failed")
+                if (reportError) {
+                    setStatus(VpnStatus.Error("tun2socks native libraries are unavailable"))
+                    updateNotification("Tunnel failed")
+                }
                 return false
             }
 
@@ -1102,13 +1286,22 @@ class OlcboxVpnService : VpnService() {
             true
         } catch (e: Exception) {
             addLog("tun2socks start failed: ${e.message}")
-            setStatus(VpnStatus.Error(e.message ?: "tun2socks failed"))
-            updateNotification("Tunnel failed")
+            if (reportError) {
+                setStatus(VpnStatus.Error(e.message ?: "tun2socks failed"))
+                updateNotification("Tunnel failed")
+            }
             false
         }
     }
 
-    private fun establishSystemVpnTunnel(): ParcelFileDescriptor? {
+    /**
+     * Asks Android for an interface built with [spec]: the app lists as the
+     * caller took them, so what is recorded as the interface's spec is what it
+     * was built with, even when a start command changes the lists meanwhile.
+     * It publishes nothing: what a failure means depends on who asked, a first
+     * connect or a session that holds another interface.
+     */
+    private fun establishSystemVpnTunnel(spec: TunSpec): Established {
         return try {
             val builder = Builder()
                 .setSession("Olcbox VPN")
@@ -1118,53 +1311,67 @@ class OlcboxVpnService : VpnService() {
                 .addDnsServer(HevTunnelConfig.MAPDNS_ADDRESS)
                 .setBlocking(true)
 
-            if (!applySplitTunneling(builder)) return null
+            applySplitTunneling(builder, spec)?.let { return Established.BadLists(it) }
 
             currentNetwork?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
-            builder.establish()
+            // Null without an exception is Android saying this app is not the
+            // prepared VPN: consent is missing, or another app has taken it.
+            val pfd = builder.establish()
+            if (pfd == null) {
+                addLog("VPN establish failed: the app is not the prepared VPN")
+                Established.Refused("VPN permission is missing")
+            } else {
+                Established.Up(pfd)
+            }
         } catch (e: Exception) {
             addLog("VPN establish failed: ${e.message}")
-            setStatus(VpnStatus.Error(e.message ?: "VPN establish failed"))
-            updateNotification("VPN tunnel error")
-            null
+            Established.Refused(e.message ?: "VPN establish failed")
         }
     }
 
-    private fun applySplitTunneling(builder: Builder): Boolean {
-        return when (splitTunnelMode) {
+    /** What came of asking Android for an interface. */
+    private sealed interface Established {
+        class Up(val pfd: ParcelFileDescriptor) : Established
+
+        /** The app lists cannot be applied: nothing a retry mends, only another list. */
+        class BadLists(val message: String) : Established
+
+        /** Android refused, or this app is not the prepared VPN. */
+        class Refused(val message: String) : Established
+    }
+
+    /** Null when the lists of [spec] were applied; otherwise what is wrong with them, for the caller to report. */
+    private fun applySplitTunneling(builder: Builder, spec: TunSpec): String? {
+        return when (AndroidSplitTunnelMode.fromValue(spec.splitMode)) {
             AndroidSplitTunnelMode.AllApps -> {
                 addDisallowedApp(builder, packageName, "Olcbox")
                 addLog("Split tunneling: all apps use TUN")
-                true
+                null
             }
 
             AndroidSplitTunnelMode.ProxySelected -> {
-                val packages = splitTunnelProxyApps
+                val packages = spec.proxyApps
                     .filter { it.isNotBlank() && it != packageName }
                     .distinct()
 
                 if (packages.isEmpty()) {
                     addLog("Split tunneling proxy list is empty")
-                    setStatus(VpnStatus.Error("Select apps for split tunneling"))
-                    updateNotification("Split tunneling error")
-                    return false
+                    return "Select apps for split tunneling"
                 }
 
                 val applied = packages.count { addAllowedApp(builder, it) }
                 if (applied == 0) {
                     addLog("Split tunneling has no valid proxy apps")
-                    setStatus(VpnStatus.Error("Selected apps are unavailable"))
-                    updateNotification("Split tunneling error")
-                    false
+                    "Selected apps are unavailable"
                 } else {
                     addLog("Split tunneling: $applied selected apps use TUN")
-                    true
+                    null
                 }
             }
 
             AndroidSplitTunnelMode.BypassSelected -> {
                 addDisallowedApp(builder, packageName, "Olcbox")
-                val applied = splitTunnelBypassApps
+                val applied = spec.bypassApps
                     .filter { it.isNotBlank() && it != packageName }
                     .distinct()
                     .count { addDisallowedApp(builder, it) }
@@ -1174,7 +1381,7 @@ class OlcboxVpnService : VpnService() {
                 } else {
                     addLog("Split tunneling: $applied selected apps bypass TUN")
                 }
-                true
+                null
             }
         }
     }
@@ -1232,8 +1439,9 @@ class OlcboxVpnService : VpnService() {
      * hev reads its target once, so it is restarted, on the descriptor that is
      * already open, whenever the target moved or hev is gone. The old instance
      * has to be gone first: hev is one instance per process, and a second one
-     * started beside it is not a restart. On false the caller restarts the
-     * whole tunnel, which closes the descriptor hev is reading.
+     * started beside it is not a restart. On false the caller keeps the
+     * interface and tries again after its backoff: hev reads a descriptor of
+     * its own, so nothing done to the interface would make it let go.
      */
     private suspend fun ensureBridge(): Boolean {
         if (connectionMode != AndroidConnectionMode.Tun) return true
@@ -1248,11 +1456,79 @@ class OlcboxVpnService : VpnService() {
         if (!restart) return true
 
         addLog("tun2socks restarts to follow the transport")
+        if (!stopBridge()) return false
+        return startTun2socks(pfd, reportError = false)
+    }
+
+    /** Stops tun2socks and waits until it is gone; false when it would not stop. */
+    private suspend fun stopBridge(): Boolean {
+        val running = tun2socksThread ?: return true
         stopTun2socks()
         if (!waitForTun2socksStopped(running, TUN2SOCKS_RESTART_WAIT_MS)) return false
         if (tun2socksThread == running) tun2socksThread = null
-        return startTun2socks(pfd)
+        return true
     }
+
+    /**
+     * Replaces the interface without a moment with none. Android creates the new
+     * one while the old descriptor is open and only then deactivates the old
+     * (the "seamless handover" of VpnService.Builder.establish); if the new one
+     * cannot be created the old one is untouched, and the session goes on behind
+     * it. The caller has stopped tun2socks, and [ensureBridge] starts it on
+     * whichever interface is up afterwards. Null when the interface was
+     * replaced; otherwise why it was not, for the caller to say.
+     */
+    private fun handOverInterface(requestedGeneration: Long): String? {
+        val old = vpnInterface ?: return "there is no interface to replace"
+        val spec = currentTunSpec()
+        val fresh = when (val established = establishSystemVpnTunnel(spec)) {
+            is Established.Up -> established.pfd
+            is Established.BadLists -> return established.message
+            is Established.Refused -> return established.message
+        }
+        val kept = adoptInterface(fresh, spec, requestedGeneration)
+        // Deactivated when the new one was created, whoever keeps the new one.
+        runCatching { old.close() }
+        if (kept) addLog("VPN interface replaced")
+        return if (kept) null else "a stop came in while it was being replaced"
+    }
+
+    /**
+     * Takes over an interface Android has just created, unless a stop came in
+     * while it was being created. A stop does not wait for a start to finish:
+     * it closes the interface it knows of, and one adopted after that would
+     * stay up, unread, behind a status that says Disconnected. A start that was
+     * only superseded by another start keeps it: the interface is the next
+     * start's to run behind.
+     */
+    private fun adoptInterface(fresh: ParcelFileDescriptor, spec: TunSpec, requestedGeneration: Long): Boolean {
+        vpnInterface = fresh
+        tunSpec = spec
+        if (requestedGeneration == generation) return true
+        val status = OlcboxVpnState.status.value
+        if (status !is VpnStatus.Stopping && status !is VpnStatus.Disconnected) return true
+        runCatching { fresh.close() }
+        if (vpnInterface === fresh) cleanupVpnInterface()
+        return false
+    }
+
+    /**
+     * For when nothing listens where tun2socks points, and may not for a while.
+     * tun2socks goes as well: left running, it offers the session's SOCKS login
+     * to whatever takes that loopback port next, and any app on the phone can
+     * bind one. The interface stays up with nobody reading it, which is the
+     * hold; [ensureBridge] starts tun2socks again with the transport.
+     */
+    private suspend fun stopBridgeForHold() {
+        if (connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) stopBridge()
+    }
+
+    private fun currentTunSpec(): TunSpec =
+        TunSpec(splitTunnelMode.value, splitTunnelProxyApps.toSet(), splitTunnelBypassApps.toSet())
+
+    /** In a tun session a reconnect is a pause for the apps on the VPN, and the notification says so. */
+    private fun reconnectingText(): String =
+        if (connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) HOLDING_TEXT else "Reconnecting..."
 
     private fun startWatchdog() {
         watchdogJob?.cancel()
@@ -1344,8 +1620,10 @@ class OlcboxVpnService : VpnService() {
         if (status is VpnStatus.Stopping && cleanupJob?.isActive == true) return
 
         val cleanupGeneration = ++generation
+        startedBySystem = false
         setStatus(VpnStatus.Stopping)
-        startupJob?.cancel()
+        val cancelledStart = startupJob
+        cancelledStart?.cancel()
         watchdogJob?.cancel()
         networkLossJob?.cancel()
         recoveryJob?.cancel()
@@ -1370,6 +1648,16 @@ class OlcboxVpnService : VpnService() {
 
                 stopMobileAndWait()
                 resetRecoveryState()
+                // The start this stop cancelled runs on until its next
+                // suspension. It may have put up an interface or a tun2socks
+                // after the pass above looked for them, or written a status
+                // after the one above. Once it has ended, what it left is taken
+                // down and the status is said again.
+                withTimeoutOrNull(CANCELLED_START_WAIT_MS) { cancelledStart?.join() }
+                if (generation == cleanupGeneration) {
+                    if (vpnInterface != null || tun2socksThread != null) stopVisibleVpnProcesses()
+                    if (OlcboxVpnState.status.value !is VpnStatus.Disconnected) setStatus(VpnStatus.Disconnected)
+                }
             } finally {
                 if (stopService && generation == cleanupGeneration) stopSelf()
             }
@@ -1727,6 +2015,8 @@ class OlcboxVpnService : VpnService() {
         // The session ends with its interface: the next one draws its own port.
         sessionCorePort.release()
         bridgeTarget = null
+        tunSpec = null
+        sessionVerified = false
     }
 
     private fun canReconnectTransportInPlace(): Boolean {
@@ -1999,6 +2289,11 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun setStatus(status: VpnStatus) {
+        // The first verified connection is where a tun session begins: from
+        // here its interface is held (TunnelSession.holdsInterface).
+        if (status is VpnStatus.Connected && connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) {
+            sessionVerified = true
+        }
         if (status is VpnStatus.Connected) {
             val (username, password) = upstreamLogin()
             OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
@@ -2230,6 +2525,11 @@ class OlcboxVpnService : VpnService() {
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
         private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
         private const val TUN2SOCKS_RESTART_WAIT_MS = 5_000L
+        private const val CANCELLED_START_WAIT_MS = 3_000L
+
+        /** The notification of a reconnect behind a held interface; a key of [NOTIFICATION_TEXTS]. */
+        private const val HOLDING_TEXT = "Reconnecting, VPN apps wait"
+        private const val LISTS_NOT_APPLIED_TEXT = "Connected, app list not applied"
         private const val TUNNEL_HANDOFF_DELAY_MS = 300L
         private const val NETWORK_LOSS_GRACE_MS = 2_500L
         private const val NETWORK_STABILITY_GRACE_MS = 1_500L
@@ -2275,6 +2575,8 @@ private val NOTIFICATION_TEXTS: Map<String, StringResource> = mapOf(
     "Waiting for transport..." to Res.string.notification_waiting_transport,
     "Connecting..." to Res.string.notification_connecting,
     "Reconnecting..." to Res.string.notification_reconnecting,
+    "Reconnecting, VPN apps wait" to Res.string.notification_holding,
+    "Connected, app list not applied" to Res.string.notification_lists_not_applied,
     "Verifying tunnel..." to Res.string.notification_verifying,
     "VPN Connected" to Res.string.notification_vpn_connected,
     "Proxy Connected" to Res.string.notification_proxy_connected,

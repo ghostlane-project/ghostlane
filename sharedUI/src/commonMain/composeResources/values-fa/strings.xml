@@ -202,6 +202,8 @@
     <string name="not_refreshed_yet">هنوز به‌روز نشده</string>
     <string name="notification_connecting">در حال اتصال…</string>
     <string name="notification_connection_failed">اتصال ناموفق بود</string>
+    <string name="notification_holding">در حال اتصال دوباره. برنامه‌های درون VPN منتظرند؛ «توقف» VPN را قطع می‌کند.</string>
+    <string name="notification_lists_not_applied">متصل شد. فهرست جدید برنامه‌ها اعمال نشد؛ VPN با فهرست قبلی کار می‌کند.</string>
     <string name="notification_protecting">اتصال شما محافظت می‌شود</string>
     <string name="notification_proxy_connected">پراکسی متصل است</string>
     <string name="notification_reconnecting">در حال اتصال دوباره…</string>

@@ -202,6 +202,8 @@
     <string name="not_refreshed_yet">尚未刷新</string>
     <string name="notification_connecting">正在连接…</string>
     <string name="notification_connection_failed">连接失败</string>
+    <string name="notification_holding">正在重新连接。走 VPN 的应用在等待；点“停止”可断开 VPN。</string>
+    <string name="notification_lists_not_applied">已连接。新的应用列表未能生效；VPN 仍使用之前的列表。</string>
     <string name="notification_protecting">正在保护你的连接</string>
     <string name="notification_proxy_connected">代理已连接</string>
     <string name="notification_reconnecting">正在重新连接…</string>

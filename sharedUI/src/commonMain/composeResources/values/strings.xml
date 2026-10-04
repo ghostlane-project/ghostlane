@@ -202,6 +202,8 @@
     <string name="not_refreshed_yet">not refreshed yet</string>
     <string name="notification_connecting">Connecting...</string>
     <string name="notification_connection_failed">Connection failed</string>
+    <string name="notification_holding">Reconnecting. Apps on the VPN wait; Stop goes without it.</string>
+    <string name="notification_lists_not_applied">Connected. The new app list could not be applied; the VPN keeps the previous one.</string>
     <string name="notification_protecting">Protecting your connection</string>
     <string name="notification_proxy_connected">Proxy Connected</string>
     <string name="notification_reconnecting">Reconnecting...</string>

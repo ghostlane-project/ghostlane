@@ -202,6 +202,8 @@
     <string name="not_refreshed_yet">ещё не обновлялся</string>
     <string name="notification_connecting">Подключение…</string>
     <string name="notification_connection_failed">Не удалось подключиться</string>
+    <string name="notification_holding">Переподключение. Приложения в VPN ждут; «Остановить» отключит VPN.</string>
+    <string name="notification_lists_not_applied">Подключено. Новый список приложений применить не удалось; VPN работает с прежним.</string>
     <string name="notification_protecting">Соединение защищено</string>
     <string name="notification_proxy_connected">Прокси подключён</string>
     <string name="notification_reconnecting">Переподключение…</string>
