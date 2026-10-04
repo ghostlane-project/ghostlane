@@ -219,7 +219,19 @@ class DesktopVpnManager private constructor(
      * per attempt, so it cannot be worked out again.
      */
     private var windowsTunInterface: String? = null
-    private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::addLog)
+    private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::onWindowsTunOutput)
+
+    /** The tun core said the system's filtering engine refused `strict_route`; see [startWindowsTun]. */
+    @Volatile
+    private var windowsFilterEngineRefused = false
+
+    /** The Windows tun of this session refuses port 53 beside itself; see [lineBehindTun]. */
+    @Volatile
+    private var windowsTunIsStrict = false
+
+    /** The log has said, in this session, what that costs a room's engine; an outage starts one every attempt. */
+    @Volatile
+    private var saidRoomMeetsStrictTun = false
 
     /**
      * Whether this session started a macOS tunnel at all.
@@ -1035,9 +1047,33 @@ class DesktopVpnManager private constructor(
         // the rule on the binaries above.
         val carrier = windowsCarrierRoute(location)
         var ready = false
+        // Windows asks every interface's resolver for a name, so with the
+        // tunnel up each one still went to the local network's resolver in the
+        // clear. A session that starts on a core's line has the tun answer
+        // every name and refuse port 53 beside itself. One that starts in a
+        // room is left as it was: the engine asks the network's own resolver
+        // itself, which is what finds its carrier on a network that answers
+        // nobody else's, and the filters would refuse it that
+        // (SingBoxConfig.buildDesktopTun).
+        val wantsStrictRoute = !isOlcrtc
+        windowsFilterEngineRefused = false
+        windowsTunIsStrict = false
+        saidRoomMeetsStrictTun = false
         val overallDeadline = System.currentTimeMillis() + WINDOWS_TUN_TOTAL_TIMEOUT_MS
         for (attempt in 0 until WINDOWS_TUN_START_ATTEMPTS) {
             if (System.currentTimeMillis() >= overallDeadline) break
+            // The filters are the system's to refuse (its filtering engine
+            // can be switched off), and sing-box does not start without the
+            // ones it was told to set. A tunnel that carries everything and
+            // leaves names as they were is better than none, and the log says
+            // which of the two this is.
+            val strictRoute = wantsStrictRoute && !windowsFilterEngineRefused
+            if (wantsStrictRoute && !strictRoute) {
+                addLog(
+                    "Windows TUN: the system's filtering engine refused the block on names leaving beside the " +
+                        "tunnel; starting without it, so names are asked of the local network's resolver as before"
+                )
+            }
             val verifyPort = allocateVerifyPort(socksPort)
             val verifyUsername = UUID.randomUUID().toString()
             val verifyPassword = UUID.randomUUID().toString()
@@ -1059,7 +1095,8 @@ class DesktopVpnManager private constructor(
                     bindInterface = physicalInterface,
                     bypassProcessPaths = bypassPaths,
                     cacheFilePath = DesktopPaths.appDataDir().resolve("windows-tun-cache.db").toString(),
-                    interfaceName = interfaceName
+                    interfaceName = interfaceName,
+                    strictRoute = strictRoute
                 )
             )
             windowsTunExit = awaitWindowsTunTraffic(
@@ -1072,9 +1109,12 @@ class DesktopVpnManager private constructor(
                     "127.0.0.1", verifyPort, verifyUsername, verifyPassword
                 )
                 windowsTunInterface = interfaceName
+                windowsTunIsStrict = strictRoute
                 break
             }
             windowsTunCore.stopNow()
+            // It answered names for as long as it stood, carrying or not.
+            windowsTunController.forgetTunnelAnswers()
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
             if (attempt + 1 < WINDOWS_TUN_START_ATTEMPTS) {
                 addLog("Windows TUN adapter was not ready; retrying with a fresh adapter")
@@ -1086,6 +1126,14 @@ class DesktopVpnManager private constructor(
         if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
         startTunExitWatcher(tunProcess!!)
         addLog("Windows TUN ready; carrier processes bypass via $physicalInterface")
+        if (windowsTunIsStrict) addLog("Windows TUN answers every name; port 53 is refused beside it")
+    }
+
+    private fun onWindowsTunOutput(line: String) {
+        if (org.olcbox.app.vpn.desktop.WindowsTunController.filterEngineRefused(line)) {
+            windowsFilterEngineRefused = true
+        }
+        addLog(line)
     }
 
     /**
@@ -1685,14 +1733,18 @@ class DesktopVpnManager private constructor(
                 tunProcess = null
             }
             DesktopOs.Windows -> {
+                // A tun that was up, or one a cancelled start left running.
+                val tunWasUp = tunProcess != null || windowsTunCore.isRunning()
                 runCatching {
                     windowsTunCore.stopNow()
                     windowsTunExit = null
                     windowsTunVerifyProxy = null
                     windowsTunInterface = null
+                    windowsTunIsStrict = false
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }
+                if (tunWasUp) windowsTunController.forgetTunnelAnswers()
                 runCatching { proxyController.restore() }
                     .onFailure { addLog("Windows proxy restore failed: ${it.message}") }
                 tunProcess = null
@@ -2428,6 +2480,14 @@ class DesktopVpnManager private constructor(
      * that loses datagrams, so a name can take a retry or several until the
      * next connect builds the tun for a room. Linux has no such setting; hev
      * answers names itself for every line.
+     *
+     * On Windows a session that started on a core also refuses port 53 beside
+     * the tun ([startWindowsTun]). A room that comes into it finds the local
+     * network's resolver closed to its engine, which is the one it asks
+     * first: it goes on to the public ones, which leave through the tun and
+     * the rule on the binaries, and on a network that answers none of them to
+     * the system's, which there is the tun's. It connects, a few seconds
+     * later than it would after a connect of its own.
      *
      * The engine's rules file is [current]'s when it has one, and written
      * only when it has none. The text is the same either way, since it comes
@@ -3316,6 +3376,13 @@ class DesktopVpnManager private constructor(
      * system's list, read now, may begin with the tun's own.
      */
     private suspend fun startLineEngine(line: SessionLine, requestGeneration: Long) {
+        if (windowsTunIsStrict && !saidRoomMeetsStrictTun) {
+            saidRoomMeetsStrictTun = true
+            addLog(
+                "Windows TUN: this session refuses port 53 beside the tunnel, so the room's engine cannot ask the " +
+                    "local network's resolver itself; it goes on to the public ones, and to the system's after them"
+            )
+        }
         val ready = CompletableDeferred<Unit>()
         val startupFailure = CompletableDeferred<String>()
         val started = startOlcRtcProcessWithFallback(

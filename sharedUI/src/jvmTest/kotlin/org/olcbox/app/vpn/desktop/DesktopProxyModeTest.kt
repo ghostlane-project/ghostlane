@@ -520,6 +520,47 @@ class DesktopProxyModeTest {
         assertContains(script, "Start-Process @startArgs")
     }
 
+    // sing-box does not start a tun whose filters the system refused, and
+    // names the call that failed. Everything else it prints is left alone.
+    @Test
+    fun aRefusalOfTheWindowsFiltersIsToldFromTheTunCoresOtherOutput() {
+        assertTrue(
+            WindowsTunController.filterEngineRefused(
+                "FATAL[0000] start service: start inbound/tun[tun-in]: configure tun interface: " +
+                    "FwpmEngineOpen0: The service has not been started."
+            )
+        )
+        assertTrue(WindowsTunController.filterEngineRefused("configure tun interface: FwpmFilterAdd0: Access is denied."))
+        assertFalse(WindowsTunController.filterEngineRefused("INFO inbound/tun[tun-in]: started at Ghostlane-a1b2c3d4-1-0"))
+        assertFalse(
+            WindowsTunController.filterEngineRefused(
+                "FATAL[0000] start service: start inbound/tun[tun-in]: configure tun interface: Access is denied."
+            )
+        )
+    }
+
+    // The app is elevated when it runs this: by its full path, not by a name
+    // the working directory could answer to.
+    @Test
+    fun theWindowsResolverCacheIsFlushedByTheSystemsOwnTool() {
+        assertEquals(
+            listOf("C:\\Windows\\System32\\ipconfig.exe", "/flushdns"),
+            WindowsTunController.flushResolverCacheCommand("C:\\Windows")
+        )
+        assertEquals(
+            listOf("D:\\WinNT\\System32\\ipconfig.exe", "/flushdns"),
+            WindowsTunController.flushResolverCacheCommand("D:\\WinNT\\")
+        )
+        assertEquals(
+            listOf("C:\\Windows\\System32\\ipconfig.exe", "/flushdns"),
+            WindowsTunController.flushResolverCacheCommand(null)
+        )
+        assertEquals(
+            listOf("C:\\Windows\\System32\\ipconfig.exe", "/flushdns"),
+            WindowsTunController.flushResolverCacheCommand(" ")
+        )
+    }
+
     @Test
     fun linuxTunScriptsRouteUserTrafficThroughTunAndKeepRootDirect() {
         val up = LinuxTunController.upScriptContent()

@@ -303,6 +303,38 @@ class SingBoxConfigDumpTest {
         )
         assertTrue(File(outDir, "desktop-tun-windows.json").exists())
     }
+
+    /**
+     * The Windows shape of a session that starts on a core's line: the tun
+     * answers every name and `strict_route` refuses port 53 beside it. No
+     * reference file: the shape is new, and `sing-box check` is the test. The
+     * twin starts its dns section; what `strict_route` does is Windows' and
+     * no runner here can show it.
+     */
+    @Test fun dumpDesktopTunWindowsStrict() {
+        dumpWithSocksTwin(
+            "desktop-tun-windows-strict",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                verifyUsername = "random-probe-user",
+                verifyPassword = "random-probe-password",
+                excludeAddresses = listOf("203.0.113.7/32"),
+                directDnsDomains = listOf("edge.example.org"),
+                bindInterface = "Ethernet",
+                bypassProcessPaths = listOf(
+                    "C:\\Program Files\\Ghostlane\\sing-box.exe",
+                    "C:\\Program Files\\Ghostlane\\xray.exe",
+                    "C:\\Program Files\\Ghostlane\\olcrtc-windows-amd64.exe"
+                ),
+                cacheFilePath = "C:\\Users\\a\\AppData\\Roaming\\Ghostlane\\windows-tun-cache.db",
+                interfaceName = "Ghostlane-a1b2c3d4-1-0",
+                strictRoute = true
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-windows-strict.json").exists())
+    }
+
     /**
      * Bypass Russia. Every rule-set is a real file here, because `sing-box check`
      * opens local rule-sets while building the router — a missing file fails the
