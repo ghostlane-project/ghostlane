@@ -49,14 +49,20 @@ class JvmLocationsDataSourceImpl(
         val text = json.encodeToString(LocationBundleV4.serializer(), bundle.normalized())
         // Written beside the bundle and moved over it. A write in place empties
         // the file first, and an app that dies there comes back to a bundle
-        // that does not parse: no server lists. Where the move is refused, the
-        // write in place is what there was before.
-        val temp = Files.createTempFile(appDir, "$LOCATIONS_BUNDLE_FILE_NAME.", ".tmp")
+        // that does not parse: no server lists.
+        // A bundle that is a symlink stays one: what it points at is replaced.
+        val target = runCatching { bundleFile.toRealPath() }.getOrDefault(bundleFile)
+        val temp = Files.createTempFile(target.parent, "$LOCATIONS_BUNDLE_FILE_NAME.", ".tmp")
         try {
+            // A write that fails here, on a full disk, leaves the bundle as it
+            // was. Only a move that is refused falls back to the write in place
+            // there was before.
             temp.writeText(text)
-            Files.move(temp, bundleFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        } catch (_: IOException) {
-            bundleFile.writeText(text)
+            try {
+                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: IOException) {
+                target.writeText(text)
+            }
         } finally {
             Files.deleteIfExists(temp)
         }
