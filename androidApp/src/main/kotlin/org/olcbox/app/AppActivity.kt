@@ -10,8 +10,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.olcbox.app.data.datasource.AndroidLocations
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
-import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.AndroidLogExporter
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.AndroidConfigImporter
@@ -44,7 +44,8 @@ class AppActivity : ComponentActivity() {
 
         val vpnManager = AndroidVpnManager(this)
         val locationsDataSource = LocationsDataSourceImpl(this)
-        val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
+        // The process's one repository: the VPN service writes through it too.
+        val locationsRepository = AndroidLocations.repository(this)
         val configImporter = AndroidConfigImporter(this)
         val logExporter = AndroidLogExporter(this)
         // Null where the store owns updates (the `play` flavor): the screen then
