@@ -169,6 +169,9 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   use them or learn the exit. On Android the port also changes with every
   connect.
 - Network migration, reconnect handling, and watchdog recovery.
+- iPhone: the tunnel takes IPv6 as well as IPv4. It used to take IPv4 only, and
+  on a network that hands out IPv6 a connection to an IPv6 address went out
+  directly, at the phone's own address, with the VPN shown as connected.
 - Android holds the tunnel for the whole session: a reconnect, another server, a
   lost network or a restarted engine all happen behind the VPN interface, which
   stays up until you disconnect, so there is no moment when the apps on the VPN

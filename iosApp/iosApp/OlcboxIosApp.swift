@@ -618,8 +618,11 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         }
 
         do {
+            // Atomically, here and in handOver: the extension reads these files at
+            // its own start, which the system can decide on, and a file caught
+            // half written is a config that does not parse.
             try Data(request.config.utf8)
-                .write(to: container.appendingPathComponent("config.json"))
+                .write(to: container.appendingPathComponent("config.json"), options: .atomic)
             // Written or removed, never left behind: a stale file from a previous
             // connection would start a core behind a tunnel that does not use one.
             try Self.handOver(
@@ -686,7 +689,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     /// Writes the file, or removes it when there is nothing to write.
     private static func handOver(_ contents: String?, to url: URL) throws {
         if let contents, !contents.isEmpty {
-            try Data(contents.utf8).write(to: url)
+            try Data(contents.utf8).write(to: url, options: .atomic)
         } else if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
