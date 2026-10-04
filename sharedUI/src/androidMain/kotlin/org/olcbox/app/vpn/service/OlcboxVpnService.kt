@@ -1084,8 +1084,11 @@ class OlcboxVpnService : VpnService() {
                         addLog("tun2socks stopped")
                     }
                 } finally {
+                    // The stop request is left as it is, and reset only by the
+                    // next start. Cleared here, a caller that had read
+                    // "started" a moment before this thread ended would pass
+                    // the compare-and-set and ask a hev that is gone to stop.
                     tun2socksStarted = false
-                    tun2socksStopRequested.set(false)
                 }
             }
             true
@@ -1720,7 +1723,15 @@ class OlcboxVpnService : VpnService() {
 
     private fun canReconnectTransportInPlace(): Boolean {
         return when (connectionMode) {
-            AndroidConnectionMode.Tun -> vpnInterface != null && tun2socksThread?.isAlive == true
+            // In place means behind a tun2socks that is alive, has not been told
+            // to stop, and points at the transport that runs. One that failed to
+            // follow the transport is still a live thread.
+            AndroidConnectionMode.Tun -> vpnInterface != null && !TunnelBridge.needsRestart(
+                running = bridgeTarget,
+                alive = tun2socksThread?.isAlive == true,
+                stopping = tun2socksStopRequested.get(),
+                wanted = currentBridgeTarget()
+            )
             AndroidConnectionMode.Proxy -> isActiveTransportRunning()
         }
     }
