@@ -22,6 +22,14 @@ object AtomicText {
     fun write(target: File, text: String) {
         val dir = target.absoluteFile.parentFile ?: throw IOException("${target.name} has no directory")
         dir.mkdirs()
+        // What a process that died between the two steps left behind: a whole
+        // copy of the text under a name nobody reads. Only old ones, so that a
+        // writer on another thread is not robbed of the file it is filling.
+        val now = System.currentTimeMillis()
+        dir.listFiles { file ->
+            file.name.startsWith("${target.name}.") && file.name.endsWith(".tmp") &&
+                now - file.lastModified() > STALE_TEMP_MS
+        }?.forEach { it.delete() }
         val temp = File.createTempFile("${target.name}.", ".tmp", dir)
         try {
             FileOutputStream(temp).use { out ->
@@ -36,4 +44,6 @@ object AtomicText {
             temp.delete()
         }
     }
+
+    private const val STALE_TEMP_MS = 60_000L
 }

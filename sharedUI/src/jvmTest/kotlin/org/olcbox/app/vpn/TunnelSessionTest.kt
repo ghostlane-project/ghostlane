@@ -34,6 +34,17 @@ class TunnelSessionTest {
         assertFalse(TunnelSession.holdsInterface(interfaceUp = false, verified = true, startedBySystem = true))
     }
 
+    // Connect tapped with no network, then the network arrives: the callback
+    // starts it "as a migration", and it is still the first connect.
+    @Test
+    fun aSessionThatWasNeverVerifiedHasNothingToMigrate() {
+        assertFalse(TunnelSession.migrates(isMigration = true, tunMode = true, verified = false, startedBySystem = false))
+        assertTrue(TunnelSession.migrates(isMigration = true, tunMode = true, verified = true, startedBySystem = false))
+        assertTrue(TunnelSession.migrates(isMigration = true, tunMode = true, verified = false, startedBySystem = true))
+        assertTrue(TunnelSession.migrates(isMigration = true, tunMode = false, verified = false, startedBySystem = false))
+        assertFalse(TunnelSession.migrates(isMigration = false, tunMode = true, verified = true, startedBySystem = true))
+    }
+
     @Test
     fun aStartByAndroidIsASessionFromItsFirstSecond() {
         assertTrue(TunnelSession.holdsInterface(interfaceUp = true, verified = false, startedBySystem = true))
