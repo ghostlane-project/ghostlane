@@ -43,7 +43,10 @@ class LocationsDataSourceImpl(
 
     override suspend fun saveLocationBundle(bundle: LocationBundleV4): Unit = withContext(Dispatchers.IO) {
         val normalized = bundle.normalized()
-        File(context.filesDir, LOCATIONS_BUNDLE_FILE_NAME).writeText(
+        // In one step: the VPN service reads this file without waiting for the
+        // app's lock, and must never find half of it (see AtomicText).
+        AtomicText.write(
+            File(context.filesDir, LOCATIONS_BUNDLE_FILE_NAME),
             json.encodeToString(LocationBundleV4.serializer(), normalized)
         )
         updateActiveLocationConfig(normalized)

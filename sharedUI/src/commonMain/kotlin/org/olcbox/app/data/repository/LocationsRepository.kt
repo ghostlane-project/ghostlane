@@ -50,6 +50,16 @@ interface LocationsRepository {
     suspend fun getAllLocations(): List<LocationEntry>
     suspend fun getActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)
+
+    /**
+     * Makes [toStorageId] the active location in place of [fromStorageId], and
+     * the remembered line of [group] (see `SubscriptionSettings.lastKnownGoodTransport`),
+     * as one change. For a session that moved by itself: false, and nothing
+     * stored, when the active location is no longer [fromStorageId], which is
+     * the user having chosen another meanwhile, or when [toStorageId] has left
+     * the store.
+     */
+    suspend fun moveActiveLocation(fromStorageId: String, toStorageId: String, group: String): Boolean
     suspend fun getActiveLocation(): LocationEntry?
     suspend fun getDeviceIdentity(): String
 
