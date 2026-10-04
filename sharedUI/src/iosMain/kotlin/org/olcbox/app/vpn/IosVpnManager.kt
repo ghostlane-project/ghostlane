@@ -932,7 +932,10 @@ class IosVpnManager(
         if (!killSwitch) return false
 
         addLog("The kill switch is on, so iOS brings the tunnel back by itself; waiting for it")
+        // Looked at after every wait, the last one too: what ends this is the
+        // tunnel being up, and the count only says when to stop asking.
         repeat(SYSTEM_RESTART_POLLS) {
+            delay(SYSTEM_RESTART_POLL_MS)
             if (!desiredConnected) return true
             if (packetTunnelBridge.isRunning()) {
                 reconnectAttempt = 0
@@ -941,7 +944,6 @@ class IosVpnManager(
                 addLog("iOS brought the packet tunnel back")
                 return true
             }
-            delay(SYSTEM_RESTART_POLL_MS)
         }
         addLog("iOS has not brought the tunnel back; restarting it from the app")
         return false
@@ -1081,10 +1083,12 @@ class IosVpnManager(
         const val RECONNECT_BASE_DELAY_MS = 2_000L
         /**
          * How long the system is given to bring a tunnel back under the kill
-         * switch: half a minute of the app being awake. An olcRTC room takes
-         * about eight seconds to open once iOS has started the extension.
+         * switch: 45 s of the app being awake, what a start of the app's own
+         * is given (`waitUntilUp` on the Swift side). A room usually opens in
+         * about eight seconds, but reaching it may take twenty, and giving up
+         * first stops a tunnel that was seconds from coming up.
          */
-        const val SYSTEM_RESTART_POLLS = 60
+        const val SYSTEM_RESTART_POLLS = 90
         const val SYSTEM_RESTART_POLL_MS = 500L
         const val RECONNECT_MAX_DELAY_MS = 30_000L
         const val MAX_RECONNECT_BACKOFF_POWER = 3

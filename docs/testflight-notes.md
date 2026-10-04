@@ -38,13 +38,17 @@ WHAT TO TEST
    Disconnect: leave a speed test running until iOS stops the VPN, or wait
    through a long idle. Traffic must stop, not continue outside the VPN,
    and the VPN must come back by itself.
-5. Kill switch on, press Disconnect in the app. It must stay disconnected,
+5. Kill switch on, connected: turn the VPN off in the system's Settings.
+   It must come back by itself. Back in the app it must say Connected, with
+   no red message, and it must not reconnect once more. Then the same, but
+   stay in Settings for a few minutes before you return to the app.
+6. Kill switch on, press Disconnect in the app. It must stay disconnected,
    and the phone must have its ordinary network back.
-6. Kill switch on: an olcRTC room and an XHTTP server must still carry
+7. Kill switch on: an olcRTC room and an XHTTP server must still carry
    traffic, and AirPlay or a printer on your Wi-Fi must still be reachable.
-7. Kill switch on, an address-check page open (ifconfig.me), change the
+8. Kill switch on, an address-check page open (ifconfig.me), change the
    server in the app. Tell us whether your own address shows at any moment
    while it changes.
-8. Kill switch off: everything as before.
-9. If the phone ends up with no network and the VPN will not come back:
-   Settings → VPN → turn it off. Tell us what you were doing.
+9. Kill switch off: everything as before.
+10. If the phone ends up with no network and the VPN will not come back:
+    Settings → VPN → turn it off. Tell us what you were doing.

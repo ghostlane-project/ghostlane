@@ -261,8 +261,6 @@ final class PacketTunnelController: ObservableObject {
     nonisolated(unsafe) private(set) static var systemConnectedSinceMs: Int64 = 0
 
     private var manager: NETunnelProviderManager?
-    /// A stop that is still on its way; see `stopInOrder`.
-    private var stopping: Task<Void, Never>?
     // Touched from deinit, which is not actor-isolated, so it cannot be either.
     private nonisolated(unsafe) var observer: NSObjectProtocol?
     private nonisolated(unsafe) var foregroundObserver: NSObjectProtocol?
@@ -404,31 +402,6 @@ final class PacketTunnelController: ObservableObject {
         }
         manager.connection.stopVPNTunnel()
         log.info("stopVPNTunnel requested")
-    }
-
-    /// `stop()`, remembered until it has finished, so that a start asked for
-    /// right behind it can wait for it (`awaitPendingStop`).
-    ///
-    /// A stop used to be one call into the system and nothing could overtake
-    /// it. Since the kill switch it first switches on-demand off and saves the
-    /// profile, which takes a moment. Kotlin sends a stop just ahead of every
-    /// restart and does not wait for it, so this one could reach
-    /// `stopVPNTunnel()` after the start behind it had brought its tunnel up,
-    /// and stop that one.
-    ///
-    /// Only a start waits. A stop asked for while a start is under way goes
-    /// ahead at once: that is Cancel, and it has to cancel now.
-    func stopInOrder() {
-        let before = stopping
-        stopping = Task { @MainActor in
-            _ = await before?.value
-            await self.stop()
-        }
-    }
-
-    /// Waits for a stop that was asked for before this moment.
-    func awaitPendingStop() async {
-        _ = await stopping?.value
     }
 
     /// The kill switch, as far as iOS has one an app can ask for.
@@ -665,6 +638,25 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 
     private static let appGroupId = "group.org.proofkit.app"
 
+    /// The last stop asked for. Each stop waits for the one asked before it,
+    /// and a start waits for the last one asked before it.
+    ///
+    /// A stop used to be one call into the system, and nothing could overtake
+    /// it. Since the kill switch it first switches on-demand off and saves the
+    /// profile, which takes a moment, and Kotlin sends a stop just ahead of
+    /// every restart without waiting for it. That stop could reach
+    /// `stopVPNTunnel()` after the start behind it had brought its tunnel up,
+    /// and stop that one.
+    ///
+    /// Kept here under a lock, and not on the main actor: Kotlin calls
+    /// `stop()` and `start()` from its own threads in the order that matters,
+    /// and the order must not rest on which of the tasks they hand to the main
+    /// actor it happens to begin first.
+    ///
+    /// A stop is never put behind a start, which may wait 45 s for its tunnel.
+    nonisolated(unsafe) private static var lastStop: Task<Void, Never>?
+    private static let stopLock = NSLock()
+
     override init() {
         super.init()
         // Force the controller into existence at launch.
@@ -750,6 +742,11 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             return
         }
 
+        // The stops asked for before this start; see `lastStop`.
+        Self.stopLock.lock()
+        let earlierStops = Self.lastStop
+        Self.stopLock.unlock()
+
         // Nothing waits here: the tunnel takes seconds to settle and the answer
         // goes back through the callback once the system has actually decided,
         // instead of holding a coroutine thread on a semaphore for the duration.
@@ -765,7 +762,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             // one. The old tunnel then survived the start, or, worse, the stop
             // Kotlin had already sent landed midway through it. That stop is
             // waited for first: it saves the profile before it stops anything.
-            await Self.controller.awaitPendingStop()
+            _ = await earlierStops?.value
             await Self.controller.stop()
             // Waited for, not slept through. A fixed 700 ms was a guess about
             // how long a teardown takes; this asks.
@@ -843,7 +840,13 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     func stop() {
-        Task { @MainActor in Self.controller.stopInOrder() }
+        Self.stopLock.lock()
+        defer { Self.stopLock.unlock() }
+        let before = Self.lastStop
+        Self.lastStop = Task { @MainActor in
+            _ = await before?.value
+            await Self.controller.stop()
+        }
     }
 
     /// The room list, to a running tunnel. The shape `PacketTunnelProvider`
