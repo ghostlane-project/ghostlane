@@ -22,12 +22,62 @@ ProofKit.app (as you)                    ProofKitTunnelDaemon (as root)
                                        └── sing-box #2: tun → socks(core)
                                              auto_route owns the routes
                                              the server's IPs are excluded
+                                             the engines' binaries leave direct
 ```
 
 The cores are unchanged — same binaries, same ports, same logs as in proxy mode.
 The daemon adds one more sing-box in front of them whose only job is to own the
 tun. Everything the tunnel carries still leaves the machine through the same core
 that carried it before.
+
+## The tun is the session's, not one server's
+
+The tun is built once, when a session starts, and points at one local port, with
+one login when the session started in an olcRTC room. Neither can change while
+it lives. So another server chosen while connected is not a new tun: the engine
+behind the tun is replaced, and the new one is started on that same port and
+asks for that same login, whatever its own would have been. The tun is not
+stopped, not handed a new config and not started again, and the daemon learns
+nothing of the change.
+
+Two things in the tun's config make that possible, and both are the first
+server's no longer:
+
+- **The engines leave by program.** The config names every binary a server can
+  be reached with — sing-box, Xray, the olcRTC engine — in a `process_path` rule
+  that sends what they dial to a `direct` outbound bound to the physical
+  interface. It is the rule the Windows tun has always had, and it comes with
+  `auto_detect_interface`, as it does there. The address exclusion stays as it
+  was: it spares the first server's packets a pass through the daemon's
+  sing-box, and is not what a later server relies on.
+- **A later core asks a resolver of its own.** With the tun up, the system's
+  resolver is reached through the tun, whose way out is the core that is asking
+  because it is not up yet. So a sing-box started behind the tun is given the
+  resolvers the Mac had before the tun came up, and its own query leaves by the
+  rule on its binary. Xray has no such part: an XHTTP server named by hostname
+  may not come up as a later server, and the log says so.
+
+The rule needs the name of the physical interface (`route -n get default`). When
+that cannot be found, and no routing rules need it either, the tun starts as it
+always did, with the first server's address excluded and nothing else, the log
+says so in one line, and another server in that session is the full restart it
+used to be.
+
+What stays the first server's for the whole session is how names are looked up
+(`upstreamUdpIsLossy`). A session that started on Reality or Hysteria2 and moves
+into an olcRTC room keeps sending lookups as datagrams, through a carrier that
+loses datagrams, so a name can take a retry until the next connect.
+
+A change of the connection mode, of the routing settings or of the SOCKS port
+and login is still a full restart: those are in the tun's config, or decide
+where the rules live.
+
+None of this section has been exercised on a Mac. It is read in the code, and
+the configs it produces are checked by `sing-box check` in CI. What a Mac has to
+show: with `while :; do curl -4 -s -m 3 https://api.ipify.org; echo; sleep 1;
+done` running in a plain shell, choose another server. The loop stops answering,
+then answers with the new exit, and the Mac's own address never appears in it;
+`netstat -rn | grep -c 172.19.0.1` does not drop to 0 in between.
 
 ## Installing it
 
@@ -214,9 +264,11 @@ use `curl -6` — silence is the correct answer.
 ## Known limits, stated plainly
 
 - **A server hostname that re-resolves to a new address mid-session loses its
-  exclusion** until the next reconnect, and the core's redial then routes into its
-  own tunnel. Reconnecting fixes it. Every address known at connect time is
-  excluded, so this only bites on a DNS change during a session.
+  exclusion** until the next reconnect. The core's redial used to route into its
+  own tunnel then. It now enters the tun and leaves it again by the rule on the
+  core's binary (above): a longer way round, not a dead end. Every address known
+  at connect time is excluded, so this only matters on a DNS change during a
+  session, and it is read in the code, not exercised.
 - **A tunnel left behind by a killed app is stopped at the next launch, not
   adopted.** The app cannot say which location an orphaned tun belongs to, and
   showing a connection it cannot describe would be worse than a clean restart.
@@ -232,7 +284,8 @@ use `curl -6` — silence is the correct answer.
   purpose: a notification would need a long-lived connection and the state to
   manage it inside the one component that runs as root.
 - **olcRTC locations have no server host to exclude** — they are addressed by a
-  room on someone else's SFU, so there is no endpoint to pin a route to. Their DNS
+  room on someone else's SFU, so there is no endpoint to pin a route to. What the
+  engine dials after the tun is up leaves by the rule on its binary. Their DNS
   still takes the reliable path (`hijack-dns` plus a TCP resolver through the
   tunnel), which is the same treatment iOS gives them.
 - **A core or an engine that dies is restarted behind the tun, which stays
@@ -244,15 +297,19 @@ use `curl -6` — silence is the correct answer.
   touched, so until the process is back its outbound points at a port nobody
   listens on, the dead end the killed-app test above measured: traffic stops,
   it does not go around. Only the tun's own death still ends the session. This
-  is read in the code and not yet exercised on a Mac, and as the config reads
-  two cases cannot come back by themselves under Global routing. A restarted
-  core looks its server's name up again, and a resolver that is itself reached
-  through the tun cannot answer, since the tun's way out is the core that is
-  asking; an address that is new since connect is the first limit here. And a
-  restarted olcRTC engine has no exclusion at all: its own sign-in to the
-  meeting service enters the tun, whose only way out is the engine that is not
-  up yet. Both stay Reconnecting, closed, until Disconnect; letting those
-  binaries out by process path, as the Windows tun does, is what fixes them.
+  is read in the code and not yet exercised on a Mac. As the config read when
+  this was written, two cases could not come back by themselves under Global
+  routing, and the rule on the engines' binaries (above) is there for both. A
+  restarted olcRTC engine had no exclusion at all: its own sign-in to the
+  meeting service entered the tun, whose only way out was the engine that was
+  not up yet. It now leaves by that rule. A restarted core's own connection
+  leaves by it too, also to an address that is new since connect. What is left
+  is the name: the core a session started with is started again exactly as it
+  was, so it asks the system's resolver for its server's name, and where that
+  resolver is not on the local network the question enters the tun and waits
+  for the core that is asking. Such a session stays Reconnecting, closed, until
+  Disconnect. A server chosen later in the session does not have this limit; it
+  is given a resolver of its own.
 
 ## Why not NetworkExtension
 

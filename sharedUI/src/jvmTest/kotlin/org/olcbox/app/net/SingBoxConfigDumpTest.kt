@@ -235,6 +235,51 @@ class SingBoxConfigDumpTest {
         assertTrue(File(outDir, "desktop-tun-native.json").exists())
     }
 
+    /**
+     * The macOS daemon's shape now that its tun is the session's and not one
+     * line's: beside the address exclusion it always had, every binary a line
+     * can run leaves by process path, bound to the physical interface, as on
+     * Windows. Once as a core's session and once as a room's under a bypass,
+     * which is the combination Windows never builds. No reference files: the
+     * shapes are new, and `sing-box check` is the test.
+     */
+    @Test fun dumpDesktopTunMacWithTheLinesBinariesLetOut() = runTest {
+        val binaries = listOf(
+            "/Users/a/Library/Application Support/Ghostlane/bin/sing-box",
+            "/Users/a/Library/Application Support/Ghostlane/bin/xray",
+            "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
+        )
+        dumpWithSocksTwin(
+            "desktop-tun-macos-lines",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                excludeAddresses = listOf("203.0.113.7/32"),
+                directDnsDomains = listOf("de1.example.org"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db"
+            )
+        )
+        val rules = File(outDir, "rules").apply { mkdirs() }
+        for (file in RuleSets.all) File(rules, file.name).writeBytes(RuleSets.bytes(file))
+        dumpWithSocksTwin(
+            "desktop-tun-macos-lines-bypass",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10808,
+                verifyPort = 10809,
+                username = "upstream-user",
+                password = "upstream-password",
+                upstreamUdpIsLossy = true,
+                routing = Routing.Rules(rules.absolutePath, DirectDns.System, "ru"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db"
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-macos-lines-as-socks.json").exists())
+    }
+
     /** The exact Windows shape: named Wintun, carrier bypass, bound direct, and authenticated probe. */
     @Test fun dumpDesktopTunWindows() {
         dumpWithSocksTwin(
