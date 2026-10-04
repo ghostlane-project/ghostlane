@@ -360,7 +360,7 @@ statistics over a local port) or the system's per-adapter ones. That is a piece 
 with a desktop to run it on: an active check in its place would restart every session's line whenever the
 address it asks stopped answering.
 
-**D2 as it is being built differs from D2 as written.** The document fronts every olcRTC line with a sing-box
+**D2 as it was built differs from D2 as written.** The document fronts every olcRTC line with a sing-box
 chain so that the tun can always point at one port without a login. That changes the path of every room session
 whether or not anybody ever changes location. Instead the tun keeps the endpoint it was started with (the first
 line's port and login), and every later line presents that endpoint itself: a core can listen on any port and
@@ -443,6 +443,35 @@ twelve, and they are fixed as well:
 Left as they are, and known: a start by Android whose transport never starts does not reach the look at other
 lines (it has no interface yet, so nothing is held, and it retries the one line); the app's own settings screen
 saves the whole settings object it loaded, which can drop the line the service remembered for a group.
+
+**Stage D was read once more as a whole** (2026-10-04), by one reader, after its eight pull requests were
+stacked: each had had a reviewer of its own, and nobody had read how they fit. No path was found that leaves a
+session Reconnecting with nobody trying. What was found sat at the edges with the platform, and is fixed on the
+branch each belongs to:
+
+- D3 on Linux: a tunnel death that lost a race with a request was never held. Only the tun's watcher decided
+  the hold, and it stands aside when the generation has moved; the request then ran the cleanup on its way to
+  a full restart and removed the block by the app's own hand. The hold is decided where the session is taken
+  down (#99).
+- D3 on Linux: a block behind a tunnel left by an earlier run was not found when the app started, because a
+  tun that is there was taken for somebody's running tunnel. Whether it leads anywhere is asked of the port its
+  config names (#99).
+- The helper on Linux: the room's engine is root's like hev and was ended by nobody; the cleanup ends it too.
+  A start over a leftover tunnel lost the machine's rp_filter values; it runs the whole cleanup. A refused
+  password there gave a false Connected; the start fails and says so (#100).
+- D2 on Linux: later lines and probes asked the resolvers the session had read at its start, which go stale
+  when the machine changes network; they are read at each start (#98, #101).
+- Windows, and older than this work: the check that a tun owns the default route asked for `0.0.0.0/0` or both
+  of its halves. A tun that leaves its server's address out gets the space minus that address as thirty-two
+  prefixes, with neither. By reading, no session on a core's line has passed that check in Windows tunnel mode
+  since v1.0.438; rooms leave nothing out and pass. Fixed on `main` (#103), and everything in stage D that
+  touches a Windows tunnel session on a core's line waits on it.
+
+Left as they are, and known: for the whole of an outage the desktop's tun points at a port nobody holds, which
+another process on the machine can bind (Android stops tun2socks for this, A6; the desktop's tun cannot be
+stopped without opening the tunnel); in the Linux tunnel a room's engine that is replaced inside a session is
+ended only by its own next write to a closed pipe; a tunnel left by a refused cleanup with the kill switch off
+still ends in a plain "disconnected" over a machine with no network, as before.
 
 ## Testing
 
