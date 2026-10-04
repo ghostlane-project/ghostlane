@@ -11,7 +11,15 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 
 internal class LinuxTunController(
-    private val addLog: (String) -> Unit
+    private val addLog: (String) -> Unit,
+    /**
+     * What every olcRTC engine of this app carries on its command line: the
+     * directory and the beginning of the file name of the config it is
+     * started with. In the Linux tunnel the engine runs as root, like hev,
+     * and what this controller runs as root at a stop ends it by that name
+     * ([engineEndLines]). Null where there is nothing to name.
+     */
+    private val enginesNaming: () -> String? = { null }
 ) {
     @Volatile private var routesInstalled = false
 
@@ -72,21 +80,27 @@ internal class LinuxTunController(
         // in the one case where nothing else would do.
         if (interfaceExists(TUN_NAME)) {
             addLog("Linux TUN: a tunnel process from before still holds $TUN_NAME; ending it first")
-            // Under a kill switch's block only the process is ended, and the
-            // rules stay as they are. Otherwise everything that tunnel put in
-            // goes with it, as at a stop. Its own pre-down is this file by
-            // now and removes nothing when hev runs it, so nothing else would
-            // put back the rp_filter values it saved, and the up script would
-            // then save the zeroes that are there now in their place: the
-            // next stop would "restore" those, until the machine restarts.
-            // Not the engines here: the one this session started is running.
-            val ending = if (held) {
+            // What follows decides. Before the kill switch's scripts, the
+            // switch being on or its block held, only the process is ended
+            // and every rule stays as it is: a block that stands under that
+            // tunnel, held or not, is then never opened on the way to the new
+            // one, and those scripts only add or replace and keep the
+            // rp_filter values already saved. Before the plain scripts
+            // everything that tunnel put in goes with it, as at a stop. Its
+            // own pre-down is this file by now and removes nothing when hev
+            // runs it, so nothing else would put back the rp_filter values it
+            // saved, and the plain up script would save the zeroes that are
+            // there now in their place: the next stop would "restore" those,
+            // until the machine restarts.
+            // Not the engines, either way: the one this session started is
+            // running by now.
+            val ending = if (withSwitch) {
                 writeScript(CLEANUP_SCRIPT_NAME, endTunnelScriptContent())
             } else {
                 writeCleanupScript(
                     removeBlockDevice = interfaceExists(KILL_SWITCH_DEVICE),
                     endTunnel = true,
-                    endEnginesNaming = null
+                    endEngines = false
                 )
             }
             runCatching { runPrivilegedScript(ending) }
@@ -153,7 +167,7 @@ internal class LinuxTunController(
      * Held, the process goes and the block stays, and no marker is written:
      * a pre-down that runs now has not been asked.
      */
-    suspend fun stop(process: Process?, endEnginesNaming: String? = null) {
+    suspend fun stop(process: Process?) {
         if (held) {
             stopProcess(process)
             routesInstalled = false
@@ -179,16 +193,23 @@ internal class LinuxTunController(
         // holds it, which is what is asked here.
         val tunnelStillUp = interfaceExists(TUN_NAME)
         val blockDevice = interfaceExists(KILL_SWITCH_DEVICE)
+        // A room's engine is root's as well. One that is still there is
+        // reason enough for the cleanup by itself: a connect given up at the
+        // tunnel's password dialog has an engine joined to its room and
+        // nothing of a tunnel to remove.
+        val engineStillThere = enginesLeft()
         if (tunnelStillUp || routeRuleExists() || routeTableExists() ||
-            Files.exists(rpFilterStatePath()) || blockDevice
+            Files.exists(rpFilterStatePath()) || blockDevice || engineStillThere
         ) {
+            if (engineStillThere) {
+                addLog(
+                    "Linux TUN: the room's engine runs as root and the app's stop did not reach it; " +
+                        "the cleanup ends it, which needs the administrator's password"
+                )
+            }
             runCatching {
                 runPrivilegedScript(
-                    writeCleanupScript(
-                        removeBlockDevice = blockDevice,
-                        endTunnel = tunnelStillUp,
-                        endEnginesNaming = endEnginesNaming
-                    )
+                    writeCleanupScript(removeBlockDevice = blockDevice, endTunnel = tunnelStillUp, endEngines = true)
                 )
             }.onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
         }
@@ -316,13 +337,14 @@ internal class LinuxTunController(
     private fun writeCleanupScript(
         removeBlockDevice: Boolean,
         endTunnel: Boolean,
-        endEnginesNaming: String?
+        endEngines: Boolean
     ): Path {
         val statePath = rpFilterStatePath().toString()
         val removal = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
         // The tunnel's process first, then the engines, then the removal: read
         // from the top of the file, since each is put right under the shebang.
-        val withEngines = if (endEnginesNaming != null) withEnginesEnded(removal, endEnginesNaming) else removal
+        val naming = enginesNaming().takeIf { endEngines }
+        val withEngines = if (naming != null) withEnginesEnded(removal, naming) else removal
         return writeScript(
             name = CLEANUP_SCRIPT_NAME,
             body = if (endTunnel) withTunnelEnded(withEngines) else withEngines
@@ -468,6 +490,24 @@ internal class LinuxTunController(
     }
 
     private fun configPath(): Path = DesktopPaths.appDataDir().resolve("linux-tun.yml")
+
+    /**
+     * Whether a process whose command line names an engine's config is
+     * running. Asked as the user: /proc tells anyone the command line of
+     * root's processes too.
+     */
+    private suspend fun enginesLeft(): Boolean = withContext(Dispatchers.IO) {
+        val naming = enginesNaming()?.toByteArray() ?: return@withContext false
+        runCatching {
+            Files.newDirectoryStream(Path("/proc")) { entry ->
+                entry.fileName.toString().all(Char::isDigit)
+            }.use { processes ->
+                processes.any { process ->
+                    runCatching { namedIn(Files.readAllBytes(process.resolve("cmdline")), naming) }.getOrDefault(false)
+                }
+            }
+        }.getOrDefault(false)
+    }
 
     private suspend fun waitForRoutesRemoved() {
         val deadline = System.currentTimeMillis() + ROUTE_CLEANUP_TIMEOUT_MS
@@ -853,6 +893,14 @@ internal class LinuxTunController(
          * asked to stop the way hev stops in order, on SIGINT, which runs its
          * pre-down; one that has not gone after three seconds is killed.
          *
+         * Asked once. hev's handler takes a second SIGINT, while it is
+         * stopping, for a stop it has to wait out and never ends; and it
+         * opens the tun without close-on-exec, so the pre-down it is then
+         * running holds the tun as well and would be interrupted half way.
+         * Tried against a stand-in that does both: asked every second, a
+         * pre-down of a second and a half was cut and the process hung until
+         * it was killed; asked once, it ended in order.
+         *
          * hev runs its own scripts with the tun's name and index as
          * arguments, and the app runs this one with none. The pre-down hev is
          * told of is this same file, so without that test hev, stopping,
@@ -864,8 +912,14 @@ internal class LinuxTunController(
               while [ "${'$'}attempt" -lt 5 ]; do
                 holders=${'$'}(grep -rls '^iff:[[:space:]]*$TUN_NAME${'$'}' /proc/[0-9]*/fdinfo 2>/dev/null | cut -d/ -f3 | sort -u)
                 [ -n "${'$'}holders" ] || break
-                if [ "${'$'}attempt" -lt 3 ]; then sig=INT; else sig=KILL; fi
-                for pid in ${'$'}holders; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                case "${'$'}attempt" in
+                  0) sig=INT ;;
+                  1|2) sig= ;;
+                  *) sig=KILL ;;
+                esac
+                if [ -n "${'$'}sig" ]; then
+                  for pid in ${'$'}holders; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                fi
                 attempt=${'$'}((attempt + 1))
                 sleep 1
               done
@@ -887,8 +941,10 @@ internal class LinuxTunController(
          * pipe the app had closed. [naming] is what the app's engine configs
          * are called, a directory and the beginning of a file name, which the
          * engine is started with: it finds the engine, and the sudo in front
-         * of it where that is what started it, by something no other
-         * program's command line carries.
+         * of it where that is what started it. A program that happens to be
+         * reading one of those files at that moment names it too and goes
+         * with them; the files are the app's own and nothing else has a use
+         * for them.
          *
          * The words go to grep on its standard input and not as an argument.
          * As an argument they are on grep's own command line, the list of
@@ -913,6 +969,14 @@ internal class LinuxTunController(
               done
             fi
         """.trimIndent().replace("NAMING", shellSingleQuote(naming))
+
+        /** Whether [words] stand somewhere in [commandLine], as /proc gives it: the arguments, each ended by a zero. */
+        internal fun namedIn(commandLine: ByteArray, words: ByteArray): Boolean {
+            if (words.isEmpty() || words.size > commandLine.size) return false
+            return (0..commandLine.size - words.size).any { at ->
+                words.indices.all { i -> commandLine[at + i] == words[i] }
+            }
+        }
 
         /** [script] with the engines ended first: right under its first line, the shebang. */
         internal fun withEnginesEnded(script: String, naming: String): String {

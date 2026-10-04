@@ -179,7 +179,7 @@ class DesktopVpnManager private constructor(
     private var lineGeneration = 0L
     /** Separates adapter names from adapters retained by an earlier app process. */
     private val windowsTunSessionId = UUID.randomUUID().toString().take(8)
-    private val linuxTunController = LinuxTunController(::addLog)
+    private val linuxTunController = LinuxTunController(::addLog) { olcRtcConfigNaming() }
     private val windowsTunController = WindowsTunController(::addLog)
     private val macOsTunController = MacOsTunController(::addLog)
 
@@ -1607,9 +1607,8 @@ class DesktopVpnManager private constructor(
                 runCatching {
                     // The room's engine runs as root here, as hev does, and the
                     // stop further down does not reach it. What the tun's
-                    // cleanup runs as root ends it, named by the config every
-                    // engine of this app is started with.
-                    linuxTunController.stop(tunProcess, endEnginesNaming = olcRtcConfigNaming())
+                    // cleanup runs as root ends it ([olcRtcConfigNaming]).
+                    linuxTunController.stop(tunProcess)
                 }.onFailure {
                     addLog("Linux TUN stop failed: ${it.message}")
                 }
