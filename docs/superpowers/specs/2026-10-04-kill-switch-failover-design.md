@@ -343,9 +343,28 @@ has run on a device. Stage D is written in part:
 | D3, `strict_route` on Windows | not written, and not to be added unseen: it is likely to stop the cores' own lookups |
 
 The unwritten rows are one piece of work, the rebuilding of how a desktop session starts on three systems, and
-none of it can be run from where this was written. Whether the release waits for it or goes out with D1 and the
-Linux fix is the owner's call; the recommendation is to release what is written once it has passed on devices,
-and to build the rest against a desktop that can run it.
+none of it can be run from where this was written. The recommendation was to release what is written once it
+has passed on devices and to build the rest against a desktop that can run it. The owner's answer, the same
+day: build all of it now, so that the next release can be checked whole. It is being built as pull requests of
+their own on top of the ones above, each of which can be left out if it does not pass on its machine.
+
+**D2 as it is being built differs from D2 as written.** The document fronts every olcRTC line with a sing-box
+chain so that the tun can always point at one port without a login. That changes the path of every room session
+whether or not anybody ever changes location. Instead the tun keeps the endpoint it was started with (the first
+line's port and login), and every later line presents that endpoint itself: a core can listen on any port and
+demand a login, and the engine takes its port and login from the settings it is started with. With no change of
+location nothing differs from today. What a later line needs beyond the endpoint is a way out of the tun that
+does not name its server: the process bypass Windows already has, the same on macOS (the app builds the
+daemon's config, so the daemon does not change), the binding of #96 on Linux; and a resolver of its own, read
+before the tun came up, because the system's resolver is the tun's by then.
+
+**`strict_route` on Windows is not a line in a config.** It blocks port 53 outside the tun, and today a session
+on a core line under Global does not hijack the system's queries at all: Windows sends them to the local
+resolver on the physical interface, which is the leak `strict_route` closes. Switched on alone it would leave
+such a session with no name resolution. It goes together with answering every session's queries in the tun
+(the hijack, the fake addresses and the resolver through the tunnel that a room's session already has), and
+that changes how names are resolved for every Windows tunnel session. It is the least certain piece and comes
+last.
 
 Not in the table because they were not in the design: the location store fix under stage C (#94, A7), a pull
 request for two faults of LAN sharing on the desktop that were found while D1 was built (#97), and one that
