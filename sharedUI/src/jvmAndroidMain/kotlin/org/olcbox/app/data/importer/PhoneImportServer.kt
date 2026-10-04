@@ -120,17 +120,22 @@ class PhoneImportServer(
      *
      * So the sending side is closed, which ends the reply for the client, and
      * what it still sends is read and thrown away, for no longer than
-     * [LINGER_MS] and no more than [LINGER_BYTES]: a request far past that is
-     * not owed a tidy answer.
+     * [LINGER_MS] in all and no more than [LINGER_BYTES]: a request far past
+     * that is not owed a tidy answer. In all, and not for each read: the
+     * server takes one client at a time, and one that sends a byte now and
+     * then would otherwise keep it for as long as it liked.
      */
     private fun lingerOver(client: Socket) {
         runCatching {
             client.shutdownOutput()
-            client.soTimeout = LINGER_MS
+            val until = System.nanoTime() + LINGER_MS * 1_000_000L
             val unread = client.getInputStream()
             val sink = ByteArray(4096)
             var left = LINGER_BYTES
             while (left > 0) {
+                val waitMs = ((until - System.nanoTime()) / 1_000_000L).toInt()
+                if (waitMs <= 0) break
+                client.soTimeout = waitMs
                 val read = unread.read(sink, 0, minOf(sink.size, left))
                 if (read < 0) break
                 left -= read
