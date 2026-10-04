@@ -121,6 +121,12 @@ internal class WindowsTunController(
          * Filtering Engine service is not running, FwpmSubLayerAdd0,
          * FwpmFilterAdd0). It then exits: on such a machine a tun that insists
          * on the filters does not start at all.
+         *
+         * One failure is not told from here: the lookup of the binary's own
+         * application id, whose error sing-tun hands on without the call's
+         * name. Taking every exit of the tun core for a refusal would cover
+         * it, and would also drop the filters after an adapter that was only
+         * slow to come up, which is the common reason for a second attempt.
          */
         fun filterEngineRefused(line: String): Boolean = "Fwpm" in line
 
