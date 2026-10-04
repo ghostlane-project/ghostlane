@@ -328,6 +328,29 @@ One subject per pull request. The stages are the order of building; all of them 
 Each pull request updates `README.MD` (Features), `docs/release-notes/pending.md` and the document whose truth
 it changes (`docs/roadmap-2026-08-14.md` item 2, `docs/macos-tunnel-daemon.md`).
 
+### Where the building stands (2026-10-04)
+
+Stages A, B, C and E are written, reviewed where a second reader could be had, and open as pull requests; none
+has run on a device. Stage D is written in part:
+
+| Stage D | State |
+|---|---|
+| D1, a dead core or engine restarted behind the tun | written, #95 |
+| D2, the Linux part: a core led out of the tun it runs beside | written, #96, checked in network namespaces |
+| D2, the rest: the tun built for the session (one upstream port, an olcRTC line fronted, macOS letting the cores out by process path) | not written |
+| The move of F3 on the desktop | not written; it needs the row above |
+| D3, the Linux kill switch | not written; its routes are designed and checked (see Risks) |
+| D3, `strict_route` on Windows | not written, and not to be added unseen: it is likely to stop the cores' own lookups |
+
+The unwritten rows are one piece of work, the rebuilding of how a desktop session starts on three systems, and
+none of it can be run from where this was written. Whether the release waits for it or goes out with D1 and the
+Linux fix is the owner's call; the recommendation is to release what is written once it has passed on devices,
+and to build the rest against a desktop that can run it.
+
+Not in the table because they were not in the design: the location store fix under stage C (#94, A7), a pull
+request for two faults of LAN sharing on the desktop that were found while D1 was built, and one that widens
+a test's timing in the CLI (#91).
+
 ## Decided
 
 The owner's answer of 2026-10-04: everything, on every platform, in the next release, together with the fixes
