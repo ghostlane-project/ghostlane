@@ -192,8 +192,11 @@ class DesktopProxyModeTest {
         // Only when the app runs it: hev hands its scripts the tun's name.
         assertEquals("if [ \"\$#\" -eq 0 ]; then", lines[1])
         assertContains(script, "grep -rls '^iff:[[:space:]]*olcbox0\$' /proc/[0-9]*/fdinfo")
-        assertContains(script, "sig=INT")
-        assertContains(script, "sig=KILL")
+        // Asked once, left alone for two seconds, then killed: hev wedges on
+        // a second SIGINT, and the pre-down it runs holds the tun as well.
+        assertContains(script, "0) sig=INT ;;")
+        assertContains(script, "1|2) sig= ;;")
+        assertContains(script, "*) sig=KILL ;;")
         // Everything the script did before is still there, after it and unchanged.
         val ended = LinuxTunController.tunnelEndLines().lines()
         assertEquals(plain.lines().drop(1), lines.drop(1 + ended.size))
@@ -224,6 +227,31 @@ class DesktopProxyModeTest {
         // What the script did before is still there, after both and unchanged.
         val added = LinuxTunController.tunnelEndLines().lines().size + LinuxTunController.engineEndLines(naming).lines().size
         assertEquals(plain.lines().drop(1), lines.drop(1 + added))
+    }
+
+    // Whether an engine is left is asked of /proc by the app itself, before it
+    // asks for a password on that account alone.
+    @Test
+    fun anEnginesCommandLineNamesItsConfig() {
+        val naming = "/home/a/.olcbox/runtime/olcrtc-client-".toByteArray()
+        fun commandLine(vararg arguments: String) = arguments.joinToString("") { it + "\u0000" }.toByteArray()
+
+        assertTrue(
+            LinuxTunController.namedIn(
+                commandLine("/opt/ghostlane/olcrtc", "-config", "/home/a/.olcbox/runtime/olcrtc-client-123.yaml"),
+                naming
+            )
+        )
+        assertTrue(
+            LinuxTunController.namedIn(
+                commandLine("sudo", "-n", "/opt/ghostlane/olcrtc", "/home/a/.olcbox/runtime/olcrtc-client-9.yaml"),
+                naming
+            )
+        )
+        assertFalse(LinuxTunController.namedIn(commandLine("/opt/ghostlane/sing-box", "run", "-c", "/tmp/c.json"), naming))
+        assertFalse(LinuxTunController.namedIn(commandLine("/home/a/.olcbox/runtime/olcrtc-clien"), naming))
+        assertFalse(LinuxTunController.namedIn(ByteArray(0), naming))
+        assertFalse(LinuxTunController.namedIn(commandLine("anything"), ByteArray(0)))
     }
 
     @Test
