@@ -184,10 +184,10 @@ list usually has another in the same country.
   tun's own process dies, something that outlives it has to hold traffic. Linux: an opt-in switch adds a second
   default route to the tun's table, on a dummy device and with the last metric, in the script hev already runs
   as root, and the app removes stale rules at its start, as the CLI's daemon does. Not the CLI's `unreachable`
-  route, which was the first plan: a route of that kind answers whatever interface the socket is bound to, so
-  it would also stop the cores, which get out of the tun by being bound to the physical interface (D2). A route
-  on a device is skipped by a socket bound to another device, and needs no interface named in any rule (see
-  Risks for the check). hev's own script must leave that route in place when hev stops without being asked to;
+  route, which was the first plan: in IPv4 a lookup that ends in such a route while its socket is bound to a
+  device is sent as if the destination were on that link, with no gateway, so it would also cut off the cores,
+  which get out of the tun by being bound to the physical interface (D2). A route on a device is passed over by
+  a socket bound to another device, and needs no interface named in any rule (see Risks for the check). hev's own script must leave that route in place when hev stops without being asked to;
   after a crash the block stays until Disconnect, which is `pkexec` once more. macOS: nothing to add; an app killed or a core dead already
   leaves the tun in place with nowhere to go, and D1 and D2 remove the two cases where the app itself took it
   down. Windows: `strict_route` goes on, which closes the DNS leak while the tun runs; it is not a kill switch,
@@ -401,14 +401,17 @@ changed in the design is A6 and A7 above; the rest brought the code back to what
   (`dns-direct`, bound like everything else), because the system's resolver is pointed at hev's fake addresses
   for as long as the tun is up. sing-box does not bind sockets that go to loopback, so a front before Xray or
   the engine is not affected. What stays broken there: an XHTTP line named by hostname (Xray asks the system's
-  resolver), and a server that answers only over IPv6 (the IPv6 half of hev's rule is a blackhole route, which
-  bound sockets meet too).
+  resolver). A server that answers only over IPv6 is not among them: the IPv6 half of hev's rule is a blackhole
+  route, and an IPv6 lookup bound to a device passes over it and reaches the main table (`ip -6 route get`,
+  not traffic).
   The kill switch of D3 was checked the same way, with `ip route get` in a namespace: with
   `default dev <dummy> metric 4294967295` in the tun's table, an app's lookup goes to the tun while it is up
   and to the dummy once it is gone; a socket bound to either of two physical interfaces goes to the main table
   in both states, also after the default route has moved from one interface to the other; root's goes to the
-  main table. With an `unreachable` route in its place the bound socket gets "no route to host" unless a rule
-  names its interface.
+  main table. With an `unreachable` route in its place the bound socket's IPv4 lookup comes back on the physical
+  interface without its gateway (the kernel takes a destination for on-link when a lookup with an outgoing
+  interface fails), which reaches nothing, unless a rule names the interface and sends it to the main table
+  first.
 - **macOS, a killed tun.** The daemon's own comment says a sing-box killed outright leaves the default route on
   a utun that no longer exists (`TunnelChild.swift`:135-138). D1 does not change that; D2 has to.
 - **The move costs a little traffic and battery.** Each probe starts a core and pulls 64 KB; the 5-minute
