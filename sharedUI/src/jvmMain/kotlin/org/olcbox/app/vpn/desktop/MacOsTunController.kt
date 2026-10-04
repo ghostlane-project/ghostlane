@@ -20,6 +20,12 @@ internal class MacOsTunController(
     private val resolve: (String) -> List<String> = ::resolveAllAddresses,
     private val defaultInterface: () -> String? = { defaultInterfaceName() },
 ) {
+    /**
+     * True when the tun that was started lets [bypassProcessPaths] out of
+     * itself, which is what a line for another server needs in order to be
+     * started behind it. False when it lets out only [serverHost], by address,
+     * as every macOS tun did before.
+     */
     suspend fun start(
         corePort: Int,
         verifyPort: Int,
@@ -31,15 +37,34 @@ internal class MacOsTunController(
         verboseLogs: Boolean = false,
         /** The rule-set files [routing] names, file name → base64, for the daemon to write. */
         ruleFiles: Map<String, String> = emptyMap(),
-    ) {
-        // Under a bypass the daemon's sing-box dials direct from inside the
-        // process that owns the tun, so those sockets are bound to the physical
-        // interface by name. No name, no bypass: a direct socket with nothing
-        // to bind to enters the tun, and that does not degrade, it loops.
-        val bindInterface = if (routing is Routing.Rules) defaultInterface() else null
+        /**
+         * Every binary a line of the session can run. What they dial is sent
+         * straight out by the daemon's sing-box, as the Windows tun does it,
+         * so the core of another server than [serverHost], and an olcRTC
+         * engine signing in again, leave the tunnel they are there to carry.
+         */
+        bypassProcessPaths: List<String> = emptyList(),
+    ): Boolean {
+        // Under a bypass, and for the lines' own binaries, the daemon's
+        // sing-box dials direct from inside the process that owns the tun, so
+        // those sockets are bound to the physical interface by name. No name,
+        // no direct socket: one with nothing to bind to enters the tun, and
+        // that does not degrade, it loops.
+        val wantsDirect = routing is Routing.Rules || bypassProcessPaths.isNotEmpty()
+        val bindInterface = if (wantsDirect) defaultInterface() else null
         if (routing is Routing.Rules && bindInterface == null) {
             addLog("cannot tell which interface carries the internet, so the bypass cannot bind to it")
             error("no interface to bind direct traffic to")
+        }
+        // Without rules the same lack must not fail a connect that worked
+        // before the lines' binaries were let out: the tun starts as it always
+        // did, and says that it is good for this one server only.
+        val lineBinaries = if (bindInterface != null) bypassProcessPaths else emptyList()
+        if (bypassProcessPaths.isNotEmpty() && bindInterface == null) {
+            addLog(
+                "cannot tell which interface carries the internet, so this tunnel lets only its own server out; " +
+                    "another location will be a full restart"
+            )
         }
         if (ruleFiles.isNotEmpty()) {
             // A daemon from before rule files drops the field and starts a
@@ -75,6 +100,7 @@ internal class MacOsTunController(
             verboseLogs = verboseLogs,
             bindInterface = bindInterface,
             cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
+            bypassProcessPaths = lineBinaries,
         )
 
         var reply = client.start(config, ruleFiles)
@@ -92,6 +118,7 @@ internal class MacOsTunController(
                 error(reply.message)
             }
         }
+        return lineBinaries.isNotEmpty()
     }
 
     private suspend fun awaitDaemon(): Boolean {

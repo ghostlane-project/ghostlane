@@ -1,8 +1,14 @@
 package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.Routing
+import org.olcbox.app.net.SingBoxConfig
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
@@ -14,6 +20,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -154,6 +161,92 @@ class MacOsTunControllerTest {
         val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { null })
         assertFailsWith<IllegalStateException> { controller.connect(bypass, ruleFiles) }
         assertEquals(emptyList(), daemon.verbs)
+    }
+
+    // A session's tun is built once and its line can be changed behind it, so
+    // the tun has to let every binary a line can run out of itself, not only
+    // the server it started with.
+    private val lineBinaries = listOf(
+        "/Users/a/Library/Application Support/Ghostlane/bin/sing-box",
+        "/Users/a/Library/Application Support/Ghostlane/bin/xray",
+        "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
+    )
+
+    private fun MacOsTunController.connectWithLineBinaries(serverHost: String?) = runBlocking {
+        start(
+            corePort = 10810,
+            verifyPort = 10811,
+            username = "",
+            password = "",
+            serverHost = serverHost,
+            upstreamUdpIsLossy = false,
+            bypassProcessPaths = lineBinaries
+        )
+    }
+
+    /** The config the daemon was handed, out of the request that carries it as a string. */
+    private fun FakeDaemon.configText(): String =
+        Json.parseToJsonElement(requests.last().trim()).jsonObject["config"]!!.jsonPrimitive.content
+
+    private fun JsonObject.strings(key: String): List<String> = this[key]!!.jsonArray.map { it.jsonPrimitive.content }
+
+    @Test fun theLinesBinariesAreLetOutBoundToThePhysicalInterface() = withFakeDaemon(listOf(running)) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { listOf("203.0.113.7") }, { "en0" })
+        assertTrue(controller.connectWithLineBinaries("de1.example.org"))
+        // Nothing is asked before the start, as before: this is not a bypass.
+        assertEquals(listOf("start"), daemon.verbs)
+
+        val config = Json.parseToJsonElement(daemon.configText()).jsonObject
+        val route = config["route"]!!.jsonObject
+        val rule = route["rules"]!!.jsonArray.first().jsonObject
+        assertEquals(lineBinaries, rule.strings("process_path"))
+        assertEquals("direct", rule["outbound"]!!.jsonPrimitive.content)
+        assertEquals("true", route["auto_detect_interface"]!!.jsonPrimitive.content)
+        val direct = config["outbounds"]!!.jsonArray.map { it.jsonObject }
+            .single { it["tag"]!!.jsonPrimitive.content == "direct" }
+        assertEquals("en0", direct["bind_interface"]!!.jsonPrimitive.content)
+        // The first line's server is still kept out by address, as it always was.
+        val tun = config["inbounds"]!!.jsonArray.first().jsonObject
+        assertEquals(listOf("203.0.113.7/32"), tun.strings("route_exclude_address"))
+    }
+
+    // Under rules the name was already required; the binaries ride the same one.
+    @Test fun underABypassTheLinesBinariesAreLetOutAsWell() = withFakeDaemon(listOf(idle, running)) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        val letsEveryLineOut = runBlocking {
+            controller.start(
+                corePort = 10810,
+                verifyPort = 10811,
+                username = "",
+                password = "",
+                serverHost = null,
+                upstreamUdpIsLossy = false,
+                routing = bypass,
+                ruleFiles = ruleFiles,
+                bypassProcessPaths = lineBinaries
+            )
+        }
+        assertTrue(letsEveryLineOut)
+        val rules = Json.parseToJsonElement(daemon.configText()).jsonObject["route"]!!.jsonObject["rules"]!!.jsonArray
+        assertEquals(lineBinaries, rules.first().jsonObject.strings("process_path"))
+    }
+
+    // No name for the physical interface, and no rules that need one: a connect
+    // that worked before the binaries were let out has to go on working. The
+    // tun is the one it always was, and says that it is good for one server.
+    @Test fun withNoInterfaceToBindToTheTunStartsAsItAlwaysDid() = withFakeDaemon(listOf(running)) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { null })
+        assertFalse(controller.connectWithLineBinaries(serverHost = null))
+        assertEquals(
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                cacheFilePath = TunnelDaemonProtocol.CACHE_FILE
+            ),
+            daemon.configText()
+        )
+        assertEquals(1, log.count { "another location will be a full restart" in it }, log.toString())
     }
 
     /** A scripted daemon on a real unix socket: one reply per request, in order. */

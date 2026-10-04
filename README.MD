@@ -181,6 +181,13 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   the port it had. A dead sing-box or Xray core is noticed now; it used to leave
   a session that said Connected and carried nothing. The death of the tunnel's
   own process still ends the session.
+- On the desktop another server chosen while connected is started behind the
+  tunnel as well. The tunnel is built once, for the session, and is not taken
+  down, rebuilt or started again for the new server, so there is no moment
+  between the two when traffic goes out directly; a server that does not answer
+  is retried behind it. On Linux the tunnel's password is not asked for again
+  (an olcRTC room still asks, for its engine). Changing the connection mode,
+  the routing or the SOCKS port and login still restarts the whole connection.
 - No account, no analytics, nothing collected.
 
 ## Protocols

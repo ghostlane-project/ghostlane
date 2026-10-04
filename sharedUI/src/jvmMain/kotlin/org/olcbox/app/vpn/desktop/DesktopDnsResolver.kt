@@ -2,6 +2,7 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
+import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.UpstreamDns
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -29,6 +30,55 @@ internal object DesktopDnsResolver {
             DesktopOs.Other -> FALLBACK_DNS_SERVER
         }
     }
+
+    /**
+     * The machine's own resolvers, for a session to read before its tun comes
+     * up and to keep: what a core started beside the tun later asks for its
+     * server's name ([linuxDirectDnsServers] on Linux, [systemServers]
+     * elsewhere).
+     *
+     * Before the tun, because afterwards the system's list is the tun's as
+     * well: on Windows it may begin with the resolver of the tun's own adapter.
+     * That address is dropped here too, since the adapter of the session
+     * before can still be closing when the next one starts.
+     */
+    fun ownServers(): List<String> = when (DesktopPaths.os) {
+        DesktopOs.Linux -> linuxDirectDnsServers()
+        DesktopOs.MacOS,
+        DesktopOs.Windows -> withoutTunResolvers(systemServers())
+        DesktopOs.Other -> emptyList()
+    }
+
+    /**
+     * [current] for an engine started while a tun is up, from [own], the
+     * servers [ownServers] read before it came up. Linux asks the default
+     * interface for its server, which the tun does not change, so there the
+     * answer is the same as ever.
+     */
+    fun engineServers(own: List<String>): String = when (DesktopPaths.os) {
+        DesktopOs.MacOS,
+        DesktopOs.Windows -> UpstreamDns.list(own)
+        DesktopOs.Linux,
+        DesktopOs.Other -> current()
+    }
+
+    /**
+     * [servers] without the addresses inside the desktop tun's own networks,
+     * where sing-box puts the resolver it gives the tun's adapter. Asked from
+     * outside the tun, nobody answers there.
+     */
+    internal fun withoutTunResolvers(servers: List<String>): List<String> =
+        servers.filterNot { server -> TUN_NETWORKS.any { inNetwork(server.substringBefore('%'), it) } }
+
+    private fun inNetwork(address: String, cidr: String): Boolean = runCatching {
+        val network = InetAddress.getByName(cidr.substringBefore('/')).address
+        val candidate = InetAddress.getByName(address).address
+        val bits = cidr.substringAfter('/').toInt()
+        candidate.size == network.size && (0 until bits).all { bit ->
+            val mask = 0x80 shr (bit % 8)
+            (candidate[bit / 8].toInt() and mask) == (network[bit / 8].toInt() and mask)
+        }
+    }.getOrDefault(false)
 
     /**
      * The system's DNS servers as the JDK's own DNS provider reads them: on
@@ -217,5 +267,6 @@ internal object DesktopDnsResolver {
     }
 
     private val DEFAULT_ROUTE_DEVICE = Regex("(?:^|\\s)dev\\s+(\\S+)")
+    private val TUN_NETWORKS = listOf(SingBoxConfig.DESKTOP_TUN_ADDRESS, SingBoxConfig.DESKTOP_TUN_ADDRESS6)
     private const val COMMAND_TIMEOUT_SECONDS = 2L
 }
