@@ -53,6 +53,15 @@ object SingBoxConfig {
      * never reaches a server named by hostname. The rule-based shape has always
      * carried `dns-direct` for this; Global gets the same one resolver, and only
      * for a server that is a name, so a link with an address is written as before.
+     *
+     * [autoDetectInterface] binds every socket the core opens to the machine's
+     * default interface (sing-box's `route.auto_detect_interface`; loopback is
+     * left alone). It is for a core that runs beside a tun whose rules do not
+     * exempt it, which is the Linux desktop: there the tun's rule takes every
+     * user's traffic, the core runs as the user, and its own connection to the
+     * server went into the tun with the rest, so no line a core carries could
+     * connect. A socket bound to the physical interface does not match the
+     * tun's route and falls through to the main table.
      */
     fun build(
         outbound: OutboundSpec,
@@ -61,9 +70,11 @@ object SingBoxConfig {
         verboseLogs: Boolean = false,
         login: SocksLogin? = null,
         serverResolver: DirectDns? = null,
+        autoDetectInterface: Boolean = false,
     ): String = render(
         socksPort, routing, verboseLogs, login,
-        serverResolver = serverResolver.takeIf { !XrayConfig.isIpLiteral(outbound.host) }
+        serverResolver = serverResolver.takeIf { !XrayConfig.isIpLiteral(outbound.host) },
+        autoDetectInterface = autoDetectInterface
     ) { addOutbound(outbound) }
 
     /// iOS addressing. Fixed rather than negotiated: the extension applies these
@@ -523,6 +534,7 @@ object SingBoxConfig {
         verboseLogs: Boolean,
         login: SocksLogin?,
         serverResolver: DirectDns? = null,
+        autoDetectInterface: Boolean = false,
         outbounds: JsonArrayBuilder.() -> Unit
     ): String {
         val bypass = routing as? Routing.RuleBased
@@ -554,9 +566,12 @@ object SingBoxConfig {
                 outbounds()
                 if (bypass != null) addDirectOutbound()
             }
-            if (bypass != null) putBypassRoute(bypass)
-            // What an outbound uses to dial a name: here, only the server's own.
-            if (resolver != null) putJsonObject("route") { put("default_domain_resolver", "dns-direct") }
+            if (bypass != null) putBypassRoute(bypass, autoDetectInterface)
+            if (bypass == null && (resolver != null || autoDetectInterface)) putJsonObject("route") {
+                // What an outbound uses to dial a name: here, only the server's own.
+                if (resolver != null) put("default_domain_resolver", "dns-direct")
+                if (autoDetectInterface) put("auto_detect_interface", true)
+            }
         }
         return obj.toString()
     }
@@ -767,8 +782,9 @@ object SingBoxConfig {
      * network underneath. Tunnel-bound names never reach it; sing-box sends
      * those to the server unresolved.
      */
-    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.RuleBased) {
+    private fun JsonObjectBuilder.putBypassRoute(bypass: Routing.RuleBased, autoDetectInterface: Boolean = false) {
         putJsonObject("route") {
+            if (autoDetectInterface) put("auto_detect_interface", true)
             putRuleSetDeclarations(bypass)
             putJsonArray("rules") {
                 addJsonObject { put("action", "sniff") }
