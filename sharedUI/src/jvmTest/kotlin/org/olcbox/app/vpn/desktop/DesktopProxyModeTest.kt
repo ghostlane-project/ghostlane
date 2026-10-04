@@ -170,6 +170,25 @@ class DesktopProxyModeTest {
         assertContains(config, "pre-down-script: /tmp/olcbox-down.sh")
     }
 
+    // The engine started with a SOCKS login turns away a client that offers
+    // none, and hev's config offered none: a room in the Linux tunnel said
+    // Connected and carried nothing.
+    @Test
+    fun linuxTunConfigCarriesTheLoginTheEngineDemands() {
+        val config = LinuxTunController.configContent(socksPort = 10808, username = "ghost", password = "it's")
+
+        assertContains(config, "  port: 10808\n  username: 'ghost'\n  password: 'it''s'\n")
+    }
+
+    @Test
+    fun linuxTunConfigWithNoLoginIsWhatItWas() {
+        assertEquals(
+            LinuxTunController.configContent(socksPort = 10810),
+            LinuxTunController.configContent(socksPort = 10810, username = "", password = "ignored")
+        )
+        assertFalse(LinuxTunController.configContent(socksPort = 10810).contains("username"))
+    }
+
     @Test
     fun olcRtcCommandUsesDesktopWbStreamProviderAlias() {
         listOf(LocationConfig.PROVIDER_WB_STREAM, "wbstream").forEach { provider ->

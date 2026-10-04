@@ -98,22 +98,21 @@ internal object LineSupervision {
      * A core listens without a login, and so does the sing-box front that
      * stands before the engine in proxy mode under rules ([frontPort]). Only
      * the engine reached directly asks for one, the one in the SOCKS settings,
-     * and only where what points at it sends one: hev's config on Linux
-     * carries none.
+     * and whatever points at it sends it: the tun's outbound on Windows and
+     * macOS, hev's config on Linux, the system's proxy setting.
      *
      * A login is a username. The tun's outbound, the system's proxy setting
      * and the engine's own yaml all send or demand one exactly when the
      * username is not blank, whatever the password is.
      */
     fun endpointOf(
-        mode: DesktopMode,
         isOlcrtc: Boolean,
         linePort: Int,
         frontPort: Int?,
         username: String,
         password: String
     ): SessionEndpoint {
-        val asksForLogin = isOlcrtc && frontPort == null && mode != DesktopMode.LinuxTun && username.isNotBlank()
+        val asksForLogin = isOlcrtc && frontPort == null && username.isNotBlank()
         return SessionEndpoint(
             port = frontPort ?: linePort,
             login = if (asksForLogin) SocksLogin(username, password) else null

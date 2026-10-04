@@ -732,7 +732,19 @@ class DesktopVpnManager private constructor(
             var letsEveryLineOut = true
 
             when (desktopMode) {
-                DesktopMode.LinuxTun -> startLinuxTun(effectiveSocksPort, requestGeneration)
+                DesktopMode.LinuxTun -> startLinuxTun(
+                    effectiveSocksPort,
+                    requestGeneration,
+                    // What hev has to send: the session's endpoint, as the tun's
+                    // outbound sends it on the other systems.
+                    login = LineSupervision.endpointOf(
+                        isOlcrtc = isOlcrtc,
+                        linePort = effectiveSocksPort,
+                        frontPort = frontPort,
+                        username = socksSettings.username,
+                        password = socksSettings.password
+                    ).login
+                )
                 DesktopMode.WindowsTun -> startWindowsTun(
                     effectiveSocksPort,
                     requestGeneration,
@@ -872,7 +884,6 @@ class DesktopVpnManager private constructor(
                         letsEveryLineOut = letsEveryLineOut
                     ),
                     endpoint = LineSupervision.endpointOf(
-                        mode = desktopMode,
                         isOlcrtc = isOlcrtc,
                         linePort = effectiveSocksPort,
                         frontPort = frontPort,
@@ -918,9 +929,15 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long) {
+    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long, login: SocksLogin?) {
         val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
-        tunProcess = linuxTunController.start(hevBinary, socksPort, killSwitch = _socksProxySettings.value.killSwitch)
+        tunProcess = linuxTunController.start(
+            hevBinary,
+            socksPort,
+            killSwitch = _socksProxySettings.value.killSwitch,
+            username = login?.username.orEmpty(),
+            password = login?.password.orEmpty()
+        )
 
         if (requestGeneration != generation) {
             throw CancellationException("Desktop start superseded")

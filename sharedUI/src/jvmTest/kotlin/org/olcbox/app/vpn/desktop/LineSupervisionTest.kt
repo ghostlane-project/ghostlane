@@ -169,14 +169,12 @@ class LineSupervisionTest {
     // The endpoint is what the tun, or the system's proxy setting, was pointed
     // at when the session started. Every later line has to be exactly this.
     private fun endpoint(
-        mode: DesktopMode,
         isOlcrtc: Boolean,
         linePort: Int,
         frontPort: Int? = null,
         username: String = "ghost",
         password: String = "pw"
     ) = LineSupervision.endpointOf(
-        mode = mode,
         isOlcrtc = isOlcrtc,
         linePort = linePort,
         frontPort = frontPort,
@@ -187,40 +185,21 @@ class LineSupervisionTest {
     // The SOCKS settings have a login here; a core never asked for it.
     @Test
     fun aSessionThatStartedOnACoreIsPointedAtItsPortWithNoLogin() {
-        for (mode in DesktopMode.entries) {
-            assertEquals(SessionEndpoint(10810, null), endpoint(mode, isOlcrtc = false, linePort = 10810), "$mode")
-        }
+        assertEquals(SessionEndpoint(10810, null), endpoint(isOlcrtc = false, linePort = 10810))
     }
 
     @Test
     fun aSessionThatStartedInARoomIsPointedAtTheEngineWithTheLoginFromTheSettings() {
-        for (mode in listOf(DesktopMode.WindowsTun, DesktopMode.MacTun, DesktopMode.SystemProxy)) {
-            assertEquals(
-                SessionEndpoint(10808, SocksLogin("ghost", "pw")),
-                endpoint(mode, isOlcrtc = true, linePort = 10808),
-                "$mode"
-            )
-            // A machine where none is set.
-            assertNull(endpoint(mode, isOlcrtc = true, linePort = 10808, username = "", password = "").login, "$mode")
-            // A username alone is a login already: the tun's outbound sends it,
-            // and the engine demands it, whenever the username is not blank.
-            assertEquals(
-                SocksLogin("ghost", ""),
-                endpoint(mode, isOlcrtc = true, linePort = 10808, password = "").login,
-                "$mode"
-            )
-            assertNull(endpoint(mode, isOlcrtc = true, linePort = 10808, username = " ").login, "$mode")
-        }
-    }
-
-    // hev's config carries no login, so on Linux the tun was never pointed at
-    // one, whatever the settings say.
-    @Test
-    fun theLinuxTunIsPointedAtAPortWithNoLogin() {
         assertEquals(
-            SessionEndpoint(10808, null),
-            endpoint(DesktopMode.LinuxTun, isOlcrtc = true, linePort = 10808)
+            SessionEndpoint(10808, SocksLogin("ghost", "pw")),
+            endpoint(isOlcrtc = true, linePort = 10808)
         )
+        // A machine where none is set.
+        assertNull(endpoint(isOlcrtc = true, linePort = 10808, username = "", password = "").login)
+        // A username alone is a login already: whatever points at the engine
+        // sends it, and the engine demands it, whenever the username is not blank.
+        assertEquals(SocksLogin("ghost", ""), endpoint(isOlcrtc = true, linePort = 10808, password = "").login)
+        assertNull(endpoint(isOlcrtc = true, linePort = 10808, username = " ").login)
     }
 
     // Proxy mode under rules: the system's proxy setting names the front, which
@@ -229,7 +208,7 @@ class LineSupervisionTest {
     fun aRoomBehindAFrontIsPointedAtTheFrontWithNoLogin() {
         assertEquals(
             SessionEndpoint(10810, null),
-            endpoint(DesktopMode.SystemProxy, isOlcrtc = true, linePort = 10808, frontPort = 10810)
+            endpoint(isOlcrtc = true, linePort = 10808, frontPort = 10810)
         )
     }
 }

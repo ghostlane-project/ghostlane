@@ -50,7 +50,10 @@ internal class LinuxTunController(
     suspend fun start(
         hevBinary: Path,
         socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
-        killSwitch: Boolean = false
+        killSwitch: Boolean = false,
+        /** The login the server on [socksPort] demands; blank when it demands none. */
+        username: String = "",
+        password: String = ""
     ): Process {
         // Over a block that is being held the scripts are the kill switch's,
         // whatever the setting says by now (it may have been switched off and
@@ -63,7 +66,7 @@ internal class LinuxTunController(
         if (withSwitch) Files.deleteIfExists(stopAskedPath())
         val upScript = writeUpScript(withSwitch)
         val downScript = writeDownScript(withSwitch)
-        val config = writeConfig(socksPort, upScript, downScript)
+        val config = writeConfig(socksPort, upScript, downScript, username, password)
         startedWithKillSwitch = withSwitch
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
         // Not over one that is still alive: a hev that could not be ended holds
@@ -201,16 +204,30 @@ internal class LinuxTunController(
         return held
     }
 
-    private fun writeConfig(socksPort: Int, upScript: Path, downScript: Path): Path {
+    private fun writeConfig(
+        socksPort: Int,
+        upScript: Path,
+        downScript: Path,
+        username: String,
+        password: String
+    ): Path {
         val config = DesktopPaths.appDataDir().resolve("linux-tun.yml")
         Files.writeString(
             config,
             configContent(
                 socksPort = socksPort,
                 postUpScript = upScript.toString(),
-                preDownScript = downScript.toString()
+                preDownScript = downScript.toString(),
+                username = username,
+                password = password
             )
         )
+        // It may carry the SOCKS login now, and hev reads it as root: nobody
+        // else on the machine has a use for it.
+        runCatching {
+            config.toFile().setReadable(false, false)
+            config.toFile().setReadable(true, true)
+        }
         return config
     }
 
@@ -425,7 +442,9 @@ internal class LinuxTunController(
         fun configContent(
             socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
             postUpScript: String? = null,
-            preDownScript: String? = null
+            preDownScript: String? = null,
+            username: String = "",
+            password: String = ""
         ): String {
             return buildString {
                 appendLine("tunnel:")
@@ -443,6 +462,17 @@ internal class LinuxTunController(
                 appendLine("socks5:")
                 appendLine("  address: ${PacServer.LOCAL_SOCKS_HOST}")
                 appendLine("  port: $socksPort")
+                // The login the server on that port demands, when it demands
+                // one. The olcRTC engine started with a SOCKS login refuses a
+                // client that offers none, and this file carried none: with a
+                // login set in the settings a room in the Linux tunnel said
+                // Connected, because the check asks the engine directly, and
+                // carried nothing, because hev was turned away. A login is a
+                // username, as everywhere else that sends or demands one.
+                if (username.isNotBlank()) {
+                    appendLine("  username: '${yamlSingleQuoted(username)}'")
+                    appendLine("  password: '${yamlSingleQuoted(password)}'")
+                }
                 // Standard UDP ASSOCIATE. 'tcp' is hev's own UDP-in-TCP command (0x05),
                 // which none of the servers on this port speaks: sing-box, Xray and the
                 // olcRTC engine refuse it, so every UDP flow died at its first packet
@@ -704,6 +734,9 @@ internal class LinuxTunController(
             """.trimIndent()
             return head + "\n" + body
         }
+
+        /** Inside single quotes YAML has one escape: a quote is written twice. */
+        private fun yamlSingleQuoted(value: String): String = value.replace("'", "''")
 
         private fun shellSingleQuote(value: String): String {
             return "'${value.replace("'", "'\"'\"'")}'"
