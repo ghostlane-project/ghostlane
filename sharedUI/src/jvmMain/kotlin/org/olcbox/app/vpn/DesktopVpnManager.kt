@@ -1189,7 +1189,9 @@ class DesktopVpnManager private constructor(
      * out is this core, which is asking because it is not up yet. sing-box
      * asks them itself, and its own query leaves by the tun's rule on its
      * binary. Xray has no such part, and an XHTTP server that is a name may
-     * not come up as a later line.
+     * not come up as a later line. They are for Windows and macOS, where the
+     * system's list is the tun's once it is up; under [besideTun] they are
+     * read again every time.
      */
     private suspend fun startDesktopCore(
         location: LocationConfig,
@@ -1207,8 +1209,14 @@ class DesktopVpnManager private constructor(
         val boundInterface = if (besideTun && xhttp != null) DesktopDnsResolver.linuxDefaultInterface() else null
         val serverResolver = when {
             xhttp != null -> null
-            resolvers != null -> DirectDns.Servers(resolvers)
+            // In the Linux tunnel the machine's resolvers are read now, for a
+            // later line as for the first. The tun does not change what the
+            // default interface says of them, so the answer is as good as it
+            // was when the session started, and better once the machine has
+            // moved to another network inside the session: the ones kept from
+            // the start are then resolvers that are no longer there.
             besideTun -> DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            resolvers != null -> DirectDns.Servers(resolvers)
             else -> null
         }
         if (besideTun && xhttp != null) {
