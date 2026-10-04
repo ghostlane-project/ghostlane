@@ -45,6 +45,14 @@ object SingBoxConfig {
     /**
      * [login], when given, is demanded of every client of the SOCKS inbound; see
      * [SocksLogin] for why the Android tun path always passes one.
+     *
+     * [serverResolver] is where the server's own name is resolved when no rules
+     * are on. Without a `dns` section sing-box asks its `local` resolver, which
+     * reads `/etc/resolv.conf` and nothing else: fine on a desktop, and on
+     * Android, where that file does not exist, it asks `[::1]:53` and the core
+     * never reaches a server named by hostname. The rule-based shape has always
+     * carried `dns-direct` for this; Global gets the same one resolver, and only
+     * for a server that is a name, so a link with an address is written as before.
      */
     fun build(
         outbound: OutboundSpec,
@@ -52,7 +60,11 @@ object SingBoxConfig {
         routing: Routing = Routing.Global,
         verboseLogs: Boolean = false,
         login: SocksLogin? = null,
-    ): String = render(socksPort, routing, verboseLogs, login) { addOutbound(outbound) }
+        serverResolver: DirectDns? = null,
+    ): String = render(
+        socksPort, routing, verboseLogs, login,
+        serverResolver = serverResolver.takeIf { !XrayConfig.isIpLiteral(outbound.host) }
+    ) { addOutbound(outbound) }
 
     /// iOS addressing. Fixed rather than negotiated: the extension applies these
     /// same values to the system when it hands the core its descriptor, so the two
@@ -510,9 +522,12 @@ object SingBoxConfig {
         routing: Routing,
         verboseLogs: Boolean,
         login: SocksLogin?,
+        serverResolver: DirectDns? = null,
         outbounds: JsonArrayBuilder.() -> Unit
     ): String {
         val bypass = routing as? Routing.RuleBased
+        // The rule-based shape resolves the server's name itself (putBypassRoute).
+        val resolver = serverResolver.takeIf { bypass == null }
         val obj = buildJsonObject {
             // Without this sing-box applies its own default, which is "info" — and
             // that names every connection the user makes, in a log we invite them to
@@ -520,6 +535,9 @@ object SingBoxConfig {
             // most users are actually on.
             putJsonObject("log") { put("level", coreLogLevel(verboseLogs)) }
             if (bypass != null) putBypassDns(bypass, remoteOverTcp = false)
+            if (resolver != null) putJsonObject("dns") {
+                putJsonArray("servers") { addDirectDnsServer(resolver) }
+            }
             putJsonArray("inbounds") {
                 addJsonObject {
                     put("type", "socks"); put("tag", "in")
@@ -537,6 +555,8 @@ object SingBoxConfig {
                 if (bypass != null) addDirectOutbound()
             }
             if (bypass != null) putBypassRoute(bypass)
+            // What an outbound uses to dial a name: here, only the server's own.
+            if (resolver != null) putJsonObject("route") { put("default_domain_resolver", "dns-direct") }
         }
         return obj.toString()
     }

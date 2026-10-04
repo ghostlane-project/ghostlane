@@ -286,6 +286,38 @@ class SingBoxConfigTest {
         }
     }
 
+    // Android has no /etc/resolv.conf, and sing-box's `local` resolver reads
+    // nothing else: without a resolver of its own the core never reaches a
+    // server named by hostname, and the tunnel "comes up" carrying nothing.
+    @Test fun aServerNamedByHostnameGetsTheResolverItIsGiven() {
+        val named = vless().copy(host = "vpn.example.com")
+        val root = Json.parseToJsonElement(
+            SingBoxConfig.build(named, serverResolver = DirectDns.Servers(listOf("192.168.1.1")))
+        ).jsonObject
+        val server = root["dns"]!!.jsonObject["servers"]!!.jsonArray.single().jsonObject
+        assertEquals("dns-direct", server["tag"]!!.jsonPrimitive.content)
+        assertEquals("udp", server["type"]!!.jsonPrimitive.content)
+        assertEquals("192.168.1.1", server["server"]!!.jsonPrimitive.content)
+        assertEquals("dns-direct", root["route"]!!.jsonObject["default_domain_resolver"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun anAddressOrNoResolverLeavesTheGlobalShapeAsItWas() {
+        val resolver = DirectDns.Servers(listOf("192.168.1.1"))
+        assertEquals(SingBoxConfig.build(vless()), SingBoxConfig.build(vless(), serverResolver = resolver))
+        val named = Json.parseToJsonElement(SingBoxConfig.build(vless().copy(host = "vpn.example.com"))).jsonObject
+        assertNull(named["dns"])
+        assertNull(named["route"])
+    }
+
+    @Test fun theRuleBasedShapeKeepsItsOwnResolverAndDoesNotGetASecondDnsSection() {
+        val named = vless().copy(host = "vpn.example.com")
+        val rules = Routing.BypassRussia(ruleSetDir = "/rules", directDns = DirectDns.Servers(listOf("10.0.0.1")))
+        assertEquals(
+            SingBoxConfig.build(named, routing = rules),
+            SingBoxConfig.build(named, routing = rules, serverResolver = DirectDns.Servers(listOf("192.168.1.1")))
+        )
+    }
+
     private fun vless() = OutboundSpec.Vless(
         "u", "1.2.3.4", 443, "sni.x", "PBK", "sid", "chrome",
         "xtls-rprx-vision", TransportSpec.Tcp, "DE"
