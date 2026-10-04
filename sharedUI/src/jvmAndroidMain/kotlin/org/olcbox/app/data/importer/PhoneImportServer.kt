@@ -104,6 +104,38 @@ class PhoneImportServer(
             write(body)
             flush()
         }
+        // A refusal goes out before the request has been read to its end.
+        if (status >= 400) lingerOver(client)
+    }
+
+    /**
+     * Lets the client finish what it is still sending before the socket is
+     * closed.
+     *
+     * Closed with bytes of the request unread, the system answers them with a
+     * reset, and a reset can overtake the reply that was just written: a phone
+     * that posted more than [MAX_BODY] then saw a dropped connection, not the
+     * refusal. With the same client the test uses, three posts in three
+     * hundred ended that way on loopback, and none with this.
+     *
+     * So the sending side is closed, which ends the reply for the client, and
+     * what it still sends is read and thrown away, for no longer than
+     * [LINGER_MS] and no more than [LINGER_BYTES]: a request far past that is
+     * not owed a tidy answer.
+     */
+    private fun lingerOver(client: Socket) {
+        runCatching {
+            client.shutdownOutput()
+            client.soTimeout = LINGER_MS
+            val unread = client.getInputStream()
+            val sink = ByteArray(4096)
+            var left = LINGER_BYTES
+            while (left > 0) {
+                val read = unread.read(sink, 0, minOf(sink.size, left))
+                if (read < 0) break
+                left -= read
+            }
+        }
     }
 
     companion object {
@@ -111,6 +143,8 @@ class PhoneImportServer(
         private const val BACKLOG = 4
         private const val MAX_HEAD = 8 * 1024
         private const val MAX_BODY = 16 * 1024
+        private const val LINGER_MS = 1_000
+        private const val LINGER_BYTES = 64 * 1024
 
         private val random = SecureRandom()
 

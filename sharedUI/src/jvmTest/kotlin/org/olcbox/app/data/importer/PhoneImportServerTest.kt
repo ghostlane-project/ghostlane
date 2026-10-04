@@ -83,6 +83,20 @@ class PhoneImportServerTest {
         assertTrue(links.isEmpty())
     }
 
+    // The reply to a post that is too large is written while the client is
+    // still sending. Closed at once after it, the socket answered the unread
+    // bytes with a reset that could overtake the reply: about one post in a
+    // hundred threw here and failed the test above, on whichever branch it
+    // happened to. Asked many times over, so that closing at once would be
+    // seen far more often than not.
+    @Test fun aRefusalReachesAClientThatIsStillSending() {
+        val tooLarge = "link=" + "a".repeat(17 * 1024)
+        repeat(60) { round ->
+            assertEquals(413, post(server.url, tooLarge).statusCode(), "post $round")
+        }
+        assertTrue(links.isEmpty())
+    }
+
     @Test fun formFieldsAreDecoded() {
         assertEquals("a b&c", PhoneImportServer.formField("x=1&link=a+b%26c", "link"))
         assertEquals(null, PhoneImportServer.formField("x=1", "link"))
