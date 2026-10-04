@@ -835,7 +835,8 @@ class OlcboxVpnService : VpnService() {
                 // Shown whoever asked for the VPN, and not retried. A retry
                 // would start and stop the transport every half minute over a
                 // list only the user can mend, behind a notification that says
-                // nothing. Their next change of the list starts it again.
+                // nothing. The error names what to mend, and the Connect that
+                // follows starts it.
                 stopMobileAndWait()
                 if (requestedGeneration == generation) {
                     setStatus(VpnStatus.Error(established.message))
