@@ -52,6 +52,9 @@
     <string name="age_now">刚刚</string>
     <string name="always_on_vpn">始终开启的 VPN</string>
     <string name="always_on_vpn_value">随手机启动 · Android 设置</string>
+    <string name="always_on_vpn_value_blocking">已开启，Android 会拦截未经 VPN 的流量</string>
+    <string name="always_on_vpn_value_off">未开启 · Android 设置</string>
+    <string name="always_on_vpn_value_on">已开启，未连接 VPN 时不拦截流量 · Android 设置</string>
     <string name="app_logs_title">应用日志</string>
     <string name="app_settings">应用设置</string>
     <string name="apps_no_match">没有匹配的应用</string>
@@ -165,6 +168,8 @@
     <string name="location_vp8_options">VP8 选项</string>
     <string name="location_vp8_options_subtitle">微调流的性能</string>
     <string name="lock_admin">退出管理员模式</string>
+    <string name="lockdown_bypass_note">Android 正在拦截未经 VPN 的连接，因此被排除在 VPN 之外的应用无法联网。</string>
+    <string name="lockdown_unselected_note">Android 正在拦截未经 VPN 的连接，因此所有未选入 VPN 的应用都无法联网。</string>
     <string name="logs_copied">日志已复制到剪贴板</string>
     <string name="logs_debug">详细调试日志</string>
     <string name="logs_debug_note">记录 DNS、分流和连接决策。更改后会重新连接当前隧道。</string>

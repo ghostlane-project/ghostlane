@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.olcbox.app.util.nowMillis
+import org.olcbox.app.vpn.SystemVpnMode
 import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.log.LogScrubber
@@ -28,6 +29,14 @@ object OlcboxVpnState {
 
     private val _traffic = MutableStateFlow<TrafficCounters?>(null)
     val traffic = _traffic.asStateFlow()
+
+    /** Android's always-on state as the running service last read it; null when it has not. */
+    private val _systemVpnMode = MutableStateFlow<SystemVpnMode?>(null)
+    val systemVpnMode = _systemVpnMode.asStateFlow()
+
+    fun setSystemVpnMode(mode: SystemVpnMode?) {
+        _systemVpnMode.value = mode
+    }
 
     fun setTraffic(bytesIn: Long, bytesOut: Long) {
         _traffic.value = TrafficCounters(bytesIn = bytesIn, bytesOut = bytesOut)

@@ -52,6 +52,9 @@
     <string name="age_now">now</string>
     <string name="always_on_vpn">Always-on VPN</string>
     <string name="always_on_vpn_value">Start with the phone · Android settings</string>
+    <string name="always_on_vpn_value_blocking">On, Android blocks traffic without the VPN</string>
+    <string name="always_on_vpn_value_off">Off · Android settings</string>
+    <string name="always_on_vpn_value_on">On, traffic is not blocked without the VPN · Android settings</string>
     <string name="app_logs_title">Application Logs</string>
     <string name="app_settings">Application settings</string>
     <string name="apps_no_match">No matching apps</string>
@@ -165,6 +168,8 @@
     <string name="location_vp8_options">VP8 options</string>
     <string name="location_vp8_options_subtitle">Fine-tune stream performance</string>
     <string name="lock_admin">Lock admin</string>
+    <string name="lockdown_bypass_note">Android is blocking connections without the VPN, so the apps you excluded from it have no network.</string>
+    <string name="lockdown_unselected_note">Android is blocking connections without the VPN, so every app you did not select for it has no network.</string>
     <string name="logs_copied">Logs copied to clipboard</string>
     <string name="logs_debug">Detailed debug logs</string>
     <string name="logs_debug_note">Record DNS, routing and connection decisions. Changing this reconnects an active tunnel.</string>

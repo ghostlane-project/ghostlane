@@ -52,6 +52,9 @@
     <string name="age_now">сейчас</string>
     <string name="always_on_vpn">Постоянная VPN</string>
     <string name="always_on_vpn_value">Запуск вместе с телефоном · настройки Android</string>
+    <string name="always_on_vpn_value_blocking">Включена, Android блокирует трафик без VPN</string>
+    <string name="always_on_vpn_value_off">Выключена · настройки Android</string>
+    <string name="always_on_vpn_value_on">Включена, без VPN трафик не блокируется · настройки Android</string>
     <string name="app_logs_title">Журнал приложения</string>
     <string name="app_settings">Настройки приложения</string>
     <string name="apps_no_match">Нет подходящих приложений</string>
@@ -165,6 +168,8 @@
     <string name="location_vp8_options">Параметры VP8</string>
     <string name="location_vp8_options_subtitle">Тонкая настройка потока</string>
     <string name="lock_admin">Выйти из режима администратора</string>
+    <string name="lockdown_bypass_note">Android блокирует соединения без VPN, поэтому приложения, исключённые из VPN, остаются без сети.</string>
+    <string name="lockdown_unselected_note">Android блокирует соединения без VPN, поэтому все приложения, не выбранные для VPN, остаются без сети.</string>
     <string name="logs_copied">Журнал скопирован в буфер обмена</string>
     <string name="logs_debug">Подробный журнал отладки</string>
     <string name="logs_debug_note">Записывать решения DNS, маршрутизации и подключения. Изменение переподключает активный туннель.</string>

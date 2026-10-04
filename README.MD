@@ -155,7 +155,10 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   credentials, Android split tunneling with a preset for Russian apps that
   refuse to work through a VPN.
 - Android: always-on VPN (the connection comes up by itself after a restart),
-  and a quick-settings tile.
+  and a quick-settings tile. While connected, the settings row says whether
+  Android's always-on is on and whether "Block connections without VPN" is
+  on with it, which is the kill switch for the case the app cannot cover, its
+  own death, and names the apps that setting leaves without network.
 - Android TV: a launcher entry, a focus mark you can see from the sofa, and a
   server list sent from your phone. The TV shows a code, and the phone opens a
   one-page form on the same home network.
