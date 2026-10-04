@@ -61,9 +61,10 @@ import mobile.Mobile
 import mobile.Runtime as OlcrtcRuntime
 import mobile.SocketProtector
 import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
+import org.olcbox.app.data.datasource.AndroidLocations
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
-import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
+import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.UpstreamDns
@@ -129,12 +130,11 @@ class OlcboxVpnService : VpnService() {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + job)
     private val tunnelMutex = Mutex()
-    private val repository: LocationsRepository by lazy {
-        LocationsRepositoryImpl(LocationsDataSourceImpl(applicationContext))
-    }
-    private val deviceIdentityProvider by lazy {
-        PersistentDeviceIdentityProvider(LocationsDataSourceImpl(applicationContext))
-    }
+    // The app's repository, not one of the service's own: one lock, so one
+    // writer of the stored bundle at a time (see AndroidLocations).
+    private val repository: LocationsRepository by lazy { AndroidLocations.repository(applicationContext) }
+    private val locationsStore by lazy { LocationsDataSourceImpl(applicationContext) }
+    private val deviceIdentityProvider by lazy { PersistentDeviceIdentityProvider(locationsStore) }
 
     private var startupJob: Job? = null
     private var watchdogJob: Job? = null
@@ -565,7 +565,8 @@ class OlcboxVpnService : VpnService() {
                         isMigration = isMigration,
                         isRestart = isRestart
                     )
-                    val active = repository.getActiveLocation()
+                    val stored = storedBundle()
+                    val active = stored.locations.firstOrNull { it.storageId == stored.activeLocationId }
                     val location = active?.location?.normalized()
                     if (location == null || !location.isComplete()) {
                         if (behindTunnel) {
@@ -586,7 +587,7 @@ class OlcboxVpnService : VpnService() {
                         return@withLock
                     }
                     OlcboxVpnState.activeLocation = location.normalized()
-                    val routingSettings = repository.getRoutingSettings()
+                    val routingSettings = stored.routing
                     routingMode = routingSettings.mode
                     this@OlcboxVpnService.routingSettings = routingSettings
                     verboseDebugLogs = routingSettings.verboseDebugLogs
@@ -628,6 +629,16 @@ class OlcboxVpnService : VpnService() {
             }
         }
     }
+
+    /**
+     * What is stored, read past the repository's lock. The app holds that lock
+     * for as long as a list refresh downloads, and a reconnect must not wait for
+     * a download. The file is replaced in one step, so what is read here is a
+     * whole bundle, the old one or the new. A store with no locations goes
+     * through the repository, which knows where older versions kept theirs.
+     */
+    private suspend fun storedBundle(): LocationBundleV4 =
+        locationsStore.loadLocationBundle()?.takeIf { it.locations.isNotEmpty() } ?: repository.getBundle()
 
     /**
      * A start threw something nothing expected (a rule file that would not be
