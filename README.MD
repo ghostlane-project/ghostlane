@@ -175,6 +175,12 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   go out around it. While it reconnects those apps wait, and the notification
   says so. What the app cannot hold is its own death; for that Android has
   "Always-on VPN" with "Block connections without VPN".
+- On the desktop a core or an olcRTC engine that dies is restarted behind the
+  tunnel instead of taking it down: the tunnel stays as it is, and apps wait
+  behind it, rather than going out directly, while the process comes back on
+  the port it had. A dead sing-box or Xray core is noticed now; it used to leave
+  a session that said Connected and carried nothing. The death of the tunnel's
+  own process still ends the session.
 - No account, no analytics, nothing collected.
 
 ## Protocols

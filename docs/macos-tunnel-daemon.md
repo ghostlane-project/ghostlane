@@ -235,6 +235,24 @@ use `curl -6` — silence is the correct answer.
   room on someone else's SFU, so there is no endpoint to pin a route to. Their DNS
   still takes the reliable path (`hijack-dns` plus a TCP resolver through the
   tunnel), which is the same treatment iOS gives them.
+- **A core or an engine that dies is restarted behind the tun, which stays
+  up.** The app notices a dead sing-box or Xray core within two seconds and a
+  dead olcRTC engine at once, says Reconnecting, and starts the process again on
+  the port it had, after 2, 4, 8, 16 and then every 30 seconds for as long as
+  the session lasts. The port is not a preference: the daemon's sing-box was
+  given it when the tun was built and cannot be given another. The tun is not
+  touched, so until the process is back its outbound points at a port nobody
+  listens on, the dead end the killed-app test above measured: traffic stops,
+  it does not go around. Only the tun's own death still ends the session. This
+  is read in the code and not yet exercised on a Mac, and as the config reads
+  two cases cannot come back by themselves under Global routing. A restarted
+  core looks its server's name up again, and a resolver that is itself reached
+  through the tun cannot answer, since the tun's way out is the core that is
+  asking; an address that is new since connect is the first limit here. And a
+  restarted olcRTC engine has no exclusion at all: its own sign-in to the
+  meeting service enters the tun, whose only way out is the engine that is not
+  up yet. Both stay Reconnecting, closed, until Disconnect; letting those
+  binaries out by process path, as the Windows tun does, is what fixes them.
 
 ## Why not NetworkExtension
 

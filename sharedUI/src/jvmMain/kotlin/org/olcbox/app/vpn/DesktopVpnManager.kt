@@ -9,7 +9,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,9 +41,11 @@ import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.util.nowMillis
+import org.olcbox.app.vpn.desktop.DeadProcess
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.DesktopProxyController
+import org.olcbox.app.vpn.desktop.LineSupervision
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.MacOsTunController
@@ -122,7 +126,28 @@ class DesktopVpnManager private constructor(
     private var processWatchJob: Job? = null
     private var tunProcessWatchJob: Job? = null
     private var macTunWatchJob: Job? = null
+    private var coreWatchJob: Job? = null
+
+    /**
+     * The restart of a dead core or engine, from the moment the death is noticed
+     * until the session is verified again.
+     *
+     * Non-null is the whole meaning of "a restart is running", and it is set and
+     * cleared under [mutex] rather than read off the job's own state: a job that
+     * has just verified the session stays active for a moment after it lets the
+     * mutex go, and a death reported in that moment would be taken for one it is
+     * still handling, and left to nobody.
+     */
+    private var lineRestartJob: Job? = null
     private var process: Process? = null
+
+    /**
+     * The engine process [processWatchJob] waits on. A restart that left the
+     * engine as it was (only the front had died) must not put a second waiter
+     * on it, and one that replaced it, in whichever of its attempts, must not
+     * leave the new one unwatched.
+     */
+    private var watchedEngine: Process? = null
     private var tunProcess: Process? = null
     private var olcRtcConfigPath: Path? = null
     private var olcRtcDirectRulesPath: Path? = null
@@ -136,6 +161,13 @@ class DesktopVpnManager private constructor(
     /** The daemon's own socks inbound, which is what a green light is measured through. */
     private var macTunVerifyPort: Int? = null
     private var windowsTunExit: org.olcbox.app.net.TunnelExit? = null
+
+    /**
+     * The adapter of the Windows tun that passed its check. A check made later
+     * in the session asks about the same adapter's routes, and the name is drawn
+     * per attempt, so it cannot be worked out again.
+     */
+    private var windowsTunInterface: String? = null
     private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::addLog)
 
     /**
@@ -159,6 +191,56 @@ class DesktopVpnManager private constructor(
         onOutput = { line -> addLog(line) }
     )
     private var activeCorePort: Int? = null
+
+    /**
+     * What the line of a connected session was started with, so that a core or
+     * an engine that dies can be started again exactly as it was.
+     *
+     * Remembered, not read again, because every value here was built into
+     * something that outlives the process it describes. The tun's upstream is
+     * [corePort], with the login in [socksSettings] for olcRTC, for as long as
+     * the tun lives; the system proxy points at [frontPort]; the engine's yaml
+     * names [engineRules]. The settings behind them can change while a session
+     * runs (the SOCKS port, the routing, the handshake), and a process brought
+     * back with today's values would listen where the tun no longer looks.
+     */
+    private data class SessionLine(
+        val location: LocationConfig,
+        val isOlcrtc: Boolean,
+        val socksSettings: DesktopSocksProxySettings,
+        /** Where the line listens: the core's port, or for olcRTC the engine's own. */
+        val corePort: Int,
+        val coreRouting: Routing,
+        val verboseLogs: Boolean,
+        /** The engine's direct-rules file, written at connect and kept until the session stops. */
+        val engineRules: Path?,
+        val dtlsProfile: String,
+        val desktopMode: DesktopMode,
+        /** The sing-box front before the engine, in proxy mode under rules; null otherwise. */
+        val frontPort: Int?,
+        /**
+         * The listener the session was verified through, and its login: the
+         * tun's own inbound where the tun has one, else the front, else the
+         * line. A restart is verified through the same one, so that Connected
+         * keeps meaning what it meant at connect.
+         */
+        val verifiedThrough: SubscriptionFetchProxy,
+        /** On Windows the check also asks whose the default routes are; null elsewhere. */
+        val windowsTunInterface: String?,
+        /**
+         * Whether the sing-box and Xray processes of this line are all running,
+         * as whoever started them tells it; null for a room reached directly,
+         * which has none.
+         */
+        val coresAlive: (() -> Boolean)?
+    )
+
+    /**
+     * Null until a session is verified, and again once it is stopped: a connect
+     * that never carried traffic fails as it always did, and only a session that
+     * did has a line worth bringing back.
+     */
+    @Volatile private var sessionLine: SessionLine? = null
 
     override fun needsPermission(): Boolean = false
 
@@ -445,7 +527,11 @@ class DesktopVpnManager private constructor(
             } else {
                 null
             }
+            val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
             var frontPort: Int? = null
+            // Which sing-box and Xray processes the line cannot do without, as
+            // whoever starts them says it; none for a room reached directly.
+            var coresAlive: (() -> Boolean)? = null
 
             if (desktopMode == DesktopMode.WindowsTun) {
                 windowsTunController.ensureAdministratorOrRequestRestart()
@@ -476,7 +562,7 @@ class DesktopVpnManager private constructor(
                     logOutput = true,
                     privileged = desktopMode == DesktopMode.LinuxTun,
                     directRulesFile = engineRules,
-                    dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
+                    dtlsProfile = dtlsProfile
                 )
                 val olcRtcProcess = process ?: error("olcRTC process is missing")
                 waitForOlcRtcReady(
@@ -488,9 +574,10 @@ class DesktopVpnManager private constructor(
                 )
                 if (coreRouting is Routing.Rules) {
                     frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
+                    coresAlive = singBoxCore::isRunning
                 }
             } else {
-                startDesktopCore(location, effectiveSocksPort, coreRouting, verboseLogs)
+                coresAlive = startDesktopCore(location, effectiveSocksPort, coreRouting, verboseLogs)
             }
 
             if (requestGeneration != generation) {
@@ -617,8 +704,28 @@ class DesktopVpnManager private constructor(
             if (currentLanSettings.shareOnLan) {
                 startLanSharing(currentLanSettings, channelProxy!!, requestGeneration)
             }
+            // The session holds its tunnel from here, the first verified
+            // connection: a core or an engine that dies after this is started
+            // again behind it with what is written down now.
+            val line = SessionLine(
+                location = location,
+                isOlcrtc = isOlcrtc,
+                socksSettings = socksSettings,
+                corePort = effectiveSocksPort,
+                coreRouting = coreRouting,
+                verboseLogs = verboseLogs,
+                engineRules = engineRules,
+                dtlsProfile = dtlsProfile,
+                desktopMode = desktopMode,
+                frontPort = frontPort,
+                verifiedThrough = channelProxy ?: error("the session has no listener to verify it through"),
+                windowsTunInterface = if (desktopMode == DesktopMode.WindowsTun) windowsTunInterface else null,
+                coresAlive = coresAlive
+            )
+            sessionLine = line
             setStatus(VpnStatus.Connected)
             addLog("$transport connected — exit ${exit.label()}")
+            startCoreWatcher(line, requestGeneration)
         } catch (e: Exception) {
             if (e is CancellationException) {
                 addLog("Desktop start cancelled")
@@ -707,6 +814,7 @@ class DesktopVpnManager private constructor(
                 windowsTunVerifyProxy = SubscriptionFetchProxy(
                     "127.0.0.1", verifyPort, verifyUsername, verifyPassword
                 )
+                windowsTunInterface = interfaceName
                 break
             }
             windowsTunCore.stopNow()
@@ -848,13 +956,21 @@ class DesktopVpnManager private constructor(
         }.getOrNull() ?: preferred
     }
 
-    /** Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port. */
+    /**
+     * Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port.
+     *
+     * Returns the question of whether what it started is still running. It is
+     * handed back rather than worked out again by the session's watcher because
+     * the answer depends on the shape chosen here: XHTTP under rules is two
+     * processes, and asking whether either core runs would call that line alive
+     * with half of it gone.
+     */
     private suspend fun startDesktopCore(
         location: LocationConfig,
         port: Int,
         routing: Routing,
         verboseLogs: Boolean
-    ) {
+    ): () -> Boolean {
         val raw = location.rawLink ?: error("core location has no link")
         val spec = org.olcbox.app.net.LinkParser.parse(raw) ?: error("unparseable core link")
         stopDesktopCores()
@@ -913,20 +1029,27 @@ class DesktopVpnManager private constructor(
             )
         }
         addLog("core ready on 127.0.0.1:$port")
+        return alive
     }
 
     /**
      * sing-box between the proxy and olcRTC, so the routing rules see every
      * connection before the relay does. The engine keeps its own port and its
      * credentials; the front listens without any, like the cores do.
+     *
+     * [heldPort] is the port of a front that died in a running session. The
+     * system proxy was pointed at it when the session started and still is, so
+     * the front comes back there or not at all: on any other port it would be
+     * running and unreachable.
      */
     private suspend fun startOlcRtcFront(
         socksSettings: DesktopSocksProxySettings,
         routing: Routing.Rules,
-        verboseLogs: Boolean
+        verboseLogs: Boolean,
+        heldPort: Int? = null
     ): Int {
         stopDesktopCores()
-        val port = allocateCorePort()
+        val port = heldPort ?: allocateCorePort()
         singBoxCore.start(
             org.olcbox.app.net.SingBoxConfig.buildSocksChain(
                 upstreamPort = socksSettings.port,
@@ -1115,6 +1238,10 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // First, and on every path out of here: a session that is being stopped
+        // has no line to bring back, and a watcher that sees one of its processes
+        // go from now on must find nothing to restart.
+        sessionLine = null
         // The LAN listener is externally reachable. Close it before changing the
         // tunnel it chains to, including partially started and already-disconnected paths.
         lanWatchJob?.cancel()
@@ -1156,6 +1283,7 @@ class DesktopVpnManager private constructor(
                     windowsTunCore.stopNow()
                     windowsTunExit = null
                     windowsTunVerifyProxy = null
+                    windowsTunInterface = null
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }
@@ -1213,9 +1341,16 @@ class DesktopVpnManager private constructor(
         macTunWatchJob = null
         processWatchJob?.cancel()
         processWatchJob = null
+        watchedEngine = null
 
         tunProcessWatchJob?.cancel()
         tunProcessWatchJob = null
+
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+
+        lineRestartJob?.cancel()
+        lineRestartJob = null
 
         logJob?.cancel()
         logJob = null
@@ -1409,6 +1544,7 @@ class DesktopVpnManager private constructor(
 
     private fun startOlcRtcExitWatcher(target: Process, requestGeneration: Long) {
         processWatchJob?.cancel()
+        watchedEngine = target
         processWatchJob = scope.launch {
             val exitCode = waitForProcessExit(target) ?: return@launch
             if (!isActive) return@launch
@@ -1418,6 +1554,7 @@ class DesktopVpnManager private constructor(
                     if (requestGeneration != generation || process !== target) return@withLock
 
                     handleUnexpectedProcessExit(
+                        which = DeadProcess.Engine,
                         logMessage = "olcRTC process exited unexpectedly with code $exitCode",
                         errorMessage = "olcRTC exited unexpectedly (code $exitCode)",
                         requestGeneration = requestGeneration
@@ -1467,6 +1604,7 @@ class DesktopVpnManager private constructor(
                     mutex.withLock {
                         if (requestGeneration != generation) return@withLock
                         handleUnexpectedProcessExit(
+                            which = DeadProcess.Tun,
                             logMessage = "the tunnel daemon is no longer running sing-box",
                             errorMessage = "the system-wide tunnel stopped unexpectedly",
                             requestGeneration = requestGeneration
@@ -1489,6 +1627,7 @@ class DesktopVpnManager private constructor(
                     if (requestGeneration != generation || tunProcess !== target) return@withLock
 
                     handleUnexpectedProcessExit(
+                        which = DeadProcess.Tun,
                         logMessage = "TUN process exited unexpectedly with code $exitCode",
                         errorMessage = "TUN process exited unexpectedly (code $exitCode)",
                         requestGeneration = requestGeneration
@@ -1498,18 +1637,354 @@ class DesktopVpnManager private constructor(
         }
     }
 
+    /**
+     * Notices when a sing-box or Xray core of the session's line dies.
+     *
+     * Until this existed nothing did. A core was asked whether it runs once, at
+     * connect, and its death after that left the tun up, the status Connected
+     * and every connection refused at a port nobody listened on: closed, which
+     * is right, and silent, which is not.
+     *
+     * Asked, not waited on as the engine and the tun are: the controllers own
+     * their processes and replace them at every start, a line may run two, and
+     * one question covers whichever it runs. And asked once, unlike the
+     * daemon's watcher: this is the operating system's answer about our own
+     * child, not a reply over a socket that may have blinked.
+     */
+    private fun startCoreWatcher(line: SessionLine, requestGeneration: Long) {
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+        val coresAlive = line.coresAlive ?: return
+        coreWatchJob = scope.launch {
+            while (isActive) {
+                delay(CORE_WATCH_INTERVAL_MS)
+                if (requestGeneration != generation || sessionLine !== line) return@launch
+                if (coresAlive()) continue
+
+                // In a coroutine of its own, as the other watchers do it: the
+                // restart this begins cancels this job.
+                scope.launch {
+                    mutex.withLock {
+                        if (requestGeneration != generation || sessionLine !== line) return@withLock
+                        val exitCode = singBoxCore.exitCodeOrNull() ?: xrayCore.exitCodeOrNull()
+                        handleUnexpectedProcessExit(
+                            which = DeadProcess.Core,
+                            logMessage = "core process exited unexpectedly" +
+                                (exitCode?.let { " with code $it" } ?: ""),
+                            errorMessage = "the core exited unexpectedly",
+                            requestGeneration = requestGeneration
+                        )
+                    }
+                }
+                return@launch
+            }
+        }
+    }
+
+    /**
+     * One of a session's processes is gone, and which one decides what becomes
+     * of the tunnel ([LineSupervision.restartsBehindTun]).
+     *
+     * A core or the engine of a connected session is started again behind the
+     * tunnel, which is not touched. Taking it down here is what used to send
+     * the machine's traffic out directly, by the app's own hand. The tun's own
+     * death ends the session as it always has: its routes went with it, and
+     * there is nothing left to hold.
+     */
     private suspend fun handleUnexpectedProcessExit(
+        which: DeadProcess,
         logMessage: String,
         errorMessage: String,
         requestGeneration: Long
     ) {
         addLog(logMessage)
+        val line = sessionLine
+        if (line != null && LineSupervision.restartsBehindTun(which)) {
+            restartLineBehindTun(line, requestGeneration)
+            return
+        }
         stopDesktopMode(finalStatus = false)
 
         if (requestGeneration == generation) {
             setStatus(VpnStatus.Error(errorMessage))
         }
     }
+
+    /**
+     * Begins the restart of a dead core or engine behind what the session
+     * holds: the tun, or in proxy mode the system's proxy setting. Neither is
+     * touched, here or by any attempt, so until the line is back whatever
+     * enters the tun has nowhere to go and nothing leaves around it.
+     *
+     * The attempts run in a job of their own, which waits between them without
+     * the mutex. A Disconnect, or another location, moves the generation and
+     * then takes the mutex; a backoff slept through under it would make the
+     * user's Disconnect wait out up to thirty seconds of a restart nobody wants
+     * any more.
+     *
+     * It goes on for as long as the session does. There is no attempt after
+     * which giving up is better: the alternative to waiting behind a closed
+     * tunnel is an error over an open one.
+     */
+    private fun restartLineBehindTun(line: SessionLine, requestGeneration: Long) {
+        // One restart per outage. A second death reported while it runs (the
+        // front after the engine, the other core of an XHTTP line) needs none
+        // of its own: every attempt starts whatever of the line is not running.
+        if (lineRestartJob != null) return
+
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+        setStatus(VpnStatus.Reconnecting)
+        addLog(
+            "The ${line.heldName()} stays as it is while the line is restarted behind it; " +
+                "nothing passes until it is back"
+        )
+        if (line.isOlcrtc && line.desktopMode == DesktopMode.LinuxTun) {
+            // pkexec asks at every launch, and no privileged process of ours
+            // lives as long as the session. Said once per outage, where the
+            // user looks when a password dialog opens by itself.
+            addLog(
+                "Linux TUN: olcRTC runs as root to bypass the TUN route, so restarting it needs the " +
+                    "administrator again; until the password is given the tunnel stays and nothing passes"
+            )
+        }
+        lineRestartJob = scope.launch {
+            var attempt = 0
+            while (isActive) {
+                val waitMs = LineSupervision.backoffMs(attempt)
+                addLog("Restarting the line in ${waitMs / 1_000}s")
+                delay(waitMs)
+                // Nothing an attempt throws ends the restart; only the end of
+                // the session does. A loop that died here would leave the
+                // status Reconnecting with nobody trying, and every later
+                // death dropped as one already in hand.
+                val done = try {
+                    restoreLine(line, requestGeneration)
+                } catch (_: CancellationException) {
+                    ensureActive()
+                    false
+                } catch (e: Exception) {
+                    addLog("The line did not come back: ${e.message}")
+                    false
+                }
+                if (done) return@launch
+                attempt++
+            }
+        }
+    }
+
+    /**
+     * One attempt: start whatever of the line is not running, on the port it
+     * had, verify the session as the connect did, and only then say Connected.
+     * True when the restart has nothing more to do: the session is Connected
+     * again, or it ended while this ran.
+     *
+     * The mutex is taken to start processes and again to say Connected, and let
+     * go in between. The check waits on the far end, sixteen seconds when
+     * nothing answers, and through an outage it is made again after every
+     * backoff: held through that, a Disconnect pressed while a server is down
+     * would wait behind it about one time in three. Let go, the stop goes
+     * through at once and cancels this job where it waits.
+     *
+     * Whatever the mutex guarded is asked again once it is taken back: that the
+     * session is still this one, and that nothing of the line died while the
+     * check was out. A death in that window is reported to nobody, since a
+     * restart is running, so this is the one place it can be found.
+     */
+    private suspend fun restoreLine(line: SessionLine, requestGeneration: Long): Boolean {
+        val started = mutex.withLock {
+            // The session ended while this waited: a Disconnect or another
+            // location moved the generation, and the tun's own death cleared
+            // the line without moving it.
+            if (requestGeneration != generation || sessionLine !== line) return true
+            startDeadProcesses(line, requestGeneration)
+        }
+        if (requestGeneration != generation) return true
+        if (!started) return false
+
+        val exit = try {
+            verifyLine(line, requestGeneration)
+        } catch (_: CancellationException) {
+            // The Windows check says "superseded" by throwing this. This
+            // coroutine's own cancellation has to go on up.
+            currentCoroutineContext().ensureActive()
+            return requestGeneration != generation
+        }
+        if (requestGeneration != generation) return true
+        if (exit == null) {
+            addLog("The line is running but no traffic reached the internet through it")
+            return false
+        }
+
+        return mutex.withLock {
+            if (requestGeneration != generation || sessionLine !== line) return true
+            if (!line.allRunning()) {
+                addLog("The line stopped again while it was being checked")
+                return@withLock false
+            }
+            _exitInfo.value = exit
+            val engine = process
+            if (line.isOlcrtc && engine != null && watchedEngine !== engine) {
+                startOlcRtcExitWatcher(engine, requestGeneration)
+            }
+            setStatus(VpnStatus.Connected)
+            addLog("Line restarted behind the ${line.heldName()} — exit ${exit.label()}")
+            startCoreWatcher(line, requestGeneration)
+            restoreLanSharing(line.verifiedThrough, requestGeneration)
+            // Last, with nothing after it that can fail: from here a death is a
+            // new outage, and has to find no restart running.
+            lineRestartJob = null
+            true
+        }
+    }
+
+    /**
+     * Starts whatever of the line is not running, under the mutex. True when
+     * all of it runs.
+     *
+     * What is running is left alone. An engine that came back and then failed
+     * the check is not killed for it: what is missing may be the far end, a new
+     * join would not bring it back, and on Linux it would be another password.
+     * So a line with nothing dead is only checked again.
+     *
+     * Whoever moves the generation meanwhile is waiting for this mutex to stop
+     * the session, and finds everything started here where a stop looks: the
+     * engine in [process] from its first moment, the cores in their controllers.
+     */
+    private suspend fun startDeadProcesses(line: SessionLine, requestGeneration: Long): Boolean {
+        try {
+            if (line.isOlcrtc && process?.isAlive != true) {
+                startLineEngine(line, requestGeneration)
+                if (requestGeneration != generation) return false
+            }
+            if (line.coresAlive?.invoke() == false) {
+                try {
+                    val frontRouting = line.coreRouting
+                    if (!line.isOlcrtc) {
+                        startDesktopCore(line.location, line.corePort, line.coreRouting, line.verboseLogs)
+                    } else if (line.frontPort != null && frontRouting is Routing.Rules) {
+                        startOlcRtcFront(line.socksSettings, frontRouting, line.verboseLogs, line.frontPort)
+                    }
+                } catch (e: Exception) {
+                    // Half a start is not left for the next attempt: a core
+                    // that runs and never opened its port would be taken for a
+                    // line with nothing dead, and checked without end.
+                    stopDesktopCores()
+                    throw e
+                }
+            }
+            return true
+        } catch (_: CancellationException) {
+            // The steps shared with the connect say "superseded" by throwing
+            // this. This coroutine's own cancellation has to go on up.
+            currentCoroutineContext().ensureActive()
+            return false
+        } catch (e: Exception) {
+            addLog("The line did not come back: ${e.message}")
+            return false
+        }
+    }
+
+    /** Whether everything of the line runs: the engine of a room, and the cores it was started with. */
+    private fun SessionLine.allRunning(): Boolean =
+        (!isOlcrtc || process?.isAlive == true) && coresAlive?.invoke() != false
+
+    /**
+     * Starts LAN sharing again after a restart, when it is still wanted and its
+     * listener is gone. The listener's own health check stops it within seconds
+     * of an outage and nothing else would start it, so a session that came back
+     * would come back without it.
+     *
+     * In a job of its own, as a change of the LAN settings starts it. The
+     * session is back whether or not the listener is, and a listener slow to
+     * open must hold up neither the mutex nor the status: its timeout arrives
+     * as a cancellation, which inside the restart would read as "superseded"
+     * and fail every attempt without a word.
+     */
+    private fun restoreLanSharing(upstream: SubscriptionFetchProxy, requestGeneration: Long) {
+        if (!_socksProxySettings.value.shareOnLan || lanProxy.isRunning()) return
+        lanControlJob?.cancel()
+        lanControlJob = scope.launch {
+            // Read here, not before the launch. A switch-off that lands in
+            // between starts a job of its own, which the cancel above may have
+            // stopped: the listener must not then be opened from what the
+            // setting was a moment earlier.
+            val settings = _socksProxySettings.value
+            if (settings.shareOnLan && !lanProxy.isRunning()) {
+                startLanSharing(settings, upstream, requestGeneration)
+            }
+        }
+    }
+
+    /**
+     * Starts the engine again as it was: the same room, SOCKS port and login,
+     * the same rules file and handshake. The port is the one thing that cannot
+     * be otherwise, since the tun's upstream was written with it.
+     *
+     * On Linux that is root again, as at connect, and so the password dialog;
+     * the wait for the room below includes the time the dialog stays open.
+     */
+    private suspend fun startLineEngine(line: SessionLine, requestGeneration: Long) {
+        val ready = CompletableDeferred<Unit>()
+        val startupFailure = CompletableDeferred<String>()
+        val started = startOlcRtcProcessWithFallback(
+            location = line.location,
+            socksSettings = line.socksSettings,
+            ready = ready,
+            startupFailure = startupFailure,
+            logOutput = true,
+            privileged = line.desktopMode == DesktopMode.LinuxTun,
+            directRulesFile = line.engineRules,
+            dtlsProfile = line.dtlsProfile
+        )
+        process = started
+        try {
+            waitForOlcRtcReady(
+                process = started,
+                ready = ready,
+                startupFailure = startupFailure,
+                socksPort = line.socksSettings.port,
+                requestGeneration = requestGeneration
+            )
+        } catch (e: CancellationException) {
+            // Superseded: whoever did it stops the session, this process included.
+            throw e
+        } catch (e: Exception) {
+            // An engine that did not come up is not left holding the port, or
+            // half joined to the room, against the attempt that follows.
+            stopProcess(started)
+            throw e
+        }
+    }
+
+    /**
+     * The check the connect made, through the listener it made it through.
+     *
+     * On Windows that is the tun's own check, not the plain request. The exit
+     * the connect remembered would pass a dead line, and a request that comes
+     * back says nothing unless the default routes are still the adapter's.
+     */
+    private suspend fun verifyLine(line: SessionLine, requestGeneration: Long): org.olcbox.app.net.TunnelExit? {
+        val through = line.verifiedThrough
+        val tunInterface = line.windowsTunInterface
+        return if (tunInterface != null) {
+            awaitWindowsTunTraffic(
+                requestGeneration, through.port, through.username, through.password,
+                tunInterface, System.currentTimeMillis() + LINE_VERIFY_WINDOW_MS
+            )
+        } else {
+            org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = through.host,
+                socksPort = through.port,
+                username = through.username,
+                password = through.password
+            )
+        }
+    }
+
+    /** What a restart leaves in place, as the log names it. */
+    private fun SessionLine.heldName(): String =
+        if (desktopMode == DesktopMode.SystemProxy) "system proxy" else "tunnel"
 
     private fun waitForProcessExit(target: Process): Int? {
         return try {
@@ -1657,6 +2132,14 @@ class DesktopVpnManager private constructor(
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         /** Two of these is the worst-case delay before a dead tunnel is reported. */
         const val MAC_TUN_WATCH_INTERVAL_MS = 4_000L
+        /** The longest a dead core goes unnoticed. */
+        const val CORE_WATCH_INTERVAL_MS = 2_000L
+        /**
+         * What the Windows tun is given to carry the check of a restarted line:
+         * as long as the one request the other systems make may take, its two
+         * addresses at TunnelVerifier's own timeout.
+         */
+        const val LINE_VERIFY_WINDOW_MS = 16_000L
         const val LAN_HEALTH_INTERVAL_MS = 15_000L
         const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
