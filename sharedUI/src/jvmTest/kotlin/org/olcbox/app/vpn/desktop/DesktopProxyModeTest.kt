@@ -429,6 +429,22 @@ class DesktopProxyModeTest {
         assertContains(config, "network: 100.64.0.0")
     }
 
+    // A block found at the app's start with a tun in front of it: whether that
+    // tun leads anywhere is asked of the port its config names, and the port
+    // is the proxy's, not the one names are mapped on.
+    @Test
+    fun theLinuxTunnelsPortIsReadBackFromItsConfig() {
+        assertEquals(4321, LinuxTunController.socksPortOf(LinuxTunController.configContent(socksPort = 4321)))
+        assertEquals(
+            10808,
+            LinuxTunController.socksPortOf(
+                LinuxTunController.configContent(socksPort = 10808, postUpScript = "/a/up.sh", preDownScript = "/a/down.sh")
+            )
+        )
+        assertNull(LinuxTunController.socksPortOf("tunnel:\n  name: olcbox0\n\nmapdns:\n  port: 53\n"))
+        assertNull(LinuxTunController.socksPortOf(""))
+    }
+
     @Test
     fun windowsTunAdministratorRestartUsesRunAsAndPreservesArguments() {
         val script = WindowsTunController.restartAsAdministratorScript(

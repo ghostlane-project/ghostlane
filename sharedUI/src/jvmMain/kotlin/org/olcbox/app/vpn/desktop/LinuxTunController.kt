@@ -210,14 +210,14 @@ internal class LinuxTunController(
 
     /**
      * Asked once, when the app starts: whether a block from a previous run is
-     * still in place, with no tunnel in front of it. The app was killed, or
-     * quit, or its cleanup was refused, while the block stood, and the rules
-     * outlived it. It is kept like any other, and the user is told why there
-     * is no network.
+     * still in place, with no tunnel in front of it, or with one that leads
+     * nowhere. The app was killed, or quit, or its cleanup was refused, while
+     * the block stood, and the rules outlived it. It is kept like any other,
+     * and the user is told why there is no network.
      */
     suspend fun findLeftoverBlock(): Boolean {
         if (routesInstalled) return false
-        held = blockLeftStanding()
+        held = blockLeftStanding() || (blockStands() && tunnelLeadsNowhere())
         if (held) {
             addLog(
                 "Linux TUN: a kill switch block from a previous run is still in place and holds this machine's " +
@@ -234,7 +234,7 @@ internal class LinuxTunController(
         username: String,
         password: String
     ): Path {
-        val config = DesktopPaths.appDataDir().resolve("linux-tun.yml")
+        val config = configPath()
         Files.writeString(
             config,
             configContent(
@@ -400,6 +400,29 @@ internal class LinuxTunController(
     private suspend fun blockLeftStanding(): Boolean =
         blockStands() && (ownTunnel?.isAlive == true || !interfaceExists())
 
+    /**
+     * Whether the tun that is there hands what it takes to nobody. hev runs
+     * as root and outlives an app that could not end it, one that quit with
+     * the cleanup's dialog closed. The cores it pointed at went with the app,
+     * so nothing answers on the port its config names, and the machine behind
+     * it has no network: that is a hold, and has to be said. A port that
+     * answers is somebody's running line, a second window of this app or
+     * cores that outlived a killed one, and is left alone.
+     */
+    private suspend fun tunnelLeadsNowhere(): Boolean = withContext(Dispatchers.IO) {
+        if (!interfaceExists()) return@withContext false
+        val port = runCatching { socksPortOf(Files.readString(configPath())) }.getOrNull()
+            ?: return@withContext false
+        runCatching {
+            java.net.Socket().use {
+                it.connect(java.net.InetSocketAddress(PacServer.LOCAL_SOCKS_HOST, port), PORT_ASK_MS)
+            }
+            false
+        }.getOrDefault(true)
+    }
+
+    private fun configPath(): Path = DesktopPaths.appDataDir().resolve("linux-tun.yml")
+
     private suspend fun waitForRoutesRemoved() {
         val deadline = System.currentTimeMillis() + ROUTE_CLEANUP_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
@@ -462,6 +485,20 @@ internal class LinuxTunController(
         const val ROUTE_CLEANUP_TIMEOUT_MS = 2_000L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+
+        /** How long a leftover tunnel's port is given to answer; it is on this machine. */
+        const val PORT_ASK_MS = 500
+
+        /** The port hev hands what it takes to, read back from a config [configContent] wrote. */
+        internal fun socksPortOf(config: String): Int? =
+            config.lineSequence()
+                .dropWhile { it.trim() != "socks5:" }
+                .drop(1)
+                .takeWhile { it.startsWith(" ") }
+                .firstOrNull { it.trim().startsWith("port:") }
+                ?.substringAfter("port:")
+                ?.trim()
+                ?.toIntOrNull()
 
         fun configContent(
             socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
