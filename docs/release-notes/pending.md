@@ -13,3 +13,7 @@ Three things a server list could say that the app did not read (ghostlane#82). A
 ### Android: the tunnel is held for the whole session
 
 Until now some failures made the app close the VPN and open it again: tun2socks stopping, an olcRTC call dropping, choosing another server while connected. For as long as that took, and for every retry when the server did not come back, the phone's traffic went out directly, with your own address. From the first successful connection until you disconnect, the VPN interface now stays up and everything restarts behind it: apps on the VPN wait instead of going around it, and the notification says so. Editing split tunnelling while connected replaces the interface without a gap. If the first connect fails, nothing is held: traffic stays as it was before you tapped.
+
+### Android: is the system's kill switch on?
+
+The one thing the app cannot hold is its own death: if Android kills it, the VPN goes with it until it is started again. Android's answer is "Always-on VPN" with "Block connections without VPN", in its own settings. On Android 10 and later the "Always-on VPN" row in connection settings now says, while you are connected, whether that is off, on, or on and blocking, and one tap opens the system screen. With blocking on it also says which apps are left without network: the ones you excluded from the VPN, or, when only chosen apps use it, every other app. Android cuts those off itself, and no VPN app can exempt them.

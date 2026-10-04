@@ -52,6 +52,9 @@
     <string name="age_now">همین حالا</string>
     <string name="always_on_vpn">VPN همیشه روشن</string>
     <string name="always_on_vpn_value">شروع همراه با گوشی · تنظیمات Android</string>
+    <string name="always_on_vpn_value_blocking">روشن، Android ترافیک بدون VPN را مسدود می‌کند</string>
+    <string name="always_on_vpn_value_off">خاموش · تنظیمات Android</string>
+    <string name="always_on_vpn_value_on">روشن، بدون VPN ترافیک مسدود نمی‌شود · تنظیمات Android</string>
     <string name="app_logs_title">گزارش برنامه</string>
     <string name="app_settings">تنظیمات برنامه</string>
     <string name="apps_no_match">برنامه‌ای مطابقت ندارد</string>
@@ -165,6 +168,8 @@
     <string name="location_vp8_options">گزینه‌های VP8</string>
     <string name="location_vp8_options_subtitle">تنظیم دقیق عملکرد جریان</string>
     <string name="lock_admin">خروج از حالت مدیر</string>
+    <string name="lockdown_bypass_note">Android اتصال‌های بدون VPN را مسدود می‌کند، پس برنامه‌هایی که از VPN کنار گذاشته‌اید شبکه ندارند.</string>
+    <string name="lockdown_unselected_note">Android اتصال‌های بدون VPN را مسدود می‌کند، پس هر برنامه‌ای که برای VPN انتخاب نکرده‌اید شبکه ندارد.</string>
     <string name="logs_copied">گزارش در کلیپ‌بورد کپی شد</string>
     <string name="logs_debug">گزارش اشکال‌زدایی مفصل</string>
     <string name="logs_debug_note">تصمیم‌های DNS، مسیریابی و اتصال ثبت می‌شود. تغییر آن، تونل فعال را دوباره وصل می‌کند.</string>

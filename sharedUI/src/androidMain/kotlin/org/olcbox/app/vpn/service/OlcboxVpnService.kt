@@ -90,6 +90,7 @@ import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
 import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.SessionPort
+import org.olcbox.app.vpn.SystemVpnMode
 import org.olcbox.app.vpn.TunSpec
 import org.olcbox.app.vpn.TunnelBridge
 import org.olcbox.app.vpn.TunnelSession
@@ -2111,6 +2112,23 @@ class OlcboxVpnService : VpnService() {
             OlcboxVpnState.channelProbe = null
         }
         OlcboxVpnState.setStatus(status)
+        publishSystemVpnMode(status)
+    }
+
+    /**
+     * Android's always-on and lockdown, for the settings row. Only this service
+     * can ask, only on Android 10 and later, and only while it runs: once it has
+     * stopped the answer is withdrawn rather than remembered, because the user
+     * may change the setting before the next connect.
+     */
+    private fun publishSystemVpnMode(status: VpnStatus) {
+        val running = status !is VpnStatus.Disconnected && status !is VpnStatus.Error
+        val mode = if (running && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { SystemVpnMode(alwaysOn = isAlwaysOn, lockdown = isLockdownEnabled) }.getOrNull()
+        } else {
+            null
+        }
+        OlcboxVpnState.setSystemVpnMode(mode)
     }
 
     private fun activeModeLabel(): String {

@@ -12,6 +12,11 @@ import multiplatform_app.sharedui.generated.resources.action_save
 import multiplatform_app.sharedui.generated.resources.action_share
 import multiplatform_app.sharedui.generated.resources.always_on_vpn
 import multiplatform_app.sharedui.generated.resources.always_on_vpn_value
+import multiplatform_app.sharedui.generated.resources.always_on_vpn_value_blocking
+import multiplatform_app.sharedui.generated.resources.always_on_vpn_value_off
+import multiplatform_app.sharedui.generated.resources.always_on_vpn_value_on
+import multiplatform_app.sharedui.generated.resources.lockdown_bypass_note
+import multiplatform_app.sharedui.generated.resources.lockdown_unselected_note
 import multiplatform_app.sharedui.generated.resources.app_logs_title
 import multiplatform_app.sharedui.generated.resources.apps_count
 import multiplatform_app.sharedui.generated.resources.apps_no_match
@@ -188,6 +193,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -242,6 +248,11 @@ import org.olcbox.app.ui.components.RoutingSettingsScreen
 import org.olcbox.app.ui.components.hubSummary
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.AndroidSplitTunnelSettings
+import org.olcbox.app.vpn.LockdownNote
+import org.olcbox.app.vpn.SystemKillSwitch
+import org.olcbox.app.vpn.killSwitch
+import org.olcbox.app.vpn.lockdownNote
+import org.olcbox.app.vpn.service.OlcboxVpnState
 import java.text.DateFormat
 import java.util.Date
 
@@ -600,15 +611,47 @@ private fun ConnectionSettingsContent(
             )
             // Android's own always-on: the system starts the VPN at boot and
             // brings it back when it drops, and "Block connections without VPN"
-            // sits beside it. Both are the system's to set, on its VPN screen.
+            // sits beside it. Both are the system's to set, on its VPN screen;
+            // what the row can do is say what a running service read there.
             val context = LocalContext.current
+            val systemVpnMode by OlcboxVpnState.systemVpnMode.collectAsState()
             SettingsNavigationRow(
                 title = stringResource(Res.string.always_on_vpn),
-                value = stringResource(Res.string.always_on_vpn_value),
+                value = stringResource(
+                    when (systemVpnMode.killSwitch()) {
+                        SystemKillSwitch.Unknown -> Res.string.always_on_vpn_value
+                        SystemKillSwitch.Off -> Res.string.always_on_vpn_value_off
+                        SystemKillSwitch.On -> Res.string.always_on_vpn_value_on
+                        SystemKillSwitch.Blocking -> Res.string.always_on_vpn_value_blocking
+                    }
+                ),
                 icon = PkIcons.PowerSettingsNew,
                 enabled = enabled,
                 onClick = { openSystemVpnSettings(context) }
             )
+            val offlineNote = lockdownNote(
+                mode = systemVpnMode,
+                proxySelected = splitTunnelSettings.mode == AndroidSplitTunnelMode.ProxySelected,
+                bypassedApps = if (splitTunnelSettings.mode == AndroidSplitTunnelMode.BypassSelected) {
+                    splitTunnelSettings.bypassPackages.size
+                } else {
+                    0
+                }
+            )
+            if (offlineNote != LockdownNote.None) {
+                Text(
+                    text = stringResource(
+                        if (offlineNote == LockdownNote.UnselectedAppsOffline) {
+                            Res.string.lockdown_unselected_note
+                        } else {
+                            Res.string.lockdown_bypass_note
+                        }
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
             // Editing the local proxy credentials/port is plumbing: admin-only.
             if (AdminState.configuratorVisible) {
                 SettingsNavigationRow(
