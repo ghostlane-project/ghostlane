@@ -17,3 +17,7 @@ Until now some failures made the app close the VPN and open it again: tun2socks 
 ### Android: is the system's kill switch on?
 
 The one thing the app cannot hold is its own death: if Android kills it, the VPN goes with it until it is started again. Android's answer is "Always-on VPN" with "Block connections without VPN", in its own settings. On Android 10 and later the "Always-on VPN" row in connection settings now says, while you are connected, whether that is off, on, or on and blocking, and one tap opens the system screen. With blocking on it also says which apps are left without network: the ones you excluded from the VPN, or, when only chosen apps use it, every other app. Android cuts those off itself, and no VPN app can exempt them.
+
+### Server lists are saved in one step
+
+The file that holds your server lists and settings was written in place: emptied, then filled. An app that died in between, or was read at that moment, came back to a file that could not be read and started over with no lists. It is now written beside the old file and moved over it, on Android and on the desktop, so there is always a whole file to read. On Android the app and its VPN service also share one store now, instead of each keeping its own view of the file.
