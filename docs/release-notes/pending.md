@@ -25,3 +25,7 @@ Until now a server that died kept the session reconnecting to it for as long as 
 ### iPhone: IPv6 no longer goes around the tunnel
 
 The iPhone's tunnel claimed IPv4 only. On a network that hands out IPv6, which many mobile networks do, a connection to an IPv6 address left directly, at the phone's own address, while the VPN said connected. In an olcRTC room and on an XHTTP server this was the ordinary case, because names there are answered with their IPv6 addresses too. The tunnel now takes IPv6 as well: on Reality, Hysteria2 and the other sing-box servers it is carried to the exit like everything else, and in a room or on XHTTP it is dropped, so an app falls back to IPv4 through the tunnel. The files the app hands the tunnel are also written whole or not at all.
+
+### iPhone: a kill switch
+
+iOS takes a VPN down when its extension is stopped, and until now traffic then went out directly: after the system killed the extension for memory, and for the moment between a stop and a start whenever you changed server. Connection settings now have a kill switch, off by default. With it on, iOS itself drops traffic whenever the VPN is not up and brings the VPN back without the app; the local network (AirPlay, printers) stays reachable. Read the note under the switch before turning it on: if the VPN cannot come back, the phone has no network until you turn the VPN off in Settings, and updating the app while connected is one way to get there. Disconnect in the app turns the automatic restart off first, so it stays disconnected.

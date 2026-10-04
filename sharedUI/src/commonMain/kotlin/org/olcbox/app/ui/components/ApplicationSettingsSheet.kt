@@ -176,6 +176,7 @@ import org.olcbox.app.ui.components.kit.pkVersionLine
 import org.olcbox.app.ui.features.home.components.LogLines
 import org.olcbox.app.ui.theme.LocalPkPalette
 import org.olcbox.app.update.AppUpdateInfo
+import org.olcbox.app.update.currentUpdatePlatform
 import org.olcbox.app.update.AppUpdateSettings
 import kotlin.time.Instant
 
@@ -394,10 +395,14 @@ fun ApplicationSettingsSheet(
                     socksProxySettings = socksProxySettings,
                     tunnelDaemonSummary = tunnelDaemonSummary,
                     chromeDtls = routingSettings.olcrtcChromeDtls,
+                    // Shown only where the platform has a kill switch the app can
+                    // ask for, which today is iOS.
+                    killSwitch = routingSettings.killSwitch.takeIf { currentUpdatePlatform().os == "ios" },
                     onConnectionModeClick = { route = SharedSettingsRoute.ConnectionMode },
                     onSocksProxyClick = { route = SharedSettingsRoute.SocksProxy },
                     onTunnelDaemonClick = onTunnelDaemonClick,
                     onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) },
+                    onKillSwitchChanged = { onRoutingSettingsChanged(routingSettings.copy(killSwitch = it)) },
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
 
@@ -597,10 +602,12 @@ private fun SharedConnectionSettingsContent(
     socksProxySettings: ApplicationSocksProxySettings?,
     tunnelDaemonSummary: String?,
     chromeDtls: Boolean,
+    killSwitch: Boolean?,
     onConnectionModeClick: () -> Unit,
     onSocksProxyClick: () -> Unit,
     onTunnelDaemonClick: () -> Unit,
     onChromeDtlsChanged: (Boolean) -> Unit,
+    onKillSwitchChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -650,6 +657,10 @@ private fun SharedConnectionSettingsContent(
                     icon = PkIcons.Public,
                     onClick = onSocksProxyClick
                 )
+            }
+
+            if (killSwitch != null) {
+                KillSwitchRow(checked = killSwitch, onCheckedChange = onKillSwitchChanged)
             }
 
             OlcrtcHandshakeRow(checked = chromeDtls, enabled = true, onCheckedChange = onChromeDtlsChanged)

@@ -135,8 +135,14 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     /// while its inbound side was happily receiving the same connection.
     func usePlatformAutoDetectControl() -> Bool { true }
 
-    /// Only meaningful with a multipath configuration we do not use.
-    func includeAllNetworks() -> Bool { false }
+    /// Whether the VPN profile sends every route into the tunnel, which is the
+    /// kill switch (`PacketTunnelController.apply(killSwitch:)`). sing-tun has
+    /// to hear the same answer the system was given: in that mode only its
+    /// gVisor stack works, which is the one the config asks for anyway, and it
+    /// refuses the others outright.
+    func includeAllNetworks() -> Bool {
+        (provider?.protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
+    }
 
     // The command server owns sing-box logs in 1.13. Interface diagnostics
     // also go to a dedicated shared-container file, independent of Go startup.

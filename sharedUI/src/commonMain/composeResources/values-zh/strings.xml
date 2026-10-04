@@ -145,6 +145,8 @@
     <string name="lan_sharing">局域网共享</string>
     <string name="lan_socks_warning">SOCKS5 在局域网内以明文发送用户名、密码、请求的地址和流量。请只在可信的私有局域网中使用，并且只与可信设备共享凭据。</string>
     <string name="lan_use_interface">使用此接口</string>
+    <string name="kill_switch">Kill switch（断网保护）</string>
+    <string name="kill_switch_note">VPN 未连接时，iOS 会丢弃流量而不是直接发出，并自动重新连接 VPN。如果 VPN 无法恢复，手机将没有网络，直到你在“设置”中关闭 VPN；连接期间更新应用可能导致这种情况。</string>
     <string name="last_refresh_at">上次刷新 %1$s</string>
     <string name="latency_nothing_measurable">这里没有可测量的内容——这些节点没有可访问的地址</string>
     <string name="latency_on_connected">延迟在已连接的节点上测量</string>

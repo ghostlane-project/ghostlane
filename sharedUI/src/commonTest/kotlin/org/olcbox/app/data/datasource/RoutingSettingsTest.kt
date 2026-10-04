@@ -124,6 +124,24 @@ class RoutingSettingsTest {
                 .jsonObject["olcrtc_chrome_dtls"]!!.jsonPrimitive.content
         )
     }
+
+    @Test fun theKillSwitchIsOffUntilSwitchedOnAndComesBackUnderItsName() = runTest {
+        // Off on every bundle written before the switch existed: nobody is left
+        // without network by an update they did not ask anything of.
+        assertEquals(false, Json.decodeFromString(RoutingSettings.serializer(), """{"mode":"global"}""").killSwitch)
+        assertEquals(false, LocationsRepositoryImpl(MemoryLocationsDataSource()).getRoutingSettings().killSwitch)
+
+        val repository = LocationsRepositoryImpl(MemoryLocationsDataSource())
+        repository.saveRoutingSettings(RoutingSettings(killSwitch = true))
+        assertEquals(true, repository.getRoutingSettings().killSwitch)
+        assertEquals(
+            "true",
+            Json.encodeToJsonElement(RoutingSettings.serializer(), RoutingSettings(killSwitch = true))
+                .jsonObject["kill_switch"]!!.jsonPrimitive.content
+        )
+        // It asks for no rules: a kill switch alone leaves routing Global.
+        assertEquals(false, RoutingSettings(killSwitch = true).needsRules)
+    }
 }
 
 /** The bundle in memory and nothing else; the repository's other collaborators keep their defaults. */
