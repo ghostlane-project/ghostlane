@@ -182,12 +182,16 @@ Nothing below can be compiled in CI or run from here: Swift is not built there, 
 not run in the simulator. Each item is the owner's to pass on a phone, from a TestFlight build, before the
 release that carries it is submitted.
 
-- **I1. IPv6 first: measure it, then claim it and refuse it.** A leak with the VPN connected outranks a leak
-  during a reconnect. The check is one page (`test-ipv6.com`) on a mobile network that hands out IPv6, once on
-  an olcRTC line and once on a Reality line. If an address shows, the tunnel takes an IPv6 address and the
-  default IPv6 route and the core refuses the family, as the desktop tun has done since the same leak was found
-  there (`DESKTOP_TUN_ADDRESS6`, `docs/macos-tunnel-daemon.md`:170-186). Under hev the refusal has to be hev's
-  own, and what hev does with a family it has no address for is one of the things to find out.
+- **I1. IPv6 first: the tunnel claims it.** A leak with the VPN connected outranks a leak during a reconnect.
+  The tunnel's settings take an IPv6 address and the default IPv6 route, as the desktop tun has done since the
+  same leak was found there (`DESKTOP_TUN_ADDRESS6`, `docs/macos-tunnel-daemon.md`:170-186). What arrives is
+  the engine's to deal with, and the configs do not change: sing-box's gVisor stack routes both families
+  whatever addresses the tun has (`stack_gvisor.go`:164-166), so it carries IPv6 to the exit like anything
+  else, and hev, which is given no IPv6 address, drops it, so a client falls back to IPv4 through the tunnel.
+  A reject rule in the sing-box config, the desktop's way, would answer faster, and would move seven reference
+  configs and the tests that pin "nothing rejects" on the iOS shapes; it can follow once a phone has shown the
+  claim itself is right. The check is one page (`test-ipv6.com`) on a mobile network that hands out IPv6, once
+  on an olcRTC line and once on a Reality line, before and after.
 - **I2. The kill switch is a switch, off by default.** It sets `includeAllNetworks = true` with
   `excludeLocalNetworks = true` on the protocol, leaves `excludeAPNs` and `excludeCellularServices` at the
   system's default, and turns on-demand on with one `NEOnDemandRuleConnect`. `LibboxPlatform.includeAllNetworks()`
@@ -209,12 +213,14 @@ release that carries it is submitted.
   hev on the descriptor it holds, and to hand the tun from one to the other when the engine changes. That is a
   design of its own. Whether `includeAllNetworks` covers the gap between the app's stop and its start is a
   question for the phone, not for this document.
-- **I5. Another server of the same country, on iOS, while the app is awake.** The reconnect loop that already
-  runs in the app (`IosVpnManager.kt`:865-898) takes the candidates of F3 after its second failed attempt and
-  starts the next one, announcing it as Android does. It cannot probe (a second core has no way around the
-  tunnel there), so each candidate is connected and the tunnel check is its test, as for olcRTC. With the app
-  suspended nothing moves: that needs the candidates in the App Group, a traffic check inside the extension and
-  the reload of I4, and it is built after I4.
+- **I5. Another server of the same country, on iOS, is not in this release.** It was planned for the app's
+  reconnect loop, while the app is awake. Reading that loop again decided against it: it runs only when the
+  tunnel is down, and for a Reality or Hysteria2 line a dead server leaves the tunnel up and carrying nothing,
+  which nothing on iOS notices; and the app is suspended minutes after it leaves the screen, which is when a
+  server usually dies. A move that works only for a room that fails to start, and only with the app in front,
+  is a switch that mostly does nothing. The real thing lives in the extension: the candidates as ready sets of
+  its three files in the App Group, a periodic check that traffic crosses the tunnel, and the reload of I4.
+  Built after I4.
 
 ### Another server of the same country
 
@@ -298,7 +304,6 @@ One subject per pull request. The stages are the order of building; all of them 
 | D | `feat(desktop)`: Linux kill switch; `strict_route` on Windows | D3 |
 | E | `fix(ios)`: the tunnel claims IPv6 and refuses it; the extension's files are written atomically | I1, I3 |
 | E | `feat(ios)`: kill switch | I2, I3 |
-| E | `feat(ios)`: another server of the same country while the app is awake | I5 |
 
 Each pull request updates `README.MD` (Features), `docs/release-notes/pending.md` and the document whose truth
 it changes (`docs/roadmap-2026-08-14.md` item 2, `docs/macos-tunnel-daemon.md`).
@@ -347,10 +352,12 @@ that had piled up. What that settles:
   and the notification has to say it in words and keep its Stop action, because the user may need the network
   to fix the cause (an expired list, an empty balance).
 - **The Linux desktop is the least certain part of stage D.** The engine's restart asks for the password again
-  (D1). And the tun's rules let only root out while the sing-box and Xray cores run as the user, so as the code
-  reads, a core's own connection to its server goes back into the tun. Stage D starts by reproducing that in a
-  network namespace and settling the way out (the core bound to the physical interface, or the candidates'
-  addresses sent to `main`), before anything is built on it.
+  (D1). And the tun's rules let only root out while the sing-box and Xray cores run as the user: reproduced in
+  two network namespaces with the app's own rules, a core run as the user dials its server into the tun and
+  times out, so a Reality or Hysteria2 line cannot connect in the Linux tunnel unless the app itself runs as
+  root. In the same namespaces `route.auto_detect_interface` (and `bind_interface`) lets the core out:
+  binding a socket to a device needs no privilege since Linux 5.7, and a lookup with an outgoing interface does
+  not match the tun's table. That is the way out stage D takes.
 - **macOS, a killed tun.** The daemon's own comment says a sing-box killed outright leaves the default route on
   a utun that no longer exists (`TunnelChild.swift`:135-138). D1 does not change that; D2 has to.
 - **The move costs a little traffic and battery.** Each probe starts a core and pulls 64 KB; the 5-minute
@@ -364,5 +371,5 @@ that had piled up. What that settles:
 ## Out of scope
 
 A block that survives the tun's death on Windows and a pf anchor on macOS. A reload in place on iOS, and with
-it the move while the app is suspended. Another country, another list. Proxy mode on any platform: nothing is
+it the move to another server there. Another country, another list. Proxy mode on any platform: nothing is
 routed there, so there is nothing to hold. sing-box JSON and Clash server lists (ghostlane#82).
