@@ -38,6 +38,39 @@ HTTP_TIMEOUT_SEC = 300
 # googleapiclient retries socket timeouts and 5xx with backoff, but only
 # when asked: the default is zero and one flaky chunk fails the upload.
 RETRIES = 5
+# Play takes this many characters of "What's new" for a language and refuses
+# a release whose text is longer.
+NOTES_MAX = 500
+
+
+def whats_new(notes, notes_file):
+    """The text for "What's new": the file's when it is there and says
+    something, else `notes`.
+
+    The file is docs/release-notes/play-whats-new.txt, written for the release
+    and emptied after it. Without it a release went to the track with its
+    version number for a text, which is what a tester then read as "what's
+    new". A text over Play's limit is cut at the last whole line that fits and
+    said so, not sent: Play would refuse the release, and a refused upload
+    fails the Android job, which holds back every other platform's publish.
+    """
+    text = notes or ""
+    if notes_file:
+        try:
+            with open(notes_file, encoding="utf-8") as handle:
+                from_file = handle.read().strip()
+        except OSError:
+            from_file = ""
+        if from_file:
+            text = from_file
+    if len(text) > NOTES_MAX:
+        print(
+            f"What's new is {len(text)} characters and Play takes {NOTES_MAX}: cut at the last line that fits.",
+            file=sys.stderr,
+        )
+        kept = text[:NOTES_MAX]
+        text = kept[: kept.rfind("\n")] if "\n" in kept else kept
+    return text
 
 
 def describe(error: HttpError) -> str:
@@ -55,7 +88,8 @@ def main() -> int:
     parser.add_argument("--bundle", required=True, help="the .aab to upload")
     parser.add_argument("--track", default="internal", help="internal, alpha, beta, production, or a custom track name")
     parser.add_argument("--release-name", help="how the release is listed in the console (defaults to the version name)")
-    parser.add_argument("--notes", help="What's new, en-US")
+    parser.add_argument("--notes", help="What's new, en-US, when --notes-file has nothing to say")
+    parser.add_argument("--notes-file", help="a file with What's new, en-US; missing or empty means --notes")
     parser.add_argument("--status", default="completed", choices=["completed", "draft", "inProgress", "halted"])
     args = parser.parse_args()
 
@@ -85,8 +119,9 @@ def main() -> int:
         release = {"versionCodes": [str(version_code)], "status": args.status}
         if args.release_name:
             release["name"] = args.release_name
-        if args.notes:
-            release["releaseNotes"] = [{"language": "en-US", "text": args.notes}]
+        notes = whats_new(args.notes, args.notes_file)
+        if notes:
+            release["releaseNotes"] = [{"language": "en-US", "text": notes}]
         edits.tracks().update(
             packageName=args.package,
             editId=edit_id,

@@ -5,62 +5,46 @@ Kept under TestFlight's 4000-character limit. English, to match the app.
 
 ---
 
-This build adds a routing choice. Settings → Routing: "All traffic through the
-tunnel" (what every build so far did) or "Bypass Russia". Under Bypass Russia,
-Russian sites, .ru domains and your local network go straight out; everything
-else — and every name lookup for it — rides the tunnel.
+This build is about what happens when the tunnel is not there: IPv6 that went
+around it, and a kill switch for when it stops.
 
 WHAT CHANGED
 
-• Bypass Russia now works on olcRTC rooms too. Since 1.0.428 the choice did
-  nothing there — everything, Russian sites included, went through the
-  room. The rules now live in the olcRTC engine itself: Russian sites, .ru
-  names and your local network go straight out from the phone and are
-  resolved by your network's own resolver; everything else rides the room.
-• Bypass Russia routes by three lists bundled with the app: v2fly's
-  category-ru, the Russian top-level domains, and the Russian IP ranges.
-  Nothing is downloaded; the lists ship inside the app.
-• Names on those lists are resolved by the resolver of the network you were on
-  when you connected. Everything else resolves through the tunnel, over TCP
-  when the room is an olcRTC one.
-• Changing the choice while connected reconnects.
-• Links from your provider's bot or panel (proofkit.org/add… or
-  proofkit://add?url=…) open in the app and add the server list.
-• The camera message before the permission has one button, Continue, and
-  the decision is made in the system prompt.
-• olcRTC rooms on Jitsi no longer drop during a long upload (the queue
-  behind the control channel was unbounded).
-• Name lookups through an olcRTC room no longer wait on the relay: a name
-  bound for the tunnel gets an address at once and the exit resolves it, and
-  the DNS the tunnel announces to the system is now its own, so iOS stops
-  upgrading lookups to encrypted DNS at Cloudflare behind the tunnel's back.
-  Pages through a room should start loading in a second or two rather than
-  twenty.
+• IPv6 is inside the tunnel now. On a network that hands out IPv6, a
+  connection to an IPv6 address could leave directly, at the phone's own
+  address, with the VPN shown as connected. The tunnel now takes IPv6 too.
+  On a Reality or Hysteria2 server it is carried to the exit; in an olcRTC
+  room and on an XHTTP server it is dropped, and apps fall back to IPv4
+  through the tunnel.
+• A kill switch: Settings → Connection, off by default. With it on, when
+  the VPN is not up iOS drops traffic instead of sending it directly, and
+  brings the VPN back by itself. The note under the switch says what it can
+  cost: if the VPN cannot come back, the phone has no network until you turn
+  the VPN off in the system's Settings.
+• Server links that use the HTTP transport now connect, and so do VLESS
+  servers with ordinary TLS, a self-signed certificate, or no TLS.
 
 WHAT TO TEST
 
-1. Bypass Russia on, connect to any location. Open sberbank.ru, gosuslugi.ru,
-   ozon.ru — they should open, and yandex.ru/internet should show your real
-   address. whatismyip.com should show the exit's. (2ip.ru only works for
-   this from inside Russia: from abroad it hands you to 2ip.io, which goes
-   through the tunnel.)
-2. Same, on an olcRTC room: yandex.ru/internet must show your real address
-   and whatismyip.com the room's exit; Russian sites should be noticeably
-   quicker than foreign ones — they no longer share the room's bandwidth.
-   The exported diagnostics carry olcrtc.log with a "direct rules:" line
-   and one "direct to" line per Russian connection.
-3. Wi-Fi → cellular, or back, while connected with Bypass Russia on. Known
-   limitation: Russian names may stop resolving until you reconnect (the
-   resolver is the one captured at connect). Tell us if it happens and on
-   which carrier.
-4. Switch back to "All traffic through the tunnel": yandex.ru/internet should
-   now show the exit's address too.
-5. Memory: nothing should change, but if the tunnel drops on its own under
-   Bypass Russia, say so — the extension's ceiling is the one thing the lists
-   could push on.
-6. Import link: put proofkit://add?url=<your list link, percent-encoded> in
-   Notes and tap it — the app opens and the list appears. Tap the "Open in
-   ProofKit" button under the bot's link too.
-7. Jitsi rooms: run a Speedtest upload through a room for a minute. Before,
-   the tunnel reconnected mid-upload; now it should hold.
-
+1. IPv6. On a mobile network that hands out IPv6, connect and open
+   test-ipv6.com, once in an olcRTC room and once on a Reality server. It
+   must not show an IPv6 address of the phone's own. On the build before
+   this one it did, in the room.
+2. Pages in an olcRTC room must still start loading promptly: IPv6 is
+   dropped there and apps fall back to IPv4.
+3. If you have an IPv6-only network (some carriers, or a Mac sharing its
+   connection with NAT64 on): the app must still connect.
+4. Kill switch on, connect. Then make the tunnel go away without pressing
+   Disconnect: leave a speed test running until iOS stops the VPN, or wait
+   through a long idle. Traffic must stop, not continue outside the VPN,
+   and the VPN must come back by itself.
+5. Kill switch on, press Disconnect in the app. It must stay disconnected,
+   and the phone must have its ordinary network back.
+6. Kill switch on: an olcRTC room and an XHTTP server must still carry
+   traffic, and AirPlay or a printer on your Wi-Fi must still be reachable.
+7. Kill switch on, an address-check page open (ifconfig.me), change the
+   server in the app. Tell us whether your own address shows at any moment
+   while it changes.
+8. Kill switch off: everything as before.
+9. If the phone ends up with no network and the VPN will not come back:
+   Settings → VPN → turn it off. Tell us what you were doing.
