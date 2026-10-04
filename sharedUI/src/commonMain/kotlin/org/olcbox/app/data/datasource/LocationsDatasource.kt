@@ -562,6 +562,24 @@ class LocationsRepositoryImpl(
         }
     }
 
+    override suspend fun moveActiveLocation(fromStorageId: String, toStorageId: String, group: String): Boolean {
+        return mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            if (bundle.activeLocationId != fromStorageId) return@withLock false
+            if (bundle.locations.none { it.storageId == toStorageId }) return@withLock false
+            val settings = bundle.settings.normalized()
+            saveBundleUnlocked(
+                bundle.copy(
+                    activeLocationId = toStorageId,
+                    settings = settings.copy(
+                        lastKnownGoodTransport = settings.lastKnownGoodTransport + (group to toStorageId)
+                    )
+                )
+            )
+            true
+        }
+    }
+
     override suspend fun getActiveLocation(): LocationEntry? {
         return mutationMutex.withLock {
             val bundle = getBundleUnlocked()

@@ -1174,6 +1174,64 @@ class LocationsRepositoryImplTest {
         LocationBundleV4(activeLocationId = active, locations = entries.toList())
     )
 
+    // A session that moved by itself writes two things, the active location
+    // and the line to start from next time, and writes them only if the choice
+    // it is replacing is still the user's.
+
+    @Test
+    fun aMoveMakesTheNewLineActiveAndRemembersItAsOneChange() = runTest {
+        val sub = "https://proofkit.org/sub/aaa"
+        val source = subSource("a1", subEntry("a1", sub), subEntry("a2", sub))
+        val repo = LocationsRepositoryImpl(source)
+        val before = repo.changes.value
+
+        assertTrue(repo.moveActiveLocation(fromStorageId = "a1", toStorageId = "a2", group = "exit"))
+
+        assertEquals("a2", repo.getActiveLocationId())
+        assertEquals("a2", repo.getSubscriptionSettings().lastKnownGoodTransport["exit"])
+        assertEquals(before + 1, repo.changes.value)
+    }
+
+    @Test
+    fun aMoveKeepsTheOtherSettingsAsTheyAreNow() = runTest {
+        val sub = "https://proofkit.org/sub/aaa"
+        val repo = LocationsRepositoryImpl(subSource("a1", subEntry("a1", sub), subEntry("a2", sub)))
+        val settings = repo.getSubscriptionSettings()
+        repo.saveSubscriptionSettings(
+            settings.copy(smartConnect = !settings.smartConnect, lastKnownGoodTransport = mapOf("other" to "a1"))
+        )
+
+        assertTrue(repo.moveActiveLocation("a1", "a2", "exit"))
+
+        val after = repo.getSubscriptionSettings()
+        assertEquals(!settings.smartConnect, after.smartConnect)
+        assertEquals(mapOf("other" to "a1", "exit" to "a2"), after.lastKnownGoodTransport)
+    }
+
+    @Test
+    fun aMoveGivesWayToALocationTheUserChoseMeanwhile() = runTest {
+        val sub = "https://proofkit.org/sub/aaa"
+        val repo = LocationsRepositoryImpl(
+            subSource("a1", subEntry("a1", sub), subEntry("a2", sub), subEntry("a3", sub))
+        )
+        repo.setActiveLocationId("a3")
+
+        assertFalse(repo.moveActiveLocation("a1", "a2", "exit"))
+
+        assertEquals("a3", repo.getActiveLocationId())
+        assertNull(repo.getSubscriptionSettings().lastKnownGoodTransport["exit"])
+    }
+
+    @Test
+    fun aMoveToALineThatHasLeftTheStoreStoresNothing() = runTest {
+        val sub = "https://proofkit.org/sub/aaa"
+        val repo = LocationsRepositoryImpl(subSource("a1", subEntry("a1", sub)))
+
+        assertFalse(repo.moveActiveLocation("a1", "gone", "exit"))
+
+        assertEquals("a1", repo.getActiveLocationId())
+    }
+
     @Test
     fun deleteSubscriptionRemovesOnlyThatSubscription() = runTest {
         val subA = "https://proofkit.org/sub/aaa"
