@@ -33,3 +33,9 @@ On macOS, Windows and Linux, when the olcRTC engine stopped in the middle of a s
 ### Linux desktop: every kind of server in tunnel mode
 
 In the Linux app's tunnel mode only olcRTC rooms connected. A Reality, Hysteria2, Trojan, VMess, Shadowsocks or XHTTP server came up and then failed its check ("No traffic reached the internet through the tunnel") unless the app itself ran as root: the tunnel's rule takes every user's traffic, the connection to the server included, and lets only root past. The server's connection is now bound to the machine's network interface, which takes it past the tunnel and needs no privilege on Linux 5.7 and later. A server named by hostname is resolved by the network's own resolver and not through the tunnel. One case is left: an XHTTP server named by hostname may still not connect in this mode, and the log says so; proxy mode carries it. The tunnel's own process is watched behind these servers too, so its death no longer leaves a session that says Connected.
+
+### Desktop: LAN sharing no longer breaks the connection it shares
+
+In proxy mode on Windows, switching LAN sharing on or off, choosing its address or renewing its login while connected to a Reality, Hysteria2, Trojan, VMess, Shadowsocks or XHTTP server pointed the system's proxy at a port nobody was listening on, and pages stopped loading until the next connect. In an olcRTC room with routing rules it pointed past the rules instead, so everything went through the room. The change now touches LAN sharing only.
+
+And on every desktop system, with LAN sharing on, a listener that was slow to open at connect took the whole connection down without an error and left the app stuck on Stopping. It now costs LAN sharing alone, with a message, and the connection goes on.
