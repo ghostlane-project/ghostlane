@@ -164,6 +164,12 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   use them or learn the exit. On Android the port also changes with every
   connect.
 - Network migration, reconnect handling, and watchdog recovery.
+- Android holds the tunnel for the whole session: a reconnect, another server, a
+  lost network or a restarted engine all happen behind the VPN interface, which
+  stays up until you disconnect, so there is no moment when the apps on the VPN
+  go out around it. While it reconnects those apps wait, and the notification
+  says so. What the app cannot hold is its own death; for that Android has
+  "Always-on VPN" with "Block connections without VPN".
 - No account, no analytics, nothing collected.
 
 ## Protocols
