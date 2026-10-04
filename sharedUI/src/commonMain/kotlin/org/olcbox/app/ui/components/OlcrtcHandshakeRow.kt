@@ -40,6 +40,28 @@ fun OlcrtcHandshakeRow(
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    ConnectionSwitchRow(
+        title = stringResource(Res.string.olcrtc_chrome_dtls),
+        note = stringResource(Res.string.olcrtc_chrome_dtls_note),
+        checked = checked,
+        enabled = enabled,
+        onCheckedChange = onCheckedChange
+    )
+}
+
+/**
+ * A switch of the connection screen: its name, under it what turning it on
+ * costs or does, and the switch. The handshake row above is one; the Linux
+ * desktop's kill switch is the other.
+ */
+@Composable
+fun ConnectionSwitchRow(
+    title: String,
+    note: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -57,14 +79,14 @@ fun OlcrtcHandshakeRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(Res.string.olcrtc_chrome_dtls),
+                    text = title,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = stringResource(Res.string.olcrtc_chrome_dtls_note),
+                    text = note,
                     style = MaterialTheme.typography.bodySmall,
                     color = LocalPkPalette.current.textDim
                 )

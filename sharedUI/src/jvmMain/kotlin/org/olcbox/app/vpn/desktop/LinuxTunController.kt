@@ -13,20 +13,80 @@ import kotlin.io.path.exists
 internal class LinuxTunController(
     private val addLog: (String) -> Unit
 ) {
-    private var routesInstalled = false
+    @Volatile private var routesInstalled = false
+
+    /**
+     * hev was last started with the kill switch's scripts, so its pre-down
+     * leaves the block alone unless it finds the stop was asked for.
+     */
+    @Volatile private var startedWithKillSwitch = false
+
+    /**
+     * The hev this controller last started, kept after a stop: one that could
+     * not be ended still holds the tun, and a tun that is there without it is
+     * somebody else's.
+     */
+    @Volatile private var ownTunnel: Process? = null
+
+    /**
+     * The kill switch's block is being kept ([LinuxKillSwitch]): from the
+     * death of a verified session's tunnel, from a block found at start, or
+     * from a cleanup that was refused, until [endHold]. While it is set no
+     * [stop] takes the block away, so a reconnect that fails, a Cancel, a
+     * quit, or anything else that tears things down leaves traffic where it
+     * was: held.
+     */
+    @Volatile private var held = false
+
+    /**
+     * Whether the block is being held with no session's tunnel in front of it,
+     * which is a machine whose traffic goes nowhere. Read off the two flags and
+     * not off the routing table: the manager asks on its way to publishing a
+     * status.
+     */
+    val holdsTraffic: Boolean
+        get() = held && !routesInstalled
 
     suspend fun start(
         hevBinary: Path,
-        socksPort: Int = PacServer.LOCAL_SOCKS_PORT
+        socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
+        killSwitch: Boolean = false
     ): Process {
-        val upScript = writeUpScript()
-        val downScript = writeDownScript()
+        // Over a block that is being held the scripts are the kill switch's,
+        // whatever the setting says by now (it may have been switched off and
+        // the cleanup refused): the plain up script deletes and flushes before
+        // it puts back, which would open the block on the way to a tunnel.
+        val withSwitch = killSwitch || held
+        // A marker left by a stop that never finished would have this tunnel's
+        // pre-down take the block away without having been asked. Without the
+        // switch nothing reads it, and nothing is touched.
+        if (withSwitch) Files.deleteIfExists(stopAskedPath())
+        val upScript = writeUpScript(withSwitch)
+        val downScript = writeDownScript(withSwitch)
         val config = writeConfig(socksPort, upScript, downScript)
+        startedWithKillSwitch = withSwitch
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
+        // Not over one that is still alive: a hev that could not be ended holds
+        // the tun, the new one exits on finding it taken, and the one to
+        // remember is the one that holds it.
+        if (ownTunnel?.isAlive != true) ownTunnel = process
         try {
             waitForTunReady(process)
             routesInstalled = true
             addLog("Linux TUN connected on $TUN_NAME")
+            val armed = withSwitch && killSwitchRouteExists()
+            // Nothing is held behind a tunnel that came up without the block:
+            // the plain up script starts from an empty table, and a kernel
+            // with no dummy device never had one.
+            if (!armed) held = false
+            if (armed) {
+                addLog("Linux TUN: kill switch in place; if the tunnel's process stops, traffic is blocked on $KILL_SWITCH_DEVICE")
+            } else if (withSwitch) {
+                addLog(
+                    "Linux TUN: the kill switch could not be put in place (no dummy network device on this " +
+                        "system?); the tunnel is up without it"
+                )
+            }
             return process
         } catch (e: Exception) {
             stop(process)
@@ -34,17 +94,111 @@ internal class LinuxTunController(
         }
     }
 
+    /**
+     * Stops the tunnel's process and, unless the kill switch holds, removes
+     * everything the tunnel put in.
+     *
+     * The removal is the app's own cleanup, as root, and in practice it is
+     * that at every stop. hev's pre-down would do it on an orderly stop, and
+     * the hev built here stops in an orderly way on SIGINT only, while what
+     * [stopProcess] sends ends it at once. Whether it arrives at all when the
+     * app is not root itself has not been tried on a desktop: a hev started
+     * through pkexec or sudo runs as root, and by kill(2) only root may
+     * signal a root process. The marker is written all the same, for the
+     * stop that does reach the pre-down: a Ctrl-C in the terminal the app was
+     * started from goes to hev as well.
+     *
+     * Held, the process goes and the block stays, and no marker is written:
+     * a pre-down that runs now has not been asked.
+     */
     suspend fun stop(process: Process?) {
+        if (held) {
+            stopProcess(process)
+            routesInstalled = false
+            return
+        }
+        if (startedWithKillSwitch) {
+            // Before the process is told to go: this is what its pre-down
+            // looks for. If it cannot be written the pre-down keeps the block,
+            // and the cleanup below removes it.
+            runCatching { Files.writeString(stopAskedPath(), "") }
+        }
         stopProcess(process)
 
         if (routesInstalled) {
             waitForRoutesRemoved()
         }
-        if (routeRuleExists() || routeTableExists() || Files.exists(rpFilterStatePath())) {
-            runCatching { runPrivilegedScript(writeDownScript()) }
+        val blockDevice = interfaceExists(KILL_SWITCH_DEVICE)
+        if (routeRuleExists() || routeTableExists() || Files.exists(rpFilterStatePath()) || blockDevice) {
+            runCatching { runPrivilegedScript(writeCleanupScript(removeBlockDevice = blockDevice)) }
                 .onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
         }
         routesInstalled = false
+        startedWithKillSwitch = false
+        runCatching { Files.deleteIfExists(stopAskedPath()) }
+        // The cleanup asks for the administrator, and the dialog can be
+        // closed. The block is then still there, and saying "disconnected"
+        // over it would leave a machine with no network and no reason given.
+        held = blockLeftStanding()
+        if (held) {
+            addLog(
+                "Linux TUN: the kill switch's block is still in place and holds this machine's traffic; " +
+                    "connect again, or turn the kill switch off in the connection settings, to remove it"
+            )
+        }
+    }
+
+    /**
+     * The hold is over: the user turned the switch off, or a new session is
+     * verified and the block is back under a tunnel. From here a [stop] takes
+     * everything out again.
+     *
+     * Nothing else ends it. Not a Cancel, not quitting the app, not a stop
+     * some other part of the app asks for on its way to something else (the
+     * "Lowest latency" selection stops before it measures): each of them
+     * would be traffic let out by something other than the user's saying so.
+     */
+    fun endHold() {
+        held = false
+    }
+
+    /**
+     * The tunnel's process of a verified session is gone. True when the kill
+     * switch's block is in place and is now kept: the [stop] that follows
+     * leaves it alone, and so does every later one until [endHold].
+     *
+     * [wanted] is the setting as it is now. Switched off since the tunnel
+     * started, the route is still in the table and still blocks, and the
+     * session ends the way it does without the switch: with the cleanup.
+     */
+    suspend fun holdAfterTunDeath(wanted: Boolean): Boolean {
+        held = wanted && startedWithKillSwitch && blockStands()
+        if (held) {
+            addLog(
+                "Linux TUN: the tunnel's process stopped and the kill switch is holding this machine's traffic; " +
+                    "it stays blocked until you connect again or turn the kill switch off"
+            )
+        }
+        return held
+    }
+
+    /**
+     * Asked once, when the app starts: whether a block from a previous run is
+     * still in place, with no tunnel in front of it. The app was killed, or
+     * quit, or its cleanup was refused, while the block stood, and the rules
+     * outlived it. It is kept like any other, and the user is told why there
+     * is no network.
+     */
+    suspend fun findLeftoverBlock(): Boolean {
+        if (routesInstalled) return false
+        held = blockLeftStanding()
+        if (held) {
+            addLog(
+                "Linux TUN: a kill switch block from a previous run is still in place and holds this machine's " +
+                    "traffic; connect, or turn the kill switch off in the connection settings, to remove it"
+            )
+        }
+        return held
     }
 
     private fun writeConfig(socksPort: Int, upScript: Path, downScript: Path): Path {
@@ -60,22 +214,51 @@ internal class LinuxTunController(
         return config
     }
 
-    private fun writeUpScript(): Path {
+    private fun writeUpScript(killSwitch: Boolean): Path {
         return writeScript(
             name = "linux-tun-up.sh",
-            body = upScriptContent(rpFilterStatePath().toString())
+            body = upScriptContent(rpFilterStatePath().toString(), killSwitch)
         )
     }
 
-    private fun writeDownScript(): Path {
+    private fun writeDownScript(killSwitch: Boolean): Path {
         return writeScript(
             name = "linux-tun-down.sh",
-            body = downScriptContent(rpFilterStatePath().toString())
+            body = downScriptContent(
+                rpFilterStatePath().toString(),
+                stopAskedPath = if (killSwitch) stopAskedPath().toString() else null
+            )
+        )
+    }
+
+    /**
+     * The app's own cleanup. It is written where hev's pre-down is, as it
+     * always was: a sudoers or polkit rule that names that path keeps working,
+     * and the next start writes the pre-down there again.
+     *
+     * On a machine where the kill switch's device is not there to remove, it
+     * is the plain down script, so that for someone who never turned the
+     * switch on, what runs as root at a disconnect is what ran before.
+     */
+    private fun writeCleanupScript(removeBlockDevice: Boolean): Path {
+        val statePath = rpFilterStatePath().toString()
+        return writeScript(
+            name = "linux-tun-down.sh",
+            body = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
         )
     }
 
     private fun rpFilterStatePath(): Path {
         return DesktopPaths.appDataDir().resolve("linux-rp-filter.state")
+    }
+
+    /**
+     * What tells hev's pre-down that the app asked for the stop. It is the
+     * app's file, in the app's directory, written and removed by the app as
+     * the user; the script, which runs as root, only asks whether it exists.
+     */
+    private fun stopAskedPath(): Path {
+        return DesktopPaths.appDataDir().resolve("linux-tun-stop.asked")
     }
 
     private fun writeScript(name: String, body: String): Path {
@@ -103,9 +286,9 @@ internal class LinuxTunController(
         error("$TUN_NAME routes were not installed")
     }
 
-    private suspend fun interfaceExists(): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun interfaceExists(name: String = TUN_NAME): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            val process = ProcessBuilder("ip", "link", "show", TUN_NAME)
+            val process = ProcessBuilder("ip", "link", "show", name)
                 .redirectErrorStream(true)
                 .start()
             process.waitFor(1, TimeUnit.SECONDS) && process.exitValue() == 0
@@ -144,6 +327,37 @@ internal class LinuxTunController(
                     }
         }.getOrDefault(false)
     }
+
+    /** Whether the kill switch's own route is in the tun's table, with or without the tun's beside it. */
+    private suspend fun killSwitchRouteExists(): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val process = ProcessBuilder("ip", "route", "show", "table", ROUTE_TABLE)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(1, TimeUnit.SECONDS) &&
+                    process.exitValue() == 0 &&
+                    LinuxKillSwitch.routeStands(output)
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Whether the block is in force: the rule that sends everyone's lookups to
+     * the tun's table, and in that table the route that drops them. Either
+     * alone blocks nothing.
+     */
+    private suspend fun blockStands(): Boolean = routeRuleExists() && killSwitchRouteExists()
+
+    /**
+     * Whether the block stands with nothing in front of it but, at most, a hev
+     * of this controller's own that could not be ended. A tun that is there
+     * without one is somebody's running tunnel, a second window of this app
+     * or a hev that outlived the app: saying "the tunnel is down" over it
+     * would be wrong, and offering to remove the block would take a live
+     * tunnel's rules away.
+     */
+    private suspend fun blockLeftStanding(): Boolean =
+        blockStands() && (ownTunnel?.isAlive == true || !interfaceExists())
 
     private suspend fun waitForRoutesRemoved() {
         val deadline = System.currentTimeMillis() + ROUTE_CLEANUP_TIMEOUT_MS
@@ -196,6 +410,12 @@ internal class LinuxTunController(
         const val ROUTE_TABLE = "51820"
         const val ROOT_BYPASS_RULE_PREF = "10"
         const val TUN_RULE_PREF = "20"
+
+        /** The kill switch's dummy device ([LinuxKillSwitch]). */
+        const val KILL_SWITCH_DEVICE = "olcboxks0"
+
+        /** The last metric there is: the tun's own default, at 0, wins for as long as the tun exists. */
+        const val KILL_SWITCH_METRIC = "4294967295"
         const val TUN_READY_TIMEOUT_MS = 10_000L
         const val TUN_READY_POLL_MS = 100L
         const val ROUTE_CLEANUP_TIMEOUT_MS = 2_000L
@@ -275,11 +495,16 @@ internal class LinuxTunController(
          * Every `ip -6` line tolerates failure: a kernel built without IPv6 has
          * no such tables, and refusing to bring the tunnel up over that would
          * trade a leak nobody has for a tunnel nobody gets.
+         *
+         * With [killSwitch] the script is another one, [killSwitchUpScript].
+         * Without it, it is what it has always been, to the byte.
          */
         fun upScriptContent(
-            rpFilterStatePath: String = "/tmp/olcbox-rp-filter.state"
+            rpFilterStatePath: String = "/tmp/olcbox-rp-filter.state",
+            killSwitch: Boolean = false
         ): String {
             val statePath = shellSingleQuote(rpFilterStatePath)
+            if (killSwitch) return killSwitchUpScript(statePath)
             return """
                 #!/bin/sh
                 set -eu
@@ -313,9 +538,85 @@ internal class LinuxTunController(
             """.trimIndent()
         }
 
+        /**
+         * The up script with the kill switch ([LinuxKillSwitch] says what the
+         * route is and why it is that one).
+         *
+         * It takes nothing away. The plain script starts clean by deleting the
+         * rules and flushing the table before it puts them back, and between
+         * the two every lookup falls through to the main table. That is
+         * harmless when nothing was there, and it is the leak itself when the
+         * script runs for a reconnect over a block that is standing: the
+         * tunnel died, the block held, and the new tunnel's own script would
+         * open it for as long as the lines in between take. So every line here
+         * adds what is missing or replaces what is there (`ip route replace`,
+         * and `ip rule add`, whose "File exists" is the answer wanted), the
+         * dummy's route goes in first, and a second run leaves what the first
+         * one did.
+         *
+         * The dummy's lines tolerate failure, as the `ip -6` ones do: a kernel
+         * without the dummy module still gets its tunnel, without the block,
+         * and [start] says so in the log.
+         *
+         * rp_filter is saved once. The plain script writes the file anew at
+         * every start; here the file of a session whose block is standing
+         * holds the machine's own values, and what `/proc` has by now is the
+         * zeroes that session wrote. Only a setting the file does not have is
+         * added to it.
+         */
+        private fun killSwitchUpScript(statePath: String): String {
+            return """
+                #!/bin/sh
+                set -eu
+                rp_filter_state=$statePath
+                ip link add $KILL_SWITCH_DEVICE type dummy 2>/dev/null || true
+                ip link set $KILL_SWITCH_DEVICE up 2>/dev/null || true
+                ip route replace default dev $KILL_SWITCH_DEVICE metric $KILL_SWITCH_METRIC table $ROUTE_TABLE 2>/dev/null || true
+                [ -e "${'$'}rp_filter_state" ] || : > "${'$'}rp_filter_state"
+                for setting in /proc/sys/net/ipv4/conf/*/rp_filter; do
+                  if [ -r "${'$'}setting" ]; then
+                    if ! grep -qF -- "${'$'}setting=" "${'$'}rp_filter_state"; then
+                      value=${'$'}(cat "${'$'}setting")
+                      printf '%s=%s\n' "${'$'}setting" "${'$'}value" >> "${'$'}rp_filter_state"
+                    fi
+                    printf '0\n' > "${'$'}setting" 2>/dev/null || true
+                  fi
+                done
+                ip link set $TUN_NAME up
+                ip rule add uidrange 0-0 lookup main pref $ROOT_BYPASS_RULE_PREF 2>/dev/null || true
+                ip route replace default dev $TUN_NAME table $ROUTE_TABLE
+                ip rule add lookup $ROUTE_TABLE pref $TUN_RULE_PREF 2>/dev/null || true
+                ip -6 rule add uidrange 0-0 lookup main pref $ROOT_BYPASS_RULE_PREF 2>/dev/null || true
+                ip -6 route replace blackhole default table $ROUTE_TABLE 2>/dev/null || true
+                ip -6 rule add lookup $ROUTE_TABLE pref $TUN_RULE_PREF 2>/dev/null || true
+                if command -v resolvectl >/dev/null 2>&1; then
+                  resolvectl dns $TUN_NAME $MAPDNS_ADDRESS >/dev/null 2>&1 || true
+                  resolvectl domain $TUN_NAME '~.' >/dev/null 2>&1 || true
+                  resolvectl default-route $TUN_NAME yes >/dev/null 2>&1 || true
+                fi
+            """.trimIndent()
+        }
+
+        /**
+         * hev's pre-down. Without [stopAskedPath] it is what it has always
+         * been, to the byte, and takes everything down whoever stopped hev.
+         *
+         * With it, the kill switch is on. hev runs this whenever it stops in
+         * an orderly way, also when nobody asked it to; for the hev built
+         * here that is a SIGINT, which a Ctrl-C in the terminal the app was
+         * started from sends to hev as it does to the app. Taking the rules
+         * down then is the leak the switch exists to close, so the script
+         * does nothing at all unless the file the app writes just before it
+         * stops hev is there; when it is, it does what [cleanupScriptContent]
+         * does. The script only asks whether the file exists. It runs as root
+         * and the path is the user's, so it neither reads the file nor
+         * removes it: the app does that, as the user.
+         */
         fun downScriptContent(
-            rpFilterStatePath: String = "/tmp/olcbox-rp-filter.state"
+            rpFilterStatePath: String = "/tmp/olcbox-rp-filter.state",
+            stopAskedPath: String? = null
         ): String {
+            if (stopAskedPath != null) return removalScript(rpFilterStatePath, stopAskedPath)
             val statePath = shellSingleQuote(rpFilterStatePath)
             return """
                 #!/bin/sh
@@ -340,6 +641,68 @@ internal class LinuxTunController(
                   rm -f "${'$'}rp_filter_state"
                 fi
             """.trimIndent()
+        }
+
+        /**
+         * The app's own cleanup where the kill switch's device exists, run as
+         * root when hev's pre-down has not already done the work: a hev that
+         * was killed outright never ran it, and with the kill switch on one
+         * that did run it kept the block. It removes everything a tunnel of
+         * this app can have put in, the device included, whatever the switch
+         * says now: a block outlives the setting that asked for it.
+         */
+        fun cleanupScriptContent(
+            rpFilterStatePath: String = "/tmp/olcbox-rp-filter.state"
+        ): String = removalScript(rpFilterStatePath, stopAskedPath = null)
+
+        /**
+         * Everything out: the rules, the table, the kill switch's device,
+         * resolved's settings for the tun, and rp_filter as it was. With
+         * [stopAskedPath], only when that file exists.
+         *
+         * Two blocks joined by a newline, each trimmed by itself: a piece put
+         * into a raw string with its own line breaks would set the indent
+         * `trimIndent` takes off to nothing, and leave the shebang indented.
+         */
+        private fun removalScript(rpFilterStatePath: String, stopAskedPath: String?): String {
+            val statePath = shellSingleQuote(rpFilterStatePath)
+            val head = if (stopAskedPath == null) {
+                """
+                    #!/bin/sh
+                    rp_filter_state=$statePath
+                """.trimIndent()
+            } else {
+                val askedPath = shellSingleQuote(stopAskedPath)
+                """
+                    #!/bin/sh
+                    rp_filter_state=$statePath
+                    stop_asked=$askedPath
+                    [ -e "${'$'}stop_asked" ] || exit 0
+                """.trimIndent()
+            }
+            val body = """
+                ip rule del uidrange 0-0 lookup main pref $ROOT_BYPASS_RULE_PREF 2>/dev/null || true
+                ip rule del lookup $ROUTE_TABLE pref $TUN_RULE_PREF 2>/dev/null || true
+                ip route flush table $ROUTE_TABLE 2>/dev/null || true
+                ip -6 rule del uidrange 0-0 lookup main pref $ROOT_BYPASS_RULE_PREF 2>/dev/null || true
+                ip -6 rule del lookup $ROUTE_TABLE pref $TUN_RULE_PREF 2>/dev/null || true
+                ip -6 route flush table $ROUTE_TABLE 2>/dev/null || true
+                ip link del $KILL_SWITCH_DEVICE 2>/dev/null || true
+                if command -v resolvectl >/dev/null 2>&1; then
+                  resolvectl revert $TUN_NAME >/dev/null 2>&1 || true
+                fi
+                if [ -r "${'$'}rp_filter_state" ]; then
+                  while IFS='=' read -r setting value; do
+                    case "${'$'}setting" in
+                      /proc/sys/net/ipv4/conf/*/rp_filter)
+                        [ -w "${'$'}setting" ] && printf '%s\n' "${'$'}value" > "${'$'}setting" 2>/dev/null || true
+                        ;;
+                    esac
+                  done < "${'$'}rp_filter_state"
+                  rm -f "${'$'}rp_filter_state"
+                fi
+            """.trimIndent()
+            return head + "\n" + body
         }
 
         private fun shellSingleQuote(value: String): String {

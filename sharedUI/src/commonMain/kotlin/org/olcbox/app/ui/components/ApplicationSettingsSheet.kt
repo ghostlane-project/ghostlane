@@ -31,6 +31,8 @@ import multiplatform_app.sharedui.generated.resources.hide_password
 import multiplatform_app.sharedui.generated.resources.hours_short
 import multiplatform_app.sharedui.generated.resources.https_sources
 import multiplatform_app.sharedui.generated.resources.https_sources_none
+import multiplatform_app.sharedui.generated.resources.kill_switch
+import multiplatform_app.sharedui.generated.resources.kill_switch_note
 import multiplatform_app.sharedui.generated.resources.lan_choose_interface
 import multiplatform_app.sharedui.generated.resources.lan_connect_first
 import multiplatform_app.sharedui.generated.resources.lan_endpoint
@@ -262,6 +264,13 @@ fun ApplicationSettingsSheet(
      */
     tunnelDaemonSummary: String? = null,
     onTunnelDaemonClick: () -> Unit = {},
+    /**
+     * The platform's own kill switch, where the app has one to offer: today the
+     * Linux desktop's tunnel. Null everywhere else, and the row is then absent,
+     * as the tunnel component's is.
+     */
+    killSwitch: Boolean? = null,
+    onKillSwitchChanged: (Boolean) -> Unit = {},
     /** How subscriptions behave. See [SubscriptionSettings]. */
     subscriptionSettings: SubscriptionSettings = SubscriptionSettings(),
     onSubscriptionSettingsChanged: (SubscriptionSettings) -> Unit = {},
@@ -393,10 +402,12 @@ fun ApplicationSettingsSheet(
                     modeSummary = connectionModeSummary,
                     socksProxySettings = socksProxySettings,
                     tunnelDaemonSummary = tunnelDaemonSummary,
+                    killSwitch = killSwitch,
                     chromeDtls = routingSettings.olcrtcChromeDtls,
                     onConnectionModeClick = { route = SharedSettingsRoute.ConnectionMode },
                     onSocksProxyClick = { route = SharedSettingsRoute.SocksProxy },
                     onTunnelDaemonClick = onTunnelDaemonClick,
+                    onKillSwitchChanged = onKillSwitchChanged,
                     onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) },
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
@@ -596,10 +607,12 @@ private fun SharedConnectionSettingsContent(
     modeSummary: String,
     socksProxySettings: ApplicationSocksProxySettings?,
     tunnelDaemonSummary: String?,
+    killSwitch: Boolean?,
     chromeDtls: Boolean,
     onConnectionModeClick: () -> Unit,
     onSocksProxyClick: () -> Unit,
     onTunnelDaemonClick: () -> Unit,
+    onKillSwitchChanged: (Boolean) -> Unit,
     onChromeDtlsChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
@@ -649,6 +662,18 @@ private fun SharedConnectionSettingsContent(
                     value = "${socksProxySettings.host}:${socksProxySettings.port}",
                     icon = PkIcons.Public,
                     onClick = onSocksProxyClick
+                )
+            }
+
+            // Here, beside the other things that decide how traffic leaves, and
+            // not behind the admin gate: it is the user's own choice, and its
+            // note is where they learn what the choice costs.
+            if (killSwitch != null) {
+                ConnectionSwitchRow(
+                    title = stringResource(Res.string.kill_switch),
+                    note = stringResource(Res.string.kill_switch_note),
+                    checked = killSwitch,
+                    onCheckedChange = onKillSwitchChanged
                 )
             }
 

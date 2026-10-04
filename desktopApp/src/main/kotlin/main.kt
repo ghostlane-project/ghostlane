@@ -124,6 +124,8 @@ import org.olcbox.app.vpn.DesktopSocksProxySettings
 import org.olcbox.app.vpn.DesktopVpnManager
 import org.olcbox.app.vpn.DesktopConnectionMode
 import org.olcbox.app.vpn.DesktopConnectionModePreference
+import org.olcbox.app.vpn.desktopKillSwitchHolds
+import org.olcbox.app.vpn.desktopKillSwitchOffered
 import org.olcbox.app.vpn.desktopRoutingModes
 import org.olcbox.app.vpn.desktopRoutingNote
 import org.olcbox.app.vpn.desktopRoutingUnavailableReason
@@ -421,6 +423,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
             val subscriptionSettings by dependencies.homeViewModel.subscriptionSettings.collectAsState()
             val routingSettings by dependencies.homeViewModel.routingSettings.collectAsState()
             val socksProxySettings by dependencies.vpnManager.socksProxySettings.collectAsState()
+            val vpnStatus by dependencies.vpnManager.status.collectAsState()
             val lanProxyEndpoint by dependencies.vpnManager.lanProxyEndpoint.collectAsState()
             val lanProxyHealth by dependencies.vpnManager.lanProxyHealth.collectAsState()
             val lanAddresses by dependencies.vpnManager.lanAddresses.collectAsState()
@@ -588,6 +591,19 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             // nothing happened, and only Apple's own text says
                             // which of them it was.
                             desktopNotice = MacOsTunnelDaemon.message().ifBlank { null }
+                        },
+                        // Linux only. It reads on while its block is what holds
+                        // the traffic, whatever is stored: switching it off is
+                        // then how the block is taken away.
+                        killSwitch = if (desktopKillSwitchOffered()) {
+                            socksProxySettings.killSwitch || desktopKillSwitchHolds(vpnStatus)
+                        } else {
+                            null
+                        },
+                        onKillSwitchChanged = { enabled ->
+                            val settings = socksProxySettings.copy(killSwitch = enabled).normalized()
+                            dependencies.vpnManager.setKillSwitch(enabled)
+                            scope.launch { dependencies.socksProxySettingsStore.save(settings) }
                         },
                         isConnectionActive = homeState.isVpnConnected,
                         subscriptionSettings = subscriptionSettings,

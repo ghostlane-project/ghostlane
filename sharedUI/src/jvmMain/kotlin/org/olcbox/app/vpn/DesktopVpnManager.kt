@@ -50,6 +50,7 @@ import org.olcbox.app.vpn.desktop.DesktopProxyController
 import org.olcbox.app.vpn.desktop.LineChange
 import org.olcbox.app.vpn.desktop.LineConfigs
 import org.olcbox.app.vpn.desktop.LineSupervision
+import org.olcbox.app.vpn.desktop.LinuxKillSwitch
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.MacOsTunController
@@ -416,7 +417,10 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override val canProbeTransports: Boolean get() = true
+    // Not while the Linux kill switch holds traffic: a probe's core goes out as
+    // any program of the user's does, the block refuses it, and smart connect
+    // would take every transport for blocked and move the line to its last resort.
+    override val canProbeTransports: Boolean get() = !linuxTunController.holdsTraffic
 
     // Smart connect: the location's core, alone, on its own port and config.
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
@@ -541,6 +545,26 @@ class DesktopVpnManager private constructor(
         }
     }
 
+    /**
+     * The Linux tunnel's kill switch ([LinuxKillSwitch]). It is read when the
+     * tunnel starts, so a change applies at the next connect.
+     *
+     * Switching it off also ends a hold, and is the one thing besides a new
+     * verified session that does. While the block stands with no tunnel, the
+     * stop that follows removes it, cleanup and its password included: the
+     * screen has no Disconnect while it shows an error, so this is the way
+     * out that does not start a connection. Under a running tunnel nothing
+     * can be taken away without root, so the block is only no longer kept,
+     * and the session ends as it does without the switch.
+     */
+    fun setKillSwitch(enabled: Boolean) {
+        _socksProxySettings.update { it.copy(killSwitch = enabled) }
+        if (enabled) return
+        val holding = linuxTunController.holdsTraffic
+        linuxTunController.endHold()
+        if (holding) stopVpn()
+    }
+
     init {
         Runtime.getRuntime().addShutdownHook(lanShutdownHook)
         runCatching { lanProxy.cleanupStaleFirewallRules() }
@@ -559,6 +583,20 @@ class DesktopVpnManager private constructor(
                 if (!macOsTunController.isRunning()) return@launch
                 addLog("a tunnel from a previous run was still up; stopping it")
                 macOsTunController.stop()
+            }
+        }
+        // The Linux kill switch's block outlives the app as it outlives the
+        // tunnel. Found at start, it is a machine with no network and an app
+        // that says "not connected": setStatus says what holds the traffic and
+        // how to let it out. Not removed here, which would be the cleanup
+        // nobody asked for, with its password dialog.
+        if (DesktopPaths.os == DesktopOs.Linux) {
+            scope.launch {
+                mutex.withLock {
+                    if (_status.value is VpnStatus.Disconnected && linuxTunController.findLeftoverBlock()) {
+                        setStatus(VpnStatus.Disconnected)
+                    }
+                }
             }
         }
     }
@@ -882,7 +920,7 @@ class DesktopVpnManager private constructor(
 
     private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long) {
         val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
-        tunProcess = linuxTunController.start(hevBinary, socksPort)
+        tunProcess = linuxTunController.start(hevBinary, socksPort, killSwitch = _socksProxySettings.value.killSwitch)
 
         if (requestGeneration != generation) {
             throw CancellationException("Desktop start superseded")
@@ -1948,8 +1986,8 @@ class DesktopVpnManager private constructor(
      * A core or the engine of a connected session is started again behind the
      * tunnel, which is not touched. Taking it down here is what used to send
      * the machine's traffic out directly, by the app's own hand. The tun's own
-     * death ends the session as it always has: its routes went with it, and
-     * there is nothing left to hold.
+     * death ends the session as it always has: its routes went with it. What
+     * is left to hold then is the Linux kill switch's block, where it is on.
      */
     private suspend fun handleUnexpectedProcessExit(
         which: DeadProcess,
@@ -1962,6 +2000,14 @@ class DesktopVpnManager private constructor(
         if (line != null && LineSupervision.restartsBehindTun(which)) {
             restartLineBehindTun(line, requestGeneration)
             return
+        }
+        // The Linux kill switch: the block under a verified session's tunnel
+        // outlives it, and from here it is kept. The teardown below then stops
+        // the line's processes and leaves the block where it is (no cleanup,
+        // so no password dialog opening by itself), and setStatus says that
+        // traffic is held and how to let it out.
+        if (which == DeadProcess.Tun && line != null) {
+            linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
         }
         stopDesktopMode(finalStatus = false)
 
@@ -2662,7 +2708,13 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private fun setStatus(status: VpnStatus) {
+    private fun setStatus(requested: VpnStatus) {
+        // The Linux kill switch. A verified session ends a hold: its block is
+        // back under a tunnel. And while the block holds traffic with no tunnel
+        // up, "disconnected" and every error are shown as that
+        // (LinuxKillSwitch.shown).
+        if (requested is VpnStatus.Connected) linuxTunController.endHold()
+        val status = LinuxKillSwitch.shown(requested, linuxTunController.holdsTraffic)
         if (status is VpnStatus.Connected && channelProbe == null) {
             channelProbe = channelProxy?.let { org.olcbox.app.net.ChannelLatency.Session(it) }
         } else if (status !is VpnStatus.Connected) {

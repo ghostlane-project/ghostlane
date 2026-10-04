@@ -166,7 +166,8 @@ internal object LineSupervision {
      * with its process, there is nothing left to restart behind, and the
      * machine's traffic already leaves directly. Saying "reconnecting" over that
      * would claim a hold that is not there, so it ends the session as it always
-     * has.
+     * has. The Linux kill switch ([LinuxKillSwitch]) changes where the traffic
+     * goes then, not this: the session still ends, with its block left standing.
      */
     fun restartsBehindTun(which: DeadProcess): Boolean = when (which) {
         DeadProcess.Core, DeadProcess.Engine -> true
