@@ -1324,7 +1324,9 @@ class DesktopVpnManager private constructor(
      * out is this core, which is asking because it is not up yet. sing-box
      * asks them itself, and its own query leaves by the tun's rule on its
      * binary. Xray has no such part, and an XHTTP server that is a name may
-     * not come up as a later line.
+     * not come up as a later line. They are for Windows and macOS, where the
+     * system's list is the tun's once it is up; under [besideTun] they are
+     * read again every time.
      */
     private suspend fun startDesktopCore(
         location: LocationConfig,
@@ -1342,8 +1344,14 @@ class DesktopVpnManager private constructor(
         val boundInterface = if (besideTun && xhttp != null) DesktopDnsResolver.linuxDefaultInterface() else null
         val serverResolver = when {
             xhttp != null -> null
-            resolvers != null -> DirectDns.Servers(resolvers)
+            // In the Linux tunnel the machine's resolvers are read now, for a
+            // later line as for the first. The tun does not change what the
+            // default interface says of them, so the answer is as good as it
+            // was when the session started, and better once the machine has
+            // moved to another network inside the session: the ones kept from
+            // the start are then resolvers that are no longer there.
             besideTun -> DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            resolvers != null -> DirectDns.Servers(resolvers)
             else -> null
         }
         if (besideTun && xhttp != null) {
@@ -1670,6 +1678,9 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // Whether what is taken down is a session that was verified, asked
+        // before the line is forgotten: the Linux kill switch holds for those.
+        val hadSession = sessionLine != null
         // First, and on every path out of here: a session that is being stopped
         // has no line to bring back, and a watcher that sees one of its processes
         // go from now on must find nothing to restart.
@@ -1697,8 +1708,26 @@ class DesktopVpnManager private constructor(
 
         when (DesktopPaths.os) {
             DesktopOs.Linux -> {
+                // The kill switch: a tunnel that died by itself is not
+                // followed by the cleanup, whoever comes to take the session
+                // down. Decided here and not by the tun's watcher alone: a
+                // request that moved the generation first (another location,
+                // a restart for new settings) makes the watcher stand aside,
+                // finds the tun's process dead, and would otherwise remove the
+                // block on its way to a new tunnel, by this app's own hand
+                // and behind a password dialog that looks like any other.
+                // Kept, the restart's tunnel goes back in front of the block
+                // without opening it. Not at a Disconnect, which is the user
+                // ending the session, block included.
+                if (!finalStatus && hadSession && tunProcess?.isAlive == false) {
+                    linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
+                }
                 runCatching {
-                    linuxTunController.stop(tunProcess)
+                    // The room's engine runs as root here, as hev does, and the
+                    // stop further down does not reach it. What the tun's
+                    // cleanup runs as root ends it, named by the config every
+                    // engine of this app is started with.
+                    linuxTunController.stop(tunProcess, endEnginesNaming = olcRtcConfigNaming())
                 }.onFailure {
                     addLog("Linux TUN stop failed: ${it.message}")
                 }
@@ -1886,10 +1915,20 @@ class DesktopVpnManager private constructor(
         return startedProcess
     }
 
+    /** Where an engine's config is written: the directory and how its file's name begins. */
+    private fun olcRtcConfigDir(): Path = DesktopPaths.appDataDir().resolve("runtime")
+
+    /**
+     * What every engine this app starts carries on its command line and
+     * nothing else does: its config's directory and the beginning of the
+     * file's name ([writeOlcRtcClientConfig]).
+     */
+    private fun olcRtcConfigNaming(): String = olcRtcConfigDir().resolve(OLCRTC_CONFIG_PREFIX).toString()
+
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
-        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        val runtimeDir = olcRtcConfigDir()
         Files.createDirectories(runtimeDir)
-        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        val path = Files.createTempFile(runtimeDir, OLCRTC_CONFIG_PREFIX, ".yaml")
         Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
         deleteOlcRtcConfig()
         olcRtcConfigPath = path
@@ -2146,13 +2185,11 @@ class DesktopVpnManager private constructor(
             return
         }
         // The Linux kill switch: the block under a verified session's tunnel
-        // outlives it, and from here it is kept. The teardown below then stops
-        // the line's processes and leaves the block where it is (no cleanup,
-        // so no password dialog opening by itself), and setStatus says that
-        // traffic is held and how to let it out.
-        if (which == DeadProcess.Tun && line != null) {
-            linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
-        }
+        // outlives it. The teardown finds the tun's process dead and keeps
+        // the block ([stopDesktopMode]): it stops the line's processes and
+        // leaves the block where it is (no cleanup, so no password dialog
+        // opening by itself), and setStatus says that traffic is held and how
+        // to let it out.
         stopDesktopMode(finalStatus = false)
 
         if (requestGeneration == generation) {
@@ -3042,16 +3079,25 @@ class DesktopVpnManager private constructor(
      * On Windows and macOS the tun lets the cores out by their binaries'
      * paths, and a probe runs the same binary, so nothing more is needed. On
      * Linux a core is led out by being bound to the physical interface
-     * ([startDesktopCore]), and the probe's is bound the same way. On all
-     * three a server that is a name is asked of the resolvers the session
-     * read before its tun came up: the system's resolver is behind the tun by
-     * now. In proxy mode there is no tun, and the probe is the one a connect
-     * makes.
+     * ([startDesktopCore]), and the probe's is bound the same way. A server
+     * that is a name is asked of the machine's own resolvers, since the
+     * system's is behind the tun by now: on Windows and macOS the ones the
+     * session read before its tun came up, and on Linux the ones the default
+     * interface names now. In proxy mode there is no tun, and the probe is
+     * the one a connect makes.
      */
     private suspend fun probePasses(line: SessionLine, candidate: LocationConfig, boundInterface: String?): Boolean =
         TransportProbe.passes(
             candidate,
-            serverResolver = line.session.resolvers?.let { DirectDns.Servers(it) },
+            // In the Linux tunnel they are read now, as startDesktopCore reads
+            // them for the session's own core: the tun does not change what
+            // the default interface says, and the ones kept from the start go
+            // stale when the machine moves to another network.
+            serverResolver = if (line.desktopMode == DesktopMode.LinuxTun) {
+                DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            } else {
+                line.session.resolvers?.let { DirectDns.Servers(it) }
+            },
             autoDetectInterface = line.desktopMode == DesktopMode.LinuxTun,
             bindInterface = boundInterface,
             starter = lookStarter
@@ -3580,6 +3626,8 @@ class DesktopVpnManager private constructor(
         const val LAN_HEALTH_INTERVAL_MS = 15_000L
         const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+        /** How the file of an engine's config begins its name; see [olcRtcConfigNaming]. */
+        const val OLCRTC_CONFIG_PREFIX = "olcrtc-client-"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
 
         internal fun isFatalOlcRtcStartupLine(line: String): Boolean {
