@@ -1543,6 +1543,9 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // Whether what is taken down is a session that was verified, asked
+        // before the line is forgotten: the Linux kill switch holds for those.
+        val hadSession = sessionLine != null
         // First, and on every path out of here: a session that is being stopped
         // has no line to bring back, and a watcher that sees one of its processes
         // go from now on must find nothing to restart.
@@ -1570,6 +1573,20 @@ class DesktopVpnManager private constructor(
 
         when (DesktopPaths.os) {
             DesktopOs.Linux -> {
+                // The kill switch: a tunnel that died by itself is not
+                // followed by the cleanup, whoever comes to take the session
+                // down. Decided here and not by the tun's watcher alone: a
+                // request that moved the generation first (another location,
+                // a restart for new settings) makes the watcher stand aside,
+                // finds the tun's process dead, and would otherwise remove the
+                // block on its way to a new tunnel, by this app's own hand
+                // and behind a password dialog that looks like any other.
+                // Kept, the restart's tunnel goes back in front of the block
+                // without opening it. Not at a Disconnect, which is the user
+                // ending the session, block included.
+                if (!finalStatus && hadSession && tunProcess?.isAlive == false) {
+                    linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
+                }
                 runCatching {
                     linuxTunController.stop(tunProcess)
                 }.onFailure {
@@ -2010,13 +2027,11 @@ class DesktopVpnManager private constructor(
             return
         }
         // The Linux kill switch: the block under a verified session's tunnel
-        // outlives it, and from here it is kept. The teardown below then stops
-        // the line's processes and leaves the block where it is (no cleanup,
-        // so no password dialog opening by itself), and setStatus says that
-        // traffic is held and how to let it out.
-        if (which == DeadProcess.Tun && line != null) {
-            linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
-        }
+        // outlives it. The teardown finds the tun's process dead and keeps
+        // the block ([stopDesktopMode]): it stops the line's processes and
+        // leaves the block where it is (no cleanup, so no password dialog
+        // opening by itself), and setStatus says that traffic is held and how
+        // to let it out.
         stopDesktopMode(finalStatus = false)
 
         if (requestGeneration == generation) {
