@@ -35,6 +35,7 @@ fun wireShape(config: LocationConfig?, words: BoardWords = BoardWords()): String
         TransportKind.Grpc -> words.wireGrpc
         TransportKind.Reality -> words.wireReality
         TransportKind.Tls -> words.wireHttps
+        TransportKind.Plain -> words.wireStream
         TransportKind.Trojan -> words.wireHttps
         TransportKind.Vmess -> words.wireStream
         TransportKind.Shadowsocks -> words.wireStreamNoHandshake

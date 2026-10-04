@@ -162,7 +162,10 @@ object XrayConfig {
                         //   Failed to build REALITY config > empty "password"
                         // which reads as a missing credential rather than as the
                         // wrong kind of security entirely.
-                        if (spec.publicKey.isBlank()) {
+                        if (spec.plain) {
+                            // `security=none`: XHTTP in the clear, as behind a CDN's port 80.
+                            put("security", "none")
+                        } else if (spec.publicKey.isBlank()) {
                             put("security", "tls")
                             putJsonObject("tlsSettings") {
                                 put("serverName", spec.sni)

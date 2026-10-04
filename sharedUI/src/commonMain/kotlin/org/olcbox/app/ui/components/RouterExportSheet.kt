@@ -104,8 +104,9 @@ fun RouterExportSheet(entries: List<RouterEntry>, onCopy: (String) -> Unit, onDi
                             val forms = listOfNotNull(
                                 LINK to entry.link,
                                 RouterExport.singBoxOutbound(entry.spec)?.let { SING_BOX to it },
-                                (RouterExport.xrayMinimumVersion(entry.spec)?.let { "$XRAY $it+" } ?: XRAY) to
-                                    RouterExport.xrayOutbound(entry.spec)
+                                RouterExport.xrayOutbound(entry.spec)?.let { outbound ->
+                                    (RouterExport.xrayMinimumVersion(entry.spec)?.let { "$XRAY $it+" } ?: XRAY) to outbound
+                                }
                             )
                             forms.forEach { (form, text) ->
                                 TextButton(onClick = {
@@ -146,5 +147,6 @@ private fun TransportSpec.routerLabel(): String = when (this) {
     is TransportSpec.Grpc -> "gRPC"
     is TransportSpec.Ws -> "WebSocket"
     is TransportSpec.HttpUpgrade -> "HTTPUpgrade"
+    is TransportSpec.Http -> "HTTP/2"
     is TransportSpec.Xhttp -> "XHTTP"
 }

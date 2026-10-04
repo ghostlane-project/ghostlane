@@ -56,6 +56,53 @@ func TestVlessRealityOutbound(t *testing.T) {
 	}
 }
 
+// tlsOf builds the config for v and returns the upstream outbound's tls object, nil when it has none.
+func tlsOf(t *testing.T, v *links.VlessLine) map[string]any {
+	t.Helper()
+	p := base(ModeProxy)
+	p.Upstream = Upstream{Vless: v}
+	cfg, err := BuildConfig(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(cfg); err != nil {
+		t.Fatalf("sing-box refused: %v\n%s", err, cfg)
+	}
+	var root struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(cfg, &root); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range root.Outbounds {
+		if o["tag"] == "tunnel" {
+			tls, _ := o["tls"].(map[string]any)
+			return tls
+		}
+	}
+	t.Fatalf("no tunnel outbound:\n%s", cfg)
+	return nil
+}
+
+func TestVlessSecurityOptions(t *testing.T) {
+	plain := vlessTCP()
+	plain.Flow, plain.PublicKey, plain.Plain = "", "", true
+	if tls := tlsOf(t, plain); tls != nil {
+		t.Fatalf("security=none has no tls block: %v", tls)
+	}
+	waived := vlessTCP()
+	waived.PublicKey, waived.Insecure = "", true
+	if tls := tlsOf(t, waived); tls["insecure"] != true {
+		t.Fatalf("allowInsecure is carried on ordinary tls: %v", tls)
+	}
+	// Reality has no certificate to waive
+	reality := vlessTCP()
+	reality.Insecure = true
+	if tls := tlsOf(t, reality); tls["insecure"] != nil || tls["reality"] == nil {
+		t.Fatalf("%v", tls)
+	}
+}
+
 func TestVlessXhttpRefused(t *testing.T) {
 	v := vlessTCP()
 	v.Transport = links.Transport{Kind: "xhttp", Path: "/pk", Host: "yandex.ru", Mode: "packet-up"}

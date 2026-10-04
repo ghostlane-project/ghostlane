@@ -37,10 +37,13 @@ func BuildConfig(p Params) ([]byte, error) {
 		"network":       "xhttp",
 		"xhttpSettings": map[string]any{"path": l.Transport.Path, "host": l.Transport.Host, "mode": l.Transport.Mode, "scMaxEachPostBytes": maxEachPostBytes},
 	}
-	if l.PublicKey == "" {
+	switch {
+	case l.Plain:
+		stream["security"] = "none"
+	case l.PublicKey == "":
 		stream["security"] = "tls"
 		stream["tlsSettings"] = map[string]any{"serverName": l.SNI, "fingerprint": l.Fingerprint, "allowInsecure": false}
-	} else {
+	default:
 		stream["security"] = "reality"
 		stream["realitySettings"] = map[string]any{"serverName": l.SNI, "fingerprint": l.Fingerprint, "publicKey": l.PublicKey, "shortId": l.ShortID}
 	}

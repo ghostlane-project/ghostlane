@@ -318,6 +318,34 @@ class SingBoxConfigTest {
         )
     }
 
+    @Test fun theHttpTransportCarriesItsHostsAndPathAndLeavesAnEmptyHostOut() {
+        val spec = vless().copy(flow = null, transport = TransportSpec.Http("/h2", listOf("a.example")))
+        val transport = outbound(SingBoxConfig.build(spec))["transport"]!!.jsonObject
+        assertEquals("http", transport["type"]!!.jsonPrimitive.content)
+        assertEquals("/h2", transport["path"]!!.jsonPrimitive.content)
+        assertEquals("a.example", transport["host"]!!.jsonArray.single().jsonPrimitive.content)
+        val bare = vless().copy(flow = null, transport = TransportSpec.Http("/", emptyList()))
+        assertNull(outbound(SingBoxConfig.build(bare))["transport"]!!.jsonObject["host"])
+    }
+
+    @Test fun aPlainVlessHasNoTlsBlockAndOrdinaryTlsCanWaiveItsCertificate() {
+        val plain = vless().copy(publicKey = "", flow = null, plain = true)
+        assertNull(outbound(SingBoxConfig.build(plain))["tls"])
+        val waived = vless().copy(publicKey = "", insecure = true)
+        assertEquals("true", outbound(SingBoxConfig.build(waived))["tls"]!!.jsonObject["insecure"]!!.jsonPrimitive.content)
+        // Reality has no certificate to waive, whatever the spec was built with.
+        assertNull(outbound(SingBoxConfig.build(vless().copy(insecure = true)))["tls"]!!.jsonObject["insecure"])
+        assertNull(outbound(SingBoxConfig.build(vless()))["tls"]!!.jsonObject["insecure"])
+    }
+
+    @Test fun aLineWithNoTlsIsNotCalledTls() {
+        val plain = org.olcbox.app.data.model.LocationConfig(
+            name = "P", id = "1.2.3.4:80", key = "", kind = LocationKind.Vless,
+            rawLink = "vless://u@1.2.3.4:80?type=tcp&security=none#P"
+        )
+        assertEquals(TransportKind.Plain, plain.transportKind())
+    }
+
     private fun vless() = OutboundSpec.Vless(
         "u", "1.2.3.4", 443, "sni.x", "PBK", "sid", "chrome",
         "xtls-rprx-vision", TransportSpec.Tcp, "DE"

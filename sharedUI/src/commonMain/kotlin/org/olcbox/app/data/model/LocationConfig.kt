@@ -711,4 +711,5 @@ private fun org.olcbox.app.net.TransportSpec.label(): String? = when (this) {
     is org.olcbox.app.net.TransportSpec.Xhttp -> "XHTTP"
     is org.olcbox.app.net.TransportSpec.Ws -> "WS"
     is org.olcbox.app.net.TransportSpec.HttpUpgrade -> "HTTPUpgrade"
+    is org.olcbox.app.net.TransportSpec.Http -> "HTTP/2"
 }

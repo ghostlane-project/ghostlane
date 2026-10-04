@@ -44,12 +44,26 @@ class RouterExportDumpTest {
         File(dir, "$name.json").writeText(config.toString())
     }
 
+    // Xray dropped its HTTP transport for XHTTP, so a router's Xray would refuse the
+    // outbound: the sheet offers the link and the sing-box form, and no Xray one.
+    @Test fun theHttpTransportHasASingBoxFormAndNoXrayForm() {
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?type=http&path=%2Fh2&security=reality" +
+                "&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&sni=www.example.com#H"
+        )
+        assertNotNull(spec)
+        assertEquals(null, RouterExport.xrayOutbound(spec))
+        assertNotNull(RouterExport.singBoxOutbound(spec))
+    }
+
     @Test fun everyProtocolBecomesAnXrayAndASingBoxOutboundTheBinariesAccept() {
         for ((name, link) in links) {
             val spec = LinkParser.parse(link)
             assertNotNull(spec, name)
 
-            val xray = Json.parseToJsonElement(RouterExport.xrayOutbound(spec)).jsonObject
+            val xrayText = RouterExport.xrayOutbound(spec)
+            assertNotNull(xrayText, name)
+            val xray = Json.parseToJsonElement(xrayText).jsonObject
             assertEquals(RouterExport.TAG, xray["tag"]!!.jsonPrimitive.content, name)
             // CI checks build/xray-configs with the Xray the app ships (release.yml's
             // XRAY_VERSION, 25.3.6), which predates Xray's native Hysteria2 (26.3). That one

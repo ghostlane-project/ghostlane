@@ -34,8 +34,19 @@ object RouterExport {
         if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) null
         else print(SingBoxConfig.outbound(spec, TAG))
 
-    /** An Xray outbound for the same server. */
-    fun xrayOutbound(spec: OutboundSpec): String = print(xray(spec))
+    /**
+     * An Xray outbound for the same server; null for the HTTP transport, which
+     * Xray dropped in favour of XHTTP and a router's Xray would refuse.
+     */
+    fun xrayOutbound(spec: OutboundSpec): String? =
+        if (transportOf(spec) is TransportSpec.Http) null else print(xray(spec))
+
+    private fun transportOf(spec: OutboundSpec): TransportSpec? = when (spec) {
+        is OutboundSpec.Vless -> spec.transport
+        is OutboundSpec.Trojan -> spec.transport
+        is OutboundSpec.Vmess -> spec.transport
+        is OutboundSpec.Hysteria2, is OutboundSpec.Shadowsocks -> null
+    }
 
     /**
      * The oldest Xray that reads [spec]'s outbound, where that is newer than any Xray
@@ -73,8 +84,10 @@ object RouterExport {
                             put("publicKey", spec.publicKey)
                             put("shortId", spec.shortId)
                         }
+                    } else if (spec.plain) {
+                        put("security", "none")
                     } else {
-                        putTls(TlsSpec(spec.sni, fingerprint = spec.fingerprint))
+                        putTls(TlsSpec(spec.sni, insecure = spec.insecure, fingerprint = spec.fingerprint))
                     }
                 }
             }
@@ -178,6 +191,7 @@ object RouterExport {
                     put("mode", transport.mode)
                 }
             }
+            is TransportSpec.Http -> error("Xray has no HTTP transport: xrayOutbound answers null for it")
         }
     }
 
