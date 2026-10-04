@@ -939,12 +939,16 @@ func TestRefreshIsParallel(t *testing.T) {
 	for _, u := range []string{"https://a.example/sub/1/x", "https://b.example/sub/1/x", "https://c.example/sub/1/x", "https://d.example/sub/1/x"} {
 		d.Handle(ctx, ipc.Request{Verb: "add", Source: u})
 	}
+	// Four fetches of 200 ms each: about 200 ms in parallel, 800 ms one after
+	// another. The line between them sits at 500 ms, far from both: at 100 ms
+	// and a 250 ms line, a loaded runner under -race took 290 ms for a parallel
+	// refresh and the test called it serial.
 	w.mu.Lock()
-	w.fetchDelay = 100 * time.Millisecond
+	w.fetchDelay = 200 * time.Millisecond
 	w.mu.Unlock()
 	start := time.Now()
 	d.Handle(ctx, ipc.Request{Verb: "refresh"})
-	if el := time.Since(start); el > 250*time.Millisecond {
+	if el := time.Since(start); el > 500*time.Millisecond {
 		t.Fatalf("four lists refreshed serially: %s", el)
 	}
 }
