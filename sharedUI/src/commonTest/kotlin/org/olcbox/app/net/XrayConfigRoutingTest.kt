@@ -39,6 +39,17 @@ class XrayConfigRoutingTest {
 
     private fun bypass() = Routing.BypassRussia("unused-on-xray", DirectDns.Placeholder)
 
+    // The Linux desktop: the core runs as the user beside a tun whose rule takes
+    // every user's traffic, the core's own connection to the server included.
+    @Test fun aCoreBesideATunLeavesByTheInterfaceItIsGiven() {
+        val json = Json.parseToJsonElement(XrayConfig.buildXhttp(xhttp(), bindInterface = "wlan0")).jsonObject
+        val sockopt = json["outbounds"]!!.jsonArray[0].jsonObject["streamSettings"]!!.jsonObject["sockopt"]!!.jsonObject
+        assertEquals("wlan0", sockopt.str("interface"))
+        assertNull(sockopt["domainStrategy"])
+        // Not given, nothing is written.
+        assertNull(build()["outbounds"]!!.jsonArray[0].jsonObject["streamSettings"]!!.jsonObject["sockopt"])
+    }
+
     private fun JsonObject.str(key: String) = this[key]!!.jsonPrimitive.content
     private fun JsonArray.strings() = map { it.jsonPrimitive.content }
     private fun JsonObject.rules(): List<JsonObject> = this["routing"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }

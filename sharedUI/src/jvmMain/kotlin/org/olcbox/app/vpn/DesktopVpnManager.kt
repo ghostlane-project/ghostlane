@@ -577,7 +577,10 @@ class DesktopVpnManager private constructor(
                     coresAlive = singBoxCore::isRunning
                 }
             } else {
-                coresAlive = startDesktopCore(location, effectiveSocksPort, coreRouting, verboseLogs)
+                coresAlive = startDesktopCore(
+                    location, effectiveSocksPort, coreRouting, verboseLogs,
+                    besideTun = desktopMode == DesktopMode.LinuxTun
+                )
             }
 
             if (requestGeneration != generation) {
@@ -640,8 +643,16 @@ class DesktopVpnManager private constructor(
                     currentTunProcess = tunProcess,
                     requestGeneration = requestGeneration
                 )
-            } else if (!singBoxCore.isRunning() && !xrayCore.isRunning()) {
-                error("core exited before desktop proxy was enabled")
+            } else {
+                if (!singBoxCore.isRunning() && !xrayCore.isRunning()) {
+                    error("core exited before desktop proxy was enabled")
+                }
+                // hev is watched behind a core line as it is behind a room.
+                // Nothing did: its death would have left the status Connected
+                // with no tunnel under it.
+                if (desktopMode == DesktopMode.LinuxTun) {
+                    startTunExitWatcher(tunProcess ?: error("TUN process is missing"), requestGeneration)
+                }
             }
             if (frontPort != null && !singBoxCore.isRunning()) {
                 error("sing-box front exited before desktop proxy was enabled")
@@ -964,18 +975,47 @@ class DesktopVpnManager private constructor(
      * the answer depends on the shape chosen here: XHTTP under rules is two
      * processes, and asking whether either core runs would call that line alive
      * with half of it gone.
+     *
+     * [besideTun] is the Linux tunnel. Its rule sends every user's traffic into
+     * the tun and lets only root keep the main table, and a core runs as the
+     * user: its own connection to the server went into the tun with the rest,
+     * came back to its own port, and no line a core carries could connect
+     * there. So the core is bound to the physical interface, which a socket
+     * needs no privilege for since Linux 5.7 and which the tun's route does
+     * not match. sing-box finds the interface itself and follows it when it
+     * changes; Xray is told its name once. A server that is a name also gets a
+     * resolver of its own, because the system's answers with hev's fake
+     * addresses for as long as the tun is up; that part exists for sing-box
+     * only.
      */
     private suspend fun startDesktopCore(
         location: LocationConfig,
         port: Int,
         routing: Routing,
-        verboseLogs: Boolean
+        verboseLogs: Boolean,
+        besideTun: Boolean = false
     ): () -> Boolean {
         val raw = location.rawLink ?: error("core location has no link")
         val spec = org.olcbox.app.net.LinkParser.parse(raw) ?: error("unparseable core link")
         stopDesktopCores()
         val xhttp = (spec as? org.olcbox.app.net.OutboundSpec.Vless)
             ?.takeIf { it.transport is org.olcbox.app.net.TransportSpec.Xhttp }
+        val boundInterface = if (besideTun && xhttp != null) DesktopDnsResolver.linuxDefaultInterface() else null
+        val serverResolver = if (besideTun && xhttp == null) {
+            DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+        } else {
+            null
+        }
+        if (besideTun && xhttp != null) {
+            if (boundInterface == null) {
+                addLog("Linux TUN: no default interface found, so the XHTTP core cannot be led out of the tunnel")
+            } else if (!org.olcbox.app.net.XrayConfig.isIpLiteral(xhttp.host)) {
+                addLog(
+                    "Linux TUN: this XHTTP server is named by hostname, and the system's resolver answers " +
+                        "through the tunnel while it is up; it may not connect in this mode"
+                )
+            }
+        }
         // Which processes must be alive once the port answers. A port that
         // answers proves nothing about who answers.
         val alive: () -> Boolean
@@ -986,7 +1026,8 @@ class DesktopVpnManager private constructor(
                 org.olcbox.app.net.XrayConfig.buildXhttp(
                     xhttp,
                     socksPort = xrayPort,
-                    verboseLogs = verboseLogs
+                    verboseLogs = verboseLogs,
+                    bindInterface = boundInterface
                 )
             )
             singBoxCore.start(
@@ -1004,7 +1045,8 @@ class DesktopVpnManager private constructor(
                 org.olcbox.app.net.XrayConfig.buildXhttp(
                     xhttp,
                     socksPort = port,
-                    verboseLogs = verboseLogs
+                    verboseLogs = verboseLogs,
+                    bindInterface = boundInterface
                 )
             )
             addLog("Xray/xhttp core starting on 127.0.0.1:$port")
@@ -1015,7 +1057,9 @@ class DesktopVpnManager private constructor(
                     spec,
                     socksPort = port,
                     routing = routing,
-                    verboseLogs = verboseLogs
+                    verboseLogs = verboseLogs,
+                    serverResolver = serverResolver,
+                    autoDetectInterface = besideTun
                 )
             )
             addLog("sing-box core (${location.kind}) starting on 127.0.0.1:$port")
@@ -1861,7 +1905,10 @@ class DesktopVpnManager private constructor(
                 try {
                     val frontRouting = line.coreRouting
                     if (!line.isOlcrtc) {
-                        startDesktopCore(line.location, line.corePort, line.coreRouting, line.verboseLogs)
+                        startDesktopCore(
+                            line.location, line.corePort, line.coreRouting, line.verboseLogs,
+                            besideTun = line.desktopMode == DesktopMode.LinuxTun
+                        )
                     } else if (line.frontPort != null && frontRouting is Routing.Rules) {
                         startOlcRtcFront(line.socksSettings, frontRouting, line.verboseLogs, line.frontPort)
                     }
@@ -2231,7 +2278,9 @@ internal enum class DesktopRulesHome {
  * - the proxy's sockets are ordinary ones;
  * - the macOS daemon binds its own to the physical interface;
  * - in the Linux tunnel only root's traffic keeps the main table, and of what
- *   runs there only the olcRTC engine runs as root (the cores run as the user);
+ *   runs there only the olcRTC engine runs as root. A core runs as the user and
+ *   reaches its server bound to the physical interface (startDesktopCore); its
+ *   rules have not been moved there;
  * - in the Windows tunnel nothing does yet.
  *
  * The proxy keeps its front for olcRTC: it also does what the engine cannot,

@@ -444,6 +444,24 @@ class DesktopProxyModeTest {
         assertEquals("192.168.43.1:53", dns)
     }
 
+    // A core beside the Linux tun is given the machine's own resolvers: the
+    // stub is the one that answers with the tun's fake addresses.
+    @Test
+    fun linuxDirectResolversAreEveryUpstreamButTheStub() {
+        assertEquals(
+            listOf("192.168.43.1", "2a00:1234::53"),
+            DesktopDnsResolver.linuxDnsServers(
+                resolvectlOutput = "Link 3 (wlan0): 192.168.43.1 2a00:1234::53",
+                nmcliOutput = "192.168.43.1",
+                resolvConf = "nameserver 127.0.0.53"
+            )
+        )
+        assertEquals(
+            emptyList(),
+            DesktopDnsResolver.linuxDnsServers(resolvectlOutput = "", nmcliOutput = "", resolvConf = "nameserver 127.0.0.53")
+        )
+    }
+
     @Test
     fun linuxDnsResolverFallsBackToLocalSystemResolver() {
         val dns = DesktopDnsResolver.selectLinuxDnsServer(

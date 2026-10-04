@@ -127,6 +127,25 @@ class SingBoxConfigDumpTest {
         )
     }
 
+    // The Linux desktop's tun: the core binds its sockets to the physical
+    // interface, here together with the resolver for a server that is a name.
+    @Test fun dumpVlessBesideATunBoundToThePhysicalInterface() {
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@vpn.example.com:443" +
+                "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+                "&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#N"
+        )
+        assertNotNull(spec)
+        dump(
+            "vless-beside-tun",
+            SingBoxConfig.build(
+                spec,
+                serverResolver = DirectDns.Servers(listOf("192.168.1.1")),
+                autoDetectInterface = true
+            )
+        )
+    }
+
     // The shapes ghostlane#82 found unread: the HTTP transport, VLESS in the clear,
     // and ordinary TLS with its certificate waived. No reference files: new shapes.
     @Test fun dumpVlessHttpTransportAndVlessSecurityOptions() {

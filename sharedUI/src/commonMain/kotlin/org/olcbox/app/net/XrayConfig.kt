@@ -75,6 +75,11 @@ object XrayConfig {
      *
      * [login], when given, is demanded of every client of the SOCKS inbound
      * (see [SocksLogin]); the tun front and every probe then have to send it.
+     *
+     * [bindInterface] names the interface the connection to the server leaves
+     * by, for a core beside a tun whose rules do not exempt it (the Linux
+     * desktop; `autoDetectInterface` in [SingBoxConfig.build] is the same thing
+     * for sing-box, which finds the interface itself).
      */
     fun buildXhttp(
         spec: OutboundSpec.Vless,
@@ -85,6 +90,7 @@ object XrayConfig {
         answersDns: Boolean = false,
         verboseLogs: Boolean = false,
         login: SocksLogin? = null,
+        bindInterface: String? = null,
     ): String {
         val xhttp = spec.transport as? TransportSpec.Xhttp
             ?: error("XrayConfig.buildXhttp requires an xhttp transport")
@@ -211,8 +217,16 @@ object XrayConfig {
                         // rather than the system's, which inside the extension
                         // is the tun — a lookup that would wait on the tunnel
                         // being dialled. `dns-direct` answers it underneath.
-                        if (serverByName) {
-                            putJsonObject("sockopt") { put("domainStrategy", "UseIPv4") }
+                        // [bindInterface]: the interface the connection to the
+                        // server leaves by, for a core beside a tun whose rules
+                        // do not exempt it (the Linux desktop; see
+                        // SingBoxConfig.build, which has sing-box find the
+                        // interface itself). Xray has to be told its name.
+                        if (serverByName || bindInterface != null) {
+                            putJsonObject("sockopt") {
+                                if (serverByName) put("domainStrategy", "UseIPv4")
+                                if (bindInterface != null) put("interface", bindInterface)
+                            }
                         }
                     }
                 }

@@ -72,8 +72,36 @@ internal object DesktopDnsResolver {
             .distinct()
 
     private fun currentLinuxDnsServer(): String? {
-        val defaultRouteOutput = runCommand(listOf("ip", "route", "show", "default")).orEmpty()
-        val interfaceName = defaultRouteInterface(defaultRouteOutput)
+        val (resolvectlOutput, nmcliOutput, resolvConf) = linuxDnsSources()
+        return selectLinuxDnsServer(
+            resolvectlOutput = resolvectlOutput,
+            nmcliOutput = nmcliOutput,
+            resolvConf = resolvConf
+        )
+    }
+
+    /**
+     * The interface the Linux machine's default route leaves by, the tun's own
+     * aside. A core beside the tun is bound to it: see
+     * `DesktopVpnManager.startDesktopCore`.
+     */
+    fun linuxDefaultInterface(): String? =
+        defaultRouteInterface(runCommand(listOf("ip", "route", "show", "default")).orEmpty())
+
+    /**
+     * The Linux machine's own resolvers, as addresses, loopback aside. While
+     * the tun is up the system's resolver answers with hev's fake addresses,
+     * so a core beside the tun asks these, through the interface it is bound
+     * to. Empty when none is found, which leaves the public fallback.
+     */
+    fun linuxDirectDnsServers(): List<String> {
+        val (resolvectlOutput, nmcliOutput, resolvConf) = linuxDnsSources()
+        return linuxDnsServers(resolvectlOutput, nmcliOutput, resolvConf)
+    }
+
+    /** What the machine says about its resolvers: resolved and NetworkManager for the default interface, and resolv.conf. */
+    private fun linuxDnsSources(): Triple<String, String, String> {
+        val interfaceName = linuxDefaultInterface()
 
         val resolvectlOutput = if (interfaceName != null) {
             runCommand(listOf("resolvectl", "dns", interfaceName))
@@ -87,11 +115,7 @@ internal object DesktopDnsResolver {
             Files.readString(Path.of("/etc/resolv.conf"))
         }.getOrDefault("")
 
-        return selectLinuxDnsServer(
-            resolvectlOutput = resolvectlOutput.orEmpty(),
-            nmcliOutput = nmcliOutput.orEmpty(),
-            resolvConf = resolvConf
-        )
+        return Triple(resolvectlOutput.orEmpty(), nmcliOutput.orEmpty(), resolvConf)
     }
 
     private fun runCommand(command: List<String>): String? {
@@ -122,17 +146,30 @@ internal object DesktopDnsResolver {
         nmcliOutput: String,
         resolvConf: String
     ): String? {
-        val candidates = buildList {
-            addAll(ipAddresses(resolvectlOutput))
-            addAll(ipAddresses(nmcliOutput))
-            addAll(resolvConfNameservers(resolvConf))
-        }.distinct()
+        val candidates = linuxDnsCandidates(resolvectlOutput, nmcliOutput, resolvConf)
 
         val selected = candidates.firstOrNull { !isLoopback(it) }
             ?: candidates.firstOrNull()
             ?: return null
         return dnsEndpoint(selected)
     }
+
+    /** Every resolver the three sources name except the loopback stub, in their order. */
+    internal fun linuxDnsServers(
+        resolvectlOutput: String,
+        nmcliOutput: String,
+        resolvConf: String
+    ): List<String> = linuxDnsCandidates(resolvectlOutput, nmcliOutput, resolvConf).filterNot(::isLoopback)
+
+    private fun linuxDnsCandidates(
+        resolvectlOutput: String,
+        nmcliOutput: String,
+        resolvConf: String
+    ): List<String> = buildList {
+        addAll(ipAddresses(resolvectlOutput))
+        addAll(ipAddresses(nmcliOutput))
+        addAll(resolvConfNameservers(resolvConf))
+    }.distinct()
 
     private fun ipAddresses(output: String): List<String> {
         return output.lineSequence()

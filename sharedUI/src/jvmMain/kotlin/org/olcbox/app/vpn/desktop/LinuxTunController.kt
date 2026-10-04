@@ -265,9 +265,12 @@ internal class LinuxTunController(
          * IPv4 in milliseconds; relaying into a node without IPv6 would hang for
          * a timeout and arrive at the same place.
          *
-         * Root keeps its direct path for IPv6 as it does for IPv4 — the core runs
-         * as root here, and without that rule it could not reach a server that
-         * only answers over IPv6.
+         * Root keeps its direct path for IPv6 as it does for IPv4: the olcRTC
+         * engine runs as root here, and without that rule it could not reach a
+         * server that only answers over IPv6. A sing-box or Xray core runs as
+         * the user and gets out bound to the physical interface instead; a
+         * lookup bound to a device passes over this blackhole as it passes over
+         * the tun's IPv4 route.
          *
          * Every `ip -6` line tolerates failure: a kernel built without IPv6 has
          * no such tables, and refusing to bring the tunnel up over that would

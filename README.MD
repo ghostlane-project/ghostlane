@@ -274,7 +274,7 @@ Where it applies:
 | iOS | All traffic, or Bypass Russia; an olcRTC room applies it from the engine's direct rules |
 | macOS, proxy and tunnel | Every mode and your rules |
 | Windows | Every mode and your rules in proxy mode. The Windows tunnel carries everything, and the routing screen says to use proxy mode for it |
-| Linux | olcRTC rooms: a bypass and your rules, as in a room on Android. The engine runs as root there, and root keeps its own route out of the tunnel. Other servers carry everything: their cores run as the user, and a socket meant to go direct would re-enter the policy-routed tun. The routing screen says so and does not offer blocked-only |
+| Linux | olcRTC rooms: a bypass and your rules, as in a room on Android. The engine runs as root there, and root keeps its own route out of the tunnel. Other servers carry everything: their cores run as the user and reach the server bound to the physical interface, and the rules have not been moved there. The routing screen says so and does not offer blocked-only |
 
 ## Server lists
 
@@ -400,7 +400,7 @@ The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
 | Android | Android Studio, SDK 37, NDK 28.2.13676358 |
 | Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
 | iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags |
-| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
+| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root) |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 
 Default local `olcrtc` path:
