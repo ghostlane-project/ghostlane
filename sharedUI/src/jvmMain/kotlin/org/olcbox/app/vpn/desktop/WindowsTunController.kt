@@ -29,16 +29,18 @@ internal class WindowsTunController(
         ${'$'}route.InterfaceAlias
     """.trimIndent()).trim().also { require(it.isNotBlank()) { "No physical interface" } }
 
-    /** sing-box auto-route must own either a default route or both split defaults. */
+    /**
+     * Whether sing-box's auto-route has taken the machine's IPv4 traffic onto
+     * the tun's adapter ([coversDefaultRoute] says what counts as that).
+     */
     suspend fun ownsDefaultRoutes(interfaceName: String): Boolean = runCatching {
-        runPowerShell("""
-            ${'$'}ErrorActionPreference = 'Stop'
-            ${'$'}routes = @(Get-NetRoute -AddressFamily IPv4 -InterfaceAlias ${interfaceName.powershellLiteral()} |
-              Where-Object { ${'$'}_.DestinationPrefix -in @('0.0.0.0/0', '0.0.0.0/1', '128.0.0.0/1') } |
-              Select-Object -ExpandProperty DestinationPrefix)
-            if (${'$'}routes -contains '0.0.0.0/0' -or
-                ((${ '$' }routes -contains '0.0.0.0/1') -and (${'$'}routes -contains '128.0.0.0/1'))) { 'true' } else { 'false' }
-        """.trimIndent()).trim().equals("true", ignoreCase = true)
+        coversDefaultRoute(
+            runPowerShell("""
+                ${'$'}ErrorActionPreference = 'Stop'
+                Get-NetRoute -AddressFamily IPv4 -InterfaceAlias ${interfaceName.powershellLiteral()} |
+                  Select-Object -ExpandProperty DestinationPrefix
+            """.trimIndent()).lines()
+        )
     }.getOrDefault(false)
 
     private suspend fun isAdministrator(): Boolean {
@@ -119,6 +121,54 @@ internal class WindowsTunController(
                 Start-Process @startArgs | Out-Null
             """.trimIndent()
         }
+
+        /**
+         * Whether [prefixes], the IPv4 routes on the tun's adapter as
+         * `Get-NetRoute` prints them, take the machine's traffic: together
+         * they leave out no more than [spared] addresses of the whole space.
+         *
+         * Not "has `0.0.0.0/0`, or both halves of it", which is what this
+         * asked before. That is what sing-box installs for a tun that leaves
+         * nothing out. A tun told to leave an address out, and every line a
+         * core carries has its server's address left out, gets the whole
+         * space minus that address as the shortest list of prefixes that
+         * makes it: thirty-two of them for one address, with one of the two
+         * halves among them and never both, and no default route at all. The
+         * old question could not be answered yes for such a tun, so its
+         * session never passed its check however well it carried.
+         *
+         * What is left out is the servers' own addresses, a handful; the
+         * limit is a /24's worth, far above that and far below what a tun
+         * whose routes are not in yet leaves out, which is nearly everything.
+         * Routes Windows puts on every adapter by itself (its own subnet,
+         * multicast, broadcast) overlap the others and are counted once.
+         */
+        fun coversDefaultRoute(prefixes: List<String>, spared: Long = ROUTES_MAY_SPARE): Boolean {
+            val ranges = prefixes.mapNotNull(::ipv4Range).sortedBy { it.first }
+            var covered = 0L
+            var reached = -1L
+            for ((start, end) in ranges) {
+                if (end <= reached) continue
+                covered += end - maxOf(start, reached + 1) + 1
+                reached = end
+            }
+            return IPV4_ADDRESSES - covered <= spared
+        }
+
+        /** `a.b.c.d/n` as its first and last address; null for anything else. */
+        private fun ipv4Range(prefix: String): Pair<Long, Long>? {
+            val address = prefix.trim().substringBefore('/')
+            val bits = prefix.trim().substringAfter('/', "").toIntOrNull()?.takeIf { it in 0..32 } ?: return null
+            val octets = address.split('.').map { it.toIntOrNull()?.takeIf { octet -> octet in 0..255 } ?: return null }
+            if (octets.size != 4) return null
+            val value = octets.fold(0L) { acc, octet -> acc * 256 + octet }
+            val size = 1L shl (32 - bits)
+            val start = value / size * size
+            return start to start + size - 1
+        }
+
+        private const val IPV4_ADDRESSES = 1L shl 32
+        const val ROUTES_MAY_SPARE = 256L
 
         private fun String.powershellLiteral(): String = "'${replace("'", "''")}'"
 
