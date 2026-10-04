@@ -1956,9 +1956,7 @@ class DesktopVpnManager private constructor(
      *
      * In a job of its own, as a change of the LAN settings starts it. The
      * session is back whether or not the listener is, and a listener slow to
-     * open must hold up neither the mutex nor the status: its timeout arrives
-     * as a cancellation, which inside the restart would read as "superseded"
-     * and fail every attempt without a word.
+     * open must hold up neither the mutex nor the status.
      */
     private fun restoreLanSharing(upstream: SubscriptionFetchProxy, requestGeneration: Long) {
         if (!_socksProxySettings.value.shareOnLan || lanProxy.isRunning()) return
