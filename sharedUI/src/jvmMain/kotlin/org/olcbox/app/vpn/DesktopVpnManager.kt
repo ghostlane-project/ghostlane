@@ -3019,16 +3019,25 @@ class DesktopVpnManager private constructor(
      * On Windows and macOS the tun lets the cores out by their binaries'
      * paths, and a probe runs the same binary, so nothing more is needed. On
      * Linux a core is led out by being bound to the physical interface
-     * ([startDesktopCore]), and the probe's is bound the same way. On all
-     * three a server that is a name is asked of the resolvers the session
-     * read before its tun came up: the system's resolver is behind the tun by
-     * now. In proxy mode there is no tun, and the probe is the one a connect
-     * makes.
+     * ([startDesktopCore]), and the probe's is bound the same way. A server
+     * that is a name is asked of the machine's own resolvers, since the
+     * system's is behind the tun by now: on Windows and macOS the ones the
+     * session read before its tun came up, and on Linux the ones the default
+     * interface names now. In proxy mode there is no tun, and the probe is
+     * the one a connect makes.
      */
     private suspend fun probePasses(line: SessionLine, candidate: LocationConfig, boundInterface: String?): Boolean =
         TransportProbe.passes(
             candidate,
-            serverResolver = line.session.resolvers?.let { DirectDns.Servers(it) },
+            // In the Linux tunnel they are read now, as startDesktopCore reads
+            // them for the session's own core: the tun does not change what
+            // the default interface says, and the ones kept from the start go
+            // stale when the machine moves to another network.
+            serverResolver = if (line.desktopMode == DesktopMode.LinuxTun) {
+                DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            } else {
+                line.session.resolvers?.let { DirectDns.Servers(it) }
+            },
             autoDetectInterface = line.desktopMode == DesktopMode.LinuxTun,
             bindInterface = boundInterface,
             starter = lookStarter
