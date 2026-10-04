@@ -146,6 +146,20 @@ list usually has another in the same country.
   would be a claim about a setting the user may have changed since. With lockdown on, the row warns about the
   apps split tunnelling leaves outside the VPN: the chosen apps in "bypass selected", every other app in "proxy
   selected". Android cuts those off, and the app cannot exempt them.
+- **A6. tun2socks does not outlive what it points at.** Added after the review of stages A to C. Where a
+  reconnect ends with nothing listening behind the interface (the transport did not start, no other line
+  carried, the location is gone), tun2socks is stopped too and started again with the transport. Left running
+  through a hold of minutes it keeps offering the session's SOCKS login to whatever binds that loopback port,
+  and any app on the phone can bind one. A tun nobody reads drops, which is the hold. A tun2socks that will not
+  stop is waited for: it is one instance per process and reads a duplicate of the descriptor, so nothing can be
+  started beside it and a handover does not dislodge it.
+- **A7. One location store.** Added after the same review. Stage C makes the service a writer of the stored
+  bundle (the active location, the remembered line). The app and the service each had a repository, and so a
+  lock, of their own, and the file was written in place: a read inside the other's write does not parse, is
+  taken for an empty store, and is saved as one. The bundle is now replaced in one step (written beside itself,
+  renamed over), the two share one repository, and the service reads the stored bundle past the repository's
+  lock, which the app holds for as long as a list refresh downloads. The move itself is one change made by the
+  repository, and only while the location that failed is still the active one.
 
 ### Desktop
 
@@ -298,6 +312,7 @@ One subject per pull request. The stages are the order of building; all of them 
 | A | `fix(links)`: `type=http`, and VLESS `security=none` and `allowInsecure`, in the app and the CLI | ghostlane#82 |
 | B | `feat(android)`: the session holds the tunnel | A1, A2, A4 |
 | B | `feat(android)`: Android's kill switch, as the system reports it | A5 |
+| C | `fix(android)`: one location store for the process, saved in one step | A7 |
 | C | `feat(connect)`: another server of the same country during a session (common code and Android) | F1-F6 |
 | D | `feat(desktop)`: a dead core or engine is restarted behind the tun | D1 |
 | D | `feat(desktop)`: the tun is the session's; another line and the move happen behind it | D2, F4 |
@@ -320,6 +335,23 @@ that had piled up. What that settles:
 3. **The move may leave the exit the user picked for another exit of the same country** (F3), under the smart
    connect switch, as proposed.
 4. **The desktop moves too**, which is why D2 rebuilds its tun around the session.
+
+## Reviewed
+
+Stages A to C were read by an independent reviewer once they were built (2026-10-04), against this document and
+without a device. Twelve findings, all confirmed in the code and fixed on the branch each belongs to. What they
+changed in the design is A6 and A7 above; the rest brought the code back to what was already decided here:
+
+- the hold began wherever an interface existed, not at the first verified connection (A4);
+- an Error could still be published over a held interface by helpers a first connect shares with a restart
+  (A1), and a start by Android that failed after its transport was up did not retry (A4);
+- an edit of the app lists was applied only by the restart that carried it, and lost when that restart ended
+  early (A2);
+- time without a network counted as outage, a superseded start counted as a failure, and a look at the other
+  lines that was cut short still put the next one off by five minutes (F2);
+- the line moved to was not named in the notification (F5);
+- a stop arriving while Android created an interface could leave that interface up; a tun2socks told to stop
+  was taken for a live one; its stop could be asked for twice.
 
 ## Testing
 
