@@ -24,9 +24,21 @@ data class TunSpec(
  */
 object TunnelSession {
     /**
+     * Whether the interface that is up is a session's, to be held. From the
+     * first verified connection on; from its first second when Android itself
+     * asked for the VPN. Until then it belongs to a first connect, and a first
+     * connect that fails, or is replaced by another choice before it has
+     * carried anything, closes it: a hold there would be a phone without
+     * network behind a server that never worked.
+     */
+    fun holdsInterface(interfaceUp: Boolean, verified: Boolean, startedBySystem: Boolean): Boolean =
+        interfaceUp && (verified || startedBySystem)
+
+    /**
      * Whether this start runs behind the interface that is already up: any
      * restart of a tun session, whoever asked for it. A first start has no
-     * interface yet, and proxy mode never has one.
+     * interface yet, or none that is held ([holdsInterface]), and proxy mode
+     * never has one.
      */
     fun runsBehindTunnel(
         tunMode: Boolean,
