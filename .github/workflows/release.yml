@@ -1274,7 +1274,8 @@ jobs:
             --bundle "dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab" \
             --track "${PLAY_TRACK}" \
             --release-name "${OLCBOX_VERSION}" \
-            --notes "Ghostlane ${OLCBOX_VERSION}"
+            --notes "Ghostlane ${OLCBOX_VERSION}" \
+            --notes-file docs/release-notes/play-whats-new.txt
           rm -f "$sa"
 
       # Says what happened to the Play upload in the run summary, so that

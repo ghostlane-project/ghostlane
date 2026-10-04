@@ -442,7 +442,11 @@ only to scan a QR code, and only when the user taps that button.
    - GitHub → Settings → Secrets → Actions → `PLAY_SERVICE_ACCOUNT_JSON` =
      the whole JSON file.
    Every `android`, `mobile` or `all` run then lands on Play's internal
-   track within minutes of the build. The `play_track` input goes to
+   track within minutes of the build. Its *What's new* is
+   `docs/release-notes/play-whats-new.txt`: Android only, English, 500
+   characters at most (a longer text is cut at the last line that fits),
+   written for the release and emptied after it like `pending.md`. With the
+   file empty or missing the text is the version number. The `play_track` input goes to
    `production` for a direct release (Play reviews it first) or `none` to
    build only; promoting a tested internal build from the console is the
    safer production path, because it ships the exact bundle testers had.
