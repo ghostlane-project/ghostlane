@@ -85,8 +85,11 @@ import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
+import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
 import org.olcbox.app.vpn.OlcRtcUdpRelay
+import org.olcbox.app.vpn.SessionPort
+import org.olcbox.app.vpn.TunnelBridge
 import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
@@ -181,6 +184,16 @@ class OlcboxVpnService : VpnService() {
     private val xrayCore by lazy { AndroidXrayController(this) }
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
+
+    /**
+     * The core's port for as long as one tun interface lives, and what tun2socks
+     * was last started against. A reconnect in place keeps the interface and
+     * tun2socks, so the core has to come back where tun2socks already points:
+     * a port drawn per start left every core line connected and carrying
+     * nothing after the first move between Wi-Fi and mobile data.
+     */
+    private val sessionCorePort = SessionPort(::freeLoopbackPort)
+    private var bridgeTarget: BridgeTarget? = null
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
@@ -564,6 +577,15 @@ class OlcboxVpnService : VpnService() {
         if (requestedGeneration != generation) return
 
         if (startTransport(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
+            if (!ensureBridge()) {
+                if (requestedGeneration != generation) return
+                // The transport is up and tun2socks cannot reach it. A full
+                // restart closes the descriptor, which ends a tun2socks that
+                // would not stop when asked, and starts both again.
+                setStatus(VpnStatus.Reconnecting)
+                requestTransportRecovery("tun2socks could not follow the transport", fullRestart = true)
+                return
+            }
             val exit = verifyTunnel()
             if (requestedGeneration != generation) return
             if (exit == null) {
@@ -759,10 +781,11 @@ class OlcboxVpnService : VpnService() {
      * endpoint the app tells other apps to use — putting the core anywhere else
      * leaves that promised port dead — and, as before, without a login. In tun
      * mode nothing outside talks to it, so it takes a port the kernel hands out
-     * for this start and demands the app's own login: tun2socks follows
-     * [activeCorePort] and sends [activeCoreLogin]. It used to be 10810, open,
-     * which any app on the phone could use to leave through the tunnel or to
-     * read its exit address (see [SocksLogin]).
+     * for this tun session and demands the app's own login: tun2socks is started
+     * against [activeCorePort] with [activeCoreLogin], and [ensureBridge] restarts
+     * it if either ever differs. It used to be 10810, open, which any app on the
+     * phone could use to leave through the tunnel or to read its exit address
+     * (see [SocksLogin]).
      */
     private suspend fun startCore(
         location: LocationConfig,
@@ -770,7 +793,7 @@ class OlcboxVpnService : VpnService() {
         routing: Routing
     ): Boolean {
         val tun = connectionMode == AndroidConnectionMode.Tun
-        val port = if (tun) freeLoopbackPort() else socksListenPort
+        val port = if (tun) sessionCorePort.acquire() else socksListenPort
         val login = if (tun) SocksLogin.of(socksUsername, socksPassword) else null
         return try {
             val raw = location.rawLink ?: error("core location has no link")
@@ -861,6 +884,9 @@ class OlcboxVpnService : VpnService() {
             val msg = e.message ?: "Core transport failed"
             addLog("core start failed: $msg")
             stopCoreProcesses()
+            // Whatever went wrong, the next start draws another port: one that
+            // something else took in the meantime would fail every start alike.
+            if (tun) sessionCorePort.release()
             if (setErrorOnFailure) {
                 setStatus(VpnStatus.Error(msg))
                 updateNotification("Connection failed")
@@ -1042,6 +1068,7 @@ class OlcboxVpnService : VpnService() {
 
             val nativeFd = ParcelFileDescriptor.dup(pfd.fileDescriptor).detachFd()
             val configFile = writeTun2socksConfig()
+            bridgeTarget = currentBridgeTarget()
             tun2socksStarted = true
             tun2socksStopRequested = false
             tun2socksThread = thread(name = "OlcboxTun2Socks", isDaemon = true) {
@@ -1175,6 +1202,35 @@ class OlcboxVpnService : VpnService() {
             )
         )
         return file
+    }
+
+    /** Where tun2socks has to point for the transport that is up now; what [writeTun2socksConfig] writes. */
+    private fun currentBridgeTarget(): BridgeTarget {
+        val (username, password) = upstreamLogin()
+        return BridgeTarget(socksConnectHost(), activeCorePort ?: socksListenPort, username, password)
+    }
+
+    /**
+     * After a transport came back behind an interface that stayed up: make sure
+     * tun2socks reaches it.
+     *
+     * hev reads its target once, so it is restarted, on the descriptor that is
+     * already open, whenever the target moved or hev is gone. The old instance
+     * has to be gone first: hev is one instance per process, and a second one
+     * started beside it is not a restart. On false the caller restarts the
+     * whole tunnel, which closes the descriptor hev is reading.
+     */
+    private suspend fun ensureBridge(): Boolean {
+        if (connectionMode != AndroidConnectionMode.Tun) return true
+        val pfd = vpnInterface ?: return false
+        val running = tun2socksThread
+        if (!TunnelBridge.needsRestart(bridgeTarget, running?.isAlive == true, currentBridgeTarget())) return true
+
+        addLog("tun2socks restarts to follow the transport")
+        stopTun2socks()
+        if (!waitForTun2socksStopped(running, TUN2SOCKS_RESTART_WAIT_MS)) return false
+        if (tun2socksThread == running) tun2socksThread = null
+        return startTun2socks(pfd)
     }
 
     private fun startWatchdog() {
@@ -1312,9 +1368,12 @@ class OlcboxVpnService : VpnService() {
         unbindProcessFromNetwork()
     }
 
-    private suspend fun waitForTun2socksStopped(thread: Thread?) {
-        if (thread == null) return
-        val stopped = withTimeoutOrNull(TUN2SOCKS_STOP_WAIT_MS) {
+    private suspend fun waitForTun2socksStopped(
+        thread: Thread?,
+        timeoutMs: Long = TUN2SOCKS_STOP_WAIT_MS
+    ): Boolean {
+        if (thread == null) return true
+        val stopped = withTimeoutOrNull(timeoutMs) {
             while (thread.isAlive) {
                 delay(SOCKS_RELEASE_POLL_MS)
             }
@@ -1323,6 +1382,7 @@ class OlcboxVpnService : VpnService() {
         if (!stopped) {
             addLog("tun2socks cleanup is still pending")
         }
+        return stopped
     }
 
     private suspend fun stopTransportProcesses(
@@ -1644,6 +1704,9 @@ class OlcboxVpnService : VpnService() {
     private fun cleanupVpnInterface() {
         runCatching { vpnInterface?.close() }
         vpnInterface = null
+        // The session ends with its interface: the next one draws its own port.
+        sessionCorePort.release()
+        bridgeTarget = null
     }
 
     private fun canReconnectTransportInPlace(): Boolean {
@@ -2138,6 +2201,7 @@ class OlcboxVpnService : VpnService() {
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
         private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
+        private const val TUN2SOCKS_RESTART_WAIT_MS = 5_000L
         private const val TUNNEL_HANDOFF_DELAY_MS = 300L
         private const val NETWORK_LOSS_GRACE_MS = 2_500L
         private const val NETWORK_STABILITY_GRACE_MS = 1_500L
