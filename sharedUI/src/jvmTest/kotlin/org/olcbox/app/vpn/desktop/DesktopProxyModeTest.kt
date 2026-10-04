@@ -200,6 +200,38 @@ class DesktopProxyModeTest {
         assertTrue(script.indexOf("kill -") < script.indexOf("ip rule del"))
     }
 
+    // The room's engine is root's too in the Linux tunnel. The cleanup ends
+    // it, found by the config it was started with.
+    @Test
+    fun theLinuxCleanupEndsTheEnginesTheAppCouldNot() {
+        val plain = LinuxTunController.downScriptContent("/tmp/state")
+        val naming = "/home/a/.olcbox/runtime/olcrtc-client-"
+        val script = LinuxTunController.withTunnelEnded(LinuxTunController.withEnginesEnded(plain, naming))
+        val lines = script.lines()
+
+        assertEquals("#!/bin/sh", lines.first())
+        // The words are a variable of the script's and go to grep on its
+        // standard input: on its command line grep would find itself.
+        assertContains(script, "naming='/home/a/.olcbox/runtime/olcrtc-client-'")
+        assertContains(script, "printf '%s\\n' \"\$naming\" | grep -lasF -f - /proc/[0-9]*/cmdline")
+        assertFalse(script.contains("grep -lasF -- "))
+        assertContains(script, "sig=TERM")
+        // The tunnel's process, then the engines, then the removal.
+        assertTrue(script.indexOf("iff:") < script.indexOf("naming="))
+        assertTrue(script.indexOf("naming=") < script.indexOf("ip rule del"))
+        // Each only when the app runs the script: hev hands its own the tun's name.
+        assertEquals(2, lines.count { it == "if [ \"\$#\" -eq 0 ]; then" })
+        // What the script did before is still there, after both and unchanged.
+        val added = LinuxTunController.tunnelEndLines().lines().size + LinuxTunController.engineEndLines(naming).lines().size
+        assertEquals(plain.lines().drop(1), lines.drop(1 + added))
+    }
+
+    @Test
+    fun aNameWithAQuoteIsOneWordToTheShell() {
+        val script = LinuxTunController.engineEndLines("/home/o'neil/.olcbox/runtime/olcrtc-client-")
+        assertContains(script, "naming='/home/o'\"'\"'neil/.olcbox/runtime/olcrtc-client-'")
+    }
+
     @Test
     fun endingATunnelLeftFromBeforeRemovesNothing() {
         val script = LinuxTunController.endTunnelScriptContent()

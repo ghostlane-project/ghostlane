@@ -69,12 +69,39 @@ internal class LinuxTunController(
         // killed with the tunnel up. A second one exits on finding the device
         // taken ("Device or resource busy"), so no connect gets through until
         // it is gone. Ending it needs root, which here is one more password,
-        // in the one case where nothing else would do. Only the process is
-        // ended: under a kill switch's block the rules stay as they are.
+        // in the one case where nothing else would do.
         if (interfaceExists(TUN_NAME)) {
             addLog("Linux TUN: a tunnel process from before still holds $TUN_NAME; ending it first")
-            runCatching { runPrivilegedScript(writeScript(CLEANUP_SCRIPT_NAME, endTunnelScriptContent())) }
+            // Under a kill switch's block only the process is ended, and the
+            // rules stay as they are. Otherwise everything that tunnel put in
+            // goes with it, as at a stop. Its own pre-down is this file by
+            // now and removes nothing when hev runs it, so nothing else would
+            // put back the rp_filter values it saved, and the up script would
+            // then save the zeroes that are there now in their place: the
+            // next stop would "restore" those, until the machine restarts.
+            // Not the engines here: the one this session started is running.
+            val ending = if (held) {
+                writeScript(CLEANUP_SCRIPT_NAME, endTunnelScriptContent())
+            } else {
+                writeCleanupScript(
+                    removeBlockDevice = interfaceExists(KILL_SWITCH_DEVICE),
+                    endTunnel = true,
+                    endEnginesNaming = null
+                )
+            }
+            runCatching { runPrivilegedScript(ending) }
                 .onFailure { addLog("Linux TUN: it could not be ended: ${it.message}") }
+            // Still there: the password was not given. A new hev started now
+            // would exit on finding the device taken, and until it did the
+            // old tun, with its rule and route in place, would pass for the
+            // new one being ready: Connected, said over a dialog that is
+            // still open.
+            if (interfaceExists(TUN_NAME)) {
+                error(
+                    "A tunnel from before still holds $TUN_NAME and could not be ended: that needs the " +
+                        "administrator's password. Connect again and give it"
+                )
+            }
         }
         val upScript = writeUpScript(withSwitch)
         val downScript = writeDownScript(withSwitch)
@@ -126,7 +153,7 @@ internal class LinuxTunController(
      * Held, the process goes and the block stays, and no marker is written:
      * a pre-down that runs now has not been asked.
      */
-    suspend fun stop(process: Process?) {
+    suspend fun stop(process: Process?, endEnginesNaming: String? = null) {
         if (held) {
             stopProcess(process)
             routesInstalled = false
@@ -156,7 +183,13 @@ internal class LinuxTunController(
             Files.exists(rpFilterStatePath()) || blockDevice
         ) {
             runCatching {
-                runPrivilegedScript(writeCleanupScript(removeBlockDevice = blockDevice, endTunnel = tunnelStillUp))
+                runPrivilegedScript(
+                    writeCleanupScript(
+                        removeBlockDevice = blockDevice,
+                        endTunnel = tunnelStillUp,
+                        endEnginesNaming = endEnginesNaming
+                    )
+                )
             }.onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
         }
         routesInstalled = false
@@ -280,12 +313,19 @@ internal class LinuxTunController(
      * is the plain down script, so that for someone who never turned the
      * switch on, what runs as root at a disconnect is what ran before.
      */
-    private fun writeCleanupScript(removeBlockDevice: Boolean, endTunnel: Boolean): Path {
+    private fun writeCleanupScript(
+        removeBlockDevice: Boolean,
+        endTunnel: Boolean,
+        endEnginesNaming: String?
+    ): Path {
         val statePath = rpFilterStatePath().toString()
         val removal = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
+        // The tunnel's process first, then the engines, then the removal: read
+        // from the top of the file, since each is put right under the shebang.
+        val withEngines = if (endEnginesNaming != null) withEnginesEnded(removal, endEnginesNaming) else removal
         return writeScript(
             name = CLEANUP_SCRIPT_NAME,
-            body = if (endTunnel) withTunnelEnded(removal) else removal
+            body = if (endTunnel) withTunnelEnded(withEngines) else withEngines
         )
     }
 
@@ -830,6 +870,48 @@ internal class LinuxTunController(
         internal fun withTunnelEnded(script: String): String {
             val shebang = script.substringBefore('\n')
             return shebang + "\n" + tunnelEndLines() + "\n" + script.substringAfter('\n')
+        }
+
+        /**
+         * Ends every process whose command line names [naming], for the
+         * cleanup the app runs as root. It is for the olcRTC engine, which in
+         * the Linux tunnel runs as root like hev, so that the app's own stop
+         * does not reach it either: it went on, joined to its room and
+         * holding the session's port, until the next line it wrote met the
+         * pipe the app had closed. [naming] is what the app's engine configs
+         * are called, a directory and the beginning of a file name, which the
+         * engine is started with: it finds the engine, and the sudo in front
+         * of it where that is what started it, by something no other
+         * program's command line carries.
+         *
+         * The words go to grep on its standard input and not as an argument.
+         * As an argument they are on grep's own command line, the list of
+         * processes is made in the process that then becomes grep, and grep
+         * finds itself: every round would kill a number that no longer
+         * belongs to anyone, or by then to someone else.
+         *
+         * Asked to end, then killed after three seconds, and only when the
+         * app runs the script, as [tunnelEndLines].
+         */
+        internal fun engineEndLines(naming: String): String = """
+            if [ "${'$'}#" -eq 0 ]; then
+              naming=NAMING
+              attempt=0
+              while [ "${'$'}attempt" -lt 5 ]; do
+                engines=${'$'}(printf '%s\n' "${'$'}naming" | grep -lasF -f - /proc/[0-9]*/cmdline 2>/dev/null | cut -d/ -f3 | sort -u)
+                [ -n "${'$'}engines" ] || break
+                if [ "${'$'}attempt" -lt 3 ]; then sig=TERM; else sig=KILL; fi
+                for pid in ${'$'}engines; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                attempt=${'$'}((attempt + 1))
+                sleep 1
+              done
+            fi
+        """.trimIndent().replace("NAMING", shellSingleQuote(naming))
+
+        /** [script] with the engines ended first: right under its first line, the shebang. */
+        internal fun withEnginesEnded(script: String, naming: String): String {
+            val shebang = script.substringBefore('\n')
+            return shebang + "\n" + engineEndLines(naming) + "\n" + script.substringAfter('\n')
         }
 
         /** Ends the tunnel's process and removes nothing: for a start over a tunnel left from before. */

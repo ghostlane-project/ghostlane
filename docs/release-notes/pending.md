@@ -54,6 +54,6 @@ In the Linux app, when the tunnel's own process stopped (killed for memory, cras
 
 ### Linux desktop: connecting again after a disconnect, and rooms with a SOCKS login
 
-In the Linux app run as an ordinary user, the tunnel's own process could not be stopped by the app: it runs as the administrator, and the app does not. After a Disconnect it could stay behind, and the next Connect then fails with "Device or resource busy" for as long as it does. The step that already asks for the administrator password at a Disconnect now stops that process too, and a Connect that finds one left over stops it first.
+In the Linux app run as an ordinary user, the tunnel's own process could not be stopped by the app: it runs as the administrator, and the app does not. After a Disconnect it could stay behind, and the next Connect then fails with "Device or resource busy" for as long as it does. The step that already asks for the administrator password at a Disconnect now stops that process too, and a Connect that finds one left over stops it first; if the password for that is not given, the app says so and does not say Connected. The same step now ends an olcRTC room's engine, which runs as the administrator there as well: after a Disconnect it used to stay in its room until it next wrote to its log.
 
 And with a login set for the SOCKS proxy in the settings, an olcRTC room in tunnel mode said Connected and carried nothing: the tunnel did not send the login the room's engine asks for. It does now.

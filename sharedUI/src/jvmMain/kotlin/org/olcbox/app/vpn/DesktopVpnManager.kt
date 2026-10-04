@@ -1605,7 +1605,11 @@ class DesktopVpnManager private constructor(
                     linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
                 }
                 runCatching {
-                    linuxTunController.stop(tunProcess)
+                    // The room's engine runs as root here, as hev does, and the
+                    // stop further down does not reach it. What the tun's
+                    // cleanup runs as root ends it, named by the config every
+                    // engine of this app is started with.
+                    linuxTunController.stop(tunProcess, endEnginesNaming = olcRtcConfigNaming())
                 }.onFailure {
                     addLog("Linux TUN stop failed: ${it.message}")
                 }
@@ -1784,10 +1788,20 @@ class DesktopVpnManager private constructor(
         return startedProcess
     }
 
+    /** Where an engine's config is written: the directory and how its file's name begins. */
+    private fun olcRtcConfigDir(): Path = DesktopPaths.appDataDir().resolve("runtime")
+
+    /**
+     * What every engine this app starts carries on its command line and
+     * nothing else does: its config's directory and the beginning of the
+     * file's name ([writeOlcRtcClientConfig]).
+     */
+    private fun olcRtcConfigNaming(): String = olcRtcConfigDir().resolve(OLCRTC_CONFIG_PREFIX).toString()
+
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
-        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        val runtimeDir = olcRtcConfigDir()
         Files.createDirectories(runtimeDir)
-        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        val path = Files.createTempFile(runtimeDir, OLCRTC_CONFIG_PREFIX, ".yaml")
         Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
         deleteOlcRtcConfig()
         olcRtcConfigPath = path
@@ -2820,6 +2834,8 @@ class DesktopVpnManager private constructor(
         const val LAN_HEALTH_INTERVAL_MS = 15_000L
         const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+        /** How the file of an engine's config begins its name; see [olcRtcConfigNaming]. */
+        const val OLCRTC_CONFIG_PREFIX = "olcrtc-client-"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
 
         internal fun isFatalOlcRtcStartupLine(line: String): Boolean {
