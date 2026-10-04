@@ -638,24 +638,31 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 
     private static let appGroupId = "group.org.proofkit.app"
 
-    /// The last stop asked for. Each stop waits for the one asked before it,
-    /// and a start waits for the last one asked before it.
+    /// The last stop or start asked for. Each waits for the one asked before
+    /// it, so the controller does one at a time, in the order Kotlin asked.
     ///
     /// A stop used to be one call into the system, and nothing could overtake
     /// it. Since the kill switch it first switches on-demand off and saves the
     /// profile, which takes a moment, and Kotlin sends a stop just ahead of
     /// every restart without waiting for it. That stop could reach
     /// `stopVPNTunnel()` after the start behind it had brought its tunnel up,
-    /// and stop that one.
+    /// and stop that one. The other way round, a stop sent while a start was
+    /// still on its way to `startVPNTunnel()` (Kotlin's reconnect, cancelled
+    /// by a tap) went through the middle of it: the start carried on behind
+    /// the stop, and its tunnel came up after a Cancel, or stood in the way of
+    /// the start that followed, which could then run on with the server
+    /// chosen before.
     ///
     /// Kept here under a lock, and not on the main actor: Kotlin calls
     /// `stop()` and `start()` from its own threads in the order that matters,
     /// and the order must not rest on which of the tasks they hand to the main
     /// actor it happens to begin first.
     ///
-    /// A stop is never put behind a start, which may wait 45 s for its tunnel.
-    nonisolated(unsafe) private static var lastStop: Task<Void, Never>?
-    private static let stopLock = NSLock()
+    /// A start queues its way to `startVPNTunnel()` and no more. Its wait for
+    /// the tunnel to come up, as long as 45 s, is outside the queue: a stop
+    /// has to be able to end it.
+    nonisolated(unsafe) private static var lastOperation: Task<Void, Never>?
+    private static let operationLock = NSLock()
 
     override init() {
         super.init()
@@ -742,15 +749,12 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             return
         }
 
-        // The stops asked for before this start; see `lastStop`.
-        Self.stopLock.lock()
-        let earlierStops = Self.lastStop
-        Self.stopLock.unlock()
-
-        // Nothing waits here: the tunnel takes seconds to settle and the answer
-        // goes back through the callback once the system has actually decided,
-        // instead of holding a coroutine thread on a semaphore for the duration.
-        Task { @MainActor in
+        // This start's turn among the stops and starts asked for; see
+        // `lastOperation`.
+        Self.operationLock.lock()
+        let before = Self.lastOperation
+        let asked: Task<Void, Never> = Task { @MainActor in
+            _ = await before?.value
             // Starting an already-running tunnel does nothing at all, and the
             // extension keeps the config it was launched with — which looks
             // exactly like a working VPN that does not change your IP.
@@ -760,9 +764,8 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             // itself, which is false on every fresh launch — including a launch
             // over a tunnel that is very much running, now that the app adopts
             // one. The old tunnel then survived the start, or, worse, the stop
-            // Kotlin had already sent landed midway through it. That stop is
-            // waited for first: it saves the profile before it stops anything.
-            _ = await earlierStops?.value
+            // Kotlin had already sent landed midway through it. That stop has
+            // had its turn by now.
             await Self.controller.stop()
             // Waited for, not slept through. A fixed 700 ms was a guess about
             // how long a teardown takes; this asks.
@@ -771,6 +774,15 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             // start, which has to find the profile as this start wants it.
             await Self.controller.apply(killSwitch: killSwitch)
             await Self.controller.start()
+        }
+        Self.lastOperation = asked
+        Self.operationLock.unlock()
+
+        // Nothing waits here: the tunnel takes seconds to settle and the answer
+        // goes back through the callback once the system has actually decided,
+        // instead of holding a coroutine thread on a semaphore for the duration.
+        Task { @MainActor in
+            await asked.value
             let reason = await Self.controller.waitUntilUp()
             answer.callback.onResult(
                 result: IosBridgeResult(success: reason == nil, message: reason)
@@ -840,10 +852,10 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     func stop() {
-        Self.stopLock.lock()
-        defer { Self.stopLock.unlock() }
-        let before = Self.lastStop
-        Self.lastStop = Task { @MainActor in
+        Self.operationLock.lock()
+        defer { Self.operationLock.unlock() }
+        let before = Self.lastOperation
+        Self.lastOperation = Task { @MainActor in
             _ = await before?.value
             await Self.controller.stop()
         }
