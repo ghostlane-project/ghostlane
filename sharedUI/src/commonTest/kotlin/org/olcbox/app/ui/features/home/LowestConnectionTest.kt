@@ -202,4 +202,36 @@ class LowestConnectionTest {
         task.join()
         assertEquals(1, vpn.starts)
     }
+
+    // The Linux desktop's kill switch holds traffic after its tunnel died, and
+    // only the user takes that block away. A stop asked for here, on the way to
+    // measuring, would be the app letting the traffic out by itself; and from
+    // behind the block nothing can be measured anyway.
+    @Test fun underTheKillSwitchTheSelectedServerIsConnectedWithoutAStopOrAMeasurement() = runTest {
+        val repo = repository(listOf(entry("slow"), entry("fast")))
+        val vpn = Vpn().apply {
+            status.value = VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC)
+            probe = { error("Nothing can be measured from behind the block") }
+        }
+        LowestConnection(vpn, repo) {}.run()
+        assertEquals(1, vpn.starts)
+        assertEquals(0, vpn.stops)
+        assertEquals("slow", repo.getActiveLocationId())
+    }
+
+    // Another server could only be tried from outside the block, so a tunnel
+    // that died into it is not failed over: the sentence stays on the screen.
+    @Test fun aTunnelThatDiedIntoTheKillSwitchIsNeitherStoppedNorFailedOver() = runTest {
+        val repo = repository(listOf(entry("slow"), entry("fast")))
+        val vpn = Vpn()
+        val task = launch { LowestConnection(vpn, repo) {}.run() }
+        runCurrent()
+        assertEquals(1, vpn.starts)
+        vpn.status.value = VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC)
+        advanceUntilIdle()
+        task.join()
+        assertEquals(1, vpn.starts)
+        assertEquals(0, vpn.stops)
+        assertEquals(VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC), vpn.status.value)
+    }
 }

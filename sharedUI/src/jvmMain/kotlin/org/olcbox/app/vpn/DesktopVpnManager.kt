@@ -5,13 +5,21 @@ import org.olcbox.app.net.toRules
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -20,7 +28,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.session_moved_to
+import org.jetbrains.compose.resources.getString
+import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.net.DirectDns
@@ -33,21 +47,33 @@ import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
+import org.olcbox.app.net.SessionFailover
+import org.olcbox.app.net.SmartConnect
+import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.vpn.desktop.TunnelDaemonProtocol
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.util.nowMillis
+import org.olcbox.app.vpn.desktop.CoreShape
+import org.olcbox.app.vpn.desktop.DeadProcess
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.DesktopProxyController
+import org.olcbox.app.vpn.desktop.FailedEngine
+import org.olcbox.app.vpn.desktop.LineChange
+import org.olcbox.app.vpn.desktop.LineConfigs
+import org.olcbox.app.vpn.desktop.LineSupervision
+import org.olcbox.app.vpn.desktop.LinuxKillSwitch
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.MacOsTunController
 import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
+import org.olcbox.app.vpn.desktop.SessionBuild
+import org.olcbox.app.vpn.desktop.SessionEndpoint
 import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.io.IOException
 import java.net.InetSocketAddress
@@ -90,6 +116,15 @@ class DesktopVpnManager private constructor(
     // not own, so there is no counter here to read. Null, not zeroes.
     override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null).asStateFlow()
 
+    /**
+     * What a session did on its own that the user is told once: it went to
+     * another line of the country because its own stopped answering. The
+     * screen that collects this reads the active location again, which this
+     * manager has changed in the store.
+     */
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    override val notices: SharedFlow<String> = _notices.asSharedFlow()
+
     private val _socksProxySettings = MutableStateFlow(DesktopSocksProxySettings())
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
     private val lanProxy = DesktopLanProxy(::addLog)
@@ -122,20 +157,68 @@ class DesktopVpnManager private constructor(
     private var processWatchJob: Job? = null
     private var tunProcessWatchJob: Job? = null
     private var macTunWatchJob: Job? = null
+    private var coreWatchJob: Job? = null
+
+    /**
+     * The restart of a dead core or engine, from the moment the death is noticed
+     * until the session is verified again; and the same for a line that was
+     * changed to, from the change until that line is verified. A look at the
+     * other lines of the country is a step of the same job, between two
+     * attempts, so whatever cancels the restart cancels the look.
+     *
+     * Non-null is the whole meaning of "a restart is running", and it is set and
+     * cleared under [mutex] rather than read off the job's own state: a job that
+     * has just verified the session stays active for a moment after it lets the
+     * mutex go, and a death reported in that moment would be taken for one it is
+     * still handling, and left to nobody.
+     */
+    private var lineRestartJob: Job? = null
     private var process: Process? = null
+
+    /**
+     * The engine process [processWatchJob] waits on. A restart that left the
+     * engine as it was (only the front had died) must not put a second waiter
+     * on it, and one that replaced it, in whichever of its attempts, must not
+     * leave the new one unwatched.
+     */
+    private var watchedEngine: Process? = null
     private var tunProcess: Process? = null
     private var olcRtcConfigPath: Path? = null
     private var olcRtcDirectRulesPath: Path? = null
     private var generation = 0L
+
+    /**
+     * The generation of the request whose line is running or being started:
+     * the connect's, and after it that of every change of location made behind
+     * the tun.
+     *
+     * The waiter on the tun's own process compares this and not the generation
+     * it was armed with. A change of location moves [generation] and leaves
+     * the tun where it is, and the waiter with it: armed with the connect's
+     * generation it would take the tun's death, after any change of location,
+     * for one that a newer request is already dealing with, and report it to
+     * nobody. It cannot be armed again instead, as the daemon's watcher is: it
+     * blocks a thread on the process until the process exits, and one more
+     * would be left blocked there by every change. Written and read under
+     * [mutex].
+     */
+    private var lineGeneration = 0L
     /** Separates adapter names from adapters retained by an earlier app process. */
     private val windowsTunSessionId = UUID.randomUUID().toString().take(8)
-    private val linuxTunController = LinuxTunController(::addLog)
+    private val linuxTunController = LinuxTunController(::addLog) { olcRtcConfigNaming() }
     private val windowsTunController = WindowsTunController(::addLog)
     private val macOsTunController = MacOsTunController(::addLog)
 
     /** The daemon's own socks inbound, which is what a green light is measured through. */
     private var macTunVerifyPort: Int? = null
     private var windowsTunExit: org.olcbox.app.net.TunnelExit? = null
+
+    /**
+     * The adapter of the Windows tun that passed its check. A check made later
+     * in the session asks about the same adapter's routes, and the name is drawn
+     * per attempt, so it cannot be worked out again.
+     */
+    private var windowsTunInterface: String? = null
     private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::addLog)
 
     /**
@@ -160,6 +243,148 @@ class DesktopVpnManager private constructor(
     )
     private var activeCorePort: Int? = null
 
+    /**
+     * The core of a line a session probes while it looks for another one
+     * ([lookAtOtherLines]): a candidate's own, beside the session's, which is
+     * not touched.
+     *
+     * One pair, kept, where the probe before a connect makes a pair for every
+     * probe. A look tries one line at a time, so one pair is enough, and a
+     * session that is stopped can then stop a probe that is running with
+     * everything else it stops ([cancelProcessJobs]). Left to the probe's own
+     * coroutine, the core is stopped when that coroutine next runs, and after
+     * Quit it never does: the process would outlive the app.
+     */
+    private val lookSingBox = DesktopSingBoxController()
+    private val lookXray = DesktopXrayController()
+    private val lookStarter = TransportProbe.Starter { spec, config ->
+        if (TransportProbe.usesXray(spec)) {
+            lookXray.start(config)
+            object : TransportProbe.Core {
+                override fun isRunning(): Boolean = lookXray.isRunning()
+                override suspend fun stop() = lookXray.stop()
+            }
+        } else {
+            lookSingBox.start(config)
+            object : TransportProbe.Core {
+                override fun isRunning(): Boolean = lookSingBox.isRunning()
+                override suspend fun stop() = lookSingBox.stop()
+            }
+        }
+    }
+
+    /** The question [networkPresent] has open, while it has one. */
+    @Volatile private var networkQuestion: Deferred<Boolean>? = null
+
+    /**
+     * What a session holds from its first verified connection until it is
+     * stopped, as far as a line that comes later has to know it. The tun, or
+     * in proxy mode the system's proxy setting, is built once, for the first
+     * line, and no change of location touches it. So every line after the
+     * first is made to fit what is written here.
+     */
+    private data class HeldSession(
+        /** What it was built with; another location is judged against it ([LineSupervision.changeOfLine]). */
+        val built: SessionBuild,
+        /** What the tun, or the system's proxy setting, points at. Every line listens there. */
+        val endpoint: SessionEndpoint,
+        /**
+         * The tun's own inbound, where the tun has one for the check to go
+         * through (Windows and macOS). Null where the check goes to the
+         * endpoint itself.
+         */
+        val tunListener: SubscriptionFetchProxy?,
+        /**
+         * The machine's own resolvers as they were read before the tun came
+         * up, for a core started beside it later. Null in proxy mode, where
+         * the system's resolver is behind nothing.
+         */
+        val resolvers: List<String>?,
+        /** Whether the first line was a room: the tun was told so, and goes on believing it. */
+        val startedInRoom: Boolean
+    )
+
+    /**
+     * What the line of a connected session was started with, so that a core or
+     * an engine that dies can be started again exactly as it was.
+     *
+     * Remembered, not read again, because every value here was built into
+     * something that outlives the process it describes. The tun's upstream is
+     * [corePort], with the login in [socksSettings] for olcRTC, for as long as
+     * the tun lives; the system proxy points at [frontPort]; the engine's yaml
+     * names [engineRules]. The settings behind them can change while a session
+     * runs (the SOCKS port, the routing, the handshake), and a process brought
+     * back with today's values would listen where the tun no longer looks.
+     *
+     * After a change of location it describes the line that was changed to,
+     * which was not started with its own port and login but with the
+     * session's ([session], [lineBehindTun]). So it does for a line the
+     * session went to by itself ([tryBehindTun]).
+     */
+    private data class SessionLine(
+        /** What the session holds; the same for every line of it. */
+        val session: HeldSession,
+        /**
+         * The location as the store had it when this line was started: its
+         * id, its name and the server list it came from. A session that goes
+         * to another line by itself goes from this one, the line it is on,
+         * and not from whatever the store keeps under that id by the time it
+         * looks. A refresh of the list can hand the id to another line, of
+         * another country even, where two lines share an entry address.
+         */
+        val entry: LocationEntry,
+        val location: LocationConfig,
+        val isOlcrtc: Boolean,
+        val socksSettings: DesktopSocksProxySettings,
+        /** Where the line listens: the core's port, or for olcRTC the engine's own. */
+        val corePort: Int,
+        val coreRouting: Routing,
+        val verboseLogs: Boolean,
+        /** The engine's direct-rules file, written at connect and kept until the session stops. */
+        val engineRules: Path?,
+        val dtlsProfile: String,
+        val desktopMode: DesktopMode,
+        /** The sing-box front before the engine, in proxy mode under rules; null otherwise. */
+        val frontPort: Int?,
+        /**
+         * The listener the session was verified through, and its login: the
+         * tun's own inbound where the tun has one, else the front, else the
+         * line. A restart is verified through the same one, so that Connected
+         * keeps meaning what it meant at connect.
+         */
+        val verifiedThrough: SubscriptionFetchProxy,
+        /** On Windows the check also asks whose the default routes are; null elsewhere. */
+        val windowsTunInterface: String?,
+        /**
+         * Whether the sing-box and Xray processes of this line are all running,
+         * as whoever started them tells it; null for a room reached directly,
+         * which has none.
+         */
+        val coresAlive: (() -> Boolean)?,
+        /**
+         * The login the line's core, or the front before its engine, demands
+         * of whoever connects to it: the endpoint's, for a line that came
+         * later. Null for the first line, whose listener is the endpoint as it
+         * stands. An engine reached directly takes its login from
+         * [socksSettings].
+         */
+        val login: SocksLogin? = null,
+        /**
+         * For a line that came later in a tun session: the resolvers its core
+         * asks for the server's name, and its engine for the meeting
+         * service's. Null for the first line, which is started as the connect
+         * started it.
+         */
+        val resolvers: List<String>? = null
+    )
+
+    /**
+     * Null until a session is verified, and again once it is stopped: a connect
+     * that never carried traffic fails as it always did, and only a session that
+     * did has a line worth bringing back.
+     */
+    @Volatile private var sessionLine: SessionLine? = null
+
     override fun needsPermission(): Boolean = false
 
     override fun startVpn() {
@@ -175,6 +400,15 @@ class DesktopVpnManager private constructor(
                         tunProcess != null
 
                 if (shouldRestart) {
+                    // Inside a session another location is another line behind
+                    // what the session holds, which is not taken down for it.
+                    if (changeLineBehindTun(requestGeneration)) return@withLock
+                    // Superseded while that was being decided. The newer
+                    // request decides for itself, and has to find the session
+                    // as it is, not torn down for a request nobody wants any
+                    // more.
+                    if (requestGeneration != generation) return@withLock
+
                     setStatus(VpnStatus.Reconnecting)
                     addLog("Restarting desktop VPN for selected location")
                     stopDesktopMode(finalStatus = false)
@@ -252,7 +486,10 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override val canProbeTransports: Boolean get() = true
+    // Not while the Linux kill switch holds traffic: a probe's core goes out as
+    // any program of the user's does, the block refuses it, and smart connect
+    // would take every transport for blocked and move the line to its last resort.
+    override val canProbeTransports: Boolean get() = !linuxTunController.holdsTraffic
 
     // Smart connect: the location's core, alone, on its own port and config.
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
@@ -301,30 +538,34 @@ class DesktopVpnManager private constructor(
     }
 
 
+    /**
+     * Stores the SOCKS settings, and nothing else.
+     *
+     * It used to point the PAC at the port in the settings as well, at once.
+     * Inside a session that is the wrong target more often than not: the PAC
+     * was given the session's endpoint when the session started
+     * ([startSystemProxy]), and that is a core's port, or the front's,
+     * whenever the line is not a room reached directly. It went unnoticed
+     * because every save was followed by a full restart, which set the PAC
+     * again. A full restart no longer always follows: when the settings are,
+     * by the time the request is looked at, what the session started with
+     * again, only the line is restarted, and the PAC would have stayed where
+     * the save put it. So the PAC is the session's, set when the session
+     * starts and not touched until it stops. A change of the port or the
+     * login is still a full restart ([LineSupervision.changeOfLine]), and
+     * that is what applies it.
+     */
     fun updateSocksProxySettings(username: String, password: String, port: Int) {
-        val settings = DesktopSocksProxySettings(
+        _socksProxySettings.value = DesktopSocksProxySettings(
             port = port,
             username = username,
             password = password
         ).normalized()
-        _socksProxySettings.value = settings
-        pacServer.updateSocksTarget(
-            socksHost = settings.host,
-            socksPort = settings.port,
-            socksUsername = settings.username,
-            socksPassword = settings.password
-        )
     }
 
+    /** As above: stored, and the PAC left to the session. */
     fun updateSocksProxySettings(settings: DesktopSocksProxySettings) {
-        val normalized = settings.normalized()
-        _socksProxySettings.value = normalized
-        pacServer.updateSocksTarget(
-            socksHost = normalized.host,
-            socksPort = normalized.port,
-            socksUsername = normalized.username,
-            socksPassword = normalized.password
-        )
+        _socksProxySettings.value = settings.normalized()
     }
 
     fun refreshLanAddresses() {
@@ -342,10 +583,22 @@ class DesktopVpnManager private constructor(
             settings.lanNetworkId.isNotBlank() &&
             settings.lanNetworkId == DesktopLanProxy.networkIdentity(settings.lanAddress)
 
-    /** Apply LAN-only changes without tearing down and rebuilding the VPN tunnel. */
+    /**
+     * Apply LAN-only changes without tearing down and rebuilding the VPN tunnel.
+     *
+     * The settings are stored and nothing else: the system proxy keeps the
+     * target the session gave it. This used to go through
+     * [updateSocksProxySettings], which pointed the PAC at the port in the
+     * settings. That is the olcRTC engine's port, and the session's target is
+     * another one whenever a core carries the line or a front stands before the
+     * engine (see where [startSystemProxy] is called). So switching LAN sharing
+     * on or off in proxy mode left the browser asking a port nobody listened
+     * on, or the engine past the front and its routing rules, until the next
+     * connect.
+     */
     fun applyLanSharingSettings(settings: DesktopSocksProxySettings) {
         val normalized = settings.normalized()
-        updateSocksProxySettings(normalized)
+        _socksProxySettings.value = normalized
         lanControlJob?.cancel()
         lanWatchJob?.cancel()
         lanWatchJob = null
@@ -359,6 +612,26 @@ class DesktopVpnManager private constructor(
             if (_status.value !is VpnStatus.Connected || upstream == null) return@launch
             startLanSharing(normalized, upstream, requestGeneration)
         }
+    }
+
+    /**
+     * The Linux tunnel's kill switch ([LinuxKillSwitch]). It is read when the
+     * tunnel starts, so a change applies at the next connect.
+     *
+     * Switching it off also ends a hold, and is the one thing besides a new
+     * verified session that does. While the block stands with no tunnel, the
+     * stop that follows removes it, cleanup and its password included: the
+     * screen has no Disconnect while it shows an error, so this is the way
+     * out that does not start a connection. Under a running tunnel nothing
+     * can be taken away without root, so the block is only no longer kept,
+     * and the session ends as it does without the switch.
+     */
+    fun setKillSwitch(enabled: Boolean) {
+        _socksProxySettings.update { it.copy(killSwitch = enabled) }
+        if (enabled) return
+        val holding = linuxTunController.holdsTraffic
+        linuxTunController.endHold()
+        if (holding) stopVpn()
     }
 
     init {
@@ -381,6 +654,20 @@ class DesktopVpnManager private constructor(
                 macOsTunController.stop()
             }
         }
+        // The Linux kill switch's block outlives the app as it outlives the
+        // tunnel. Found at start, it is a machine with no network and an app
+        // that says "not connected": setStatus says what holds the traffic and
+        // how to let it out. Not removed here, which would be the cleanup
+        // nobody asked for, with its password dialog.
+        if (DesktopPaths.os == DesktopOs.Linux) {
+            scope.launch {
+                mutex.withLock {
+                    if (_status.value is VpnStatus.Disconnected && linuxTunController.findLeftoverBlock()) {
+                        setStatus(VpnStatus.Disconnected)
+                    }
+                }
+            }
+        }
     }
 
     fun close() {
@@ -397,12 +684,13 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun startDesktopMode(requestGeneration: Long, isRestart: Boolean) {
+        lineGeneration = requestGeneration
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
         val active = locationsRepository.getActiveLocation()
         val location = active?.location?.normalized()
 
-        if (location == null || !location.isComplete()) {
+        if (active == null || location == null || !location.isComplete()) {
             setStatus(VpnStatus.Error("No active location"))
             addLog("Add a valid location before starting desktop proxy")
             return
@@ -445,7 +733,11 @@ class DesktopVpnManager private constructor(
             } else {
                 null
             }
+            val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
             var frontPort: Int? = null
+            // Which sing-box and Xray processes the line cannot do without, as
+            // whoever starts them says it; none for a room reached directly.
+            var coresAlive: (() -> Boolean)? = null
 
             if (desktopMode == DesktopMode.WindowsTun) {
                 windowsTunController.ensureAdministratorOrRequestRestart()
@@ -476,7 +768,7 @@ class DesktopVpnManager private constructor(
                     logOutput = true,
                     privileged = desktopMode == DesktopMode.LinuxTun,
                     directRulesFile = engineRules,
-                    dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
+                    dtlsProfile = dtlsProfile
                 )
                 val olcRtcProcess = process ?: error("olcRTC process is missing")
                 waitForOlcRtcReady(
@@ -488,17 +780,40 @@ class DesktopVpnManager private constructor(
                 )
                 if (coreRouting is Routing.Rules) {
                     frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
+                    coresAlive = singBoxCore::isRunning
                 }
             } else {
-                startDesktopCore(location, effectiveSocksPort, coreRouting, verboseLogs)
+                coresAlive = startDesktopCore(
+                    location, effectiveSocksPort, coreRouting, verboseLogs,
+                    besideTun = desktopMode == DesktopMode.LinuxTun
+                )
             }
 
             if (requestGeneration != generation) {
                 throw CancellationException("Desktop start superseded")
             }
 
+            // Read here, before the tun comes up, and kept for the session.
+            // Once it is up the system's list is the tun's as well, and the
+            // core of another location, started beside the tun later, needs
+            // the resolvers the machine really has.
+            val ownResolvers = if (desktopMode == DesktopMode.SystemProxy) null else DesktopDnsResolver.ownServers()
+            var letsEveryLineOut = true
+
             when (desktopMode) {
-                DesktopMode.LinuxTun -> startLinuxTun(effectiveSocksPort, requestGeneration)
+                DesktopMode.LinuxTun -> startLinuxTun(
+                    effectiveSocksPort,
+                    requestGeneration,
+                    // What hev has to send: the session's endpoint, as the tun's
+                    // outbound sends it on the other systems.
+                    login = LineSupervision.endpointOf(
+                        isOlcrtc = isOlcrtc,
+                        linePort = effectiveSocksPort,
+                        frontPort = frontPort,
+                        username = socksSettings.username,
+                        password = socksSettings.password
+                    ).login
+                )
                 DesktopMode.WindowsTun -> startWindowsTun(
                     effectiveSocksPort,
                     requestGeneration,
@@ -512,7 +827,7 @@ class DesktopVpnManager private constructor(
                     } else {
                         Routing.Global
                     }
-                    startMacTun(
+                    letsEveryLineOut = startMacTun(
                         corePort = effectiveSocksPort,
                         isOlcrtc = isOlcrtc,
                         socksSettings = socksSettings,
@@ -553,8 +868,16 @@ class DesktopVpnManager private constructor(
                     currentTunProcess = tunProcess,
                     requestGeneration = requestGeneration
                 )
-            } else if (!singBoxCore.isRunning() && !xrayCore.isRunning()) {
-                error("core exited before desktop proxy was enabled")
+            } else {
+                if (!singBoxCore.isRunning() && !xrayCore.isRunning()) {
+                    error("core exited before desktop proxy was enabled")
+                }
+                // hev is watched behind a core line as it is behind a room.
+                // Nothing did: its death would have left the status Connected
+                // with no tunnel under it.
+                if (desktopMode == DesktopMode.LinuxTun) {
+                    startTunExitWatcher(tunProcess ?: error("TUN process is missing"))
+                }
             }
             if (frontPort != null && !singBoxCore.isRunning()) {
                 error("sing-box front exited before desktop proxy was enabled")
@@ -617,8 +940,50 @@ class DesktopVpnManager private constructor(
             if (currentLanSettings.shareOnLan) {
                 startLanSharing(currentLanSettings, channelProxy!!, requestGeneration)
             }
+            // The session holds its tunnel from here, the first verified
+            // connection: a core or an engine that dies after this is started
+            // again behind it with what is written down now, and another
+            // location is started behind it as a line that fits it.
+            val line = SessionLine(
+                session = HeldSession(
+                    built = SessionBuild(
+                        mode = desktopMode,
+                        routing = routingSettings,
+                        socks = socksSettings,
+                        letsEveryLineOut = letsEveryLineOut
+                    ),
+                    endpoint = LineSupervision.endpointOf(
+                        isOlcrtc = isOlcrtc,
+                        linePort = effectiveSocksPort,
+                        frontPort = frontPort,
+                        username = socksSettings.username,
+                        password = socksSettings.password
+                    ),
+                    tunListener = channelProxy.takeIf {
+                        desktopMode == DesktopMode.WindowsTun || verifiedThroughTun
+                    },
+                    resolvers = ownResolvers,
+                    startedInRoom = isOlcrtc
+                ),
+                entry = active,
+                location = location,
+                isOlcrtc = isOlcrtc,
+                socksSettings = socksSettings,
+                corePort = effectiveSocksPort,
+                coreRouting = coreRouting,
+                verboseLogs = verboseLogs,
+                engineRules = engineRules,
+                dtlsProfile = dtlsProfile,
+                desktopMode = desktopMode,
+                frontPort = frontPort,
+                verifiedThrough = channelProxy ?: error("the session has no listener to verify it through"),
+                windowsTunInterface = if (desktopMode == DesktopMode.WindowsTun) windowsTunInterface else null,
+                coresAlive = coresAlive
+            )
+            sessionLine = line
             setStatus(VpnStatus.Connected)
             addLog("$transport connected — exit ${exit.label()}")
+            startCoreWatcher(line, requestGeneration)
         } catch (e: Exception) {
             if (e is CancellationException) {
                 addLog("Desktop start cancelled")
@@ -634,9 +999,15 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long) {
+    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long, login: SocksLogin?) {
         val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
-        tunProcess = linuxTunController.start(hevBinary, socksPort)
+        tunProcess = linuxTunController.start(
+            hevBinary,
+            socksPort,
+            killSwitch = _socksProxySettings.value.killSwitch,
+            username = login?.username.orEmpty(),
+            password = login?.password.orEmpty()
+        )
 
         if (requestGeneration != generation) {
             throw CancellationException("Desktop start superseded")
@@ -654,23 +1025,14 @@ class DesktopVpnManager private constructor(
     ) {
         val physicalInterface = windowsTunController.physicalInterface()
         DesktopNativeAssets.ensureWintunRuntime()
-        val childProcesses = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
-        // ProcessHandle.Info.command() may be empty on Windows. Exact process
-        // paths are useful when present; known resolved binaries are the safe
-        // fallback for the process bypass rule.
-        val resolvedPaths = buildList {
-            add(DesktopNativeAssets.resolveSingBoxBinary().toString())
-            val parsed = location.rawLink?.let(LinkParser::parse)
-            if (parsed is org.olcbox.app.net.OutboundSpec.Vless &&
-                parsed.transport is org.olcbox.app.net.TransportSpec.Xhttp
-            ) add(DesktopNativeAssets.resolveXrayBinary().toString())
-            if (isOlcrtc) addAll(DesktopNativeAssets.resolveOlcRtcBinaryCandidates().map(Path::toString))
-        }
-        val bypassPaths = (
-            childProcesses.mapNotNull { it.info().command().orElse(null) } + resolvedPaths
-        ).distinct()
+        val bypassPaths = lineBinaryPaths()
         require(bypassPaths.isNotEmpty()) { "No VPN core to route outside the TUN" }
 
+        // The carrier's addresses and name are this line's, and stay in the
+        // tun after another location has taken its place. They only spare the
+        // first line's packets a pass through the tun's own process; what lets
+        // any line out, this one included when its name does not resolve, is
+        // the rule on the binaries above.
         val carrier = windowsCarrierRoute(location)
         var ready = false
         val overallDeadline = System.currentTimeMillis() + WINDOWS_TUN_TOTAL_TIMEOUT_MS
@@ -688,6 +1050,8 @@ class DesktopVpnManager private constructor(
                     verifyPassword = verifyPassword,
                     username = if (isOlcrtc) socksSettings.username else "",
                     password = if (isOlcrtc) socksSettings.password else "",
+                    // The first line's, for the whole session (lineBehindTun
+                    // says what that costs a line that comes later).
                     upstreamUdpIsLossy = isOlcrtc,
                     excludeAddresses = carrier.addresses,
                     directDnsDomains = carrier.domains,
@@ -707,6 +1071,7 @@ class DesktopVpnManager private constructor(
                 windowsTunVerifyProxy = SubscriptionFetchProxy(
                     "127.0.0.1", verifyPort, verifyUsername, verifyPassword
                 )
+                windowsTunInterface = interfaceName
                 break
             }
             windowsTunCore.stopNow()
@@ -719,8 +1084,32 @@ class DesktopVpnManager private constructor(
         if (!ready) error("Windows TUN did not carry its HTTPS verification request after retries; see the core log")
         tunProcess = windowsTunCore.runningProcess() ?: error("Windows TUN core exited")
         if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
-        startTunExitWatcher(tunProcess!!, requestGeneration)
+        startTunExitWatcher(tunProcess!!)
         addLog("Windows TUN ready; carrier processes bypass via $physicalInterface")
+    }
+
+    /**
+     * Every binary a line can run, as a tun's process rule names them: the two
+     * cores and the olcRTC engine, whichever of them the line at hand runs.
+     *
+     * The rule is the session's and the line is not. Naming only the binaries
+     * of the line a session started with let that line out and no other, which
+     * is one of the reasons another location had to be another tun. A binary
+     * this build does not carry is left out and is not an error: a connect
+     * that needs none of it worked before it was asked about here.
+     */
+    private fun lineBinaryPaths(): List<String> {
+        // ProcessHandle.Info.command() may be empty on Windows. Exact process
+        // paths are useful when present; known resolved binaries are the safe
+        // fallback for the process bypass rule.
+        val running = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
+            .mapNotNull { it.info().command().orElse(null) }
+        val bundled = buildList<Path> {
+            runCatching { DesktopNativeAssets.resolveSingBoxBinary() }.getOrNull()?.let { add(it) }
+            runCatching { DesktopNativeAssets.resolveXrayBinary() }.getOrNull()?.let { add(it) }
+            addAll(runCatching { DesktopNativeAssets.resolveOlcRtcBinaryCandidates() }.getOrDefault(emptyList()))
+        }
+        return LineConfigs.processPaths(running, bundled)
     }
 
     private suspend fun awaitWindowsTunTraffic(
@@ -801,6 +1190,12 @@ class DesktopVpnManager private constructor(
      * olcRTC has no server host in a link — it is addressed by a room on somebody
      * else's SFU — so there is nothing to exclude from the tunnel for it, and
      * [serverEndpoint] returning null is the honest answer rather than a gap.
+     *
+     * The exclusion is the first line's and stays in the tun for as long as it
+     * lives. What lets a line for another location out, and an engine that has
+     * to sign in again, is the rule on the binaries a line can run
+     * ([lineBinaryPaths]), which the Windows tun has always had. True when the
+     * tun was started with that rule ([MacOsTunController.start]).
      */
     private suspend fun startMacTun(
         corePort: Int,
@@ -810,9 +1205,9 @@ class DesktopVpnManager private constructor(
         routing: Routing,
         verboseLogs: Boolean,
         ruleFiles: Map<String, String>
-    ) {
+    ): Boolean {
         val verifyPort = allocateVerifyPort(corePort)
-        macOsTunController.start(
+        val letsEveryLineOut = macOsTunController.start(
             corePort = corePort,
             verifyPort = verifyPort,
             // Only olcRTC enforces them; the cores' own inbounds have no auth.
@@ -820,14 +1215,18 @@ class DesktopVpnManager private constructor(
             password = if (isOlcrtc) socksSettings.password else "",
             serverHost = serverEndpoint(location)?.first,
             // olcRTC relays UDP over a lossy video carrier, so DNS takes the
-            // reliable path. The native transports carry UDP themselves.
+            // reliable path. The native transports carry UDP themselves. It is
+            // the first line's answer for the whole session (lineBehindTun
+            // says what that costs a line that comes later).
             upstreamUdpIsLossy = isOlcrtc,
             routing = routing,
             verboseLogs = verboseLogs,
-            ruleFiles = ruleFiles
+            ruleFiles = ruleFiles,
+            bypassProcessPaths = lineBinaryPaths()
         )
         macTunVerifyPort = verifyPort
         macTunActive = true
+        return letsEveryLineOut
     }
 
     /**
@@ -848,63 +1247,108 @@ class DesktopVpnManager private constructor(
         }.getOrNull() ?: preferred
     }
 
-    /** Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port. */
+    /**
+     * Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port.
+     *
+     * Returns the question of whether what it started is still running. It is
+     * handed back rather than worked out again by the session's watcher because
+     * the answer depends on the shape chosen here: XHTTP under rules is two
+     * processes, and asking whether either core runs would call that line alive
+     * with half of it gone.
+     *
+     * [besideTun] is the Linux tunnel. Its rule sends every user's traffic into
+     * the tun and lets only root keep the main table, and a core runs as the
+     * user: its own connection to the server went into the tun with the rest,
+     * came back to its own port, and no line a core carries could connect
+     * there. So the core is bound to the physical interface, which a socket
+     * needs no privilege for since Linux 5.7 and which the tun's route does
+     * not match. sing-box finds the interface itself and follows it when it
+     * changes; Xray is told its name once. A server that is a name also gets a
+     * resolver of its own, because the system's answers with hev's fake
+     * addresses for as long as the tun is up; that part exists for sing-box
+     * only.
+     *
+     * [login] and [resolvers] are for a line that comes later in a session,
+     * when another location is chosen ([lineBehindTun]). The login is the
+     * endpoint's, demanded by whatever listens on [port]. The resolvers are
+     * the machine's own, read before the tun came up: with the tun up, a
+     * question to the system's resolver goes into the tun, and the tun's way
+     * out is this core, which is asking because it is not up yet. sing-box
+     * asks them itself, and its own query leaves by the tun's rule on its
+     * binary. Xray has no such part, and an XHTTP server that is a name may
+     * not come up as a later line. They are for Windows and macOS, where the
+     * system's list is the tun's once it is up; under [besideTun] they are
+     * read again every time.
+     */
     private suspend fun startDesktopCore(
         location: LocationConfig,
         port: Int,
         routing: Routing,
-        verboseLogs: Boolean
-    ) {
+        verboseLogs: Boolean,
+        besideTun: Boolean = false,
+        login: SocksLogin? = null,
+        resolvers: List<String>? = null
+    ): () -> Boolean {
         val raw = location.rawLink ?: error("core location has no link")
         val spec = org.olcbox.app.net.LinkParser.parse(raw) ?: error("unparseable core link")
         stopDesktopCores()
-        val xhttp = (spec as? org.olcbox.app.net.OutboundSpec.Vless)
-            ?.takeIf { it.transport is org.olcbox.app.net.TransportSpec.Xhttp }
+        val xhttp = LineConfigs.xhttpOf(spec)
+        val boundInterface = if (besideTun && xhttp != null) DesktopDnsResolver.linuxDefaultInterface() else null
+        val serverResolver = when {
+            xhttp != null -> null
+            // In the Linux tunnel the machine's resolvers are read now, for a
+            // later line as for the first. The tun does not change what the
+            // default interface says of them, so the answer is as good as it
+            // was when the session started, and better once the machine has
+            // moved to another network inside the session: the ones kept from
+            // the start are then resolvers that are no longer there.
+            besideTun -> DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            resolvers != null -> DirectDns.Servers(resolvers)
+            else -> null
+        }
+        if (besideTun && xhttp != null) {
+            if (boundInterface == null) {
+                addLog("Linux TUN: no default interface found, so the XHTTP core cannot be led out of the tunnel")
+            } else if (!org.olcbox.app.net.XrayConfig.isIpLiteral(xhttp.host)) {
+                addLog(
+                    "Linux TUN: this XHTTP server is named by hostname, and the system's resolver answers " +
+                        "through the tunnel while it is up; it may not connect in this mode"
+                )
+            }
+        } else if (resolvers != null && xhttp != null && !org.olcbox.app.net.XrayConfig.isIpLiteral(xhttp.host)) {
+            addLog(
+                "This XHTTP server is named by hostname, and Xray asks the system's resolver, whose questions " +
+                    "go into the tunnel while it is up; it may not connect until you disconnect and connect"
+            )
+        }
         // Which processes must be alive once the port answers. A port that
         // answers proves nothing about who answers.
-        val alive: () -> Boolean
-        if (xhttp != null && routing is Routing.Rules) {
-            // Xray does not route; sing-box does, so it goes in front.
-            val xrayPort = allocateVerifyPort(port)
-            xrayCore.start(
-                org.olcbox.app.net.XrayConfig.buildXhttp(
-                    xhttp,
-                    socksPort = xrayPort,
-                    verboseLogs = verboseLogs
-                )
-            )
-            singBoxCore.start(
-                org.olcbox.app.net.SingBoxConfig.buildSocksChain(
-                    xrayPort,
-                    socksPort = port,
-                    routing = routing,
-                    verboseLogs = verboseLogs
-                )
-            )
-            addLog("Xray/xhttp core on 127.0.0.1:$xrayPort behind a sing-box front on 127.0.0.1:$port")
-            alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
-        } else if (xhttp != null) {
-            xrayCore.start(
-                org.olcbox.app.net.XrayConfig.buildXhttp(
-                    xhttp,
-                    socksPort = port,
-                    verboseLogs = verboseLogs
-                )
-            )
-            addLog("Xray/xhttp core starting on 127.0.0.1:$port")
-            alive = xrayCore::isRunning
-        } else {
-            singBoxCore.start(
-                org.olcbox.app.net.SingBoxConfig.build(
-                    spec,
-                    socksPort = port,
-                    routing = routing,
-                    verboseLogs = verboseLogs
-                )
-            )
-            addLog("sing-box core (${location.kind}) starting on 127.0.0.1:$port")
-            alive = singBoxCore::isRunning
-        }
+        val shape = LineConfigs.shapeOf(spec, routing)
+        val alive = shape.alive()
+        // Xray does not route; sing-box does, so under rules it goes in front
+        // and Xray takes a port of its own behind it.
+        val xrayPort = if (shape == CoreShape.XrayBehindSingBox) allocateVerifyPort(port) else port
+        val configs = LineConfigs.core(
+            spec,
+            port = port,
+            xrayPort = xrayPort,
+            routing = routing,
+            verboseLogs = verboseLogs,
+            login = login,
+            serverResolver = serverResolver,
+            autoDetectInterface = besideTun,
+            bindInterface = boundInterface
+        )
+        configs.xray?.let { xrayCore.start(it) }
+        configs.singBox?.let { singBoxCore.start(it) }
+        addLog(
+            when (shape) {
+                CoreShape.XrayBehindSingBox ->
+                    "Xray/xhttp core on 127.0.0.1:$xrayPort behind a sing-box front on 127.0.0.1:$port"
+                CoreShape.Xray -> "Xray/xhttp core starting on 127.0.0.1:$port"
+                CoreShape.SingBox -> "sing-box core (${location.kind}) starting on 127.0.0.1:$port"
+            }
+        )
         if (!waitForCoreSocks(port) || !alive()) {
             val exit = if (xhttp != null) xrayCore.exitCodeOrNull() else singBoxCore.exitCodeOrNull()
             error(
@@ -913,28 +1357,39 @@ class DesktopVpnManager private constructor(
             )
         }
         addLog("core ready on 127.0.0.1:$port")
+        return alive
     }
 
     /**
      * sing-box between the proxy and olcRTC, so the routing rules see every
      * connection before the relay does. The engine keeps its own port and its
      * credentials; the front listens without any, like the cores do.
+     *
+     * [heldPort] is the port of a front that died in a running session. The
+     * system proxy was pointed at it when the session started and still is, so
+     * the front comes back there or not at all: on any other port it would be
+     * running and unreachable. It is also the session's endpoint, for the
+     * front before a room that was changed to, and [login] is what the
+     * endpoint demands there.
      */
     private suspend fun startOlcRtcFront(
         socksSettings: DesktopSocksProxySettings,
         routing: Routing.Rules,
-        verboseLogs: Boolean
+        verboseLogs: Boolean,
+        heldPort: Int? = null,
+        login: SocksLogin? = null
     ): Int {
         stopDesktopCores()
-        val port = allocateCorePort()
+        val port = heldPort ?: allocateCorePort()
         singBoxCore.start(
-            org.olcbox.app.net.SingBoxConfig.buildSocksChain(
-                upstreamPort = socksSettings.port,
-                socksPort = port,
-                username = socksSettings.username,
-                password = socksSettings.password,
+            LineConfigs.front(
+                enginePort = socksSettings.port,
+                engineUsername = socksSettings.username,
+                enginePassword = socksSettings.password,
+                port = port,
                 routing = routing,
-                verboseLogs = verboseLogs
+                verboseLogs = verboseLogs,
+                login = login
             )
         )
         addLog("sing-box front for olcRTC starting on 127.0.0.1:$port")
@@ -1009,6 +1464,66 @@ class DesktopVpnManager private constructor(
         activeCorePort = null
     }
 
+    /** Whether every process of a line of this shape runs. */
+    private fun CoreShape.alive(): () -> Boolean {
+        val singBox = this != CoreShape.Xray
+        val xray = this != CoreShape.SingBox
+        return { (!singBox || singBoxCore.isRunning()) && (!xray || xrayCore.isRunning()) }
+    }
+
+    /**
+     * Gives a line that was just stopped a moment to stop listening on [port].
+     * A process that was told to stop can hold its listener a little longer
+     * ([allocateCorePort] waits the same out), and the line that follows has
+     * no other port to take: started into a port still listened on, it would
+     * be a failed attempt and a wait of two seconds where a tenth was enough.
+     *
+     * Asked by connecting, not by binding as [isLocalPortFree] asks. What the
+     * old line had accepted lingers on its port after the line is gone, for
+     * as long as a minute: the line closed those connections first, which a
+     * full restart never did, since there the tun at their other end went
+     * first. A bind that does not reuse the address can be refused for all of
+     * that time. A listener that does reuse it, as the cores and the engine
+     * do, is not, so the question is only whether anybody still listens.
+     */
+    private suspend fun awaitPortReleased(port: Int, requestGeneration: Long) {
+        val deadline = System.currentTimeMillis() + CORE_PORT_RELEASE_TIMEOUT_MS
+        while (
+            requestGeneration == generation &&
+            canConnectToSocks(port) &&
+            System.currentTimeMillis() < deadline
+        ) {
+            delay(CORE_PORT_RELEASE_POLL_MS)
+        }
+    }
+
+    /**
+     * A line is not started on a port where something still listens.
+     *
+     * The waits that follow a start take a port that answers for the new
+     * process's own. With the line before it still there, they would call a
+     * line up that is not, and the session's check would then pass through
+     * the old one. A process that was told to stop is not always gone when
+     * the call returns: [stopProcess] gives it four seconds and goes on, and
+     * on Linux the engine runs as root, which this process does not. Until
+     * the old listener is gone the attempt fails here, with a message, and is
+     * made again after its wait.
+     */
+    private fun requireNoListener(port: Int) {
+        if (canConnectToSocks(port)) error("port $port still answers to another process")
+    }
+
+    /** Closes the LAN listener and forgets what was said about it. Whoever wants it back starts it. */
+    private fun stopLanSharing() {
+        lanWatchJob?.cancel()
+        lanWatchJob = null
+        lanControlJob?.cancel()
+        lanControlJob = null
+        lanProxy.stop()
+        _lanProxyEndpoint.value = null
+        _lanProxyHealth.value = null
+    }
+
     private suspend fun startLanSharing(
         settings: DesktopSocksProxySettings,
         upstream: SubscriptionFetchProxy,
@@ -1080,10 +1595,10 @@ class DesktopVpnManager private constructor(
         logOutput: Boolean,
         privileged: Boolean,
         directRulesFile: Path?,
-        dtlsProfile: String
+        dtlsProfile: String,
+        dnsServer: String = DesktopDnsResolver.current()
     ): Process {
         val binaries = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
-        val dnsServer = DesktopDnsResolver.current()
         var lastException: Exception? = null
 
         addLog("olcRTC resolvers: $dnsServer")
@@ -1115,15 +1630,16 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        // Whether what is taken down is a session that was verified, asked
+        // before the line is forgotten: the Linux kill switch holds for those.
+        val hadSession = sessionLine != null
+        // First, and on every path out of here: a session that is being stopped
+        // has no line to bring back, and a watcher that sees one of its processes
+        // go from now on must find nothing to restart.
+        sessionLine = null
         // The LAN listener is externally reachable. Close it before changing the
         // tunnel it chains to, including partially started and already-disconnected paths.
-        lanWatchJob?.cancel()
-        lanWatchJob = null
-        lanControlJob?.cancel()
-        lanControlJob = null
-        lanProxy.stop()
-        _lanProxyEndpoint.value = null
-        _lanProxyHealth.value = null
+        stopLanSharing()
         // macTunActive belongs in this guard: on macOS the cores are owned by
         // their own controllers and the tun by the daemon, so both `process` and
         // `tunProcess` are null while a tunnel is very much up. Without it a stop
@@ -1144,7 +1660,24 @@ class DesktopVpnManager private constructor(
 
         when (DesktopPaths.os) {
             DesktopOs.Linux -> {
+                // The kill switch: a tunnel that died by itself is not
+                // followed by the cleanup, whoever comes to take the session
+                // down. Decided here and not by the tun's watcher alone: a
+                // request that moved the generation first (another location,
+                // a restart for new settings) makes the watcher stand aside,
+                // finds the tun's process dead, and would otherwise remove the
+                // block on its way to a new tunnel, by this app's own hand
+                // and behind a password dialog that looks like any other.
+                // Kept, the restart's tunnel goes back in front of the block
+                // without opening it. Not at a Disconnect, which is the user
+                // ending the session, block included.
+                if (!finalStatus && hadSession && tunProcess?.isAlive == false) {
+                    linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
+                }
                 runCatching {
+                    // The room's engine runs as root here, as hev does, and the
+                    // stop further down does not reach it. What the tun's
+                    // cleanup runs as root ends it ([olcRtcConfigNaming]).
                     linuxTunController.stop(tunProcess)
                 }.onFailure {
                     addLog("Linux TUN stop failed: ${it.message}")
@@ -1156,6 +1689,7 @@ class DesktopVpnManager private constructor(
                     windowsTunCore.stopNow()
                     windowsTunExit = null
                     windowsTunVerifyProxy = null
+                    windowsTunInterface = null
                 }.onFailure {
                     addLog("Windows TUN stop failed: ${it.message}")
                 }
@@ -1213,9 +1747,21 @@ class DesktopVpnManager private constructor(
         macTunWatchJob = null
         processWatchJob?.cancel()
         processWatchJob = null
+        watchedEngine = null
 
         tunProcessWatchJob?.cancel()
         tunProcessWatchJob = null
+
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+
+        lineRestartJob?.cancel()
+        lineRestartJob = null
+        // After the job that runs them: a probe's core that a look had
+        // running goes now, with the session, and not when the cancelled job
+        // gets to its own cleanup.
+        lookSingBox.stopNow()
+        lookXray.stopNow()
 
         logJob?.cancel()
         logJob = null
@@ -1316,10 +1862,20 @@ class DesktopVpnManager private constructor(
         return startedProcess
     }
 
+    /** Where an engine's config is written: the directory and how its file's name begins. */
+    private fun olcRtcConfigDir(): Path = DesktopPaths.appDataDir().resolve("runtime")
+
+    /**
+     * What every engine this app starts carries on its command line and
+     * nothing else does: its config's directory and the beginning of the
+     * file's name ([writeOlcRtcClientConfig]).
+     */
+    private fun olcRtcConfigNaming(): String = olcRtcConfigDir().resolve(OLCRTC_CONFIG_PREFIX).toString()
+
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
-        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        val runtimeDir = olcRtcConfigDir()
         Files.createDirectories(runtimeDir)
-        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        val path = Files.createTempFile(runtimeDir, OLCRTC_CONFIG_PREFIX, ".yaml")
         Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
         deleteOlcRtcConfig()
         olcRtcConfigPath = path
@@ -1391,8 +1947,7 @@ class DesktopVpnManager private constructor(
         when (desktopMode) {
             DesktopMode.LinuxTun,
             DesktopMode.WindowsTun -> startTunExitWatcher(
-                currentTunProcess ?: error("TUN process is missing"),
-                requestGeneration
+                currentTunProcess ?: error("TUN process is missing")
             )
             // Neither has a tun process in *this* JVM to watch: the proxy has no
             // tun at all, and on macOS the tun belongs to the root daemon's child.
@@ -1409,6 +1964,7 @@ class DesktopVpnManager private constructor(
 
     private fun startOlcRtcExitWatcher(target: Process, requestGeneration: Long) {
         processWatchJob?.cancel()
+        watchedEngine = target
         processWatchJob = scope.launch {
             val exitCode = waitForProcessExit(target) ?: return@launch
             if (!isActive) return@launch
@@ -1418,6 +1974,7 @@ class DesktopVpnManager private constructor(
                     if (requestGeneration != generation || process !== target) return@withLock
 
                     handleUnexpectedProcessExit(
+                        which = DeadProcess.Engine,
                         logMessage = "olcRTC process exited unexpectedly with code $exitCode",
                         errorMessage = "olcRTC exited unexpectedly (code $exitCode)",
                         requestGeneration = requestGeneration
@@ -1467,6 +2024,7 @@ class DesktopVpnManager private constructor(
                     mutex.withLock {
                         if (requestGeneration != generation) return@withLock
                         handleUnexpectedProcessExit(
+                            which = DeadProcess.Tun,
                             logMessage = "the tunnel daemon is no longer running sing-box",
                             errorMessage = "the system-wide tunnel stopped unexpectedly",
                             requestGeneration = requestGeneration
@@ -1478,7 +2036,14 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private fun startTunExitWatcher(target: Process, requestGeneration: Long) {
+    /**
+     * Waits on the tun's own process for as long as it lives, which is as long
+     * as the session does: a change of location leaves the tun, and this
+     * waiter, where they are. So what it compares when the process is gone is
+     * [lineGeneration], the generation of the request whose line the tun now
+     * carries, and not the one that was current when it was armed.
+     */
+    private fun startTunExitWatcher(target: Process) {
         tunProcessWatchJob?.cancel()
         tunProcessWatchJob = scope.launch {
             val exitCode = waitForProcessExit(target) ?: return@launch
@@ -1486,9 +2051,11 @@ class DesktopVpnManager private constructor(
 
             scope.launch {
                 mutex.withLock {
+                    val requestGeneration = lineGeneration
                     if (requestGeneration != generation || tunProcess !== target) return@withLock
 
                     handleUnexpectedProcessExit(
+                        which = DeadProcess.Tun,
                         logMessage = "TUN process exited unexpectedly with code $exitCode",
                         errorMessage = "TUN process exited unexpectedly (code $exitCode)",
                         requestGeneration = requestGeneration
@@ -1498,18 +2065,1318 @@ class DesktopVpnManager private constructor(
         }
     }
 
+    /**
+     * Notices when a sing-box or Xray core of the session's line dies.
+     *
+     * Until this existed nothing did. A core was asked whether it runs once, at
+     * connect, and its death after that left the tun up, the status Connected
+     * and every connection refused at a port nobody listened on: closed, which
+     * is right, and silent, which is not.
+     *
+     * Asked, not waited on as the engine and the tun are: the controllers own
+     * their processes and replace them at every start, a line may run two, and
+     * one question covers whichever it runs. And asked once, unlike the
+     * daemon's watcher: this is the operating system's answer about our own
+     * child, not a reply over a socket that may have blinked.
+     */
+    private fun startCoreWatcher(line: SessionLine, requestGeneration: Long) {
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+        val coresAlive = line.coresAlive ?: return
+        coreWatchJob = scope.launch {
+            while (isActive) {
+                delay(CORE_WATCH_INTERVAL_MS)
+                if (requestGeneration != generation || sessionLine !== line) return@launch
+                if (coresAlive()) continue
+
+                // In a coroutine of its own, as the other watchers do it: the
+                // restart this begins cancels this job.
+                scope.launch {
+                    mutex.withLock {
+                        if (requestGeneration != generation || sessionLine !== line) return@withLock
+                        val exitCode = singBoxCore.exitCodeOrNull() ?: xrayCore.exitCodeOrNull()
+                        handleUnexpectedProcessExit(
+                            which = DeadProcess.Core,
+                            logMessage = "core process exited unexpectedly" +
+                                (exitCode?.let { " with code $it" } ?: ""),
+                            errorMessage = "the core exited unexpectedly",
+                            requestGeneration = requestGeneration
+                        )
+                    }
+                }
+                return@launch
+            }
+        }
+    }
+
+    /**
+     * One of a session's processes is gone, and which one decides what becomes
+     * of the tunnel ([LineSupervision.restartsBehindTun]).
+     *
+     * A core or the engine of a connected session is started again behind the
+     * tunnel, which is not touched. Taking it down here is what used to send
+     * the machine's traffic out directly, by the app's own hand. The tun's own
+     * death ends the session as it always has: its routes went with it. What
+     * is left to hold then is the Linux kill switch's block, where it is on.
+     */
     private suspend fun handleUnexpectedProcessExit(
+        which: DeadProcess,
         logMessage: String,
         errorMessage: String,
         requestGeneration: Long
     ) {
         addLog(logMessage)
+        val line = sessionLine
+        if (line != null && LineSupervision.restartsBehindTun(which)) {
+            restartLineBehindTun(line, requestGeneration)
+            return
+        }
+        // The Linux kill switch: the block under a verified session's tunnel
+        // outlives it. The teardown finds the tun's process dead and keeps
+        // the block ([stopDesktopMode]): it stops the line's processes and
+        // leaves the block where it is (no cleanup, so no password dialog
+        // opening by itself), and setStatus says that traffic is held and how
+        // to let it out.
         stopDesktopMode(finalStatus = false)
 
         if (requestGeneration == generation) {
             setStatus(VpnStatus.Error(errorMessage))
         }
     }
+
+    /**
+     * Begins the restart of a dead core or engine behind what the session
+     * holds: the tun, or in proxy mode the system's proxy setting. Neither is
+     * touched, here or by any attempt, so until the line is back whatever
+     * enters the tun has nowhere to go and nothing leaves around it.
+     *
+     * The attempts run in a job of their own, which waits between them without
+     * the mutex. A Disconnect, or another location, moves the generation and
+     * then takes the mutex; a backoff slept through under it would make the
+     * user's Disconnect wait out up to thirty seconds of a restart nobody wants
+     * any more.
+     *
+     * It goes on for as long as the session does. There is no attempt after
+     * which giving up is better: the alternative to waiting behind a closed
+     * tunnel is an error over an open one.
+     */
+    private fun restartLineBehindTun(line: SessionLine, requestGeneration: Long) {
+        // One restart per outage. A second death reported while it runs (the
+        // front after the engine, the other core of an XHTTP line) needs none
+        // of its own: every attempt starts whatever of the line is not running.
+        if (lineRestartJob != null) return
+
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+        setStatus(VpnStatus.Reconnecting)
+        addLog(
+            "The ${line.heldName()} stays as it is while the line is restarted behind it; " +
+                "nothing passes until it is back"
+        )
+        if (line.isOlcrtc && line.desktopMode == DesktopMode.LinuxTun) {
+            // pkexec asks at every launch, and no privileged process of ours
+            // lives as long as the session. Said once per outage, where the
+            // user looks when a password dialog opens by itself.
+            addLog(
+                "Linux TUN: olcRTC runs as root to bypass the TUN route, so restarting it needs the " +
+                    "administrator again; until the password is given the tunnel stays and nothing passes"
+            )
+        }
+        lineRestartJob = launchLineAttempts(line, requestGeneration)
+    }
+
+    /**
+     * Another location chosen inside a session: the line is replaced behind
+     * what the session holds, the tun or in proxy mode the system's proxy
+     * setting, which is not stopped, not reconfigured and not started again.
+     * True when that is what was done, or begun; false when the change is the
+     * full restart it has always been ([LineSupervision.changeOfLine] says
+     * when), which the caller then makes.
+     *
+     * It used to be a teardown and a start whatever was chosen. Between the
+     * two the tun was down and the machine's traffic left directly, with its
+     * own address, for as long as the new connect took; on Linux the password
+     * for the tun was asked again as well.
+     *
+     * What makes this possible is that nothing the session holds depends on
+     * the line. It points at the session's endpoint, one local port and at
+     * most one login, and the new line is started to be exactly that
+     * ([lineBehindTun]). So nothing that is held has to learn of the change.
+     *
+     * The old line is stopped and the new one started in one stretch under the
+     * mutex, stop and then start at once. In between, the endpoint's port is
+     * free, and another local process could take it: what enters the tun
+     * would then be handed to that process, while the new line found the port
+     * taken and went on trying. Nothing is built against that. The stretch is
+     * as long as a process takes to exit.
+     *
+     * A line that does not come up is not an error, and does not open the
+     * tunnel. The user chose this location, so from here on it is the
+     * session's line, and it is tried again behind the tun exactly as a line
+     * that died is: the first attempt now, the rest after their waits.
+     */
+    private suspend fun changeLineBehindTun(requestGeneration: Long): Boolean {
+        val current = sessionLine ?: return false
+        val session = current.session
+        // Anything thrown before the new line is the session's is a full
+        // restart, as every change was. The generation has moved already, so
+        // a request that simply died here would leave the session with
+        // watchers that all take it for superseded, and nobody after it.
+        val line = try {
+            val active = locationsRepository.getActiveLocation()
+            val location = active?.location?.normalized()
+            // No location to change to. The full restart ends in the error it
+            // always has.
+            if (active == null || location == null || !location.isComplete()) return false
+            val routingSettings = locationsRepository.getRoutingSettings()
+            val change = LineSupervision.changeOfLine(
+                session = session.built,
+                mode = DesktopMode.current(),
+                routing = routingSettings,
+                socks = _socksProxySettings.value.normalized(),
+                tunRunning = tunRunning(current.desktopMode)
+            )
+            // Whoever moved the generation while that was read is waiting for
+            // this mutex, and decides for itself.
+            if (requestGeneration != generation) return false
+            if (change != LineChange.BehindTun) {
+                change.whyFullRestart()?.let(::addLog)
+                return false
+            }
+            val next = lineBehindTun(current, active, location, routingSettings)
+            if (requestGeneration != generation) return false
+
+            lineGeneration = requestGeneration
+            setStatus(VpnStatus.Reconnecting)
+            addLog(
+                "Changing to the selected location behind the ${next.heldName()}, which stays as it is; " +
+                    "nothing passes until the new line is up"
+            )
+            if (next.isOlcrtc && next.desktopMode == DesktopMode.LinuxTun) {
+                // As for a restart: pkexec asks at every launch.
+                addLog(
+                    "Linux TUN: olcRTC runs as root to bypass the TUN route, so starting it for this room needs " +
+                        "the administrator again; until the password is given the tunnel stays and nothing passes"
+                )
+            }
+            val tunAnswersNames =
+                next.desktopMode == DesktopMode.WindowsTun || next.desktopMode == DesktopMode.MacTun
+            if (next.isOlcrtc && !session.startedInRoom && tunAnswersNames) {
+                // What lineBehindTun says about `upstreamUdpIsLossy`, where
+                // the user will look when pages are slow to start loading.
+                addLog(
+                    "This tunnel was started for a server that carries UDP, so names are looked up through the " +
+                        "room as datagrams, which a room can lose: a lookup may take a retry until you " +
+                        "disconnect and connect"
+                )
+            }
+
+            // Nothing of the old line is left to bring back: not by a restart
+            // that was running, and not by a look at other lines, which is one
+            // of that restart's steps.
+            lineRestartJob?.cancel()
+            lineRestartJob = null
+            // The daemon's watcher compares the generation it was armed with,
+            // and this request has moved it. Unlike the waiter on a process it
+            // can be armed again, so it is.
+            if (next.desktopMode == DesktopMode.MacTun) startMacTunWatcher(requestGeneration)
+
+            takeAsSessionLine(next)
+            next
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            addLog(
+                "The selected location could not be changed to behind the ${current.heldName()} " +
+                    "(${e.message}), so the session is restarted in full"
+            )
+            return false
+        }
+
+        // From here the line is the session's, and whatever goes wrong with it
+        // is a line that is not up: nothing thrown below may leave the session
+        // Reconnecting with nobody trying.
+        val started = try {
+            // The line the user left is not coming back, so the rules its
+            // engine read go with it, unless the new line's engine reads them
+            // too. The engine reads them once, when it starts.
+            if (line.engineRules == null) deleteOlcRtcDirectRules()
+            replaceRunningLine(line, requestGeneration)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            addLog("The line did not come up: ${e.message}")
+            false
+        }
+        // Superseded while the port was waited for, or while the line was
+        // started. Whoever did it finds the session with this line, and stops
+        // it or changes it again.
+        if (requestGeneration != generation) return true
+        lineRestartJob = launchLineAttempts(line, requestGeneration, startedNow = started)
+        return true
+    }
+
+    /**
+     * From here [next] is the session's line: nothing of the line before it is
+     * left to watch, and what is said of the session is said of [next]. Under
+     * the mutex.
+     *
+     * The same for a location the user chose ([changeLineBehindTun]) and for a
+     * line the session tries by itself ([tryBehindTun]). What differs between
+     * the two is theirs: a change the user asked for moves the generation and
+     * can end in a full restart, and a move nobody asked for does neither.
+     */
+    private fun takeAsSessionLine(next: SessionLine) {
+        coreWatchJob?.cancel()
+        coreWatchJob = null
+        processWatchJob?.cancel()
+        processWatchJob = null
+        watchedEngine = null
+        // The LAN listener hands what it takes to the session's listener, and
+        // is closed for as long as nothing answers there. It comes back with
+        // the line, and with the new exit.
+        stopLanSharing()
+        sessionLine = next
+        connectedLocation = next.location
+        channelProxy = next.verifiedThrough
+    }
+
+    /**
+     * Stops whatever line runs and starts [line] where it listened, on the
+     * session's endpoint: stop and then start at once, in one stretch under the
+     * mutex ([changeLineBehindTun] says what that stretch leaves open). True
+     * when all of [line] was started.
+     */
+    private suspend fun replaceRunningLine(line: SessionLine, requestGeneration: Long): Boolean {
+        // Forgotten before it is stopped: an engine still named here is taken
+        // for the new line's by every attempt that follows.
+        val oldEngine = process
+        process = null
+        stopDesktopCores()
+        stopProcess(oldEngine)
+        // A room's yaml names its key, and does not outlive its engine.
+        if (!line.isOlcrtc) deleteOlcRtcConfig()
+        for (port in listOfNotNull(line.corePort, line.frontPort).distinct()) {
+            awaitPortReleased(port, requestGeneration)
+        }
+        // Superseded while the port was waited for: nothing of the line is
+        // started for a request nobody wants any more.
+        if (requestGeneration != generation) return false
+        return startDeadProcesses(line, requestGeneration)
+    }
+
+    /**
+     * Whether what holds the session's tun is running. On macOS the daemon is
+     * asked, and asked again a moment later before a no is believed, as its
+     * watcher asks twice: a socket that blinked, or a daemon that was busy,
+     * must not turn a change of location into the teardown it exists to avoid.
+     */
+    private suspend fun tunRunning(mode: DesktopMode): Boolean = when (mode) {
+        DesktopMode.LinuxTun,
+        DesktopMode.WindowsTun -> tunProcess?.isAlive == true
+        DesktopMode.MacTun -> macTunActive && macTunAnswers()
+        // Nothing of the proxy's stops by itself: the PAC is served from this
+        // process, and the setting is the system's.
+        DesktopMode.SystemProxy -> true
+    }
+
+    private suspend fun macTunAnswers(): Boolean {
+        if (macOsTunController.isRunning()) return true
+        delay(MAC_TUN_RECHECK_MS)
+        return macOsTunController.isRunning()
+    }
+
+    /** Why another location is a full restart, as the log says it; null where nothing needs saying. */
+    private fun LineChange.whyFullRestart(): String? = when (this) {
+        LineChange.BehindTun,
+        LineChange.NoSession -> null
+        LineChange.ModeChanged ->
+            "The connection mode is not the one this session started in, so it is restarted in full"
+        LineChange.RoutingChanged ->
+            "The routing settings are not the ones this session started with, so it is restarted in full"
+        LineChange.SocksChanged ->
+            "The SOCKS settings are not the ones this session started with, so it is restarted in full"
+        LineChange.TunNotRunning ->
+            "The tunnel's own process is not running, so there is nothing to change the location behind"
+        LineChange.TunBuiltForOneLine ->
+            "This tunnel lets only the server it started with out of itself, so another location is a full restart"
+    }
+
+    /**
+     * The line for [location] as it has to be started inside the session of
+     * [current]: as the session's endpoint, whatever its own port and login
+     * would have been.
+     *
+     * A core listens on the endpoint's port and demands its login. An engine
+     * reached directly takes both from the settings it is started with, so it
+     * is handed a copy that names the endpoint's. Where a front stands before
+     * the engine, in proxy mode under rules, the front is the endpoint, and
+     * the engine keeps its own port and login behind it.
+     *
+     * The rules live where a connect to this location would put them
+     * ([desktopRulesHome]), from the routing settings the session started
+     * with: had they changed, this would be a full restart. The rule-set files
+     * of the proxy's core were written when the session started and are not
+     * written again under a core that has them open.
+     *
+     * How the tun answers names is the first line's for the whole session,
+     * since `upstreamUdpIsLossy` is written into its config. A session that
+     * started in a room and moves to a core keeps the room's way, names
+     * answered by the tun and asked over TCP, at the price of a slower first
+     * lookup. One that started on a core and moves into a room keeps the
+     * core's: lookups cross the room as the datagrams they are, on a carrier
+     * that loses datagrams, so a name can take a retry or several until the
+     * next connect builds the tun for a room. Linux has no such setting; hev
+     * answers names itself for every line.
+     *
+     * The engine's rules file is [current]'s when it has one, and written
+     * only when it has none. The text is the same either way, since it comes
+     * from the routing settings and they are the session's. What differs is
+     * that writing it deletes the file before it, and a line the session only
+     * tries ([tryBehindTun]) must leave [current] able to start again.
+     */
+    private suspend fun lineBehindTun(
+        current: SessionLine,
+        entry: LocationEntry,
+        location: LocationConfig,
+        routingSettings: RoutingSettings
+    ): SessionLine {
+        val session = current.session
+        val endpoint = session.endpoint
+        val mode = current.desktopMode
+        val socks = session.built.socks
+        val isOlcrtc = location.kind == LocationKind.Olcrtc
+        val rulesHome = desktopRulesHome(mode, isOlcrtc, routingSettings.needsRules)
+        val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
+            routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), DirectDns.System)
+        } else {
+            Routing.Global
+        }
+        val fronted = isOlcrtc && coreRouting is Routing.Rules
+        val engineSettings = when {
+            !fronted -> LineConfigs.engineSettings(socks, endpoint)
+            // Behind a front the engine keeps the port in the settings, unless
+            // that is the very port the front has to take.
+            socks.port == endpoint.port -> socks.copy(port = allocateVerifyPort(endpoint.port))
+            else -> socks
+        }
+        val coresAlive: (() -> Boolean)? = when {
+            fronted -> singBoxCore::isRunning
+            isOlcrtc -> null
+            else -> {
+                val spec = location.rawLink?.let(LinkParser::parse) ?: error("unparseable core link")
+                LineConfigs.shapeOf(spec, coreRouting).alive()
+            }
+        }
+        return SessionLine(
+            session = session,
+            entry = entry,
+            location = location,
+            isOlcrtc = isOlcrtc,
+            socksSettings = engineSettings,
+            corePort = if (fronted) engineSettings.port else endpoint.port,
+            coreRouting = coreRouting,
+            verboseLogs = routingSettings.verboseDebugLogs,
+            engineRules = if (rulesHome == DesktopRulesHome.Engine) {
+                current.engineRules ?: writeOlcRtcDirectRules(routingSettings)
+            } else {
+                null
+            },
+            dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls),
+            desktopMode = mode,
+            frontPort = if (fronted) endpoint.port else null,
+            // The listener the session was verified through: the tun's own
+            // where it has one, and otherwise the endpoint, with the login it
+            // demands now.
+            verifiedThrough = session.tunListener ?: SubscriptionFetchProxy(
+                socks.host,
+                endpoint.port,
+                endpoint.login?.username.orEmpty(),
+                endpoint.login?.password.orEmpty()
+            ),
+            windowsTunInterface = current.windowsTunInterface,
+            coresAlive = coresAlive,
+            login = endpoint.login,
+            resolvers = session.resolvers
+        )
+    }
+
+    /**
+     * The attempts at a line that is not up, each after its wait
+     * ([LineSupervision.backoffMs]), until one of them leaves the session
+     * Connected or the session ends.
+     *
+     * [startedNow] is a change of location. Its line was started already, at
+     * once and under the mutex the change was decided under, and what is left
+     * of that first attempt is the check.
+     *
+     * A line that died and a line that never answered both end up here, so
+     * this is where an outage is counted, and where the session, once the line
+     * has been out for long enough, looks at the other lines of the same
+     * country ([movedAfterFailedAttempt]). One run of this loop is one outage
+     * of one line: the count begins with the first attempt that fails and is
+     * gone with the loop.
+     */
+    private fun launchLineAttempts(
+        line: SessionLine,
+        requestGeneration: Long,
+        startedNow: Boolean = false
+    ): Job = scope.launch {
+        val outage = LineOutage()
+        if (startedNow) {
+            if (lineAttempt { confirmLine(line, requestGeneration) }) return@launch
+            if (movedAfterFailedAttempt(line, requestGeneration, outage)) return@launch
+        }
+        var attempt = 0
+        while (isActive) {
+            val waitMs = LineSupervision.backoffMs(attempt)
+            addLog("Restarting the line in ${waitMs / 1_000}s")
+            delay(waitMs)
+            if (lineAttempt { restoreLine(line, requestGeneration) }) return@launch
+            if (movedAfterFailedAttempt(line, requestGeneration, outage)) return@launch
+            attempt++
+        }
+    }
+
+    /**
+     * Nothing an attempt throws ends the restart; only the end of the session
+     * does. A loop that died here would leave the status Reconnecting with
+     * nobody trying, and every later death dropped as one already in hand.
+     */
+    private suspend fun lineAttempt(attempt: suspend () -> Boolean): Boolean = try {
+        attempt()
+    } catch (_: CancellationException) {
+        currentCoroutineContext().ensureActive()
+        false
+    } catch (e: Exception) {
+        addLog("The line did not come up: ${e.message}")
+        false
+    }
+
+    /**
+     * One attempt: start whatever of the line is not running, on the port it
+     * had, verify the session as the connect did, and only then say Connected.
+     * True when the restart has nothing more to do: the session is Connected
+     * again, or it ended while this ran.
+     *
+     * The mutex is taken to start processes and again to say Connected, and let
+     * go in between. The check waits on the far end, sixteen seconds when
+     * nothing answers, and through an outage it is made again after every
+     * backoff: held through that, a Disconnect pressed while a server is down
+     * would wait behind it about one time in three. Let go, the stop goes
+     * through at once and cancels this job where it waits.
+     *
+     * Whatever the mutex guarded is asked again once it is taken back: that the
+     * session is still this one, and that nothing of the line died while the
+     * check was out. A death in that window is reported to nobody, since a
+     * restart is running, so this is the one place it can be found.
+     */
+    private suspend fun restoreLine(line: SessionLine, requestGeneration: Long): Boolean {
+        val started = mutex.withLock {
+            // The session ended while this waited: a Disconnect or another
+            // location moved the generation, and the tun's own death cleared
+            // the line without moving it.
+            if (requestGeneration != generation || sessionLine !== line) return true
+            startDeadProcesses(line, requestGeneration)
+        }
+        if (requestGeneration != generation) return true
+        if (!started) return false
+        return confirmLine(line, requestGeneration)
+    }
+
+    /**
+     * The second half of an attempt, for a line all of whose processes were
+     * started: the check, with the mutex let go, and then Connected, with the
+     * mutex taken back. True when there is nothing more to do.
+     */
+    private suspend fun confirmLine(line: SessionLine, requestGeneration: Long): Boolean {
+        val exit = try {
+            verifyLine(line, requestGeneration)
+        } catch (_: CancellationException) {
+            // The Windows check says "superseded" by throwing this. This
+            // coroutine's own cancellation has to go on up.
+            currentCoroutineContext().ensureActive()
+            return requestGeneration != generation
+        }
+        if (requestGeneration != generation) return true
+        if (exit == null) {
+            addLog("The line is running but no traffic reached the internet through it")
+            return false
+        }
+
+        return mutex.withLock {
+            if (requestGeneration != generation || sessionLine !== line) return true
+            if (!line.allRunning()) {
+                addLog("The line stopped again while it was being checked")
+                return@withLock false
+            }
+            lineIsUp(line, exit, requestGeneration)
+            true
+        }
+    }
+
+    /**
+     * [line] passed its check with all of it running, and the session is
+     * Connected on it: its watchers are armed, LAN sharing comes back, and no
+     * restart is running any more. Under the mutex, for the session's own line
+     * brought back ([confirmLine]) and for one the session went to by itself
+     * ([tryBehindTun]).
+     */
+    private fun lineIsUp(line: SessionLine, exit: org.olcbox.app.net.TunnelExit, requestGeneration: Long) {
+        _exitInfo.value = exit
+        val engine = process
+        if (line.isOlcrtc && engine != null && watchedEngine !== engine) {
+            startOlcRtcExitWatcher(engine, requestGeneration)
+        }
+        setStatus(VpnStatus.Connected)
+        addLog("The line is up behind the ${line.heldName()} — exit ${exit.label()}")
+        startCoreWatcher(line, requestGeneration)
+        restoreLanSharing(line.verifiedThrough, requestGeneration)
+        // Last, with nothing after it that can fail: from here a death is a
+        // new outage, and has to find no restart running.
+        lineRestartJob = null
+    }
+
+    /**
+     * Starts whatever of the line is not running, under the mutex. True when
+     * all of it runs.
+     *
+     * What is running is left alone. An engine that came back and then failed
+     * the check is not killed for it: what is missing may be the far end, a new
+     * join would not bring it back, and on Linux it would be another password.
+     * So a line with nothing dead is only checked again.
+     *
+     * For a line that was changed to, nothing runs the first time, and all of
+     * it is started as the session's endpoint: the engine with the settings the
+     * line names, the core or the front with the line's login.
+     *
+     * Whoever moves the generation meanwhile is waiting for this mutex to stop
+     * the session, and finds everything started here where a stop looks: the
+     * engine in [process] from its first moment, the cores in their controllers.
+     */
+    private suspend fun startDeadProcesses(line: SessionLine, requestGeneration: Long): Boolean {
+        try {
+            if (line.isOlcrtc && process?.isAlive != true) {
+                requireNoListener(line.socksSettings.port)
+                startLineEngine(line, requestGeneration)
+                if (requestGeneration != generation) return false
+            }
+            if (line.coresAlive?.invoke() == false) {
+                try {
+                    // Whatever of the cores still runs goes first, as each
+                    // start below would stop it anyway: it holds the port the
+                    // question is about.
+                    stopDesktopCores()
+                    requireNoListener(line.frontPort ?: line.corePort)
+                    val frontRouting = line.coreRouting
+                    if (!line.isOlcrtc) {
+                        startDesktopCore(
+                            line.location, line.corePort, line.coreRouting, line.verboseLogs,
+                            besideTun = line.desktopMode == DesktopMode.LinuxTun,
+                            login = line.login,
+                            resolvers = line.resolvers
+                        )
+                    } else if (line.frontPort != null && frontRouting is Routing.Rules) {
+                        startOlcRtcFront(
+                            line.socksSettings, frontRouting, line.verboseLogs, line.frontPort, line.login
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Half a start is not left for the next attempt: a core
+                    // that runs and never opened its port would be taken for a
+                    // line with nothing dead, and checked without end.
+                    stopDesktopCores()
+                    throw e
+                }
+            }
+            return true
+        } catch (_: CancellationException) {
+            // The steps shared with the connect say "superseded" by throwing
+            // this. This coroutine's own cancellation has to go on up.
+            currentCoroutineContext().ensureActive()
+            return false
+        } catch (e: Exception) {
+            addLog("The line did not come up: ${e.message}")
+            return false
+        }
+    }
+
+    /** Whether everything of the line runs: the engine of a room, and the cores it was started with. */
+    private fun SessionLine.allRunning(): Boolean =
+        (!isOlcrtc || process?.isAlive == true) && coresAlive?.invoke() != false
+
+    /** The outage of the line one run of [launchLineAttempts] is trying; see [SessionFailover]. */
+    private class LineOutage {
+        var counted: SessionFailover.Outage? = null
+
+        /** Whether the log has said, in this outage, that a room's running engine keeps the session on it. */
+        var saidEngineRuns = false
+    }
+
+    /** How a look at the other lines ended. */
+    private enum class Look {
+        /** The session is on another line, Connected, and the store names it. */
+        Moved,
+
+        /**
+         * Every line that could be tried was tried, or there was none, or the
+         * store would not be written, and the session is where it was. This
+         * one goes on record ([LineSupervision.afterLook]).
+         */
+        RanToItsEnd,
+
+        /** It stopped before that, and tried nothing that counts. */
+        CutShort
+    }
+
+    /** What became of one line the session tried in the place of its own. */
+    private enum class Trial {
+        /** It carries the session's traffic and is the active location. */
+        Moved,
+
+        /** It did not come up or carried nothing, and the session's own line is its line again. */
+        Failed,
+
+        /** The look ends here: the session is no longer this one, or can go to no other line now. */
+        Over,
+
+        /**
+         * It carried, and the store could not be written, so it is not the
+         * active location and the session's own line is its line again. No
+         * other line would be stored either.
+         */
+        NotStored
+    }
+
+    /**
+     * An attempt at the line failed. It is counted, and once the line has been
+     * out for long enough, with a network under the machine and with smart
+     * connect on, the session looks at the other lines of the same country
+     * ([SessionFailover] has the rule, [lookAtOtherLines] the look).
+     *
+     * True when the attempts at this line are over: the session is on another
+     * line, or it is no longer this line's. False leaves the caller to go on
+     * retrying the line it has, which with smart connect off is all that ever
+     * happens.
+     *
+     * Nothing a look throws ends the attempts, as nothing an attempt throws
+     * does ([lineAttempt]).
+     */
+    private suspend fun movedAfterFailedAttempt(
+        line: SessionLine,
+        requestGeneration: Long,
+        outage: LineOutage
+    ): Boolean = try {
+        countAndLook(line, requestGeneration, outage)
+    } catch (_: CancellationException) {
+        currentCoroutineContext().ensureActive()
+        requestGeneration != generation || sessionLine !== line
+    } catch (e: Exception) {
+        addLog("The look at the other lines ended early: ${e.message}")
+        requestGeneration != generation || sessionLine !== line
+    }
+
+    private suspend fun countAndLook(line: SessionLine, requestGeneration: Long, outage: LineOutage): Boolean {
+        // An attempt that was superseded did not fail, it was stopped, and is
+        // not counted. A Disconnect or another location moves the generation
+        // first and cancels this job afterwards, and the tun's own death takes
+        // the line from the session without moving the generation, so all
+        // three are asked.
+        currentCoroutineContext().ensureActive()
+        if (requestGeneration != generation || sessionLine !== line) return true
+
+        // Nor is an attempt the network left half way through. That is the
+        // machine with its cable out, not a dead server, and it is asked after
+        // the attempt because that is when it is known.
+        val present = networkPresent()
+        val now = System.currentTimeMillis()
+        val counted = LineSupervision.afterFailedAttempt(outage.counted, now, present)
+        outage.counted = counted
+
+        // The switch is in the store, and the store is asked last, only once
+        // everything else says it is time, which after most attempts it does
+        // not: reading it can mean waiting for it ([storedBundle]).
+        if (!SessionFailover.due(counted, now, networkPresent = present, enabled = true)) return false
+        val stored = storedBundle() ?: return false
+        if (!stored.settings.normalized().smartConnect) return false
+
+        val look = lookAtOtherLines(line, requestGeneration, stored, outage)
+        if (look == Look.Moved) return true
+        if (requestGeneration != generation || sessionLine !== line) return true
+        val ranToItsEnd = look == Look.RanToItsEnd
+        outage.counted = LineSupervision.afterLook(
+            outage.counted,
+            System.currentTimeMillis(),
+            ranToItsEnd = ranToItsEnd,
+            // Asked only for a look that has something to put on record.
+            networkPresent = ranToItsEnd && networkPresent()
+        )
+        return false
+    }
+
+    /**
+     * Whether the machine has a network of its own under the session.
+     *
+     * A phone asks its system, and a request would answer the same question,
+     * but inside a tun session this app's own requests enter the tun (only the
+     * cores' and the engine's binaries are let out of it), so with the line
+     * down the app has no network to ask over. What it can know without one
+     * is whether the machine still has a default route that is not the
+     * tun's: a cable out or a Wi-Fi gone takes that route with it. A route
+     * that leads nowhere, behind a router with no uplink, still counts as a
+     * network, and the look then finds every line dead, once every
+     * [SessionFailover.REPEAT_MS].
+     *
+     * In proxy mode there is no tun and a request would get out. The same
+     * question is asked there all the same: it has the same answer without a
+     * tun, and it sends nothing anywhere.
+     *
+     * It is asked in a job of its own and waited for no longer than
+     * [NETWORK_ASK_MS]. The commands behind it have no limit of their own on
+     * macOS and Windows, and this runs in the loop that retries the line: a
+     * question that hangs may cost a look, and must not cost the retry. No
+     * answer is taken for no network.
+     *
+     * One question at a time. A command that hangs holds a thread and a
+     * process until it ends, which no cancelling shortens, so a question
+     * still open is waited for again and not asked again: asked anew after
+     * every attempt, an hour of outage would leave no thread for anything
+     * else this manager does.
+     */
+    private suspend fun networkPresent(): Boolean {
+        val asked = networkQuestion?.takeIf { it.isActive } ?: scope.async {
+            when (DesktopPaths.os) {
+                DesktopOs.Linux -> DesktopDnsResolver.linuxDefaultInterface() != null
+                DesktopOs.MacOS -> MacOsTunController.defaultInterfaceName() != null
+                DesktopOs.Windows -> {
+                    // It names the interface or throws: with no route left
+                    // but the tun's own, there is none to name.
+                    windowsTunController.physicalInterface()
+                    true
+                }
+                // No session starts there: nothing sets a system proxy.
+                DesktopOs.Other -> true
+            }
+        }.also { networkQuestion = it }
+        return try {
+            withTimeoutOrNull(NETWORK_ASK_MS) { asked.await() } ?: false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * What is stored, for a session that may go to another line: the switch,
+     * the list and the line last known good, read at once so that they are one
+     * state. Null when it cannot be read within [STORE_WAIT_MS].
+     *
+     * The repository keeps its lock for as long as a list refresh downloads,
+     * and with the line down that download may be waiting on the very tunnel
+     * the line is there to carry. The line's own retry does not wait with it:
+     * no answer is no look this time, and the next failed attempt asks again.
+     */
+    private suspend fun storedBundle(): LocationBundleV4? = try {
+        withTimeoutOrNull(STORE_WAIT_MS) { locationsRepository.getBundle() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        addLog("The server lists could not be read: ${e.message}")
+        null
+    }
+
+    /**
+     * Tries the lines [SessionFailover.candidates] names in the place of
+     * [line], in order, behind what the session holds, which stays exactly as
+     * it is, and makes the first that carries the session's traffic the active
+     * location. When none does, the location the user had stays active and its
+     * retry goes on.
+     *
+     * A core line is probed by a core of its own first ([probePasses]), so a
+     * dead one costs a probe and leaves the session's line as it was. An
+     * olcRTC room is connected, which is its only test.
+     */
+    private suspend fun lookAtOtherLines(
+        line: SessionLine,
+        requestGeneration: Long,
+        stored: LocationBundleV4,
+        outage: LineOutage
+    ): Look {
+        // The line that failed is the one this session is on: the entry it was
+        // started from, with the name and the list it had then, and not what
+        // the store keeps under its id by now. A refresh of the list hands
+        // ids out again, and where two lines share an entry address it can
+        // give this one's to a line of another country. The lines to try are
+        // the ones of the country the session is in.
+        val failed = line.entry
+        // It is this session's to move away from only while the store names
+        // its id as the active one. Where it names another, the user has
+        // chosen another location and the request that comes with the choice
+        // is on its way, or a refresh has made another entry the active one,
+        // which nobody has tried and this session is not on.
+        if (stored.activeLocationId != failed.storageId) return Look.CutShort
+
+        // What the Linux tunnel has to know of the line that failed
+        // ([LineSupervision.linesToTry]). Asked under the mutex, where the
+        // engine's process is named.
+        val engine = mutex.withLock {
+            if (requestGeneration != generation || sessionLine !== line) return Look.CutShort
+            when {
+                !line.isOlcrtc -> FailedEngine.None
+                process?.isAlive == true -> FailedEngine.Running
+                else -> FailedEngine.Down
+            }
+        }
+        val toTry = LineSupervision.linesToTry(
+            candidates = SessionFailover.candidates(
+                active = failed,
+                all = stored.locations,
+                lastKnownGood = stored.settings.normalized().lastKnownGoodTransport[SmartConnect.groupKey(failed)],
+                // Whether only domestic addresses answer cannot be asked from
+                // here: the question is a request, and in a tun session this
+                // app's requests enter the tun. So the rooms never go first on
+                // the desktop, which costs a probe of every core line before
+                // them on a network that would have wanted them first. Proxy
+                // mode could ask and does not, so that a desktop has one order.
+                whitelist = false
+            ),
+            session = line.session.built,
+            engine = engine
+        )
+        if (toTry.rootEngineRuns) {
+            if (!outage.saidEngineRuns) {
+                outage.saidEngineRuns = true
+                addLog(
+                    "Linux TUN: this room's engine still runs, as root. Trying another line in its place " +
+                        "would stop it, and starting it again asks for the administrator's password, which " +
+                        "is not asked for a move nobody asked for: the session stays on this room"
+                )
+            }
+            // Not a look that ran to its end, so not on record: the engine
+            // may be down by the next attempt, and then there are lines to try.
+            return Look.CutShort
+        }
+        if (outage.counted?.lastPassAtMs == null) {
+            // Said at the first look of an outage, where the user looks when
+            // a session that could have moved has not.
+            when {
+                toTry.tunLetsNoOtherLineOut -> addLog(LineChange.TunBuiltForOneLine.whyNoMove())
+                toTry.roomsLeftOut > 0 -> addLog(
+                    "Linux TUN: an olcRTC room starts its engine as root, which asks for the administrator's " +
+                        "password, and no dialog is opened for a move nobody asked for: " +
+                        "${toTry.roomsLeftOut} room(s) of this country are left out"
+                )
+                toTry.steps.isEmpty() -> addLog(
+                    "The line is not answering, and this server list has no other line of the same country"
+                )
+            }
+        }
+        if (toTry.steps.isEmpty()) return Look.RanToItsEnd
+
+        addLog(
+            "The line is not answering; trying ${toTry.steps.size} other line(s) of the same country " +
+                "behind the ${line.heldName()}, which stays as it is"
+        )
+        // What Xray is bound to in the Linux tunnel, as startDesktopCore reads
+        // it for the session's own core; sing-box finds it by itself.
+        val boundInterface = if (line.desktopMode == DesktopMode.LinuxTun) {
+            DesktopDnsResolver.linuxDefaultInterface()
+        } else {
+            null
+        }
+        for (step in toTry.steps) {
+            currentCoroutineContext().ensureActive()
+            if (requestGeneration != generation || sessionLine !== line) return Look.CutShort
+            val entry = step.entry
+            val location = entry.location.normalized()
+            if (!location.isComplete()) continue
+            if (step is SmartConnect.Step.Probe && !probePasses(line, location, boundInterface)) {
+                addLog("${entry.nameForLog()} did not pass its check")
+                continue
+            }
+            when (tryBehindTun(line, entry, location, requestGeneration)) {
+                Trial.Moved -> return Look.Moved
+                Trial.Failed -> continue
+                Trial.Over -> return Look.CutShort
+                // On record, as a look that ran to its end: a store that
+                // cannot be written now will not be written at the next
+                // attempt either, and off the record every attempt would
+                // start a line that carries and drop it again.
+                Trial.NotStored -> return Look.RanToItsEnd
+            }
+        }
+        return Look.RanToItsEnd
+    }
+
+    /**
+     * Whether [candidate] carries traffic, asked through a core of its own on
+     * a port of its own ([TransportProbe]), with the session's line left as it
+     * is.
+     *
+     * The probe's core has to get out of the tun as the session's own does.
+     * On Windows and macOS the tun lets the cores out by their binaries'
+     * paths, and a probe runs the same binary, so nothing more is needed. On
+     * Linux a core is led out by being bound to the physical interface
+     * ([startDesktopCore]), and the probe's is bound the same way. A server
+     * that is a name is asked of the machine's own resolvers, since the
+     * system's is behind the tun by now: on Windows and macOS the ones the
+     * session read before its tun came up, and on Linux the ones the default
+     * interface names now. In proxy mode there is no tun, and the probe is
+     * the one a connect makes.
+     */
+    private suspend fun probePasses(line: SessionLine, candidate: LocationConfig, boundInterface: String?): Boolean =
+        TransportProbe.passes(
+            candidate,
+            // In the Linux tunnel they are read now, as startDesktopCore reads
+            // them for the session's own core: the tun does not change what
+            // the default interface says, and the ones kept from the start go
+            // stale when the machine moves to another network.
+            serverResolver = if (line.desktopMode == DesktopMode.LinuxTun) {
+                DirectDns.Servers(DesktopDnsResolver.linuxDirectDnsServers())
+            } else {
+                line.session.resolvers?.let { DirectDns.Servers(it) }
+            },
+            autoDetectInterface = line.desktopMode == DesktopMode.LinuxTun,
+            bindInterface = boundInterface,
+            starter = lookStarter
+        )
+
+    /**
+     * Puts [entry] behind what the session holds, in the place of [own], the
+     * line that stopped answering, and makes it the active location when it
+     * carries the session's traffic there.
+     *
+     * It is the change [changeLineBehindTun] makes for a location the user
+     * chose, by the same steps ([lineBehindTun], [takeAsSessionLine],
+     * [replaceRunningLine], [lineIsUp]), and differs from it in what a failure
+     * means. The user's line stays the session's whether it comes up or not,
+     * and what cannot be changed behind the tun is restarted in full. A line
+     * nobody asked for is the session's only once it carries traffic and the
+     * store has taken the move: until then every way out of here puts [own]
+     * back, unless a newer request has taken the session over and deals with
+     * whatever line it finds. And nothing here ever becomes a full restart,
+     * which would take the tun down for a move the user did not ask for.
+     *
+     * The mutex is held to start the line and again to finish, and let go for
+     * the check between the two, as an attempt at the session's own line does
+     * it ([restoreLine]).
+     */
+    private suspend fun tryBehindTun(
+        own: SessionLine,
+        entry: LocationEntry,
+        location: LocationConfig,
+        requestGeneration: Long
+    ): Trial {
+        // The text, before anything is touched. It suspends, and nothing may
+        // come between the store naming the new line and the user being told.
+        val notice = getString(Res.string.session_moved_to, entry.name.ifBlank { location.displayName() })
+        val name = entry.nameForLog()
+
+        val next = mutex.withLock {
+            if (requestGeneration != generation || sessionLine !== own) return Trial.Over
+            val move = LineSupervision.moveBehindTun(own.session.built, tunRunning(own.desktopMode))
+            if (move != LineChange.BehindTun) {
+                // Never the full restart a change of location makes of this
+                // answer. A tun whose process is gone has a watcher that ends
+                // the session, and nothing is moved behind one that is not
+                // there.
+                addLog(move.whyNoMove())
+                return Trial.Over
+            }
+            val candidate = try {
+                lineBehindTun(own, entry, location, own.session.built.routing)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addLog("$name cannot be started behind the ${own.heldName()} (${e.message}) and is passed over")
+                return Trial.Failed
+            }
+            if (requestGeneration != generation) return Trial.Over
+
+            addLog("Starting $name behind the ${own.heldName()}, in the place of the line that is not answering")
+            if (candidate.isOlcrtc && candidate.desktopMode == DesktopMode.LinuxTun) {
+                // Only where the line that failed is a room whose own restart
+                // has been asking ([LineSupervision.linesToTry]).
+                addLog(
+                    "Linux TUN: this room's engine runs as root as well, so it asks for the administrator " +
+                        "again; until the password is given the tunnel stays and nothing passes"
+                )
+            }
+            takeAsSessionLine(candidate)
+            val started = try {
+                replaceRunningLine(candidate, requestGeneration)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addLog("The line did not come up: ${e.message}")
+                false
+            }
+            // Superseded: whoever did it is waiting for this mutex, and finds
+            // the session with this line, which it stops or changes.
+            if (requestGeneration != generation) return Trial.Over
+            if (!started) {
+                backToOwnLine(own)
+                return Trial.Failed
+            }
+            candidate
+        }
+
+        // From here the line is the session's, and the attempts that go on are
+        // for the line it had. So nothing below may throw its way out with the
+        // session still on this one: it would be left there with nobody
+        // trying. A check that throws is a check that failed.
+        val exit = try {
+            verifyLine(next, requestGeneration)
+        } catch (_: CancellationException) {
+            // The Windows check says "superseded" by throwing this. This
+            // coroutine's own cancellation has to go on up.
+            currentCoroutineContext().ensureActive()
+            null
+        } catch (e: Exception) {
+            addLog("$name could not be checked: ${e.message}")
+            null
+        }
+        return mutex.withLock { finishTrial(own, next, entry, name, notice, exit, requestGeneration) }
+    }
+
+    /**
+     * The second half of [tryBehindTun], under the mutex taken back after the
+     * check: [next] is the session's for good when it carried traffic and the
+     * store took the move, and [own] is put back when either did not.
+     */
+    private suspend fun finishTrial(
+        own: SessionLine,
+        next: SessionLine,
+        entry: LocationEntry,
+        name: String,
+        notice: String,
+        exit: org.olcbox.app.net.TunnelExit?,
+        requestGeneration: Long
+    ): Trial {
+        // The session ended, or was given another line, while the check was
+        // out. Whoever did that has dealt with this line.
+        if (requestGeneration != generation || sessionLine !== next) return Trial.Over
+        if (exit == null || !next.allRunning()) {
+            addLog("$name carried no traffic behind the ${own.heldName()}")
+            backToOwnLine(own)
+            return Trial.Failed
+        }
+
+        // The store is written under this manager's mutex, so that no request
+        // reads it between the session being on this line and the store
+        // saying so: one that did would start the line that failed again,
+        // behind a store that names this one. That makes a wait for the
+        // repository's lock a wait for everybody: a Disconnect behind it, and
+        // a Quit that never returns when what holds that lock needs the very
+        // thread Quit is blocking. The write itself can be given no limit. So
+        // the store is asked first, for as long as a look waits for it
+        // anywhere ([storedBundle]), and one that does not answer now is not
+        // written now: the move is not made, and the next attempt asks again.
+        if (storedBundle() == null) {
+            addLog("The server lists are busy, so the session does not move to $name now")
+            backToOwnLine(own)
+            return Trial.Over
+        }
+        // Superseded while the store was asked. Nothing is stored for a
+        // request nobody wants any more, and whoever superseded it deals with
+        // this line.
+        if (requestGeneration != generation) return Trial.Over
+        // One change, made under the lock the app's own changes wait for, and
+        // only while the location that failed is still the active one: a
+        // location the user chose meanwhile is theirs, and the request that
+        // comes with it is on its way. Not to be cancelled half way. A write
+        // cut short after the store changed would leave the store on the new
+        // line and nobody told.
+        val recorded = try {
+            withContext(NonCancellable) {
+                locationsRepository.moveActiveLocation(
+                    fromStorageId = own.entry.storageId,
+                    toStorageId = entry.storageId,
+                    group = SmartConnect.groupKey(entry)
+                )
+            }
+        } catch (e: Exception) {
+            // A write that threw is taken for one that was not made, which is
+            // what a bundle written beside itself and moved over the old one
+            // makes of it.
+            addLog("The move could not be stored: ${e.message ?: e}")
+            backToOwnLine(own)
+            return Trial.NotStored
+        }
+        if (!recorded) {
+            addLog(
+                "The store no longer names the line that failed as the active one, or no longer has $name, " +
+                    "so the session does not move"
+            )
+            backToOwnLine(own)
+            return Trial.Over
+        }
+        // The store names the new line from here, so the user is told whatever
+        // comes next, a request that superseded this one included: the next
+        // start connects what the store names.
+        _notices.tryEmit(notice)
+        addLog(
+            "Moved to another line of the same country, $name, behind the ${own.heldName()}, " +
+                "which stayed as it was"
+        )
+        // The rules the engine of the line that was left had read, unless the
+        // new line's engine reads them too, as after a change of location.
+        if (next.engineRules == null) deleteOlcRtcDirectRules()
+        if (requestGeneration != generation) return Trial.Over
+        try {
+            lineIsUp(next, exit, requestGeneration)
+        } catch (e: Exception) {
+            // The move is made and cannot be taken back, so whatever went
+            // wrong in saying so is this line not being up yet, and the
+            // status says that. It gets attempts of its own: the ones that
+            // brought the session here end with this look.
+            addLog("The line did not come up: ${e.message}")
+            setStatus(VpnStatus.Reconnecting)
+            lineRestartJob = launchLineAttempts(next, requestGeneration)
+        }
+        return Trial.Moved
+    }
+
+    /**
+     * A line the session tried by itself did not become its line. Whatever of
+     * it runs is stopped, and the line the session was on is its line again,
+     * with nothing of it running, for the retry that goes on. Under the mutex.
+     *
+     * Stopped here, and not left for the next attempt to find: the cores
+     * belong to their controllers whichever line started them, so a
+     * candidate's core left running would be taken for this line's own, found
+     * alive, and checked in its place.
+     */
+    private fun backToOwnLine(own: SessionLine) {
+        try {
+            val engine = process
+            process = null
+            stopDesktopCores()
+            stopProcess(engine)
+            // No engine runs now, and a room's yaml does not outlive its engine.
+            deleteOlcRtcConfig()
+        } finally {
+            // Whatever a stop throws, the attempts that go on are this line's.
+            sessionLine = own
+            connectedLocation = own.location
+            channelProxy = own.verifiedThrough
+        }
+    }
+
+    /** Why a session cannot go to another line by itself, as the log says it. */
+    private fun LineChange.whyNoMove(): String = when (this) {
+        LineChange.TunBuiltForOneLine ->
+            "This tunnel lets only the server it started with out of itself, so the session cannot go to " +
+                "another line behind it; it keeps retrying this one"
+        LineChange.TunNotRunning ->
+            "The tunnel's own process is not running, so there is nothing to go to another line behind"
+        else -> "The session cannot go to another line behind what it holds"
+    }
+
+    /** A line as the log names it. A room with no name is named by nothing: its id is a capability. */
+    private fun LocationEntry.nameForLog(): String = name.ifBlank { "a line with no name" }
+
+    /**
+     * Starts LAN sharing again after a restart, when it is still wanted and its
+     * listener is gone. The listener's own health check stops it within seconds
+     * of an outage and nothing else would start it, so a session that came back
+     * would come back without it.
+     *
+     * In a job of its own, as a change of the LAN settings starts it. The
+     * session is back whether or not the listener is, and a listener slow to
+     * open must hold up neither the mutex nor the status.
+     */
+    private fun restoreLanSharing(upstream: SubscriptionFetchProxy, requestGeneration: Long) {
+        if (!_socksProxySettings.value.shareOnLan || lanProxy.isRunning()) return
+        lanControlJob?.cancel()
+        lanControlJob = scope.launch {
+            // Read here, not before the launch. A switch-off that lands in
+            // between starts a job of its own, which the cancel above may have
+            // stopped: the listener must not then be opened from what the
+            // setting was a moment earlier.
+            val settings = _socksProxySettings.value
+            if (settings.shareOnLan && !lanProxy.isRunning()) {
+                startLanSharing(settings, upstream, requestGeneration)
+            }
+        }
+    }
+
+    /**
+     * Starts the engine again as it was: the same room, SOCKS port and login,
+     * the same rules file and handshake. The port is the one thing that cannot
+     * be otherwise, since the tun's upstream was written with it.
+     *
+     * On Linux that is root again, as at connect, and so the password dialog;
+     * the wait for the room below includes the time the dialog stays open.
+     *
+     * The engine of a room that was changed to is started here too, for the
+     * first time: with the settings its line names, which are the endpoint's,
+     * and with the resolvers the machine had before the tun came up, since the
+     * system's list, read now, may begin with the tun's own.
+     */
+    private suspend fun startLineEngine(line: SessionLine, requestGeneration: Long) {
+        val ready = CompletableDeferred<Unit>()
+        val startupFailure = CompletableDeferred<String>()
+        val started = startOlcRtcProcessWithFallback(
+            location = line.location,
+            socksSettings = line.socksSettings,
+            ready = ready,
+            startupFailure = startupFailure,
+            logOutput = true,
+            privileged = line.desktopMode == DesktopMode.LinuxTun,
+            directRulesFile = line.engineRules,
+            dtlsProfile = line.dtlsProfile,
+            dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current()
+        )
+        process = started
+        try {
+            waitForOlcRtcReady(
+                process = started,
+                ready = ready,
+                startupFailure = startupFailure,
+                socksPort = line.socksSettings.port,
+                requestGeneration = requestGeneration
+            )
+        } catch (e: CancellationException) {
+            // Superseded: whoever did it stops the session, this process included.
+            throw e
+        } catch (e: Exception) {
+            // An engine that did not come up is not left holding the port, or
+            // half joined to the room, against the attempt that follows.
+            stopProcess(started)
+            throw e
+        }
+    }
+
+    /**
+     * The check the connect made, through the listener it made it through.
+     *
+     * On Windows that is the tun's own check, not the plain request. The exit
+     * the connect remembered would pass a dead line, and a request that comes
+     * back says nothing unless the default routes are still the adapter's.
+     */
+    private suspend fun verifyLine(line: SessionLine, requestGeneration: Long): org.olcbox.app.net.TunnelExit? {
+        val through = line.verifiedThrough
+        val tunInterface = line.windowsTunInterface
+        return if (tunInterface != null) {
+            awaitWindowsTunTraffic(
+                requestGeneration, through.port, through.username, through.password,
+                tunInterface, System.currentTimeMillis() + LINE_VERIFY_WINDOW_MS
+            )
+        } else {
+            org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = through.host,
+                socksPort = through.port,
+                username = through.username,
+                password = through.password
+            )
+        }
+    }
+
+    /** What a restart leaves in place, as the log names it. */
+    private fun SessionLine.heldName(): String =
+        if (desktopMode == DesktopMode.SystemProxy) "system proxy" else "tunnel"
 
     private fun waitForProcessExit(target: Process): Int? {
         return try {
@@ -1607,7 +3474,13 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private fun setStatus(status: VpnStatus) {
+    private fun setStatus(requested: VpnStatus) {
+        // The Linux kill switch. A verified session ends a hold: its block is
+        // back under a tunnel. And while the block holds traffic with no tunnel
+        // up, "disconnected" and every error are shown as that
+        // (LinuxKillSwitch.shown).
+        if (requested is VpnStatus.Connected) linuxTunController.endHold()
+        val status = LinuxKillSwitch.shown(requested, linuxTunController.holdsTraffic)
         if (status is VpnStatus.Connected && channelProbe == null) {
             channelProbe = channelProxy?.let { org.olcbox.app.net.ChannelLatency.Session(it) }
         } else if (status !is VpnStatus.Connected) {
@@ -1657,9 +3530,36 @@ class DesktopVpnManager private constructor(
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         /** Two of these is the worst-case delay before a dead tunnel is reported. */
         const val MAC_TUN_WATCH_INTERVAL_MS = 4_000L
+        /**
+         * Between the two asks a change of location makes of the daemon. It is
+         * waited under the mutex, and only after a first no, so it is short.
+         */
+        const val MAC_TUN_RECHECK_MS = 1_000L
+        /** The longest a dead core goes unnoticed. */
+        const val CORE_WATCH_INTERVAL_MS = 2_000L
+        /**
+         * What the Windows tun is given to carry the check of a restarted line:
+         * as long as the one request the other systems make may take, its two
+         * addresses at TunnelVerifier's own timeout.
+         */
+        const val LINE_VERIFY_WINDOW_MS = 16_000L
+        /**
+         * How long a session whose line is down waits for the store before it
+         * goes back to retrying the line. Reading it takes milliseconds; what
+         * it waits for is the repository's lock, held through a download.
+         */
+        const val STORE_WAIT_MS = 3_000L
+        /**
+         * How long a session whose line is down waits to hear whether the
+         * machine has a network. The answer takes a moment where there is one,
+         * PowerShell's start included; the limit is for a command that hangs.
+         */
+        const val NETWORK_ASK_MS = 10_000L
         const val LAN_HEALTH_INTERVAL_MS = 15_000L
         const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+        /** How the file of an engine's config begins its name; see [olcRtcConfigNaming]. */
+        const val OLCRTC_CONFIG_PREFIX = "olcrtc-client-"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
 
         internal fun isFatalOlcRtcStartupLine(line: String): Boolean {
@@ -1748,7 +3648,9 @@ internal enum class DesktopRulesHome {
  * - the proxy's sockets are ordinary ones;
  * - the macOS daemon binds its own to the physical interface;
  * - in the Linux tunnel only root's traffic keeps the main table, and of what
- *   runs there only the olcRTC engine runs as root (the cores run as the user);
+ *   runs there only the olcRTC engine runs as root. A core runs as the user and
+ *   reaches its server bound to the physical interface (startDesktopCore); its
+ *   rules have not been moved there;
  * - in the Windows tunnel nothing does yet.
  *
  * The proxy keeps its front for olcRTC: it also does what the engine cannot,

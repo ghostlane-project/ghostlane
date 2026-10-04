@@ -127,6 +127,25 @@ class SingBoxConfigDumpTest {
         )
     }
 
+    // The Linux desktop's tun: the core binds its sockets to the physical
+    // interface, here together with the resolver for a server that is a name.
+    @Test fun dumpVlessBesideATunBoundToThePhysicalInterface() {
+        val spec = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@vpn.example.com:443" +
+                "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+                "&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#N"
+        )
+        assertNotNull(spec)
+        dump(
+            "vless-beside-tun",
+            SingBoxConfig.build(
+                spec,
+                serverResolver = DirectDns.Servers(listOf("192.168.1.1")),
+                autoDetectInterface = true
+            )
+        )
+    }
+
     // The shapes ghostlane#82 found unread: the HTTP transport, VLESS in the clear,
     // and ordinary TLS with its certificate waived. No reference files: new shapes.
     @Test fun dumpVlessHttpTransportAndVlessSecurityOptions() {
@@ -214,6 +233,51 @@ class SingBoxConfigDumpTest {
             )
         )
         assertTrue(File(outDir, "desktop-tun-native.json").exists())
+    }
+
+    /**
+     * The macOS daemon's shape now that its tun is the session's and not one
+     * line's: beside the address exclusion it always had, every binary a line
+     * can run leaves by process path, bound to the physical interface, as on
+     * Windows. Once as a core's session and once as a room's under a bypass,
+     * which is the combination Windows never builds. No reference files: the
+     * shapes are new, and `sing-box check` is the test.
+     */
+    @Test fun dumpDesktopTunMacWithTheLinesBinariesLetOut() = runTest {
+        val binaries = listOf(
+            "/Users/a/Library/Application Support/Ghostlane/bin/sing-box",
+            "/Users/a/Library/Application Support/Ghostlane/bin/xray",
+            "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
+        )
+        dumpWithSocksTwin(
+            "desktop-tun-macos-lines",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                excludeAddresses = listOf("203.0.113.7/32"),
+                directDnsDomains = listOf("de1.example.org"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db"
+            )
+        )
+        val rules = File(outDir, "rules").apply { mkdirs() }
+        for (file in RuleSets.all) File(rules, file.name).writeBytes(RuleSets.bytes(file))
+        dumpWithSocksTwin(
+            "desktop-tun-macos-lines-bypass",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10808,
+                verifyPort = 10809,
+                username = "upstream-user",
+                password = "upstream-password",
+                upstreamUdpIsLossy = true,
+                routing = Routing.Rules(rules.absolutePath, DirectDns.System, "ru"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db"
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-macos-lines-as-socks.json").exists())
     }
 
     /** The exact Windows shape: named Wintun, carrier bypass, bound direct, and authenticated probe. */

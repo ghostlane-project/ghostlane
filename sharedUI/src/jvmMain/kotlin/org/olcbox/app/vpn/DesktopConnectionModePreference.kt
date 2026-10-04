@@ -150,6 +150,22 @@ fun desktopRoutingModes(): List<RoutingMode> = routingModesFor(DesktopPaths.os)
 internal fun routingModesFor(os: DesktopOs): List<RoutingMode> =
     if (os == DesktopOs.Linux) RoutingMode.entries - RoutingMode.BlockedOnly else RoutingMode.entries
 
+/**
+ * Whether this desktop has a kill switch to offer. Only the Linux tunnel has
+ * one the app owns ([org.olcbox.app.vpn.desktop.LinuxKillSwitch]); everywhere
+ * else the row is absent.
+ */
+fun desktopKillSwitchOffered(): Boolean = killSwitchOfferedOn(DesktopPaths.os)
+
+internal fun killSwitchOfferedOn(os: DesktopOs): Boolean = os == DesktopOs.Linux
+
+/**
+ * Whether [status] is the kill switch holding traffic with no tunnel up. Its
+ * row then reads on whatever is stored, because switching it off is how the
+ * block is taken away, and a block can outlive the setting that asked for it.
+ */
+fun desktopKillSwitchHolds(status: VpnStatus): Boolean = status.isKillSwitchHold()
+
 internal const val WINDOWS_TUNNEL_CARRIES_ALL = "The Windows tunnel carries all traffic. Routing works in proxy mode."
 internal const val LINUX_TUNNEL_ROOMS_ONLY =
     "In the Linux tunnel, routing applies to olcRTC rooms. With other servers, all traffic goes through the tunnel."

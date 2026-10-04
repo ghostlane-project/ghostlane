@@ -40,17 +40,64 @@ internal object TransportProbe {
     /** xhttp is Xray's; everything else a probe sees is sing-box's. */
     fun usesXray(spec: OutboundSpec): Boolean = spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp
 
-    /** [serverResolver]: see [SingBoxConfig.build]; Android passes the network's own resolvers. */
-    fun coreConfig(spec: OutboundSpec, port: Int, login: SocksLogin, serverResolver: DirectDns? = null): String =
+    /**
+     * [serverResolver]: see [SingBoxConfig.build]; Android passes the network's own resolvers.
+     *
+     * [autoDetectInterface] and [bindInterface] are for a probe made while a
+     * session's tun is up, where the tun's rule does not let the core out by
+     * itself, which is the Linux desktop. They are the binding the session's
+     * own core is started with there: `route.auto_detect_interface` for
+     * sing-box ([SingBoxConfig.build]) and `sockopt.interface` for Xray, which
+     * has to be told the name ([XrayConfig.buildXhttp]). Each core takes its
+     * own and ignores the other's. Left as they are, the config is byte for
+     * byte what it was before they existed.
+     */
+    fun coreConfig(
+        spec: OutboundSpec,
+        port: Int,
+        login: SocksLogin,
+        serverResolver: DirectDns? = null,
+        autoDetectInterface: Boolean = false,
+        bindInterface: String? = null
+    ): String =
         if (spec is OutboundSpec.Vless && usesXray(spec)) {
-            XrayConfig.buildXhttp(spec, socksPort = port, login = login)
+            XrayConfig.buildXhttp(spec, socksPort = port, login = login, bindInterface = bindInterface)
         } else {
-            SingBoxConfig.build(spec, socksPort = port, login = login, serverResolver = serverResolver)
+            SingBoxConfig.build(
+                spec,
+                socksPort = port,
+                login = login,
+                serverResolver = serverResolver,
+                autoDetectInterface = autoDetectInterface
+            )
         }
 
     suspend fun passes(
         location: LocationConfig,
         serverResolver: DirectDns? = null,
+        starter: Starter
+    ): Boolean = passes(
+        location,
+        serverResolver,
+        autoDetectInterface = false,
+        bindInterface = null,
+        starter = starter
+    )
+
+    /**
+     * The same probe for a core that is started beside a tun and has to be led
+     * out of it ([coreConfig] says how).
+     *
+     * A function of its own and not two more defaults on the one above: there
+     * [starter] is the third argument for a caller that names nothing and the
+     * last for one that passes it as a lambda, and Android has one of each, so
+     * no place is left where a new parameter breaks neither.
+     */
+    suspend fun passes(
+        location: LocationConfig,
+        serverResolver: DirectDns?,
+        autoDetectInterface: Boolean,
+        bindInterface: String?,
         starter: Starter
     ): Boolean = withContext(Dispatchers.IO) {
         val spec = location.rawLink?.let { LinkParser.parse(it) } ?: return@withContext false
@@ -58,7 +105,8 @@ internal object TransportProbe {
         val login = SocksLogin(token(), token())
         var core: Core? = null
         try {
-            val started = starter.start(spec, coreConfig(spec, port, login, serverResolver)).also { core = it }
+            val config = coreConfig(spec, port, login, serverResolver, autoDetectInterface, bindInterface)
+            val started = starter.start(spec, config).also { core = it }
             if (!waitForPort(port, started)) return@withContext false
             val proxy = SubscriptionFetchProxy(LOOPBACK, port, login.username, login.password)
             val client = createProxyHttpClient(

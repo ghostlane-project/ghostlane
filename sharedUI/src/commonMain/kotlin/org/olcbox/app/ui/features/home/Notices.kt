@@ -2,6 +2,7 @@ package org.olcbox.app.ui.features.home
 
 import androidx.compose.runtime.Composable
 import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.kill_switch_blocked
 import multiplatform_app.sharedui.generated.resources.olcrtc_failure_key
 import multiplatform_app.sharedui.generated.resources.olcrtc_failure_key_gone
 import multiplatform_app.sharedui.generated.resources.olcrtc_failure_no_peer
@@ -9,6 +10,7 @@ import multiplatform_app.sharedui.generated.resources.olcrtc_failure_protocol
 import multiplatform_app.sharedui.generated.resources.olcrtc_failure_silent
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
+import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
 import org.olcbox.app.vpn.OlcrtcFailure
 
 /**
@@ -27,5 +29,7 @@ internal val NOTICES: Map<String, StringResource> = mapOf(
     OlcrtcFailure.KEY to Res.string.olcrtc_failure_key,
     OlcrtcFailure.SILENT to Res.string.olcrtc_failure_silent,
     OlcrtcFailure.KEY_GONE to Res.string.olcrtc_failure_key_gone,
-    OlcrtcFailure.NO_PEER to Res.string.olcrtc_failure_no_peer
+    OlcrtcFailure.NO_PEER to Res.string.olcrtc_failure_no_peer,
+    // The Linux desktop's kill switch, holding traffic with no tunnel up.
+    KILL_SWITCH_HOLDS_TRAFFIC to Res.string.kill_switch_blocked
 )

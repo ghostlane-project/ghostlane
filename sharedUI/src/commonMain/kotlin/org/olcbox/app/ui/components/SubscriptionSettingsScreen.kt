@@ -162,8 +162,13 @@ fun SubscriptionSettingsScreen(
             SubscriptionSettingsNote(
                 stringResource(Res.string.sub_smart_connect_note)
             )
-            // The move during a session is the VPN service's, and so far only
-            // Android's service makes it.
+            // The note says the app moves when the server stops answering, and
+            // only Android can keep that word: its service watches the tunnel's
+            // traffic and notices a server that has gone quiet. A desktop
+            // session moves too, but only from a line the app is already
+            // retrying (a core or an engine that died, a server chosen while
+            // connected that never answered); a server that goes quiet under a
+            // running core it does not notice. iOS makes no move at all.
             if (currentUpdatePlatform().os == "android") {
                 SubscriptionSettingsNote(
                     stringResource(Res.string.sub_smart_connect_session_note)

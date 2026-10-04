@@ -6,6 +6,7 @@ import multiplatform_app.sharedui.generated.resources.lowest_previous_stopping
 import org.jetbrains.compose.resources.getString
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.isKillSwitchHold
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -42,6 +43,21 @@ internal class LowestConnection(
         }.sortedBy { if (it.storageId == selected.storageId) 0 else 1 }
             .distinctBy { connectionKey(it) }
         if (candidates.isEmpty()) return
+
+        // The Linux desktop's kill switch is holding traffic. Nothing can be
+        // measured from behind it, and the stop below is not for this to ask:
+        // only the user takes the block away. The first candidate is connected
+        // unmeasured, behind the block: the selected server, which the list
+        // above puts first, or the next one when it cannot be connected at all.
+        if (vpn.status.value.isKillSwitchHold()) {
+            val first = candidates.first()
+            if (first.storageId != selected.storageId) {
+                repository.setActiveLocationId(first.storageId)
+                onSelected()
+            }
+            vpn.startVpn()
+            return
+        }
 
         // ICMP/TCP address probes only make sense outside our own tunnel on
         // iOS. Wait for the old tunnel to stop before ranking any destination.
@@ -112,6 +128,11 @@ internal class LowestConnection(
 
     private suspend fun stopAndWait(): Boolean {
         if (vpn.status.value is VpnStatus.Disconnected) return true
+        // A tunnel that died into the Linux desktop's kill switch: a stop would
+        // not end in Disconnected, the block being what is left, and another
+        // server could only be tried from outside it. The selection ends here
+        // and the screen keeps the sentence that says what to do.
+        if (vpn.status.value.isKillSwitchHold()) return false
         vpn.stopVpn()
         return withTimeoutOrNull(STOP_TIMEOUT_MS) {
             vpn.status.first { it is VpnStatus.Disconnected }

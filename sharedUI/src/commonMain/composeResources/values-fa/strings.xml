@@ -130,6 +130,9 @@
     <string name="import_read_failed">خواندن فایل پیکربندی ممکن نشد</string>
     <string name="imported_from_clipboard">از کلیپ‌بورد وارد شد</string>
     <string name="imported_from_qr">از کد QR وارد شد</string>
+    <string name="kill_switch">Kill switch</string>
+    <string name="kill_switch_blocked">تونل قطع است و Kill switch ترافیک را مسدود کرده است. دوباره وصل شوید، یا برای رفع انسداد، Kill switch را در تنظیمات اتصال خاموش کنید. هر دو کار گذرواژهٔ مدیر را می‌خواهد.</string>
+    <string name="kill_switch_note">اگر پردازهٔ تونل متوقف شود، ترافیک، از جمله ترافیک شبکهٔ محلی، به‌جای خروج مستقیم مسدود می‌شود. این انسداد تا وقتی دوباره وصل شوید یا این گزینه را خاموش کنید باقی می‌ماند و هر دو کار گذرواژهٔ مدیر را می‌خواهد. برنامه‌هایی که با کاربر root اجرا می‌شوند مسدود نمی‌شوند و انسداد پس از راه‌اندازی دوبارهٔ رایانه باقی نمی‌ماند. از اتصال بعدی اعمال می‌شود.</string>
     <string name="label_transport">انتقال</string>
     <string name="lan_choose_interface">رابط شبکهٔ خصوصی‌ای را انتخاب کنید که دستگاه‌های کلاینت به آن دسترسی دارند:</string>
     <string name="lan_connect_first">پیش از فعال کردن اشتراک، این رایانه را به یک شبکهٔ محلی خصوصی وصل کنید.</string>

@@ -2,6 +2,7 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
+import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.UpstreamDns
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -29,6 +30,55 @@ internal object DesktopDnsResolver {
             DesktopOs.Other -> FALLBACK_DNS_SERVER
         }
     }
+
+    /**
+     * The machine's own resolvers, for a session to read before its tun comes
+     * up and to keep: what a core started beside the tun later asks for its
+     * server's name ([linuxDirectDnsServers] on Linux, [systemServers]
+     * elsewhere).
+     *
+     * Before the tun, because afterwards the system's list is the tun's as
+     * well: on Windows it may begin with the resolver of the tun's own adapter.
+     * That address is dropped here too, since the adapter of the session
+     * before can still be closing when the next one starts.
+     */
+    fun ownServers(): List<String> = when (DesktopPaths.os) {
+        DesktopOs.Linux -> linuxDirectDnsServers()
+        DesktopOs.MacOS,
+        DesktopOs.Windows -> withoutTunResolvers(systemServers())
+        DesktopOs.Other -> emptyList()
+    }
+
+    /**
+     * [current] for an engine started while a tun is up, from [own], the
+     * servers [ownServers] read before it came up. Linux asks the default
+     * interface for its server, which the tun does not change, so there the
+     * answer is the same as ever.
+     */
+    fun engineServers(own: List<String>): String = when (DesktopPaths.os) {
+        DesktopOs.MacOS,
+        DesktopOs.Windows -> UpstreamDns.list(own)
+        DesktopOs.Linux,
+        DesktopOs.Other -> current()
+    }
+
+    /**
+     * [servers] without the addresses inside the desktop tun's own networks,
+     * where sing-box puts the resolver it gives the tun's adapter. Asked from
+     * outside the tun, nobody answers there.
+     */
+    internal fun withoutTunResolvers(servers: List<String>): List<String> =
+        servers.filterNot { server -> TUN_NETWORKS.any { inNetwork(server.substringBefore('%'), it) } }
+
+    private fun inNetwork(address: String, cidr: String): Boolean = runCatching {
+        val network = InetAddress.getByName(cidr.substringBefore('/')).address
+        val candidate = InetAddress.getByName(address).address
+        val bits = cidr.substringAfter('/').toInt()
+        candidate.size == network.size && (0 until bits).all { bit ->
+            val mask = 0x80 shr (bit % 8)
+            (candidate[bit / 8].toInt() and mask) == (network[bit / 8].toInt() and mask)
+        }
+    }.getOrDefault(false)
 
     /**
      * The system's DNS servers as the JDK's own DNS provider reads them: on
@@ -72,8 +122,36 @@ internal object DesktopDnsResolver {
             .distinct()
 
     private fun currentLinuxDnsServer(): String? {
-        val defaultRouteOutput = runCommand(listOf("ip", "route", "show", "default")).orEmpty()
-        val interfaceName = defaultRouteInterface(defaultRouteOutput)
+        val (resolvectlOutput, nmcliOutput, resolvConf) = linuxDnsSources()
+        return selectLinuxDnsServer(
+            resolvectlOutput = resolvectlOutput,
+            nmcliOutput = nmcliOutput,
+            resolvConf = resolvConf
+        )
+    }
+
+    /**
+     * The interface the Linux machine's default route leaves by, the tun's own
+     * aside. A core beside the tun is bound to it: see
+     * `DesktopVpnManager.startDesktopCore`.
+     */
+    fun linuxDefaultInterface(): String? =
+        defaultRouteInterface(runCommand(listOf("ip", "route", "show", "default")).orEmpty())
+
+    /**
+     * The Linux machine's own resolvers, as addresses, loopback aside. While
+     * the tun is up the system's resolver answers with hev's fake addresses,
+     * so a core beside the tun asks these, through the interface it is bound
+     * to. Empty when none is found, which leaves the public fallback.
+     */
+    fun linuxDirectDnsServers(): List<String> {
+        val (resolvectlOutput, nmcliOutput, resolvConf) = linuxDnsSources()
+        return linuxDnsServers(resolvectlOutput, nmcliOutput, resolvConf)
+    }
+
+    /** What the machine says about its resolvers: resolved and NetworkManager for the default interface, and resolv.conf. */
+    private fun linuxDnsSources(): Triple<String, String, String> {
+        val interfaceName = linuxDefaultInterface()
 
         val resolvectlOutput = if (interfaceName != null) {
             runCommand(listOf("resolvectl", "dns", interfaceName))
@@ -87,11 +165,7 @@ internal object DesktopDnsResolver {
             Files.readString(Path.of("/etc/resolv.conf"))
         }.getOrDefault("")
 
-        return selectLinuxDnsServer(
-            resolvectlOutput = resolvectlOutput.orEmpty(),
-            nmcliOutput = nmcliOutput.orEmpty(),
-            resolvConf = resolvConf
-        )
+        return Triple(resolvectlOutput.orEmpty(), nmcliOutput.orEmpty(), resolvConf)
     }
 
     private fun runCommand(command: List<String>): String? {
@@ -122,17 +196,30 @@ internal object DesktopDnsResolver {
         nmcliOutput: String,
         resolvConf: String
     ): String? {
-        val candidates = buildList {
-            addAll(ipAddresses(resolvectlOutput))
-            addAll(ipAddresses(nmcliOutput))
-            addAll(resolvConfNameservers(resolvConf))
-        }.distinct()
+        val candidates = linuxDnsCandidates(resolvectlOutput, nmcliOutput, resolvConf)
 
         val selected = candidates.firstOrNull { !isLoopback(it) }
             ?: candidates.firstOrNull()
             ?: return null
         return dnsEndpoint(selected)
     }
+
+    /** Every resolver the three sources name except the loopback stub, in their order. */
+    internal fun linuxDnsServers(
+        resolvectlOutput: String,
+        nmcliOutput: String,
+        resolvConf: String
+    ): List<String> = linuxDnsCandidates(resolvectlOutput, nmcliOutput, resolvConf).filterNot(::isLoopback)
+
+    private fun linuxDnsCandidates(
+        resolvectlOutput: String,
+        nmcliOutput: String,
+        resolvConf: String
+    ): List<String> = buildList {
+        addAll(ipAddresses(resolvectlOutput))
+        addAll(ipAddresses(nmcliOutput))
+        addAll(resolvConfNameservers(resolvConf))
+    }.distinct()
 
     private fun ipAddresses(output: String): List<String> {
         return output.lineSequence()
@@ -180,5 +267,6 @@ internal object DesktopDnsResolver {
     }
 
     private val DEFAULT_ROUTE_DEVICE = Regex("(?:^|\\s)dev\\s+(\\S+)")
+    private val TUN_NETWORKS = listOf(SingBoxConfig.DESKTOP_TUN_ADDRESS, SingBoxConfig.DESKTOP_TUN_ADDRESS6)
     private const val COMMAND_TIMEOUT_SECONDS = 2L
 }

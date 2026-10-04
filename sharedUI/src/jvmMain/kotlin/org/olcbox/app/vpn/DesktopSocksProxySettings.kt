@@ -16,7 +16,13 @@ data class DesktopSocksProxySettings(
     val lanNetworkId: String = "",
     val lanPort: Int = DEFAULT_LAN_PORT,
     val lanUsername: String = "",
-    val lanPassword: String = ""
+    val lanPassword: String = "",
+    /**
+     * The Linux tunnel's kill switch (`LinuxKillSwitch`): off unless the user
+     * turned it on, and off for a file written before it existed. Read when
+     * the tunnel starts.
+     */
+    val killSwitch: Boolean = false
 ) {
     val isConfigured: Boolean
         get() = username.isNotBlank() && password.isNotBlank()

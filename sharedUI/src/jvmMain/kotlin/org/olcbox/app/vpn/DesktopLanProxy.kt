@@ -7,7 +7,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
@@ -53,7 +53,12 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
                     ownershipPort, ownershipUsername, ownershipPassword
                 )
             )
-            withTimeout(5_000) {
+            // Not withTimeout: its timeout is a CancellationException, and the
+            // callers read that as "the start was superseded". A connect with LAN
+            // sharing on was then taken down without a word and its status left
+            // at Stopping, because a listener was slow to open. As an ordinary
+            // failure it costs LAN sharing and nothing else.
+            withTimeoutOrNull(5_000) {
                 while (true) {
                     check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
                     if (runCatching {
@@ -62,7 +67,7 @@ internal class DesktopLanProxy(private val onOutput: (String) -> Unit) {
                     ) break
                     delay(100)
                 }
-            }
+            } ?: error("LAN SOCKS listener did not open in time; check the port and interface")
             // This private, random loopback inbound exists in the same config as
             // the LAN listener. If the requested LAN port belonged to another
             // process, sing-box could not bind the config and this check cannot pass.

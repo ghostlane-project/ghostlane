@@ -4,7 +4,9 @@ import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.desktop.DesktopOs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopConnectionModePreferenceTest {
     private val tun = DesktopConnectionModeOption(DesktopConnectionMode.Tun, "System-wide tunnel", "")
@@ -41,6 +43,14 @@ class DesktopConnectionModePreferenceTest {
         for (os in listOf(DesktopOs.MacOS, DesktopOs.Windows, DesktopOs.Other)) {
             assertNull(routingNoteFor(os), "$os")
             assertEquals(RoutingMode.entries, routingModesFor(os), "$os")
+        }
+    }
+
+    /** The one kill switch the app owns is the Linux tunnel's; a switch shown elsewhere would do nothing. */
+    @Test fun onlyLinuxHasAKillSwitchToOffer() {
+        assertTrue(killSwitchOfferedOn(DesktopOs.Linux))
+        for (os in listOf(DesktopOs.MacOS, DesktopOs.Windows, DesktopOs.Other)) {
+            assertFalse(killSwitchOfferedOn(os), "$os")
         }
     }
 }
