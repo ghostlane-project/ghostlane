@@ -64,6 +64,18 @@ internal class LinuxTunController(
         // pre-down take the block away without having been asked. Without the
         // switch nothing reads it, and nothing is touched.
         if (withSwitch) Files.deleteIfExists(stopAskedPath())
+        // A tunnel process from before that nobody could end still holds the
+        // tun: the app is not root and could not signal it, or the app was
+        // killed with the tunnel up. A second one exits on finding the device
+        // taken ("Device or resource busy"), so no connect gets through until
+        // it is gone. Ending it needs root, which here is one more password,
+        // in the one case where nothing else would do. Only the process is
+        // ended: under a kill switch's block the rules stay as they are.
+        if (interfaceExists(TUN_NAME)) {
+            addLog("Linux TUN: a tunnel process from before still holds $TUN_NAME; ending it first")
+            runCatching { runPrivilegedScript(writeScript(CLEANUP_SCRIPT_NAME, endTunnelScriptContent())) }
+                .onFailure { addLog("Linux TUN: it could not be ended: ${it.message}") }
+        }
         val upScript = writeUpScript(withSwitch)
         val downScript = writeDownScript(withSwitch)
         val config = writeConfig(socksPort, upScript, downScript, username, password)
@@ -131,10 +143,21 @@ internal class LinuxTunController(
         if (routesInstalled) {
             waitForRoutesRemoved()
         }
+        // The tunnel's process runs as root, and an app that does not cannot
+        // end it: by kill(2) only root signals a root process, so the stop
+        // above never arrived, and hev ignores the pipe the app closed. The
+        // process is then still there, holding the tun, and the next connect's
+        // would exit on finding the device taken. The cleanup runs as root,
+        // so the cleanup ends it. The tun exists exactly as long as a process
+        // holds it, which is what is asked here.
+        val tunnelStillUp = interfaceExists(TUN_NAME)
         val blockDevice = interfaceExists(KILL_SWITCH_DEVICE)
-        if (routeRuleExists() || routeTableExists() || Files.exists(rpFilterStatePath()) || blockDevice) {
-            runCatching { runPrivilegedScript(writeCleanupScript(removeBlockDevice = blockDevice)) }
-                .onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
+        if (tunnelStillUp || routeRuleExists() || routeTableExists() ||
+            Files.exists(rpFilterStatePath()) || blockDevice
+        ) {
+            runCatching {
+                runPrivilegedScript(writeCleanupScript(removeBlockDevice = blockDevice, endTunnel = tunnelStillUp))
+            }.onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
         }
         routesInstalled = false
         startedWithKillSwitch = false
@@ -240,7 +263,7 @@ internal class LinuxTunController(
 
     private fun writeDownScript(killSwitch: Boolean): Path {
         return writeScript(
-            name = "linux-tun-down.sh",
+            name = CLEANUP_SCRIPT_NAME,
             body = downScriptContent(
                 rpFilterStatePath().toString(),
                 stopAskedPath = if (killSwitch) stopAskedPath().toString() else null
@@ -257,11 +280,12 @@ internal class LinuxTunController(
      * is the plain down script, so that for someone who never turned the
      * switch on, what runs as root at a disconnect is what ran before.
      */
-    private fun writeCleanupScript(removeBlockDevice: Boolean): Path {
+    private fun writeCleanupScript(removeBlockDevice: Boolean, endTunnel: Boolean): Path {
         val statePath = rpFilterStatePath().toString()
+        val removal = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
         return writeScript(
-            name = "linux-tun-down.sh",
-            body = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
+            name = CLEANUP_SCRIPT_NAME,
+            body = if (endTunnel) withTunnelEnded(removal) else removal
         )
     }
 
@@ -734,6 +758,52 @@ internal class LinuxTunController(
             """.trimIndent()
             return head + "\n" + body
         }
+
+        /**
+         * Ends whatever process holds the tun. For the scripts the app runs
+         * as root, which is the only place it can be done from when the app
+         * itself is not root.
+         *
+         * The process is found by what it holds, not by its name or its
+         * binary's path: the kernel says of every open tun descriptor which
+         * device it is attached to (`iff:` in `/proc/<pid>/fdinfo`). It is
+         * asked to stop the way hev stops in order, on SIGINT, which runs its
+         * pre-down; one that has not gone after three seconds is killed.
+         *
+         * hev runs its own scripts with the tun's name and index as
+         * arguments, and the app runs this one with none. The pre-down hev is
+         * told of is this same file, so without that test hev, stopping,
+         * would be asked by its own pre-down to stop.
+         */
+        internal fun tunnelEndLines(): String = """
+            if [ "${'$'}#" -eq 0 ]; then
+              attempt=0
+              while [ "${'$'}attempt" -lt 5 ]; do
+                holders=${'$'}(grep -rls '^iff:[[:space:]]*$TUN_NAME${'$'}' /proc/[0-9]*/fdinfo 2>/dev/null | cut -d/ -f3 | sort -u)
+                [ -n "${'$'}holders" ] || break
+                if [ "${'$'}attempt" -lt 3 ]; then sig=INT; else sig=KILL; fi
+                for pid in ${'$'}holders; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                attempt=${'$'}((attempt + 1))
+                sleep 1
+              done
+            fi
+        """.trimIndent()
+
+        /** [script] with the tunnel's process ended first: right under its first line, the shebang. */
+        internal fun withTunnelEnded(script: String): String {
+            val shebang = script.substringBefore('\n')
+            return shebang + "\n" + tunnelEndLines() + "\n" + script.substringAfter('\n')
+        }
+
+        /** Ends the tunnel's process and removes nothing: for a start over a tunnel left from before. */
+        internal fun endTunnelScriptContent(): String = "#!/bin/sh\n" + tunnelEndLines() + "\n"
+
+        /**
+         * The one script the app runs as root by itself. Its path is also the
+         * pre-down hev is told of, as it always was, so a sudoers or polkit
+         * rule that names it keeps covering both.
+         */
+        const val CLEANUP_SCRIPT_NAME = "linux-tun-down.sh"
 
         /** Inside single quotes YAML has one escape: a quote is written twice. */
         private fun yamlSingleQuoted(value: String): String = value.replace("'", "''")

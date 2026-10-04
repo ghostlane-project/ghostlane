@@ -180,6 +180,37 @@ class DesktopProxyModeTest {
         assertContains(config, "  port: 10808\n  username: 'ghost'\n  password: 'it''s'\n")
     }
 
+    // The app is not root and the tunnel's process is: the app cannot signal
+    // it. What the app runs as root ends it, by the tun it holds.
+    @Test
+    fun theLinuxCleanupEndsTheTunnelsProcessBeforeItRemovesAnything() {
+        val plain = LinuxTunController.downScriptContent("/tmp/state")
+        val script = LinuxTunController.withTunnelEnded(plain)
+        val lines = script.lines()
+
+        assertEquals("#!/bin/sh", lines.first())
+        // Only when the app runs it: hev hands its scripts the tun's name.
+        assertEquals("if [ \"\$#\" -eq 0 ]; then", lines[1])
+        assertContains(script, "grep -rls '^iff:[[:space:]]*olcbox0\$' /proc/[0-9]*/fdinfo")
+        assertContains(script, "sig=INT")
+        assertContains(script, "sig=KILL")
+        // Everything the script did before is still there, after it and unchanged.
+        val ended = LinuxTunController.tunnelEndLines().lines()
+        assertEquals(plain.lines().drop(1), lines.drop(1 + ended.size))
+        assertTrue(script.indexOf("kill -") < script.indexOf("ip rule del"))
+    }
+
+    @Test
+    fun endingATunnelLeftFromBeforeRemovesNothing() {
+        val script = LinuxTunController.endTunnelScriptContent()
+
+        assertTrue(script.startsWith("#!/bin/sh\n"))
+        assertContains(script, "kill -")
+        assertFalse(script.contains("ip rule"))
+        assertFalse(script.contains("ip route"))
+        assertFalse(script.contains("ip link"))
+    }
+
     @Test
     fun linuxTunConfigWithNoLoginIsWhatItWas() {
         assertEquals(
