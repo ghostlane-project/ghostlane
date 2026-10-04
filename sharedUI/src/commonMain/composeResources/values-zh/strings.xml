@@ -130,6 +130,8 @@
     <string name="import_read_failed">无法读取配置文件</string>
     <string name="imported_from_clipboard">已从剪贴板导入</string>
     <string name="imported_from_qr">已从二维码导入</string>
+    <string name="kill_switch_blocked">隧道已断开，Kill switch 正在拦截流量。请重新连接，或在连接设置中关闭 Kill switch 以解除拦截。这两种操作都会要求输入管理员密码。</string>
+    <string name="kill_switch_note">如果隧道进程停止，流量（包括局域网流量）会被拦截，而不是直接外发。拦截会一直保持，直到你重新连接或关闭此开关，这两种操作都会要求输入管理员密码。以 root 身份运行的程序不受拦截，重启电脑后拦截也不会保留。下次连接时生效。</string>
     <string name="label_transport">传输方式</string>
     <string name="lan_choose_interface">选择客户端设备可以访问的私有网络接口：</string>
     <string name="lan_connect_first">启用共享前，请先将这台电脑连接到私有局域网。</string>
@@ -146,7 +148,7 @@
     <string name="lan_socks_warning">SOCKS5 在局域网内以明文发送用户名、密码、请求的地址和流量。请只在可信的私有局域网中使用，并且只与可信设备共享凭据。</string>
     <string name="lan_use_interface">使用此接口</string>
     <string name="kill_switch">Kill switch（断网保护）</string>
-    <string name="kill_switch_note">VPN 未连接时，iOS 会丢弃流量而不是直接发出，并自动重新连接 VPN。如果 VPN 无法恢复，手机将没有网络，直到你在“设置”中关闭 VPN；连接期间更新应用可能导致这种情况。</string>
+    <string name="kill_switch_note_ios">VPN 未连接时，iOS 会丢弃流量而不是直接发出，并自动重新连接 VPN。如果 VPN 无法恢复，手机将没有网络，直到你在“设置”中关闭 VPN；连接期间更新应用可能导致这种情况。</string>
     <string name="last_refresh_at">上次刷新 %1$s</string>
     <string name="latency_nothing_measurable">这里没有可测量的内容——这些节点没有可访问的地址</string>
     <string name="latency_on_connected">延迟在已连接的节点上测量</string>

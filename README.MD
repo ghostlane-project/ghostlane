@@ -124,7 +124,9 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 - Smart connect: another transport when one is blocked, olcRTC in the same
   country when nothing else gets through (Android and the desktop). On Android
   it also moves a session whose server stopped answering to another server of
-  the same country, and says where.
+  the same country, and says where; a desktop session moves the same way from
+  a server the app is already retrying, and does not notice one that has only
+  gone quiet (see Protocols).
 - olcRTC rooms carry their occupancy on the board, and say out loud when one is
   full or its key is no longer good rather than failing at connect.
 - olcRTC on a server that moves its clients between rooms: the next room is read
@@ -183,6 +185,46 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   go out around it. While it reconnects those apps wait, and the notification
   says so. What the app cannot hold is its own death; for that Android has
   "Always-on VPN" with "Block connections without VPN".
+- On the desktop a core or an olcRTC engine that dies is restarted behind the
+  tunnel instead of taking it down: the tunnel stays as it is, and apps wait
+  behind it, rather than going out directly, while the process comes back on
+  the port it had. A dead sing-box or Xray core is noticed now; it used to leave
+  a session that said Connected and carried nothing. The death of the tunnel's
+  own process still ends the session.
+- On the desktop another server chosen while connected is started behind the
+  tunnel as well. The tunnel is built once, for the session, and is not taken
+  down, rebuilt or started again for the new server, so there is no moment
+  between the two when traffic goes out directly; a server that does not answer
+  is retried behind it. On Linux the tunnel's password is not asked for again
+  (an olcRTC room still asks, for its engine). Changing the connection mode,
+  the routing or the SOCKS port and login still restarts the whole connection.
+- Linux desktop: a kill switch for that last case, off by default (Settings,
+  Connection). When the tunnel's own process stops, its route goes with it and
+  traffic would leave directly; with the switch on, a second route in the
+  tunnel's table drops it instead, the local network included, and the app
+  says so. It stays blocked until you connect again, which puts a tunnel back
+  without opening the block, or turn the switch off; either asks for the
+  administrator password. Nothing else removes it: not a connect that fails,
+  not Cancel, not quitting the app. It is routes and rules, so it holds for as
+  long as they stand, and for what they cover: not across a restart of the
+  computer; not for programs running as root or for what the computer forwards
+  for containers and virtual machines, neither of which the Linux tunnel has
+  ever carried; and not for a program that binds its sockets to a network
+  interface. The `ghostlane` command has a kill switch of its own, which its
+  daemon also keeps between servers and puts back after a crash
+  ([docs/cli.md](docs/cli.md)); the desktop app has no such daemon.
+- On the desktop a server that stays down no longer keeps the session on it.
+  With smart connect on, a server that is being retried behind the tunnel (a
+  core or an olcRTC engine that died and did not come back, or a server chosen
+  while connected that never answered) is given two failed attempts and half a
+  minute; then the other servers of the same country in the same list are
+  tried behind the tunnel, which stays as it is, and the first that carries
+  traffic becomes the active one, with a message that says which. The tunnel
+  is never taken down for it, and no password dialog opens by itself: on Linux
+  a session on any other server is not moved into an olcRTC room, and one that
+  is in a room moves only once that room's engine has stopped and is asking
+  for the password already. A server that goes quiet while its core keeps
+  running is not noticed on the desktop.
 - No account, no analytics, nothing collected.
 
 ## Protocols
@@ -230,15 +272,27 @@ country. When only domestic sites answer — a mobile "whitelist" shutdown — i
 goes to olcRTC first. It never changes the country, and it can be turned off in
 the server-list settings.
 
-The same switch covers a server that dies during a session, on Android so far.
-After two failed reconnects and half a minute without the server, with a network
-present, the app tries the other transports of the same exit, then the other
-servers of the same country in the same list, then olcRTC of that country. A
-candidate is checked by an engine of its own first, so a dead one costs a check
+The same switch covers a server that dies during a session, on Android and the
+desktop. After two failed reconnects and half a minute without the server, with
+a network present, the app tries the other transports of the same exit, then the
+other servers of the same country in the same list, then olcRTC of that country.
+A candidate is checked by an engine of its own first, so a dead one costs a check
 and not a reconnect, and all of it happens behind the tunnel the session keeps
 up. The first line that carries traffic becomes the active one, and the app says
 which. It never changes the country or the list, and nothing moves back by
 itself.
+
+The desktop differs in three things. The count begins from a server the app is
+already retrying: a core or an olcRTC engine that died, or a server chosen while
+connected that never answered. A server that goes quiet under a core that keeps
+running is not noticed there, so nothing moves. olcRTC does not go first on a
+whitelisted network: from behind its own tunnel the app cannot ask which kind of
+network it is on, and "a network is present" means the machine still has a
+default route of its own. And on Linux, where an olcRTC engine runs as root and
+starting one asks for the administrator's password, no dialog is opened for a
+move nobody asked for: a session on any other server goes only to servers whose
+cores ask for nothing, and a session in a room moves only once that room's
+engine has stopped, when its own restart is asking already.
 
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ — the matrix below says how.
@@ -276,7 +330,7 @@ Where it applies:
 | iOS | All traffic, or Bypass Russia; an olcRTC room applies it from the engine's direct rules |
 | macOS, proxy and tunnel | Every mode and your rules |
 | Windows | Every mode and your rules in proxy mode. The Windows tunnel carries everything, and the routing screen says to use proxy mode for it |
-| Linux | olcRTC rooms: a bypass and your rules, as in a room on Android. The engine runs as root there, and root keeps its own route out of the tunnel. Other servers carry everything: their cores run as the user, and a socket meant to go direct would re-enter the policy-routed tun. The routing screen says so and does not offer blocked-only |
+| Linux | olcRTC rooms: a bypass and your rules, as in a room on Android. The engine runs as root there, and root keeps its own route out of the tunnel. Other servers carry everything: their cores run as the user and reach the server bound to the physical interface, and the rules have not been moved there. The routing screen says so and does not offer blocked-only |
 
 ## Server lists
 
@@ -381,7 +435,7 @@ Everything below is for building the app yourself; the downloads above need none
 | iOS | System VPN | sing-box's own tun for Reality and Hysteria2; `hev-socks5-tunnel` in front of Xray and olcRTC | all three in one `Cores.xcframework` inside the extension |
 | macOS | TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
 | Windows | TUN, proxy | supervised sing-box TUN + Wintun; OS proxy settings otherwise | as macOS |
-| Linux | TUN | `hev-socks5-tunnel` + policy routes | as macOS |
+| Linux | TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | as macOS |
 
 The desktop apps can also lend the tunnel to another device on the same local
 network — a phone, a TV, a laptop that must not have a client installed — as an
@@ -402,7 +456,7 @@ The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
 | Android | Android Studio, SDK 37, NDK 28.2.13676358 |
 | Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
 | iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags |
-| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges |
+| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root). The kill switch needs the kernel's `dummy` device; without it the tunnel comes up without the switch, and the log says so |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 
 Default local `olcrtc` path:
@@ -498,9 +552,12 @@ tunnel simply does not appear, and nothing anywhere says why.
   bundle. A local `packageReleaseDmg` is neither unless `MACOS_SIGN_IDENTITY`
   and the notary credentials are set.
 - Windows installers must be built on Windows with `jpackage` and WiX available.
-- Linux TUN interface: `olcbox0`.
+- Linux TUN interface: `olcbox0`; the kill switch's dummy device: `olcboxks0`.
 - Linux stop removes policy routes and reverts `systemd-resolved` settings when
-  `resolvectl` is available.
+  `resolvectl` is available. With the kill switch on, that is so for a running
+  tunnel you disconnect. When the tunnel's process stops by itself they stay in
+  place, which is the block, and until you are connected again only turning
+  the switch off removes them.
 
 `keystore.properties`:
 

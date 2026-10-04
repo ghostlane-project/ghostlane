@@ -29,6 +29,26 @@ class DesktopDnsResolverTest {
     }
 
     /**
+     * The resolver sing-box gives its tun's adapter sits in the tun's own
+     * network. A core beside the tun cannot ask it: its query leaves by the
+     * physical interface, where nobody has that address. It is on the system's
+     * list while a tun is up, and for a moment after one was stopped.
+     */
+    @Test
+    fun theTunsOwnResolverIsNotOneOfTheMachines() {
+        assertEquals(
+            listOf("192.168.1.1", "172.19.0.4", "fe80::1%en0", "2a01:4ff:ff00::add:2"),
+            DesktopDnsResolver.withoutTunResolvers(
+                listOf(
+                    "172.19.0.2", "192.168.1.1", "172.19.0.1", "172.19.0.4",
+                    "fdfe:dcba:9876::2", "fe80::1%en0", "2a01:4ff:ff00::add:2"
+                )
+            )
+        )
+        assertEquals(emptyList(), DesktopDnsResolver.withoutTunResolvers(listOf("172.19.0.2")))
+    }
+
+    /**
      * The JDK's DNS provider on a Unix host reads `/etc/resolv.conf`, as it does on
      * macOS, where configd writes that file from the primary resolver. So on the test
      * host the list has to be the file's nameservers, the first five of them.

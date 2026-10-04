@@ -130,6 +130,9 @@
     <string name="import_read_failed">Could not read config file</string>
     <string name="imported_from_clipboard">Imported from clipboard</string>
     <string name="imported_from_qr">Imported from QR code</string>
+    <string name="kill_switch">Kill switch</string>
+    <string name="kill_switch_blocked">The tunnel is down and the kill switch is blocking traffic. Connect again, or turn the kill switch off in the connection settings to unblock it. Either one asks for the administrator password.</string>
+    <string name="kill_switch_note">If the tunnel's process stops, traffic is blocked, the local network included, instead of going out directly. It stays blocked until you connect again or turn this off, and either one asks for the administrator password. Programs running as root are not held, and the block does not outlast a restart of the computer. Takes effect at the next connection.</string>
     <string name="label_transport">Transport</string>
     <string name="lan_choose_interface">Choose the private interface that client devices can reach:</string>
     <string name="lan_connect_first">Connect this computer to a private LAN before enabling sharing.</string>
@@ -145,8 +148,7 @@
     <string name="lan_sharing">Local network sharing</string>
     <string name="lan_socks_warning">SOCKS5 sends its username, password, requested addresses, and traffic without local-network encryption. Use it only on a trusted private LAN and share credentials only with trusted devices.</string>
     <string name="lan_use_interface">Use this interface</string>
-    <string name="kill_switch">Kill switch</string>
-    <string name="kill_switch_note">When the VPN is not up, iOS drops traffic instead of sending it directly, and brings the VPN back by itself. If it cannot come back, the phone has no network until you turn the VPN off in Settings; updating the app while connected can cause that.</string>
+    <string name="kill_switch_note_ios">When the VPN is not up, iOS drops traffic instead of sending it directly, and brings the VPN back by itself. If it cannot come back, the phone has no network until you turn the VPN off in Settings; updating the app while connected can cause that.</string>
     <string name="last_refresh_at">last refresh %1$s</string>
     <string name="latency_nothing_measurable">Nothing here can be measured — these locations have no address to reach</string>
     <string name="latency_on_connected">Latency is measured on the connected location</string>

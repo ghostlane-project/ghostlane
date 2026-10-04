@@ -31,6 +31,9 @@ import multiplatform_app.sharedui.generated.resources.hide_password
 import multiplatform_app.sharedui.generated.resources.hours_short
 import multiplatform_app.sharedui.generated.resources.https_sources
 import multiplatform_app.sharedui.generated.resources.https_sources_none
+import multiplatform_app.sharedui.generated.resources.kill_switch
+import multiplatform_app.sharedui.generated.resources.kill_switch_note
+import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
 import multiplatform_app.sharedui.generated.resources.lan_choose_interface
 import multiplatform_app.sharedui.generated.resources.lan_connect_first
 import multiplatform_app.sharedui.generated.resources.lan_endpoint
@@ -263,6 +266,15 @@ fun ApplicationSettingsSheet(
      */
     tunnelDaemonSummary: String? = null,
     onTunnelDaemonClick: () -> Unit = {},
+    /**
+     * The platform's own kill switch, where the caller has one to offer: today
+     * the Linux desktop's tunnel. Null everywhere else. iOS has a kill switch
+     * too and hands in nothing here: its switch is the VPN profile's and is
+     * carried by [routingSettings] ([RoutingSettings.killSwitch]). With
+     * neither, the row is absent, as the tunnel component's is.
+     */
+    killSwitch: Boolean? = null,
+    onKillSwitchChanged: (Boolean) -> Unit = {},
     /** How subscriptions behave. See [SubscriptionSettings]. */
     subscriptionSettings: SubscriptionSettings = SubscriptionSettings(),
     onSubscriptionSettingsChanged: (SubscriptionSettings) -> Unit = {},
@@ -394,15 +406,24 @@ fun ApplicationSettingsSheet(
                     modeSummary = connectionModeSummary,
                     socksProxySettings = socksProxySettings,
                     tunnelDaemonSummary = tunnelDaemonSummary,
+                    // One row, and two platforms that have a kill switch to
+                    // put in it, never both at once. The Linux desktop's is
+                    // its tunnel's and comes from the caller. iOS's is the VPN
+                    // profile's and lives in the routing settings.
+                    killSwitch = killSwitch
+                        ?: routingSettings.killSwitch.takeIf { currentUpdatePlatform().os == "ios" },
                     chromeDtls = routingSettings.olcrtcChromeDtls,
-                    // Shown only where the platform has a kill switch the app can
-                    // ask for, which today is iOS.
-                    killSwitch = routingSettings.killSwitch.takeIf { currentUpdatePlatform().os == "ios" },
                     onConnectionModeClick = { route = SharedSettingsRoute.ConnectionMode },
                     onSocksProxyClick = { route = SharedSettingsRoute.SocksProxy },
                     onTunnelDaemonClick = onTunnelDaemonClick,
+                    onKillSwitchChanged = { enabled ->
+                        if (killSwitch != null) {
+                            onKillSwitchChanged(enabled)
+                        } else {
+                            onRoutingSettingsChanged(routingSettings.copy(killSwitch = enabled))
+                        }
+                    },
                     onChromeDtlsChanged = { onRoutingSettingsChanged(routingSettings.copy(olcrtcChromeDtls = it)) },
-                    onKillSwitchChanged = { onRoutingSettingsChanged(routingSettings.copy(killSwitch = it)) },
                     onBack = { route = SharedSettingsRoute.Hub }
                 )
 
@@ -601,13 +622,13 @@ private fun SharedConnectionSettingsContent(
     modeSummary: String,
     socksProxySettings: ApplicationSocksProxySettings?,
     tunnelDaemonSummary: String?,
-    chromeDtls: Boolean,
     killSwitch: Boolean?,
+    chromeDtls: Boolean,
     onConnectionModeClick: () -> Unit,
     onSocksProxyClick: () -> Unit,
     onTunnelDaemonClick: () -> Unit,
-    onChromeDtlsChanged: (Boolean) -> Unit,
     onKillSwitchChanged: (Boolean) -> Unit,
+    onChromeDtlsChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -659,8 +680,24 @@ private fun SharedConnectionSettingsContent(
                 )
             }
 
+            // Here, beside the other things that decide how traffic leaves, and
+            // not behind the admin gate: it is the user's own choice, and its
+            // note is where they learn what the choice costs. The cost is the
+            // platform's: what iOS does with a tunnel that cannot come back is
+            // not what the Linux tunnel's block does.
             if (killSwitch != null) {
-                KillSwitchRow(checked = killSwitch, onCheckedChange = onKillSwitchChanged)
+                ConnectionSwitchRow(
+                    title = stringResource(Res.string.kill_switch),
+                    note = stringResource(
+                        if (currentUpdatePlatform().os == "ios") {
+                            Res.string.kill_switch_note_ios
+                        } else {
+                            Res.string.kill_switch_note
+                        }
+                    ),
+                    checked = killSwitch,
+                    onCheckedChange = onKillSwitchChanged
+                )
             }
 
             OlcrtcHandshakeRow(checked = chromeDtls, enabled = true, onCheckedChange = onChromeDtlsChanged)

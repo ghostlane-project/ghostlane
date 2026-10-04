@@ -309,6 +309,34 @@ class SingBoxConfigTest {
         assertNull(named["route"])
     }
 
+    // The Linux desktop: the tun's rule takes every user's traffic and the core
+    // runs as the user, so its own connection to the server went into the tun.
+    @Test fun aCoreBesideATunBindsItsSocketsToThePhysicalInterface() {
+        val route = Json.parseToJsonElement(SingBoxConfig.build(vless(), autoDetectInterface = true))
+            .jsonObject["route"]!!.jsonObject
+        assertEquals("true", route["auto_detect_interface"]!!.jsonPrimitive.content)
+        assertNull(route["default_domain_resolver"])
+        // A server named by hostname: the one route block carries both.
+        val named = Json.parseToJsonElement(
+            SingBoxConfig.build(
+                vless().copy(host = "vpn.example.com"),
+                serverResolver = DirectDns.Servers(listOf("192.168.1.1")),
+                autoDetectInterface = true
+            )
+        ).jsonObject["route"]!!.jsonObject
+        assertEquals("dns-direct", named["default_domain_resolver"]!!.jsonPrimitive.content)
+        assertEquals("true", named["auto_detect_interface"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun theRuleBasedShapeTakesTheBindingIntoItsOwnRouteBlock() {
+        val rules = Routing.BypassRussia(ruleSetDir = "/rules", directDns = DirectDns.Servers(listOf("10.0.0.1")))
+        val bound = Json.parseToJsonElement(SingBoxConfig.build(vless(), routing = rules, autoDetectInterface = true))
+            .jsonObject["route"]!!.jsonObject
+        assertEquals("true", bound["auto_detect_interface"]!!.jsonPrimitive.content)
+        val plain = Json.parseToJsonElement(SingBoxConfig.build(vless(), routing = rules)).jsonObject["route"]!!.jsonObject
+        assertNull(plain["auto_detect_interface"])
+    }
+
     @Test fun theRuleBasedShapeKeepsItsOwnResolverAndDoesNotGetASecondDnsSection() {
         val named = vless().copy(host = "vpn.example.com")
         val rules = Routing.BypassRussia(ruleSetDir = "/rules", directDns = DirectDns.Servers(listOf("10.0.0.1")))
