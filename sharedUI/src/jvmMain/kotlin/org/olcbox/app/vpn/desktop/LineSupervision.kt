@@ -1,6 +1,9 @@
 package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.data.model.RoutingSettings
+import org.olcbox.app.net.LocationKind
+import org.olcbox.app.net.SessionFailover
+import org.olcbox.app.net.SmartConnect
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.vpn.DesktopMode
 import org.olcbox.app.vpn.DesktopSocksProxySettings
@@ -77,8 +80,40 @@ internal enum class LineChange {
 }
 
 /**
- * The rules of a desktop session one of whose processes died, or whose location
- * is changed, kept apart from the manager so they can be read and tested
+ * The olcRTC engine of the line that stopped answering, as far as a session
+ * that looks for another line has to know it. It matters in the Linux tunnel,
+ * where an engine runs as root and the app does not.
+ */
+internal enum class FailedEngine {
+    /** The line is a core and has no engine. */
+    None,
+
+    /** A room whose engine is down: every attempt at it starts one, and so asks for the password already. */
+    Down,
+
+    /** A room whose engine runs and carries nothing. */
+    Running
+}
+
+/**
+ * The lines a desktop session may go to by itself, of those the common rule
+ * names for it ([SessionFailover.candidates]), in that rule's order, and what
+ * was taken out of them ([LineSupervision.linesToTry]).
+ */
+internal data class LinesToTry(
+    val steps: List<SmartConnect.Step>,
+    /** How many olcRTC rooms were left out because starting their engine asks for a password. */
+    val roomsLeftOut: Int = 0,
+    /** The tun lets no line but its first out of itself, so nothing can be tried behind it. */
+    val tunLetsNoOtherLineOut: Boolean = false,
+    /** Nothing is tried, because it would begin with stopping an engine that runs as root. */
+    val rootEngineRuns: Boolean = false
+)
+
+/**
+ * The rules of a desktop session one of whose processes died, whose location
+ * is changed, or whose line stays down until the session goes to another by
+ * itself, kept apart from the manager so they can be read and tested
  * without a desktop.
  *
  * A session is two halves: the tun, which claims the machine's traffic, and
@@ -156,6 +191,102 @@ internal object LineSupervision {
     private fun sameListener(now: DesktopSocksProxySettings, then: DesktopSocksProxySettings): Boolean =
         now.host == then.host && now.port == then.port &&
             now.username == then.username && now.password == then.password
+
+    /**
+     * Whether a line the session goes to by itself, when its own has stopped
+     * answering, can be started behind what the session holds. It is
+     * [changeOfLine] with the settings taken from the session itself, and so
+     * never one of its three answers about settings.
+     *
+     * The difference from a location the user chose is what a no means. There
+     * it is the full restart, which the user's own request then makes. Here
+     * nobody asked, and a full restart takes the tun down, which is the one
+     * thing a move exists to avoid: a no is no move.
+     *
+     * The settings are left out because a move applies none. The session goes
+     * on as it was built, and settings changed since then are applied by the
+     * request the user's own gesture sends, which supersedes whatever a look
+     * is doing. Weighing them here would only turn a request that is on its
+     * way into a move that is not made.
+     */
+    fun moveBehindTun(session: SessionBuild, tunRunning: Boolean): LineChange =
+        changeOfLine(session, session.mode, session.routing, session.socks, tunRunning)
+
+    /**
+     * Which of [candidates], the lines the common rule names in place of one
+     * that stopped answering, a session built as [session] may try by itself.
+     * The order is the rule's and is kept, and a desktop only takes lines out.
+     *
+     * Behind a tun that lets only its first line out
+     * ([SessionBuild.letsEveryLineOut]) it takes out all of them: neither a
+     * probe's core nor another line's would get out of that tun.
+     *
+     * In the Linux tunnel it takes out whatever ends in a password dialog.
+     * The engine runs as root there, starting one asks for the
+     * administrator's password, and a dialog that opens by itself, for a move
+     * nobody asked for, is not acceptable. What that leaves depends on the
+     * engine of the line that failed ([engine]). A session on a core is not
+     * moved into a room. A session in a room whose engine is down may go
+     * anywhere: every attempt at its own line opens that dialog already, and
+     * a room in its place opens one more of the same. A session in a room
+     * whose engine runs and carries nothing stays there: trying any line in
+     * its place begins with stopping that engine, and a line that then does
+     * not carry leaves the session's own to come back through the dialog.
+     * Nor is it known how soon an engine that runs as root is gone once a
+     * process that does not has told it to stop, and until it is gone no
+     * other line can take its port.
+     */
+    fun linesToTry(
+        candidates: List<SmartConnect.Step>,
+        session: SessionBuild,
+        engine: FailedEngine
+    ): LinesToTry {
+        if (!session.letsEveryLineOut) return LinesToTry(emptyList(), tunLetsNoOtherLineOut = true)
+        if (session.mode != DesktopMode.LinuxTun) return LinesToTry(candidates)
+        return when (engine) {
+            FailedEngine.Down -> LinesToTry(candidates)
+            FailedEngine.Running -> LinesToTry(emptyList(), rootEngineRuns = true)
+            FailedEngine.None -> {
+                val withoutRooms = candidates.filterNot { it.entry.location.kind == LocationKind.Olcrtc }
+                LinesToTry(withoutRooms, roomsLeftOut = candidates.size - withoutRooms.size)
+            }
+        }
+    }
+
+    /**
+     * The outage of a line after an attempt at it failed at [nowMs]: begun by
+     * the first failure, and one failure longer with each one after it.
+     *
+     * Only with a network. A machine whose cable is out is not a dead server,
+     * every other line would fail the same way, and the time it lasts is not
+     * time the line was down: the count is dropped, and begins again with the
+     * first attempt that fails once the network is back.
+     */
+    fun afterFailedAttempt(
+        outage: SessionFailover.Outage?,
+        nowMs: Long,
+        networkPresent: Boolean
+    ): SessionFailover.Outage? = when {
+        !networkPresent -> null
+        outage == null -> SessionFailover.Outage(startedAtMs = nowMs, failedAttempts = 1)
+        else -> outage.another()
+    }
+
+    /**
+     * The outage after a look at the other lines that moved the session
+     * nowhere. The look goes on record, which puts the next one off by
+     * [SessionFailover.REPEAT_MS], only when it [ranToItsEnd] with a network
+     * still under it. One that was cut short, by another request or by the
+     * network going half way, tried nothing: on record it would put the next
+     * look off by five minutes while the dead line is retried.
+     */
+    fun afterLook(
+        outage: SessionFailover.Outage?,
+        nowMs: Long,
+        ranToItsEnd: Boolean,
+        networkPresent: Boolean
+    ): SessionFailover.Outage? =
+        if (ranToItsEnd && networkPresent) outage?.copy(lastPassAtMs = nowMs) else outage
 
     /**
      * Whether the death of [which] is recovered behind the tun, which stays

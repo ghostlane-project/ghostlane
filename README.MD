@@ -124,7 +124,9 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 - Smart connect: another transport when one is blocked, olcRTC in the same
   country when nothing else gets through (Android and the desktop). On Android
   it also moves a session whose server stopped answering to another server of
-  the same country, and says where.
+  the same country, and says where; a desktop session moves the same way from
+  a server the app is already retrying, and does not notice one that has only
+  gone quiet (see Protocols).
 - olcRTC rooms carry their occupancy on the board, and say out loud when one is
   full or its key is no longer good rather than failing at connect.
 - olcRTC on a server that moves its clients between rooms: the next room is read
@@ -203,6 +205,18 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   interface. The `ghostlane` command has a kill switch of its own, which its
   daemon also keeps between servers and puts back after a crash
   ([docs/cli.md](docs/cli.md)); the desktop app has no such daemon.
+- On the desktop a server that stays down no longer keeps the session on it.
+  With smart connect on, a server that is being retried behind the tunnel (a
+  core or an olcRTC engine that died and did not come back, or a server chosen
+  while connected that never answered) is given two failed attempts and half a
+  minute; then the other servers of the same country in the same list are
+  tried behind the tunnel, which stays as it is, and the first that carries
+  traffic becomes the active one, with a message that says which. The tunnel
+  is never taken down for it, and no password dialog opens by itself: on Linux
+  a session on any other server is not moved into an olcRTC room, and one that
+  is in a room moves only once that room's engine has stopped and is asking
+  for the password already. A server that goes quiet while its core keeps
+  running is not noticed on the desktop.
 - No account, no analytics, nothing collected.
 
 ## Protocols
@@ -250,15 +264,27 @@ country. When only domestic sites answer — a mobile "whitelist" shutdown — i
 goes to olcRTC first. It never changes the country, and it can be turned off in
 the server-list settings.
 
-The same switch covers a server that dies during a session, on Android so far.
-After two failed reconnects and half a minute without the server, with a network
-present, the app tries the other transports of the same exit, then the other
-servers of the same country in the same list, then olcRTC of that country. A
-candidate is checked by an engine of its own first, so a dead one costs a check
+The same switch covers a server that dies during a session, on Android and the
+desktop. After two failed reconnects and half a minute without the server, with
+a network present, the app tries the other transports of the same exit, then the
+other servers of the same country in the same list, then olcRTC of that country.
+A candidate is checked by an engine of its own first, so a dead one costs a check
 and not a reconnect, and all of it happens behind the tunnel the session keeps
 up. The first line that carries traffic becomes the active one, and the app says
 which. It never changes the country or the list, and nothing moves back by
 itself.
+
+The desktop differs in three things. The count begins from a server the app is
+already retrying: a core or an olcRTC engine that died, or a server chosen while
+connected that never answered. A server that goes quiet under a core that keeps
+running is not noticed there, so nothing moves. olcRTC does not go first on a
+whitelisted network: from behind its own tunnel the app cannot ask which kind of
+network it is on, and "a network is present" means the machine still has a
+default route of its own. And on Linux, where an olcRTC engine runs as root and
+starting one asks for the administrator's password, no dialog is opened for a
+move nobody asked for: a session on any other server goes only to servers whose
+cores ask for nothing, and a session in a room moves only once that room's
+engine has stopped, when its own restart is asking already.
 
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ — the matrix below says how.

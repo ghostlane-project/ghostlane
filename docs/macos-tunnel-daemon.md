@@ -63,6 +63,14 @@ always did, with the first server's address excluded and nothing else, the log
 says so in one line, and another server in that session is the full restart it
 used to be.
 
+The same two things carry a session that goes to another server by itself, when
+its own has stopped answering (smart connect; README, Protocols). A server it
+considers is checked first by a core of its own, started beside the tun: that
+core is one of the named binaries and leaves as the session's own does, and it
+asks the same resolvers. A tun that started without the rule lets neither that
+core nor another server's out, so a session in it does not move, and the log
+says so once in an outage.
+
 What stays the first server's for the whole session is how names are looked up
 (`upstreamUdpIsLossy`). A session that started on Reality or Hysteria2 and moves
 into an olcRTC room keeps sending lookups as datagrams, through a carrier that
@@ -77,7 +85,14 @@ the configs it produces are checked by `sing-box check` in CI. What a Mac has to
 show: with `while :; do curl -4 -s -m 3 https://api.ipify.org; echo; sleep 1;
 done` running in a plain shell, choose another server. The loop stops answering,
 then answers with the new exit, and the Mac's own address never appears in it;
-`netstat -rn | grep -c 172.19.0.1` does not drop to 0 in between.
+`netstat -rn | grep -c 172.19.0.1` does not drop to 0 in between. And for the
+move the session makes by itself: with the same loop running, choose a server
+whose address does not answer, in a list that has another server of the same
+country. Within about a minute and a half the loop answers with that other
+server's exit, the app says which server it moved to, and the Mac's own address
+never appears. `route -n get default` has to name the physical interface while
+the tunnel is up: that is how the app tells a dead server from a Mac with no
+network, and a `utun` there would mean it never looks.
 
 ## Installing it
 
