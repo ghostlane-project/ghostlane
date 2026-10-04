@@ -1370,8 +1370,9 @@ class OlcboxVpnService : VpnService() {
      * hev reads its target once, so it is restarted, on the descriptor that is
      * already open, whenever the target moved or hev is gone. The old instance
      * has to be gone first: hev is one instance per process, and a second one
-     * started beside it is not a restart. On false the caller restarts the
-     * whole tunnel, which closes the descriptor hev is reading.
+     * started beside it is not a restart. On false the caller keeps the
+     * interface and tries again after its backoff: hev reads a descriptor of
+     * its own, so nothing done to the interface would make it let go.
      */
     private suspend fun ensureBridge(): Boolean {
         if (connectionMode != AndroidConnectionMode.Tun) return true
