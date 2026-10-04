@@ -348,8 +348,8 @@ Linux fix is the owner's call; the recommendation is to release what is written 
 and to build the rest against a desktop that can run it.
 
 Not in the table because they were not in the design: the location store fix under stage C (#94, A7), a pull
-request for two faults of LAN sharing on the desktop that were found while D1 was built, and one that widens
-a test's timing in the CLI (#91).
+request for two faults of LAN sharing on the desktop that were found while D1 was built (#97), and one that
+widens a test's timing in the CLI (#91).
 
 ## Decided
 
@@ -380,6 +380,28 @@ changed in the design is A6 and A7 above; the rest brought the code back to what
 - the line moved to was not named in the notification (F5);
 - a stop arriving while Android created an interface could leave that interface up; a tun2socks told to stop
   was taken for a live one; its stop could be asked for twice.
+
+The fixes were then read by a second reviewer who had written none of them. That read found no path that closes
+a held interface or publishes an Error over one. It found ten things, three of them left over from the first
+twelve, and they are fixed as well:
+
+- A4 had a hole that was older than this work: Connect tapped with no network became "a migration" when the
+  network arrived, and a migration retries in place for ever. A tun session that was never verified has nothing
+  to migrate; it is still the first connect and ends as one.
+- A6 was not complete: tun2socks was still left pointing at a port nothing held while the phone was offline with
+  the transport dead, through a look that began after a failed start, and through every olcRTC candidate.
+- A2: a handover that failed was silent, and app lists that cannot be applied were retried every half minute
+  for a start by Android. They are an error, whoever asked, and a failed handover is said in the notification.
+- A stop could still be outrun by the start it had cancelled (a tun2socks started, or a status written, after
+  the stop had looked); the stop now waits for that start to end and cleans up after it.
+- F5: a move could be stored and not announced when the start was superseded inside the write; the location a
+  move replaces was the one the store named when the look began, not the one that had failed.
+- Anything a start threw that nothing caught ended the process, and the interface with it.
+- A7: the desktop's fallback to the write in place also caught a temp file that could not be written.
+
+Left as they are, and known: a start by Android whose transport never starts does not reach the look at other
+lines (it has no interface yet, so nothing is held, and it retries the one line); the app's own settings screen
+saves the whole settings object it loaded, which can drop the line the service remembered for a group.
 
 ## Testing
 
@@ -422,8 +444,9 @@ changed in the design is A6 and A7 above; the rest brought the code back to what
   run it was root inside its namespace, which proves the routing and not the permission): plain fails, bound
   connects, and a server named by hostname connects once the config also carries a resolver of its own
   (`dns-direct`, bound like everything else), because the system's resolver is pointed at hev's fake addresses
-  for as long as the tun is up. sing-box does not bind sockets that go to loopback, so a front before Xray or
-  the engine is not affected. What stays broken there: an XHTTP line named by hostname (Xray asks the system's
+  for as long as the tun is up. Both orders were run: the core started with the tun already up, which is a
+  restart, and the core started first with the tun and its rules added under it, which is the connect.
+  sing-box does not bind sockets that go to loopback, so a front before Xray or the engine is not affected. What stays broken there: an XHTTP line named by hostname (Xray asks the system's
   resolver). A server that answers only over IPv6 is not among them: the IPv6 half of hev's rule is a blackhole
   route, and an IPv6 lookup bound to a device passes over it and reaches the main table (`ip -6 route get`,
   not traffic).
