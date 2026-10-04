@@ -18,9 +18,17 @@ data class BridgeTarget(
 )
 
 object TunnelBridge {
-    /** Whether tun2socks has to be started again before it reaches [wanted]. */
-    fun needsRestart(running: BridgeTarget?, alive: Boolean, wanted: BridgeTarget): Boolean =
-        !alive || running != wanted
+    /**
+     * Whether tun2socks has to be started again before it reaches [wanted].
+     *
+     * [stopping]: it has been told to stop and has not gone yet. Its thread is
+     * still alive, and it is no bridge: a start that was superseded stops
+     * tun2socks on its way out, and the start that follows would otherwise find
+     * it "alive" on the right target and report a session with nothing reading
+     * the tun.
+     */
+    fun needsRestart(running: BridgeTarget?, alive: Boolean, stopping: Boolean, wanted: BridgeTarget): Boolean =
+        !alive || stopping || running != wanted
 }
 
 /**
