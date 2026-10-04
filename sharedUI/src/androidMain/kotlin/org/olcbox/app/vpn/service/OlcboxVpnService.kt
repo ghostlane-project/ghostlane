@@ -20,6 +20,7 @@ import multiplatform_app.sharedui.generated.resources.notification_verifying
 import multiplatform_app.sharedui.generated.resources.notification_vpn_connected
 import multiplatform_app.sharedui.generated.resources.notification_waiting_network
 import multiplatform_app.sharedui.generated.resources.notification_waiting_transport
+import multiplatform_app.sharedui.generated.resources.session_moved_to
 import org.jetbrains.compose.resources.getString as resourceString
 import org.jetbrains.compose.resources.StringResource
 import android.app.NotificationChannel
@@ -61,12 +62,14 @@ import mobile.Runtime as OlcrtcRuntime
 import mobile.SocketProtector
 import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
+import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.UpstreamDns
 import org.olcbox.app.data.repository.LocationsRepository
+import org.olcbox.app.net.AndroidCoreProcess
 import org.olcbox.app.net.AndroidSingBoxController
 import org.olcbox.app.net.AndroidXrayController
 import org.olcbox.app.net.DirectDns
@@ -77,11 +80,16 @@ import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
+import org.olcbox.app.net.SessionFailover
 import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.SmartConnect
 import org.olcbox.app.net.SocksLogin
+import org.olcbox.app.net.TransportGroup
+import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.net.TunnelExit
 import org.olcbox.app.net.TunnelVerifier
+import org.olcbox.app.net.WhitelistCheck
 import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
@@ -110,6 +118,7 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -207,6 +216,10 @@ class OlcboxVpnService : VpnService() {
     private var tunSpec: TunSpec? = null
     private var startedBySystem = false
     private var handoverPending = false
+
+    /** The outage of the active line, while there is one; see [SessionFailover]. */
+    private var outage: SessionFailover.Outage? = null
+    private val failoverSerial = AtomicInteger()
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
@@ -656,6 +669,8 @@ class OlcboxVpnService : VpnService() {
             val exit = verifyTunnel()
             if (requestedGeneration != generation) return
             if (exit == null) {
+                if (movedAfterFailedReconnect(upstream, requestedGeneration)) return
+                if (requestedGeneration != generation) return
                 failUnverifiedTunnel(
                     what = "${activeModeLabel()} transport",
                     isMigration = true,
@@ -669,10 +684,133 @@ class OlcboxVpnService : VpnService() {
             addLog("${activeModeLabel()} transport reconnected — exit ${exit.label()}")
             startWatchdog()
         } else {
+            if (movedAfterFailedReconnect(upstream, requestedGeneration)) return
+            if (requestedGeneration != generation) return
             updateUnderlyingNetwork(null)
             setStatus(VpnStatus.Reconnecting)
             updateNotification("Waiting for transport...")
             scheduleTransportRetry(requestedGeneration, "transport reconnect failed")
+        }
+    }
+
+    /**
+     * A reconnect failed with a network present. Counts it, and once the line
+     * has been down long enough and smart connect is on, looks for another line
+     * of the same country. True when the session is up on one; false leaves the
+     * caller to retry the line it was on.
+     */
+    private suspend fun movedAfterFailedReconnect(upstream: Network, requestedGeneration: Long): Boolean {
+        val now = System.currentTimeMillis()
+        val current = outage?.another() ?: SessionFailover.Outage(startedAtMs = now, failedAttempts = 1)
+        outage = current
+        val enabled = runCatching { repository.getSubscriptionSettings().smartConnect }.getOrDefault(false)
+        if (!SessionFailover.due(current, now, networkPresent = true, enabled = enabled)) return false
+        outage = current.copy(lastPassAtMs = now)
+        return moveToAnotherLine(upstream, requestedGeneration)
+    }
+
+    /**
+     * Tries the lines [SessionFailover.candidates] names, in order, behind the
+     * interface that stays up, and makes the first that carries traffic the
+     * active location. A core line is probed by a core of its own first, so a
+     * dead one costs a probe and not a restart of the transport; an olcRTC room
+     * is connected, which is its only test. When none carries, the location the
+     * user had stays active and its retry goes on.
+     */
+    private suspend fun moveToAnotherLine(upstream: Network, requestedGeneration: Long): Boolean {
+        val active = repository.getActiveLocation() ?: return false
+        val all = repository.getAllLocations()
+        val settings = repository.getSubscriptionSettings()
+        val whitelist = TransportGroup.olcrtcFallbacks(active, all).isNotEmpty() && whitelistMode()
+        val steps = SessionFailover.candidates(
+            active, all, settings.lastKnownGoodTransport[SmartConnect.groupKey(active)], whitelist
+        )
+        if (steps.isEmpty()) return false
+        addLog("The line is not answering; trying ${steps.size} other line(s) of the same country")
+        val resolver = DirectDns.Servers(upstreamDnsAddresses(upstream))
+        val original = OlcboxVpnState.activeLocation
+
+        for (step in steps) {
+            coroutineContext.ensureActive()
+            if (requestedGeneration != generation) return false
+            val candidate = step.entry.location.normalized()
+            if (step is SmartConnect.Step.Probe &&
+                !TransportProbe.passes(candidate, resolver, failoverStarter)
+            ) {
+                continue
+            }
+            if (requestedGeneration != generation) return false
+            OlcboxVpnState.activeLocation = candidate
+            stopMobileAndWait()
+            val exit = if (
+                startTransport(candidate, upstream, requestedGeneration, setErrorOnFailure = false) && ensureBridge()
+            ) {
+                verifyTunnel()
+            } else {
+                null
+            }
+            if (requestedGeneration != generation) return false
+            if (exit == null) continue
+
+            val name = step.entry.name.ifBlank { candidate.displayName() }
+            repository.setActiveLocationId(step.entry.storageId)
+            repository.saveSubscriptionSettings(
+                settings.copy(
+                    lastKnownGoodTransport = settings.lastKnownGoodTransport +
+                        (SmartConnect.groupKey(step.entry) to step.entry.storageId)
+                )
+            )
+            setStatus(VpnStatus.Connected)
+            resetRecoveryState()
+            updateNotification(connectedNotificationText())
+            addLog("Moved to another line of the same country — exit ${exit.label()}")
+            OlcboxVpnState.announce(resourceString(Res.string.session_moved_to, name))
+            startWatchdog()
+            return true
+        }
+        // None carried. Whatever the last attempt left running goes, and the
+        // location the user had is the session's again.
+        stopMobileAndWait()
+        OlcboxVpnState.activeLocation = original
+        return false
+    }
+
+    /** A candidate's own core, alone, in a work dir of its own: the session's core is never touched. */
+    private val failoverStarter = TransportProbe.Starter { spec, config ->
+        val label = "failover-${failoverSerial.incrementAndGet()}"
+        val core = AndroidCoreProcess(
+            context = this,
+            soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
+            label = label,
+            argv = { bin, file -> listOf(bin, "run", "-c", file) },
+        )
+        core.start(config)
+        object : TransportProbe.Core {
+            override fun isRunning(): Boolean = core.isRunning()
+            override suspend fun stop() {
+                core.stop()
+                File(cacheDir, "olcbox-$label").deleteRecursively()
+            }
+        }
+    }
+
+    /** Asked directly: this app's own traffic never enters the tun. See [WhitelistCheck]. */
+    private suspend fun whitelistMode(): Boolean {
+        val client = createProxyHttpClient(
+            null,
+            connectTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            requestTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            socketTimeoutMs = WhitelistCheck.TIMEOUT_MS,
+            followRedirects = false
+        )
+        return try {
+            WhitelistCheck.detect(client)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        } finally {
+            client.close()
         }
     }
 
@@ -1811,6 +1949,7 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun resetRecoveryState() {
+        outage = null
         recoveryRequestedForGeneration = 0L
         reconnectAttempt = 0
         recoveryJob?.cancel()

@@ -22,6 +22,7 @@ import multiplatform_app.sharedui.generated.resources.sub_prevent_duplicates_not
 import multiplatform_app.sharedui.generated.resources.sub_server_list
 import multiplatform_app.sharedui.generated.resources.sub_smart_connect
 import multiplatform_app.sharedui.generated.resources.sub_smart_connect_note
+import multiplatform_app.sharedui.generated.resources.sub_smart_connect_session_note
 import multiplatform_app.sharedui.generated.resources.sub_update_interval
 import multiplatform_app.sharedui.generated.resources.sub_update_on_open
 import multiplatform_app.sharedui.generated.resources.sub_updating
@@ -161,6 +162,13 @@ fun SubscriptionSettingsScreen(
             SubscriptionSettingsNote(
                 stringResource(Res.string.sub_smart_connect_note)
             )
+            // The move during a session is the VPN service's, and so far only
+            // Android's service makes it.
+            if (currentUpdatePlatform().os == "android") {
+                SubscriptionSettingsNote(
+                    stringResource(Res.string.sub_smart_connect_session_note)
+                )
+            }
         }
 
         Spacer(Modifier.height(18.dp))

@@ -386,9 +386,16 @@ class HomeScreenViewModel(
 
         viewModelScope.launch {
             // What the tunnel did on its own, in the same place the app's other
-            // one-off messages appear. Today: a Hysteria2 session that the
-            // carrier's UDP blocking silenced, moved to a TCP transport (#27).
-            vpnManager.notices.collect { _autoRefreshNotice.emit(it) }
+            // one-off messages appear: a Hysteria2 session that the carrier's
+            // UDP blocking silenced, moved to a TCP transport (#27), and a
+            // session moved to another line of the country because its own
+            // stopped answering. Both change the active location, and on
+            // Android the one who changed it is the VPN service, with a
+            // repository of its own, so the screen reads it again here.
+            vpnManager.notices.collect {
+                loadCurrentConfigNow()
+                _autoRefreshNotice.emit(it)
+            }
         }
 
         viewModelScope.launch {
