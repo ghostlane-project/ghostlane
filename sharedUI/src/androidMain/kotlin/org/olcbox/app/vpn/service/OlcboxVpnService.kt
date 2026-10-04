@@ -581,7 +581,7 @@ class OlcboxVpnService : VpnService() {
                     val stored = storedBundle()
                     val active = stored.locations.firstOrNull { it.storageId == stored.activeLocationId }
                     val location = active?.location?.normalized()
-                    if (location == null || !location.isComplete()) {
+                    if (active == null || location == null || !location.isComplete()) {
                         if (behindTunnel) {
                             // Inside a session a missing location is a reason to
                             // wait, not to let traffic out: the interface stays and
@@ -618,12 +618,13 @@ class OlcboxVpnService : VpnService() {
                         behindTunnel -> reconnectTransport(
                             location,
                             requestedGeneration,
+                            lineId = active.storageId,
                             restartBridge = forceFullRestart,
                             replaceInterface = TunnelSession.needsHandover(tunSpec, currentTunSpec())
                         )
 
                         migrates && !forceFullRestart && canReconnectTransportInPlace() ->
-                            reconnectTransport(location, requestedGeneration)
+                            reconnectTransport(location, requestedGeneration, lineId = active.storageId)
 
                         else -> startFullTunnel(location, requestedGeneration, migrates, isRestart)
                     }
@@ -683,10 +684,14 @@ class OlcboxVpnService : VpnService() {
      * [restartBridge] also restarts tun2socks, for the cases that used to close
      * the interface to get a clean one. [replaceInterface] swaps the interface
      * itself by handover. Neither leaves a moment with no interface.
+     *
+     * [lineId] is [location] by its id in the store: the line this start
+     * connects, and so the one that failed if it fails.
      */
     private suspend fun reconnectTransport(
         location: LocationConfig,
         requestedGeneration: Long,
+        lineId: String,
         restartBridge: Boolean = false,
         replaceInterface: Boolean = false
     ) {
@@ -748,7 +753,7 @@ class OlcboxVpnService : VpnService() {
                 // nothing is the one whose account is wanted, and a look at the
                 // other lines stops it.
                 logUnverifiedTunnel("${activeModeLabel()} transport")
-                if (movedAfterFailedReconnect(upstream, requestedGeneration)) return
+                if (movedAfterFailedReconnect(upstream, requestedGeneration, lineId)) return
                 if (requestedGeneration != generation) return
                 updateUnderlyingNetwork(null)
                 setStatus(VpnStatus.Reconnecting)
@@ -767,9 +772,13 @@ class OlcboxVpnService : VpnService() {
             addLog("${activeModeLabel()} transport reconnected — exit ${exit.label()}")
             startWatchdog()
         } else {
-            if (movedAfterFailedReconnect(upstream, requestedGeneration)) return
             if (requestedGeneration != generation) return
+            // Before the look at other lines, which can take minutes: nothing
+            // listens where tun2socks points from here on, and the port a core
+            // failed on is no longer even the session's.
             stopBridgeForHold()
+            if (movedAfterFailedReconnect(upstream, requestedGeneration, lineId)) return
+            if (requestedGeneration != generation) return
             updateUnderlyingNetwork(null)
             setStatus(VpnStatus.Reconnecting)
             updateNotification("Waiting for transport...")
@@ -783,12 +792,22 @@ class OlcboxVpnService : VpnService() {
      * of the same country. True when the session is up on one; false leaves the
      * caller to retry the line it was on.
      */
-    private suspend fun movedAfterFailedReconnect(upstream: Network, requestedGeneration: Long): Boolean {
+    private suspend fun movedAfterFailedReconnect(
+        upstream: Network,
+        requestedGeneration: Long,
+        failedId: String
+    ): Boolean {
         // A start that was superseded did not fail, it was stopped, and is not
         // counted. Its job is cancelled before the generation moves on, so
         // both are asked.
         coroutineContext.ensureActive()
         if (requestedGeneration != generation) return false
+        // Nor is an attempt the network left half way through: that is the
+        // lift again, and every other line would fail the same way.
+        if (findActiveUpstreamNetwork() == null) {
+            outage = null
+            return false
+        }
         val now = System.currentTimeMillis()
         val current = outage?.another() ?: SessionFailover.Outage(startedAtMs = now, failedAttempts = 1)
         outage = current
@@ -800,7 +819,7 @@ class OlcboxVpnService : VpnService() {
             false
         }
         if (!SessionFailover.due(current, now, networkPresent = true, enabled = enabled)) return false
-        val moved = moveToAnotherLine(upstream, requestedGeneration)
+        val moved = moveToAnotherLine(upstream, requestedGeneration, failedId)
         // A look goes on record once it has run to its end with a network under
         // it. One that was cut short (another start, the network gone half way)
         // tried nothing, and on record it would put the next look off by
@@ -819,9 +838,17 @@ class OlcboxVpnService : VpnService() {
      * is connected, which is its only test. When none carries, the location the
      * user had stays active and its retry goes on.
      */
-    private suspend fun moveToAnotherLine(upstream: Network, requestedGeneration: Long): Boolean {
+    private suspend fun moveToAnotherLine(upstream: Network, requestedGeneration: Long, failedId: String): Boolean {
         val stored = storedBundle()
-        val active = stored.locations.firstOrNull { it.storageId == stored.activeLocationId } ?: return false
+        // The line that failed is the one this start connected, not whatever
+        // the store names by now. A list refresh may have put another entry in
+        // its place, one nobody has tried: the next retry connects it, and what
+        // was counted against the old one is not held against it.
+        if (stored.activeLocationId != failedId) {
+            outage = null
+            return false
+        }
+        val active = stored.locations.firstOrNull { it.storageId == failedId } ?: return false
         val all = stored.locations
         val whitelist = TransportGroup.olcrtcFallbacks(active, all).isNotEmpty() && whitelistMode()
         val steps = SessionFailover.candidates(
@@ -847,6 +874,10 @@ class OlcboxVpnService : VpnService() {
             if (requestedGeneration != generation) return false
             OlcboxVpnState.activeLocation = candidate
             stopMobileAndWait()
+            // A room listens on another port than a core and takes half a
+            // minute to join: tun2socks is not left pointing at the port that
+            // has just been given up. ensureBridge starts it for the candidate.
+            stopBridgeForHold()
             val exit = if (
                 startTransport(candidate, upstream, requestedGeneration, setErrorOnFailure = false) && ensureBridge()
             ) {
@@ -857,27 +888,46 @@ class OlcboxVpnService : VpnService() {
             if (requestedGeneration != generation) return false
             if (exit == null) continue
 
-            // One change, made under the lock the app's own changes wait for,
-            // and only while the location that failed is still the active one.
-            // A location the user chose meanwhile is theirs, and the start that
-            // comes with it is on its way.
-            val recorded = repository.moveActiveLocation(
-                fromStorageId = active.storageId,
-                toStorageId = step.entry.storageId,
-                group = SmartConnect.groupKey(step.entry)
-            )
-            if (!recorded) break
+            // Built before the store changes: it suspends, and nothing may come
+            // between the store naming the new line and the user being told.
             val notice = resourceString(
                 Res.string.session_moved_to,
                 step.entry.name.ifBlank { candidate.displayName() }
             )
+            coroutineContext.ensureActive()
+            if (requestedGeneration != generation) return false
+            // One change, made under the lock the app's own changes wait for,
+            // and only while the location that failed is still the active one.
+            // A location the user chose meanwhile is theirs, and the start that
+            // comes with it is on its way. Not to be cancelled half way: a
+            // start superseded inside the write would leave the store on the
+            // new line, the app not told to read it again, and nobody told.
+            val recorded = try {
+                withContext(NonCancellable) {
+                    repository.moveActiveLocation(
+                        fromStorageId = failedId,
+                        toStorageId = step.entry.storageId,
+                        group = SmartConnect.groupKey(step.entry)
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addLog("The move could not be stored: ${e.message ?: e}")
+                false
+            }
+            if (!recorded) break
+            // The store names the new line from here, so the app is told even
+            // when this start is no longer the current one: the next start
+            // connects what the store names.
+            OlcboxVpnState.announce(notice)
+            if (requestedGeneration != generation) return false
             setStatus(VpnStatus.Connected)
             resetRecoveryState()
             // Named where it is seen without opening the app: the session is on
             // another server than the one the user chose.
             updateNotification(notice)
             addLog("Moved to another line of the same country — exit ${exit.label()}")
-            OlcboxVpnState.announce(notice)
             startWatchdog()
             return true
         }
@@ -1630,8 +1680,9 @@ class OlcboxVpnService : VpnService() {
      * already open, whenever the target moved or hev is gone. The old instance
      * has to be gone first: hev is one instance per process, and a second one
      * started beside it is not a restart. On false the caller keeps the
-     * interface and tries again after its backoff: hev reads a descriptor of
-     * its own, so nothing done to the interface would make it let go.
+     * interface: a reconnect tries again after its backoff, a look at other
+     * lines goes on to the next. hev reads a descriptor of its own, so nothing
+     * done to the interface would make it let go.
      */
     private suspend fun ensureBridge(): Boolean {
         if (connectionMode != AndroidConnectionMode.Tun) return true
