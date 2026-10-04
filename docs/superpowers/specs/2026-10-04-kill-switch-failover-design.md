@@ -337,7 +337,7 @@ has run on a device. Stage D is written in part:
 |---|---|
 | D1, a dead core or engine restarted behind the tun | written, #95 |
 | D2, the Linux part: a core led out of the tun it runs beside | written, #96, checked in network namespaces |
-| D2, the rest: the tun built for the session (one upstream port, an olcRTC line fronted, macOS letting the cores out by process path) | not written |
+| D2, the rest: another location is another line behind the tun (every line presents the session's endpoint; macOS lets the lines' binaries out by process path) | written, #98 |
 | The move of F3 on the desktop | not written; it needs the row above |
 | D3, the Linux kill switch | not written; its routes are designed and checked (see Risks) |
 | D3, `strict_route` on Windows | not written, and not to be added unseen: it is likely to stop the cores' own lookups |
