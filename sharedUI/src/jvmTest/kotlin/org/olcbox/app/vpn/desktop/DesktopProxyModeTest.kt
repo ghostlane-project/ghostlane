@@ -379,6 +379,22 @@ class DesktopProxyModeTest {
         assertContains(config, "network: 100.64.0.0")
     }
 
+    // A block found at the app's start with a tun in front of it: whether that
+    // tun leads anywhere is asked of the port its config names, and the port
+    // is the proxy's, not the one names are mapped on.
+    @Test
+    fun theLinuxTunnelsPortIsReadBackFromItsConfig() {
+        assertEquals(4321, LinuxTunController.socksPortOf(LinuxTunController.configContent(socksPort = 4321)))
+        assertEquals(
+            10808,
+            LinuxTunController.socksPortOf(
+                LinuxTunController.configContent(socksPort = 10808, postUpScript = "/a/up.sh", preDownScript = "/a/down.sh")
+            )
+        )
+        assertNull(LinuxTunController.socksPortOf("tunnel:\n  name: olcbox0\n\nmapdns:\n  port: 53\n"))
+        assertNull(LinuxTunController.socksPortOf(""))
+    }
+
     @Test
     fun windowsTunAdministratorRestartUsesRunAsAndPreservesArguments() {
         val script = WindowsTunController.restartAsAdministratorScript(
@@ -431,6 +447,181 @@ class DesktopProxyModeTest {
         assertContains(down, "ip -6 rule del uidrange 0-0 lookup main pref 10")
         assertContains(down, "ip -6 rule del lookup 51820 pref 20")
         assertContains(down, "ip -6 route flush table 51820")
+    }
+
+    // The kill switch is opt-in. Off, hev is handed the two scripts it has
+    // always been handed, to the byte: written out here, not built from the
+    // controller's constants, so that nothing done for the switch can reach a
+    // machine that never turned it on without this test saying so.
+    @Test
+    fun linuxTunScriptsAreUnchangedWithoutTheKillSwitch() {
+        assertEquals(
+            """
+            #!/bin/sh
+            set -eu
+            rp_filter_state='/tmp/olcbox-rp-filter.state'
+            ip rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true
+            ip rule del lookup 51820 pref 20 2>/dev/null || true
+            ip route flush table 51820 2>/dev/null || true
+            : > "${'$'}rp_filter_state"
+            for setting in /proc/sys/net/ipv4/conf/*/rp_filter; do
+              if [ -r "${'$'}setting" ]; then
+                value=${'$'}(cat "${'$'}setting")
+                printf '%s=%s\n' "${'$'}setting" "${'$'}value" >> "${'$'}rp_filter_state"
+                printf '0\n' > "${'$'}setting" 2>/dev/null || true
+              fi
+            done
+            ip link set olcbox0 up
+            ip rule add uidrange 0-0 lookup main pref 10
+            ip route add default dev olcbox0 table 51820
+            ip rule add lookup 51820 pref 20
+            ip -6 rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true
+            ip -6 rule del lookup 51820 pref 20 2>/dev/null || true
+            ip -6 route flush table 51820 2>/dev/null || true
+            ip -6 rule add uidrange 0-0 lookup main pref 10 2>/dev/null || true
+            ip -6 route add blackhole default table 51820 2>/dev/null || true
+            ip -6 rule add lookup 51820 pref 20 2>/dev/null || true
+            if command -v resolvectl >/dev/null 2>&1; then
+              resolvectl dns olcbox0 1.1.1.1 >/dev/null 2>&1 || true
+              resolvectl domain olcbox0 '~.' >/dev/null 2>&1 || true
+              resolvectl default-route olcbox0 yes >/dev/null 2>&1 || true
+            fi
+            """.trimIndent(),
+            LinuxTunController.upScriptContent()
+        )
+        assertEquals(
+            """
+            #!/bin/sh
+            rp_filter_state='/tmp/olcbox-rp-filter.state'
+            ip rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true
+            ip rule del lookup 51820 pref 20 2>/dev/null || true
+            ip route flush table 51820 2>/dev/null || true
+            ip -6 rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true
+            ip -6 rule del lookup 51820 pref 20 2>/dev/null || true
+            ip -6 route flush table 51820 2>/dev/null || true
+            if command -v resolvectl >/dev/null 2>&1; then
+              resolvectl revert olcbox0 >/dev/null 2>&1 || true
+            fi
+            if [ -r "${'$'}rp_filter_state" ]; then
+              while IFS='=' read -r setting value; do
+                case "${'$'}setting" in
+                  /proc/sys/net/ipv4/conf/*/rp_filter)
+                    [ -w "${'$'}setting" ] && printf '%s\n' "${'$'}value" > "${'$'}setting" 2>/dev/null || true
+                    ;;
+                esac
+              done < "${'$'}rp_filter_state"
+              rm -f "${'$'}rp_filter_state"
+            fi
+            """.trimIndent(),
+            LinuxTunController.downScriptContent()
+        )
+        // Off is what leaving the argument out means.
+        assertEquals(LinuxTunController.upScriptContent(), LinuxTunController.upScriptContent(killSwitch = false))
+        assertEquals(LinuxTunController.downScriptContent(), LinuxTunController.downScriptContent(stopAskedPath = null))
+    }
+
+    // The block: a dummy device and a second default route in the tun's table,
+    // with the last metric. While the tun is up its own route wins; once hev is
+    // gone a lookup lands on the dummy and is dropped, and a socket bound to the
+    // physical interface (the cores) passes over both.
+    @Test
+    fun linuxKillSwitchUpScriptAddsTheDeviceAndItsRouteAndComesUpWithoutThem() {
+        val up = LinuxTunController.upScriptContent(killSwitch = true)
+        val lines = up.lines()
+
+        assertEquals(listOf("#!/bin/sh", "set -eu"), lines.take(2))
+        // `set -eu` ends the script at the first command that fails, so each
+        // of the three forgives its own failure: a kernel with no dummy module
+        // gets no block, and still gets its tunnel.
+        val device = lines.indexOf("ip link add olcboxks0 type dummy 2>/dev/null || true")
+        val deviceUp = lines.indexOf("ip link set olcboxks0 up 2>/dev/null || true")
+        val block = lines.indexOf(
+            "ip route replace default dev olcboxks0 metric 4294967295 table 51820 2>/dev/null || true"
+        )
+        assertTrue(device >= 0, up)
+        assertTrue(deviceUp > device, up)
+        assertTrue(block > deviceUp, up)
+        // The block is in the table before the tun's route, and before the rule
+        // that sends anyone there.
+        val tunRoute = lines.indexOf("ip route replace default dev olcbox0 table 51820")
+        val rule = lines.indexOf("ip rule add lookup 51820 pref 20 2>/dev/null || true")
+        assertTrue(tunRoute > block, up)
+        assertTrue(rule > tunRoute, up)
+        // Nothing is taken away. Run for a reconnect over a block that stands,
+        // a rule deleted or the table flushed is that block opened until the
+        // lines after put it back.
+        assertTrue(lines.none { " del " in it || "flush" in it }, up)
+        // Never an unreachable or blackhole route for IPv4: with one, a socket
+        // bound to the physical interface is sent out without its gateway.
+        assertTrue(lines.none { it.startsWith("ip route") && ("unreachable" in it || "blackhole" in it) }, up)
+        assertContains(lines, "ip -6 route replace blackhole default table 51820 2>/dev/null || true")
+        assertContains(lines, "ip -6 rule add lookup 51820 pref 20 2>/dev/null || true")
+        // rp_filter as the machine had it is saved once: over a block that
+        // stands, what /proc holds is the zeroes the session before wrote.
+        assertContains(lines, "[ -e \"${'$'}rp_filter_state\" ] || : > \"${'$'}rp_filter_state\"")
+        assertContains(up, "if ! grep -qF -- \"${'$'}setting=\" \"${'$'}rp_filter_state\"; then")
+        assertTrue(lines.none { it == ": > \"${'$'}rp_filter_state\"" }, up)
+        // The rest is the tunnel's own, as without the switch.
+        assertContains(lines, "ip link set olcbox0 up")
+        assertContains(lines, "ip rule add uidrange 0-0 lookup main pref 10 2>/dev/null || true")
+        assertContains(up, "resolvectl dns olcbox0 1.1.1.1")
+    }
+
+    // hev runs its pre-down whenever it stops in an orderly way, also when
+    // nobody asked it to. With the switch on that must leave the block alone.
+    @Test
+    fun linuxKillSwitchPreDownKeepsTheBlockUnlessTheStopWasAskedFor() {
+        val down = LinuxTunController.downScriptContent(stopAskedPath = "/home/u/.olcbox/linux-tun-stop.asked")
+        val lines = down.lines()
+
+        // Nothing runs before the question, and without the file nothing runs after it.
+        assertEquals(
+            listOf(
+                "#!/bin/sh",
+                "rp_filter_state='/tmp/olcbox-rp-filter.state'",
+                "stop_asked='/home/u/.olcbox/linux-tun-stop.asked'",
+                "[ -e \"${'$'}stop_asked\" ] || exit 0"
+            ),
+            lines.take(4)
+        )
+        // Asked for, it is the app's own cleanup, line for line.
+        assertEquals(LinuxTunController.cleanupScriptContent().lines().drop(2), lines.drop(4))
+        // The script is root and the path is the user's: it asks whether the
+        // file exists and does nothing else with it.
+        assertEquals(2, lines.count { "stop_asked" in it })
+        assertContains(
+            LinuxTunController.downScriptContent(stopAskedPath = "/home/o'brien/.olcbox/linux-tun-stop.asked"),
+            "stop_asked='/home/o'\"'\"'brien/.olcbox/linux-tun-stop.asked'"
+        )
+    }
+
+    // When hev is killed outright its pre-down never runs, and with the switch
+    // on an orderly stop nobody asked for keeps the block. What is left is the
+    // app's to remove, when the user disconnects.
+    @Test
+    fun linuxCleanupTakesEverythingOutTheKillSwitchDeviceIncluded() {
+        val cleanup = LinuxTunController.cleanupScriptContent()
+        val lines = cleanup.lines()
+
+        for (line in listOf(
+            "ip rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true",
+            "ip rule del lookup 51820 pref 20 2>/dev/null || true",
+            "ip route flush table 51820 2>/dev/null || true",
+            "ip -6 rule del uidrange 0-0 lookup main pref 10 2>/dev/null || true",
+            "ip -6 rule del lookup 51820 pref 20 2>/dev/null || true",
+            "ip -6 route flush table 51820 2>/dev/null || true",
+            "ip link del olcboxks0 2>/dev/null || true"
+        )) {
+            assertContains(lines, line)
+        }
+        // Whatever the switch says now, and with no condition: a block
+        // outlives the setting that asked for it.
+        assertTrue(lines.none { "exit" in it || "stop_asked" in it }, cleanup)
+        // It is the plain down script and that one line more.
+        assertEquals(
+            LinuxTunController.downScriptContent().lines(),
+            lines - "ip link del olcboxks0 2>/dev/null || true"
+        )
     }
 
     @Test

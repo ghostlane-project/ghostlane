@@ -65,9 +65,11 @@ import org.olcbox.app.util.nowMillis
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.ui.features.locations.LocationItem
+import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
 import org.olcbox.app.vpn.OlcrtcFailure
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.failureKeptAcrossAttempts
 
 class HomeScreenViewModel(
     private val vpnManager: VpnManager,
@@ -114,9 +116,19 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * The failure a new attempt starts from: none, except the sentence that
+     * says the Linux desktop's kill switch is holding traffic, while the
+     * status is still that. An attempt can end before it reaches the platform
+     * (no valid location, a transport the server does not speak); the status
+     * behind the sentence then never changes, and cleared here it would not
+     * come back.
+     */
+    private fun keptFailure(): String? = vpnManager.status.value.failureKeptAcrossAttempts()
+
     private fun startLowest(preferredLocationIds: List<String>? = null) {
         cancelAutomaticSelection()
-        _state.update { it.copy(isVpnLoading = true, failure = null) }
+        _state.update { it.copy(isVpnLoading = true, failure = keptFailure()) }
         selectionJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 LowestConnection(vpnManager, locationsRepository) {
@@ -240,7 +252,7 @@ class HomeScreenViewModel(
     /** Keep the measured order while the platform obtains VPN permission. */
     fun queueLowestAfterPermission(preferredLocationIds: List<String>) {
         pendingLowestCandidates = preferredLocationIds
-        _state.update { it.copy(isVpnLoading = true, failure = null) }
+        _state.update { it.copy(isVpnLoading = true, failure = keptFailure()) }
     }
 
     /** Android calls this when its system permission sheet is declined. */
@@ -492,12 +504,12 @@ class HomeScreenViewModel(
     }
 
     fun startVpnContinuation() {
-        _state.update { it.copy(isVpnLoading = true, failure = null) }
+        _state.update { it.copy(isVpnLoading = true, failure = keptFailure()) }
     }
 
     /** The user has read the last failure and waved it away. */
     fun dismissFailure() {
-        _state.update { it.copy(failure = null) }
+        _state.update { it.copy(failure = keptFailure()) }
     }
 
     fun ToggleVpn() {
@@ -521,7 +533,7 @@ class HomeScreenViewModel(
         }
 
         viewModelScope.launch {
-            _state.update { it.copy(isVpnLoading = true, failure = null) }
+            _state.update { it.copy(isVpnLoading = true, failure = keptFailure()) }
             try {
                 if (_state.value.isVpnConnected || vpnManager.status.value is VpnStatus.Connected) {
                     cancelAutomaticSelection()
@@ -904,6 +916,17 @@ data class HomeScreenState(
             if (keyGone && revocable) OlcrtcFailure.KEY_GONE else it
         }
         ?: startBlockedReason?.takeIf { selectedLocation != null && !canStartVpn }
+
+    /**
+     * Whether the notice can be waved away. A failure can: it is about an
+     * attempt that is over. The one exception says the Linux desktop's kill
+     * switch is holding traffic. The machine has no network for as long as
+     * that block stands, the status behind the sentence does not change, so
+     * nothing would say it a second time, and without it the screen reads
+     * "not connected" over a machine where nothing loads.
+     */
+    val noticeDismissible: Boolean
+        get() = failure != null && failure != KILL_SWITCH_HOLDS_TRAFFIC
 
     /** The state after the platform reports [status]. Pure, so it can be tested. */
     fun applying(status: VpnStatus): HomeScreenState = when (status) {

@@ -188,6 +188,21 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   is retried behind it. On Linux the tunnel's password is not asked for again
   (an olcRTC room still asks, for its engine). Changing the connection mode,
   the routing or the SOCKS port and login still restarts the whole connection.
+- Linux desktop: a kill switch for that last case, off by default (Settings,
+  Connection). When the tunnel's own process stops, its route goes with it and
+  traffic would leave directly; with the switch on, a second route in the
+  tunnel's table drops it instead, the local network included, and the app
+  says so. It stays blocked until you connect again, which puts a tunnel back
+  without opening the block, or turn the switch off; either asks for the
+  administrator password. Nothing else removes it: not a connect that fails,
+  not Cancel, not quitting the app. It is routes and rules, so it holds for as
+  long as they stand, and for what they cover: not across a restart of the
+  computer; not for programs running as root or for what the computer forwards
+  for containers and virtual machines, neither of which the Linux tunnel has
+  ever carried; and not for a program that binds its sockets to a network
+  interface. The `ghostlane` command has a kill switch of its own, which its
+  daemon also keeps between servers and puts back after a crash
+  ([docs/cli.md](docs/cli.md)); the desktop app has no such daemon.
 - No account, no analytics, nothing collected.
 
 ## Protocols
@@ -386,7 +401,7 @@ Everything below is for building the app yourself; the downloads above need none
 | iOS | System VPN | sing-box's own tun for Reality and Hysteria2; `hev-socks5-tunnel` in front of Xray and olcRTC | all three in one `Cores.xcframework` inside the extension |
 | macOS | TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
 | Windows | TUN, proxy | supervised sing-box TUN + Wintun; OS proxy settings otherwise | as macOS |
-| Linux | TUN | `hev-socks5-tunnel` + policy routes | as macOS |
+| Linux | TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | as macOS |
 
 The desktop apps can also lend the tunnel to another device on the same local
 network — a phone, a TV, a laptop that must not have a client installed — as an
@@ -407,7 +422,7 @@ The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
 | Android | Android Studio, SDK 37, NDK 28.2.13676358 |
 | Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
 | iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags |
-| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root) |
+| Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root). The kill switch needs the kernel's `dummy` device; without it the tunnel comes up without the switch, and the log says so |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 
 Default local `olcrtc` path:
@@ -503,9 +518,12 @@ tunnel simply does not appear, and nothing anywhere says why.
   bundle. A local `packageReleaseDmg` is neither unless `MACOS_SIGN_IDENTITY`
   and the notary credentials are set.
 - Windows installers must be built on Windows with `jpackage` and WiX available.
-- Linux TUN interface: `olcbox0`.
+- Linux TUN interface: `olcbox0`; the kill switch's dummy device: `olcboxks0`.
 - Linux stop removes policy routes and reverts `systemd-resolved` settings when
-  `resolvectl` is available.
+  `resolvectl` is available. With the kill switch on, that is so for a running
+  tunnel you disconnect. When the tunnel's process stops by itself they stay in
+  place, which is the block, and until you are connected again only turning
+  the switch off removes them.
 
 `keystore.properties`:
 

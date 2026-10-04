@@ -537,7 +537,7 @@ fun HomeScreen(
             trafficTrace = { throughputTrace(trafficSamples.value) },
             notice = state.notice(keyGone = selectedId != null && selectedId in locationViewModel.olcrtcRevoked)
                 ?.let { localizedNotice(it) },
-            noticeDismissible = state.failure != null,
+            noticeDismissible = state.noticeDismissible,
             heading = boardHeading(model.hasRooms, boardWords),
             sortLabel = sortLabel(subscriptionSettings.sort, boardWords),
             action = boardAction(
