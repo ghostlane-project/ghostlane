@@ -25,6 +25,20 @@ class TunnelSessionTest {
         assertFalse(TunnelSession.runsBehindTunnel(tunMode = true, interfaceHeld = false, isMigration = true, isRestart = true))
     }
 
+    // Picking another server while the first connect is still being verified is
+    // not a restart inside a session: nothing has carried traffic yet.
+    @Test
+    fun theHoldBeginsAtTheFirstVerifiedConnection() {
+        assertFalse(TunnelSession.holdsInterface(interfaceUp = true, verified = false, startedBySystem = false))
+        assertTrue(TunnelSession.holdsInterface(interfaceUp = true, verified = true, startedBySystem = false))
+        assertFalse(TunnelSession.holdsInterface(interfaceUp = false, verified = true, startedBySystem = true))
+    }
+
+    @Test
+    fun aStartByAndroidIsASessionFromItsFirstSecond() {
+        assertTrue(TunnelSession.holdsInterface(interfaceUp = true, verified = false, startedBySystem = true))
+    }
+
     @Test
     fun theInterfaceIsReplacedOnlyWhenWhatItWasBuiltWithChanged() {
         assertFalse(TunnelSession.needsHandover(held = all, wanted = all))

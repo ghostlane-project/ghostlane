@@ -13,23 +13,30 @@ class TunnelBridgeTest {
 
     @Test
     fun aLiveBridgeOnTheSameTargetIsLeftAlone() {
-        assertFalse(TunnelBridge.needsRestart(running = core, alive = true, wanted = core))
+        assertFalse(TunnelBridge.needsRestart(running = core, alive = true, stopping = false, wanted = core))
     }
 
     @Test
     fun anotherPortRestartsIt() {
-        assertTrue(TunnelBridge.needsRestart(core, alive = true, wanted = core.copy(port = 40002)))
+        assertTrue(TunnelBridge.needsRestart(core, alive = true, stopping = false, wanted = core.copy(port = 40002)))
     }
 
     @Test
     fun anotherLoginRestartsIt() {
-        assertTrue(TunnelBridge.needsRestart(core, alive = true, wanted = core.copy(password = "other")))
+        assertTrue(TunnelBridge.needsRestart(core, alive = true, stopping = false, wanted = core.copy(password = "other")))
     }
 
     @Test
     fun aDeadOrNeverStartedBridgeRestarts() {
-        assertTrue(TunnelBridge.needsRestart(core, alive = false, wanted = core))
-        assertTrue(TunnelBridge.needsRestart(null, alive = false, wanted = core))
+        assertTrue(TunnelBridge.needsRestart(core, alive = false, stopping = false, wanted = core))
+        assertTrue(TunnelBridge.needsRestart(null, alive = false, stopping = false, wanted = core))
+    }
+
+    // A start that was superseded stops tun2socks as it goes. The next start
+    // finds the thread still alive for a moment, on the very target it wants.
+    @Test
+    fun aBridgeToldToStopIsNotABridge() {
+        assertTrue(TunnelBridge.needsRestart(core, alive = true, stopping = true, wanted = core))
     }
 
     @Test
