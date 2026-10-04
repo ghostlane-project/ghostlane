@@ -38,6 +38,11 @@ type VlessLine struct {
 	Flow        string // tcp only
 	Transport   Transport
 	Label       string
+	// Plain is security=none on a line without Reality keys: no TLS at all.
+	// Insecure is allowInsecure=1 on ordinary TLS. Both as the app's LinkParser
+	// reads them, and both false wherever there are Reality keys.
+	Plain    bool
+	Insecure bool
 }
 
 // Hy2Line is hysteria2://<password>@host:port?…#label.
@@ -123,6 +128,10 @@ func ParseVless(line string) (*VlessLine, error) {
 	if l.Label == "" {
 		l.Label = p.host
 	}
+	if l.PublicKey == "" {
+		l.Plain = strings.ToLower(strings.TrimSpace(q.Get("security"))) == "none"
+		l.Insecure = truthy(q.Get("allowInsecure")) || truthy(q.Get("insecure"))
+	}
 	switch typ {
 	case "tcp", "raw":
 		l.Transport = Transport{Kind: "tcp"}
@@ -146,6 +155,9 @@ func ParseVless(line string) (*VlessLine, error) {
 	}
 	return l, nil
 }
+
+// truthy is how a share link spells a set flag.
+func truthy(v string) bool { return v == "1" || v == "true" }
 
 func ParseHy2(line string) (*Hy2Line, error) {
 	line = strings.TrimSpace(line)

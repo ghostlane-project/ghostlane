@@ -3,9 +3,49 @@ package org.olcbox.app.net
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class LinkParserTest {
+    // sing-box panels write `type=http` for the HTTP transport. It used to read as
+    // plain TCP, and the server answered a VLESS request with its HTTP/2 preface.
+    @Test fun typeHttpIsTheHttpTransportNotPlainTcp() {
+        val s = LinkParser.parse(
+            "vless://u@1.2.3.4:443?type=http&host=a.example%2Cb.example&path=%2Fh2&security=reality&pbk=PBK&sid=ab&flow=xtls-rprx-vision#H"
+        )
+        assertIs<OutboundSpec.Vless>(s)
+        assertEquals(TransportSpec.Http("/h2", listOf("a.example", "b.example")), s.transport)
+        assertNull(s.flow) // Vision is a TCP thing
+        val h2 = LinkParser.parse("vless://u@1.2.3.4:443?type=h2&security=reality&pbk=PBK#H")
+        assertIs<OutboundSpec.Vless>(h2)
+        assertEquals(TransportSpec.Http("/", emptyList()), h2.transport)
+    }
+
+    @Test fun securityNoneIsNoTlsAtAll() {
+        val s = LinkParser.parse("vless://u@1.2.3.4:80?type=ws&path=%2Fws&security=none#P")
+        assertIs<OutboundSpec.Vless>(s)
+        assertTrue(s.plain)
+    }
+
+    @Test fun allowInsecureIsReadOnOrdinaryTlsAndIgnoredUnderReality() {
+        val tls = LinkParser.parse("vless://u@1.2.3.4:443?type=tcp&security=tls&allowInsecure=1&sni=x.example#T")
+        assertIs<OutboundSpec.Vless>(tls)
+        assertTrue(tls.insecure)
+        assertFalse(tls.plain)
+        val reality = LinkParser.parse("vless://u@1.2.3.4:443?security=none&pbk=PBK&allowInsecure=1#R")
+        assertIs<OutboundSpec.Vless>(reality)
+        assertFalse(reality.insecure)
+        assertFalse(reality.plain)
+    }
+
+    @Test fun aLinkThatSaysNothingAboutItsSecurityReadsAsItAlwaysDid() {
+        val s = LinkParser.parse("vless://u@1.2.3.4:443?type=tcp&sni=x.example#T")
+        assertIs<OutboundSpec.Vless>(s)
+        assertFalse(s.plain)
+        assertFalse(s.insecure)
+    }
+
     @Test fun parsesVlessReality() {
         val link = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443" +
             "?security=reality&encryption=none&pbk=PUBKEY&sid=ab12&fp=chrome&sni=www.example.com&flow=xtls-rprx-vision&type=tcp#DE"

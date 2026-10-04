@@ -65,24 +65,32 @@ object LinkParser {
             "grpc" -> TransportSpec.Grpc(
                 p.query["serviceName"] ?: p.query["servicename"].orEmpty()
             )
-            "ws", "httpupgrade" -> streamTransport(type, p.query)!!
+            "ws", "httpupgrade", "http", "h2" -> streamTransport(type, p.query)!!
             "tcp", "raw" -> TransportSpec.Tcp
             // Keep older unsupported rows readable and stored. They remain
             // visible instead of disappearing during normalization after an
             // application update; transport support is added explicitly above.
             else -> TransportSpec.Tcp
         }
+        val publicKey = p.query["pbk"].orEmpty()
+        // What a link says about its TLS matters only where there is ordinary TLS
+        // to say it about: with Reality keys there is no certificate to waive and
+        // no way to do without the handshake. `alpn` stays unread for VLESS: a
+        // WebSocket link that lists h2 first works only because it is ignored.
+        val ordinaryTls = tlsOf(p.query, fallbackSni = "")
         return OutboundSpec.Vless(
             uuid = p.userinfo,
             host = p.host,
             port = p.port,
             sni = p.query["sni"].orEmpty(),
-            publicKey = p.query["pbk"].orEmpty(),
+            publicKey = publicKey,
             shortId = p.query["sid"].orEmpty(),
             fingerprint = p.query["fp"] ?: "chrome",
             flow = if (transport is TransportSpec.Tcp) p.query["flow"]?.takeIf { it.isNotBlank() } else null,
             transport = transport,
             tag = p.tag.ifBlank { p.host },
+            plain = publicKey.isBlank() && p.query["security"]?.trim()?.lowercase() == "none",
+            insecure = publicKey.isBlank() && ordinaryTls.insecure,
         )
     }
 
@@ -205,12 +213,19 @@ object LinkParser {
         )
     }
 
-    /** tcp, ws and httpupgrade, the transports a link can ask for by `type`; null for any other. */
+    /** tcp, ws, httpupgrade and http, the transports a link can ask for by `type`; null for any other. */
     private fun streamTransport(type: String, query: Map<String, String>): TransportSpec? = when (type) {
         "tcp", "raw", "" -> TransportSpec.Tcp
         "ws" -> TransportSpec.Ws(path = query["path"].orEmpty().ifEmpty { "/" }, host = query["host"].orEmpty())
         "httpupgrade" -> TransportSpec.HttpUpgrade(path = query["path"].orEmpty().ifEmpty { "/" }, host = query["host"].orEmpty())
         "grpc" -> TransportSpec.Grpc(query["serviceName"] ?: query["servicename"].orEmpty())
+        // sing-box panels write `http`, older links `h2`; several hosts are comma-separated.
+        // It used to fall through to plain TCP, which a server on this transport answers
+        // with its HTTP/2 preface: the tunnel "came up" and carried nothing.
+        "http", "h2" -> TransportSpec.Http(
+            path = query["path"].orEmpty().ifEmpty { "/" },
+            hosts = query["host"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() },
+        )
         else -> null
     }
 

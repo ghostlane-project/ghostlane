@@ -171,8 +171,8 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 | Protocol | Engine |
 | --- | --- |
 | olcRTC — a tunnel inside a WebRTC video call | our own engine fork |
-| VLESS + Reality, over TCP or gRPC | sing-box |
-| VLESS over TLS, incl. behind a CDN, over TCP, WebSocket or HTTPUpgrade | sing-box |
+| VLESS + Reality, over TCP, gRPC or HTTP/2 (`type=http`) | sing-box |
+| VLESS over TLS, incl. behind a CDN, over TCP, WebSocket, HTTPUpgrade or HTTP/2; a link's `allowInsecure` is honoured, and `security=none` is VLESS with no TLS | sing-box |
 | Hysteria2, with Salamander obfuscation | sing-box |
 | Trojan | sing-box |
 | Shadowsocks, AEAD and 2022 | sing-box |

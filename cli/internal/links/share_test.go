@@ -47,6 +47,10 @@ func TestParseVlessRefusals(t *testing.T) {
 		"vless://" + uuid + "@h:443?type=grpc&serviceName=x&security=reality&pbk=P",
 		"vless://" + uuid + "@h:443?type=ws&path=/",
 		"vless://" + uuid + "@h:443?type=httpupgrade",
+		// the app carries these two over sing-box's HTTP transport; here they are
+		// refused by name rather than dialled as plain TCP
+		"vless://" + uuid + "@h:443?type=http&path=/h2&security=reality&pbk=P",
+		"vless://" + uuid + "@h:443?type=h2&security=reality&pbk=P",
 	} {
 		if _, err := ParseVless(bad); !errors.Is(err, ErrUnsupportedTransport) {
 			t.Fatalf("%s: %v", bad, err)
@@ -87,6 +91,27 @@ func TestParseHy2(t *testing.T) {
 func TestLabelPlusIsSpace(t *testing.T) {
 	l, err := ParseVless("vless://" + uuid + "@h:443?type=tcp&security=reality&sni=s&pbk=P&sid=1#DE%20via+RU")
 	if err != nil || l.Label != "DE via RU" {
+		t.Fatalf("%+v %v", l, err)
+	}
+}
+
+func TestParseVlessSecurityOptions(t *testing.T) {
+	l, err := ParseVless("vless://" + uuid + "@h.example:80?type=tcp&security=none#P")
+	if err != nil || !l.Plain || l.Insecure {
+		t.Fatalf("%+v %v", l, err)
+	}
+	l, err = ParseVless("vless://" + uuid + "@h.example:443?type=tcp&security=tls&allowInsecure=1&sni=x.example#T")
+	if err != nil || l.Plain || !l.Insecure {
+		t.Fatalf("%+v %v", l, err)
+	}
+	// with Reality keys there is no certificate to waive and no doing without the handshake
+	l, err = ParseVless("vless://" + uuid + "@h.example:443?security=none&allowInsecure=1&pbk=P&sid=1")
+	if err != nil || l.Plain || l.Insecure {
+		t.Fatalf("%+v %v", l, err)
+	}
+	// a line that says nothing reads as it always did
+	l, err = ParseVless("vless://" + uuid + "@h.example:443?type=tcp&sni=x.example")
+	if err != nil || l.Plain || l.Insecure {
 		t.Fatalf("%+v %v", l, err)
 	}
 }

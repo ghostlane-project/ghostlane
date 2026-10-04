@@ -13,6 +13,11 @@ sealed interface TransportSpec {
     data class Ws(val path: String, val host: String) : TransportSpec
     /** HTTP upgrade (`type=httpupgrade`), the lighter WebSocket handshake. */
     data class HttpUpgrade(val path: String, val host: String) : TransportSpec
+    /**
+     * sing-box's HTTP transport (`type=http`, or `h2` as older links spell it):
+     * HTTP/2 over the outbound's TLS. [hosts] is empty for the server's own name.
+     */
+    data class Http(val path: String, val hosts: List<String>) : TransportSpec
 }
 
 /** Ordinary TLS as a Trojan or VMess link spells it (`sni`, `allowInsecure`, `fp`, `alpn`). */
@@ -40,6 +45,14 @@ sealed interface OutboundSpec {
         val flow: String?,       // e.g. xtls-rprx-vision; null for xhttp
         val transport: TransportSpec,
         override val tag: String,
+        /**
+         * `security=none`: no TLS at all. This and the one below are last and
+         * defaulted, so positional construction keeps compiling and a link that
+         * says nothing about them reads as it always did.
+         */
+        val plain: Boolean = false,
+        /** `allowInsecure=1` on ordinary TLS. Never set with Reality keys: there is no certificate to waive. */
+        val insecure: Boolean = false,
     ) : OutboundSpec
 
     data class Hysteria2(

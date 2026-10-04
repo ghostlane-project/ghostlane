@@ -794,8 +794,11 @@ object SingBoxConfig {
                 put("uuid", spec.uuid); put("packet_encoding", "xudp")
                 if (spec.flow != null) put("flow", spec.flow)
                 putTransport(spec.transport)
-                putJsonObject("tls") {
+                // `security=none` is VLESS in the clear, and a `tls` block there is
+                // a handshake the server answers with a reset.
+                if (!spec.plain) putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
+                    if (spec.insecure && spec.publicKey.isBlank()) put("insecure", true)
                     putJsonObject("utls") { put("enabled", true); put("fingerprint", spec.fingerprint) }
                     // Same rule as XrayConfig: a link without a public key is
                     // VLESS over ordinary TLS, and `TransportKind.Tls` exists to
@@ -889,6 +892,11 @@ object SingBoxConfig {
             is TransportSpec.HttpUpgrade -> putJsonObject("transport") {
                 put("type", "httpupgrade"); put("path", transport.path)
                 if (transport.host.isNotBlank()) put("host", transport.host)
+            }
+            is TransportSpec.Http -> putJsonObject("transport") {
+                put("type", "http")
+                if (transport.hosts.isNotEmpty()) putJsonArray("host") { transport.hosts.forEach { add(it) } }
+                put("path", transport.path)
             }
         }
     }

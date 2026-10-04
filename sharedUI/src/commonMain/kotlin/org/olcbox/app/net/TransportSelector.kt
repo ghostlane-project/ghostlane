@@ -11,6 +11,8 @@ enum class TransportKind {
     Grpc,
     /** VLESS over TLS without Reality keys. */
     Tls,
+    /** VLESS with no TLS at all (`security=none`). */
+    Plain,
     Trojan,
     Shadowsocks,
     Vmess,
@@ -23,6 +25,7 @@ enum class TransportKind {
         Xhttp -> "XHTTP"
         Grpc -> "gRPC"
         Tls -> "TLS"
+        Plain -> "No TLS"
         Trojan -> "Trojan"
         Shadowsocks -> "Shadowsocks"
         Vmess -> "VMess"
@@ -43,6 +46,7 @@ fun LocationConfig.transportKind(): TransportKind = when (kind) {
                     spec.transport is TransportSpec.Xhttp -> TransportKind.Xhttp
                     spec.transport is TransportSpec.Grpc -> TransportKind.Grpc
                     spec.publicKey.isNotBlank() -> TransportKind.Reality
+                    spec.plain -> TransportKind.Plain
                     else -> TransportKind.Tls
                 }
             else -> TransportKind.Tls
@@ -64,7 +68,8 @@ object TransportSelector {
         TransportKind.Tls,
         TransportKind.Trojan,
         TransportKind.Vmess,
-        TransportKind.Shadowsocks
+        TransportKind.Shadowsocks,
+        TransportKind.Plain
     )
 
     /**

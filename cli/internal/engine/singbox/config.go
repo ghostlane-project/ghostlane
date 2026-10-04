@@ -87,11 +87,19 @@ func upstreamOutbound(u Upstream) (map[string]any, error) {
 		if v.Transport.Kind != "tcp" {
 			return nil, errXhttpNotSingBox
 		}
-		tls := map[string]any{"enabled": true, "server_name": v.SNI, "utls": map[string]any{"enabled": true, "fingerprint": v.Fingerprint}}
-		if v.PublicKey != "" {
-			tls["reality"] = map[string]any{"enabled": true, "public_key": v.PublicKey, "short_id": v.ShortID}
+		out := map[string]any{"type": "vless", "tag": "tunnel", "server": v.Host, "server_port": v.Port, "uuid": v.UUID, "packet_encoding": "xudp"}
+		// security=none is VLESS in the clear: a tls block there is a handshake
+		// the server answers with a reset.
+		if !v.Plain {
+			tls := map[string]any{"enabled": true, "server_name": v.SNI, "utls": map[string]any{"enabled": true, "fingerprint": v.Fingerprint}}
+			switch {
+			case v.PublicKey != "":
+				tls["reality"] = map[string]any{"enabled": true, "public_key": v.PublicKey, "short_id": v.ShortID}
+			case v.Insecure:
+				tls["insecure"] = true
+			}
+			out["tls"] = tls
 		}
-		out := map[string]any{"type": "vless", "tag": "tunnel", "server": v.Host, "server_port": v.Port, "uuid": v.UUID, "packet_encoding": "xudp", "tls": tls}
 		if v.Flow != "" {
 			out["flow"] = v.Flow
 		}

@@ -127,6 +127,25 @@ class SingBoxConfigDumpTest {
         )
     }
 
+    // The shapes ghostlane#82 found unread: the HTTP transport, VLESS in the clear,
+    // and ordinary TLS with its certificate waived. No reference files: new shapes.
+    @Test fun dumpVlessHttpTransportAndVlessSecurityOptions() {
+        val links = mapOf(
+            "vless-http-reality" to "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
+                "?type=http&host=cdn.example.com&path=%2Fh2&security=reality" +
+                "&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome&sni=www.example.com#H",
+            "vless-plain-ws" to "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:80" +
+                "?type=ws&path=%2Fws&host=cdn.example.com&security=none#P",
+            "vless-tls-insecure" to "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
+                "?type=tcp&security=tls&allowInsecure=1&sni=example.com&fp=chrome&flow=xtls-rprx-vision#T",
+        )
+        for ((name, link) in links) {
+            val spec = LinkParser.parse(link)
+            assertNotNull(spec, name)
+            dump(name, SingBoxConfig.build(spec))
+        }
+    }
+
     @Test fun dumpHysteria2() {
         val link = "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#RU-hy2"
         val spec = LinkParser.parse(link)
