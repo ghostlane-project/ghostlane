@@ -330,23 +330,35 @@ it changes (`docs/roadmap-2026-08-14.md` item 2, `docs/macos-tunnel-daemon.md`).
 
 ### Where the building stands (2026-10-04)
 
-Stages A, B, C and E are written, reviewed where a second reader could be had, and open as pull requests; none
-has run on a device. Stage D is written in part:
+Every stage is written, reviewed where a second reader could be had, and open as a pull request; none has run
+on a device. Stage D, which was the last:
 
 | Stage D | State |
 |---|---|
 | D1, a dead core or engine restarted behind the tun | written, #95 |
 | D2, the Linux part: a core led out of the tun it runs beside | written, #96, checked in network namespaces |
 | D2, the rest: another location is another line behind the tun (every line presents the session's endpoint; macOS lets the lines' binaries out by process path) | written, #98 |
-| The move of F3 on the desktop | not written; it needs the row above |
-| D3, the Linux kill switch | not written; its routes are designed and checked (see Risks) |
-| D3, `strict_route` on Windows | not written, and not to be added unseen: it is likely to stop the cores' own lookups |
+| D3, the Linux kill switch | written, #99; its routes checked in a namespace |
+| The Linux tunnel's helper: the SOCKS login, and ending the tun's process, which the app cannot signal | written, #100; found while #99 was built, not in the design |
+| The move of F3 on the desktop | written, #101, **narrower than on Android**: see below |
+| D3, `strict_route` on Windows | written, #102, for a session that starts on a core's line: see below |
 
-The unwritten rows are one piece of work, the rebuilding of how a desktop session starts on three systems, and
-none of it can be run from where this was written. The recommendation was to release what is written once it
-has passed on devices and to build the rest against a desktop that can run it. The owner's answer, the same
-day: build all of it now, so that the next release can be checked whole. It is being built as pull requests of
-their own on top of the ones above, each of which can be left out if it does not pass on its machine.
+The recommendation had been to release stages A to C and E once they passed on devices and to build the rest of
+D against a desktop that can run it. The owner's answer, the same day: build all of it now, so that the next
+release can be checked whole. So it was built as pull requests of their own on top of the ones above, each of
+which can be left out if it does not pass on its machine; #102 is the last of them for that reason.
+
+**The desktop's move begins only from a line the app is already retrying.** Android notices a server that has
+gone quiet because its service reads the tunnel's packet counters (packets out and none back for three samples).
+The desktop reads nothing of the kind: its tun belongs to another process, hev on Linux and sing-box on Windows
+and macOS. So on the desktop the count of F2 starts when a core or an engine has died and does not come back, or
+when a server chosen while connected never answers, and a server that goes quiet under a running core leaves the
+session saying Connected, as before. The note under the smart connect switch promises the move "when the server
+stops answering" and therefore stays Android's. What the desktop needs to keep that word is the same rule over a
+counter it can read: the tun's own in `/sys/class/net` on Linux, and on Windows and macOS the tun core's (its
+statistics over a local port) or the system's per-adapter ones. That is a piece of its own, and one to build
+with a desktop to run it on: an active check in its place would restart every session's line whenever the
+address it asks stopped answering.
 
 **D2 as it is being built differs from D2 as written.** The document fronts every olcRTC line with a sing-box
 chain so that the tun can always point at one port without a login. That changes the path of every room session
@@ -358,13 +370,23 @@ does not name its server: the process bypass Windows already has, the same on ma
 daemon's config, so the daemon does not change), the binding of #96 on Linux; and a resolver of its own, read
 before the tun came up, because the system's resolver is the tun's by then.
 
-**`strict_route` on Windows is not a line in a config.** It blocks port 53 outside the tun, and today a session
-on a core line under Global does not hijack the system's queries at all: Windows sends them to the local
-resolver on the physical interface, which is the leak `strict_route` closes. Switched on alone it would leave
-such a session with no name resolution. It goes together with answering every session's queries in the tun
-(the hijack, the fake addresses and the resolver through the tunnel that a room's session already has), and
-that changes how names are resolved for every Windows tunnel session. It is the least certain piece and comes
-last.
+**`strict_route` on Windows is not a line in a config**, and not for every session. Read in sing-tun 0.8.11
+(`tun_windows.go`), it is three filters in a session of the system's filtering engine that ends with the
+process: permit this binary, permit the tun's interface, block remote port 53 for everything else. Before it, a
+session on a core's line did not answer the system's queries at all: Windows asks the resolver of every
+interface, nothing answered the tun's, and the local network's answered alone, in the clear. Switched on alone
+it would have left such a session with no names. So it comes with the tun answering every query that reaches
+it (the hijack, the fake addresses and the resolver through the line, which a room's session already had).
+
+Who the filters catch decided the rest. The line's sing-box core is the same file as the tun's, so the permit
+covers it. Xray asks the system, which then asks the tun. The olcRTC engine is neither: it asks the network's
+own resolver itself, from a binary of its own, and that resolver is what finds its carrier on a network that
+answers nobody else's. The filters would refuse it. **A session that starts in a room is therefore built as it
+was**, and a room chosen inside a core's session goes on to the public resolvers and then the system's. The
+rule that lets the lines' binaries out stays ahead of the hijack: what one of them asks a resolver of its own
+it asks for itself. Two things stand beside it: when the system refuses the filters (its filtering engine can
+be off) the next attempt goes without them, as before; and the system's resolver cache is emptied when a tun
+goes, since a fake address is good for ten minutes and means nothing after it.
 
 Not in the table because they were not in the design: the location store fix under stage C (#94, A7), a pull
 request for two faults of LAN sharing on the desktop that were found while D1 was built (#97), and one that
