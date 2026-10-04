@@ -41,6 +41,25 @@ internal class WindowsTunController(
         """.trimIndent()).trim().equals("true", ignoreCase = true)
     }.getOrDefault(false)
 
+    /**
+     * Empties the system's resolver cache, for when a tun has gone.
+     *
+     * While it was up the tun answered names with addresses that mean
+     * something only to it (SingBoxConfig's fake range), each good for ten
+     * minutes by sing-box's count. Left in the cache they are handed out
+     * after the tun has gone, to connections nothing takes. Whether Windows
+     * drops them by itself when the adapter goes was not established, so they
+     * are dropped here. Not waited for: the stop this belongs to is not held up.
+     */
+    fun forgetTunnelAnswers() {
+        runCatching {
+            ProcessBuilder(flushResolverCacheCommand())
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        }.onFailure { addLog("Windows TUN: the resolver cache was not emptied: ${it.message}") }
+    }
+
     private suspend fun isAdministrator(): Boolean {
         val isAdmin = runPowerShell(
             """
@@ -94,6 +113,25 @@ internal class WindowsTunController(
     internal companion object {
         const val TUN_NAME = "Olcbox"
         const val ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
+
+        /**
+         * Whether a line of the tun core's output says the system's filtering
+         * engine refused `strict_route`. sing-box names the call that failed,
+         * and each of them begins the same way (FwpmEngineOpen0 when the Base
+         * Filtering Engine service is not running, FwpmSubLayerAdd0,
+         * FwpmFilterAdd0). It then exits: on such a machine a tun that insists
+         * on the filters does not start at all.
+         */
+        fun filterEngineRefused(line: String): Boolean = "Fwpm" in line
+
+        /**
+         * By its full path: this process is elevated, and a bare name is
+         * looked for in the working directory before the system's.
+         */
+        fun flushResolverCacheCommand(systemRoot: String? = System.getenv("SystemRoot")): List<String> {
+            val windows = systemRoot?.trimEnd('\\')?.takeIf { it.isNotBlank() } ?: "C:\\Windows"
+            return listOf("$windows\\System32\\ipconfig.exe", "/flushdns")
+        }
 
         fun restartAsAdministratorScript(
             command: String,

@@ -247,6 +247,28 @@ object SingBoxConfig {
         bypassProcessPaths: List<String> = emptyList(),
         /** A per-start name avoids colliding with a Wintun adapter still closing. */
         interfaceName: String? = null,
+        /**
+         * sing-box's `strict_route`, for Windows, and with it what it cannot
+         * do without: the tun answering every name itself.
+         *
+         * Windows asks the resolvers of every interface for a name, not only
+         * the tun's. In a session on a core's line nothing here answered the
+         * tun's, so the local network's resolver was the only one that did:
+         * every name went to it in the clear, and the address it gave was the
+         * one used. With this on, the queries that reach the tun are hijacked
+         * and answered as they are for a room, and sing-box's filters refuse
+         * port 53 to whatever is neither this binary's own nor inside the tun.
+         *
+         * "This binary" is why a line's core is not caught: it is the same
+         * sing-box file. Xray asks the system, which asks the tun. The olcRTC
+         * engine is neither: it asks the network's resolver itself, from a
+         * binary of its own, and the filters would refuse it that. So the
+         * caller leaves this off for a session that starts in a room.
+         *
+         * It is not a kill switch. The filters are sing-box's and go with its
+         * process, however it ends.
+         */
+        strictRoute: Boolean = false,
     ): String {
         val bypass = routing as? Routing.RuleBased
         require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
@@ -259,7 +281,8 @@ object SingBoxConfig {
         // olcRTC's lossy carrier, as before, and under any bypass, which needs
         // the Russian names resolved here. Then it fakes the tunnel's names
         // too, exactly as iOS does and for the same twenty seconds a lookup.
-        val answersDns = upstreamUdpIsLossy || bypass != null
+        // And under [strictRoute], which leaves the system nobody else to ask.
+        val answersDns = upstreamUdpIsLossy || bypass != null || strictRoute
         val obj = buildJsonObject {
             putJsonObject("log") { put("level", coreLogLevel(verboseLogs)) }
             putJsonObject("dns") {
@@ -305,6 +328,7 @@ object SingBoxConfig {
                     putJsonArray("address") { add(address); add(address6) }
                     put("mtu", mtu)
                     put("auto_route", true)
+                    if (strictRoute) put("strict_route", true)
                     put("stack", "gvisor")
                     if (excludeAddresses.isNotEmpty()) {
                         putJsonArray("route_exclude_address") {

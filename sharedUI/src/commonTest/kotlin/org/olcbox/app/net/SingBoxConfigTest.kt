@@ -564,6 +564,71 @@ class SingBoxConfigTest {
         )
     }
 
+    // Windows asks the resolver of every interface for a name. On a core's
+    // line nothing answered the tun's, so the local network's answered alone:
+    // every name in the clear, and its answer the one that was used.
+    @Test
+    fun aStrictDesktopTunAnswersEveryNameAndRefusesPort53BesideItself() {
+        val json = SingBoxConfig.buildDesktopTun(
+            corePort = 10810,
+            verifyPort = 10811,
+            directDnsDomains = listOf("edge.example.org"),
+            bindInterface = "Ethernet",
+            bypassProcessPaths = listOf("C:\\Ghostlane\\sing-box.exe", "C:\\Ghostlane\\xray.exe"),
+            strictRoute = true
+        )
+        val root = obj(json)
+        val tun = root["inbounds"]!!.jsonArray.map { it.jsonObject }.first { str(it, "tag") == "tun-in" }
+        assertEquals("true", str(tun, "strict_route"))
+        assertEquals("true", str(tun, "auto_route"))
+
+        // Through the line first, and by datagram: a core's line carries them.
+        val servers = dnsServers(json)
+        assertEquals(listOf("dns-remote", "dns-direct", "dns-fakeip"), servers.map { str(it, "tag") })
+        assertEquals("udp", str(servers.first(), "type"))
+        val dns = root["dns"]!!.jsonObject
+        assertEquals("dns-remote", str(dns, "final"))
+        // The line's own server keeps its real address, asked underneath;
+        // every other name is the tunnel's.
+        val dnsRules = dns["rules"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("edge.example.org"), strings(dnsRules[0], "domain"))
+        assertEquals("dns-direct", str(dnsRules[0], "server"))
+        assertEquals(listOf("A", "AAAA"), strings(dnsRules[1], "query_type"))
+        assertEquals("dns-fakeip", str(dnsRules[1], "server"))
+
+        // The lines' binaries leave before anything is hijacked: what one of
+        // them asks a resolver of its own, it asks for itself, and the tun
+        // answering it would hand the engine back the questions it relays.
+        val rules = routeRules(json)
+        assertTrue(rules[0].containsKey("process_path"))
+        assertEquals("direct", str(rules[0], "outbound"))
+        assertEquals("sniff", str(rules[1], "action"))
+        assertEquals("hijack-dns", str(rules[2], "action"))
+        // A fake address outlives the tun that gave it; the next one has to
+        // know it still.
+        val cache = root["experimental"]!!.jsonObject["cache_file"]!!.jsonObject
+        assertEquals("true", str(cache, "store_fakeip"))
+    }
+
+    // The room's engine asks the network's resolver itself, from a binary of
+    // its own, and the filters would refuse it that: a session that starts in
+    // a room is built as it was.
+    @Test
+    fun aDesktopTunIsStrictOnlyWhenAsked() {
+        for (lossy in listOf(true, false)) {
+            val json = SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = lossy
+            )
+            assertTrue("strict_route" !in json)
+        }
+        // And asked of a room's tun it changes nothing but the filters.
+        val room = SingBoxConfig.buildDesktopTun(corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true)
+        val strictRoom = SingBoxConfig.buildDesktopTun(
+            corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true, strictRoute = true
+        )
+        assertEquals(room, strictRoom.replace("\"strict_route\":true,", ""))
+    }
+
     @Test
     fun desktopTunPutsTheRemoteResolverFirstWhenQueriesAreHijacked() {
         // The first server answers anything no rule claims. Local first would send
