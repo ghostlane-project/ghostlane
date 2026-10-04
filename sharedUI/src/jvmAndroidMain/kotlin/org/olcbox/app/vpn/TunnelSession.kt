@@ -35,6 +35,18 @@ object TunnelSession {
         interfaceUp && (verified || startedBySystem)
 
     /**
+     * Whether a start that calls itself a migration has anything to migrate. A
+     * tun session that was never verified has not: the network arriving under a
+     * first connect that began without one is still that first connect, and
+     * ends as one, in an error with the interface closed, when the server does
+     * not answer. Taken for a migration it was retried in place for ever,
+     * behind an interface nothing had been verified through. Proxy mode holds
+     * nothing and keeps its retries, and so does a VPN Android asked for.
+     */
+    fun migrates(isMigration: Boolean, tunMode: Boolean, verified: Boolean, startedBySystem: Boolean): Boolean =
+        isMigration && (!tunMode || verified || startedBySystem)
+
+    /**
      * Whether this start runs behind the interface that is already up: any
      * restart of a tun session, whoever asked for it. A first start has no
      * interface yet, or none that is held ([holdsInterface]), and proxy mode
