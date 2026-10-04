@@ -110,6 +110,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.coroutines.coroutineContext
 import org.olcbox.app.log.LogScrubber
@@ -156,8 +157,11 @@ class OlcboxVpnService : VpnService() {
     private var tun2socksThread: Thread? = null
     @Volatile
     private var tun2socksStarted = false
-    @Volatile
-    private var tun2socksStopRequested = false
+    // Atomic, not volatile: stop is asked for from the main thread, the startup
+    // job and the cleanup job, and hev's stop must be called once per run. A
+    // second call after hev has gone waits for the next hev to start, and then
+    // stops that one.
+    private val tun2socksStopRequested = AtomicBoolean(false)
 
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var connectivityManager: ConnectivityManager
@@ -1078,7 +1082,7 @@ class OlcboxVpnService : VpnService() {
             val configFile = writeTun2socksConfig()
             bridgeTarget = currentBridgeTarget()
             tun2socksStarted = true
-            tun2socksStopRequested = false
+            tun2socksStopRequested.set(false)
             tun2socksThread = thread(name = "OlcboxTun2Socks", isDaemon = true) {
                 try {
                     val result = startTun2socksNative(configFile.absolutePath, nativeFd)
@@ -1089,7 +1093,7 @@ class OlcboxVpnService : VpnService() {
                     }
                 } finally {
                     tun2socksStarted = false
-                    tun2socksStopRequested = false
+                    tun2socksStopRequested.set(false)
                 }
             }
             true
@@ -1232,7 +1236,13 @@ class OlcboxVpnService : VpnService() {
         if (connectionMode != AndroidConnectionMode.Tun) return true
         val pfd = vpnInterface ?: return false
         val running = tun2socksThread
-        if (!TunnelBridge.needsRestart(bridgeTarget, running?.isAlive == true, currentBridgeTarget())) return true
+        val restart = TunnelBridge.needsRestart(
+            running = bridgeTarget,
+            alive = running?.isAlive == true,
+            stopping = tun2socksStopRequested.get(),
+            wanted = currentBridgeTarget()
+        )
+        if (!restart) return true
 
         addLog("tun2socks restarts to follow the transport")
         stopTun2socks()
@@ -1427,8 +1437,7 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun stopTun2socks() {
-        if (nativeLibrariesLoaded && tun2socksStarted && !tun2socksStopRequested) {
-            tun2socksStopRequested = true
+        if (nativeLibrariesLoaded && tun2socksStarted && tun2socksStopRequested.compareAndSet(false, true)) {
             runCatching { stopTun2socksNative() }
         }
     }
