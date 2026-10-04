@@ -383,6 +383,7 @@
     <string name="share_server_list_title">Список серверов</string>
     <string name="show_password">Показать пароль</string>
     <string name="show_system_apps">Показывать системные</string>
+    <string name="session_moved_to">Сервер перестал отвечать. Переключились на %1$s</string>
     <string name="smart_blocked_checking">%1$s здесь заблокирован, проверяю %2$s…</string>
     <string name="smart_checking">Проверяю %1$s…</string>
     <string name="smart_last_resort_through">Больше ничего не прошло: подключаюсь через %1$s</string>
@@ -451,6 +452,7 @@
     <string name="sub_server_list">Список серверов</string>
     <string name="sub_smart_connect">Умное подключение</string>
     <string name="sub_smart_connect_note">Если сервер опубликован с несколькими протоколами, перед подключением они проверяются и используется первый, который проходит; последним пробуется olcRTC той же страны.</string>
+    <string name="sub_smart_connect_session_note">Во время сеанса, если сервер перестал отвечать, приложение переходит на другой сервер той же страны из того же списка и сообщает об этом.</string>
     <string name="sub_update_interval">Интервал обновления (ч)</string>
     <string name="sub_update_on_open">Обновлять при открытии</string>
     <string name="sub_updating">Обновление</string>

@@ -66,6 +66,37 @@ object TransportGroup {
     }
 
     /**
+     * The other exits of [entry]'s country in the same server list: core lines
+     * only, in the list's order, [entry]'s own exit left out. Where a session
+     * may go when its exit stops answering (SessionFailover). For an olcRTC
+     * [entry] these are all the country's core lines. Nothing for a list whose
+     * names do not lead with a country code, as for [olcrtcFallbacks].
+     */
+    fun sameCountryExits(entry: LocationEntry, all: List<LocationEntry>): List<LocationEntry> {
+        val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val own = keyOf(entry)
+        val country = countryOf(own.baseName) ?: return emptyList()
+        return all.filter { candidate ->
+            candidate.location.kind != LocationKind.Olcrtc &&
+                candidate.subscriptionUrl?.trim() == url &&
+                keyOf(candidate).let { it != own && countryOf(it.baseName) == country }
+        }
+    }
+
+    /** The other olcRTC rooms of an olcRTC [entry]'s country in the same list, in the list's order. */
+    fun otherRooms(entry: LocationEntry, all: List<LocationEntry>): List<LocationEntry> {
+        if (entry.location.kind != LocationKind.Olcrtc) return emptyList()
+        val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val country = countryOf(entry.name.ifBlank { entry.location.displayName() }) ?: return emptyList()
+        return all.filter { candidate ->
+            candidate.storageId != entry.storageId &&
+                candidate.location.kind == LocationKind.Olcrtc &&
+                candidate.subscriptionUrl?.trim() == url &&
+                countryOf(candidate.name.ifBlank { candidate.location.displayName() }) == country
+        }
+    }
+
+    /**
      * The olcRTC lines of [entry]'s subscription for [entry]'s own country, in the
      * order the subscription lists them (Telemost, WB, SaluteJazz). The smart
      * connect's last resort: the same country, never another one, so no line for

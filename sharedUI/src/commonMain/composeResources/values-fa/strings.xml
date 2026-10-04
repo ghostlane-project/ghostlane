@@ -383,6 +383,7 @@
     <string name="share_server_list_title">فهرست سرورها</string>
     <string name="show_password">نمایش گذرواژه</string>
     <string name="show_system_apps">نمایش برنامه‌های سیستمی</string>
+    <string name="session_moved_to">این سرور دیگر پاسخ نمی‌دهد. به %1$s منتقل شد</string>
     <string name="smart_blocked_checking">%1$s اینجا مسدود است، در حال بررسی %2$s…</string>
     <string name="smart_checking">در حال بررسی %1$s…</string>
     <string name="smart_last_resort_through">هیچ راه دیگری جواب نداد: اتصال از طریق %1$s</string>
@@ -451,6 +452,7 @@
     <string name="sub_server_list">فهرست سرورها</string>
     <string name="sub_smart_connect">اتصال هوشمند</string>
     <string name="sub_smart_connect_note">وقتی سروری با چند روش انتقال منتشر شده، پیش از اتصال بررسی می‌شوند و نخستین روشی که جواب بدهد به کار می‌رود؛ آخر از همه olcRTC همان کشور امتحان می‌شود.</string>
+    <string name="sub_smart_connect_session_note">در حین اتصال، اگر سرور دیگر پاسخ ندهد، برنامه به سرور دیگری از همان کشور در همان فهرست می‌رود و این را اعلام می‌کند.</string>
     <string name="sub_update_interval">فاصلهٔ به‌روزرسانی (ساعت)</string>
     <string name="sub_update_on_open">به‌روزرسانی هنگام باز شدن</string>
     <string name="sub_updating">در حال به‌روزرسانی</string>

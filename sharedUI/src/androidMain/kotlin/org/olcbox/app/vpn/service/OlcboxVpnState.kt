@@ -1,7 +1,9 @@
 package org.olcbox.app.vpn.service
 
 import android.util.Log
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.olcbox.app.util.nowMillis
@@ -36,6 +38,14 @@ object OlcboxVpnState {
 
     fun setSystemVpnMode(mode: SystemVpnMode?) {
         _systemVpnMode.value = mode
+    }
+
+    /** What the service did on its own that the user should see once: see VpnManager.notices. */
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val notices = _notices.asSharedFlow()
+
+    fun announce(message: String) {
+        _notices.tryEmit(message)
     }
 
     fun setTraffic(bytesIn: Long, bytesOut: Long) {

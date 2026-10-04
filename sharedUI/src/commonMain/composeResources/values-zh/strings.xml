@@ -383,6 +383,7 @@
     <string name="share_server_list_title">服务器列表</string>
     <string name="show_password">显示密码</string>
     <string name="show_system_apps">显示系统应用</string>
+    <string name="session_moved_to">此服务器不再响应，已切换到 %1$s</string>
     <string name="smart_blocked_checking">%1$s 在这里被封锁，正在检查 %2$s…</string>
     <string name="smart_checking">正在检查 %1$s…</string>
     <string name="smart_last_resort_through">其他方式都不通：正在通过 %1$s 连接</string>
@@ -451,6 +452,7 @@
     <string name="sub_server_list">服务器列表</string>
     <string name="sub_smart_connect">智能连接</string>
     <string name="sub_smart_connect_note">当一台服务器以多种传输方式发布时，会在连接前逐一检查，并使用第一个能连通的方式，最后才尝试同一国家的 olcRTC。</string>
+    <string name="sub_smart_connect_session_note">连接期间如果服务器不再响应，应用会切换到同一列表中同一国家的另一台服务器，并给出提示。</string>
     <string name="sub_update_interval">更新间隔（小时）</string>
     <string name="sub_update_on_open">打开时更新</string>
     <string name="sub_updating">正在更新</string>

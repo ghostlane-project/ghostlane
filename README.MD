@@ -122,7 +122,9 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
   support and web links — read from the server list's own headers, and a list
   that survives its provider's blocked domain (see Server lists).
 - Smart connect: another transport when one is blocked, olcRTC in the same
-  country when nothing else gets through (Android and the desktop).
+  country when nothing else gets through (Android and the desktop). On Android
+  it also moves a session whose server stopped answering to another server of
+  the same country, and says where.
 - olcRTC rooms carry their occupancy on the board, and say out loud when one is
   full or its key is no longer good rather than failing at connect.
 - olcRTC on a server that moves its clients between rooms: the next room is read
@@ -219,6 +221,16 @@ starting with the one that worked last time, and ends on olcRTC in the same
 country. When only domestic sites answer — a mobile "whitelist" shutdown — it
 goes to olcRTC first. It never changes the country, and it can be turned off in
 the server-list settings.
+
+The same switch covers a server that dies during a session, on Android so far.
+After two failed reconnects and half a minute without the server, with a network
+present, the app tries the other transports of the same exit, then the other
+servers of the same country in the same list, then olcRTC of that country. A
+candidate is checked by an engine of its own first, so a dead one costs a check
+and not a reconnect, and all of it happens behind the tunnel the session keeps
+up. The first line that carries traffic becomes the active one, and the app says
+which. It never changes the country or the list, and nothing moves back by
+itself.
 
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ — the matrix below says how.

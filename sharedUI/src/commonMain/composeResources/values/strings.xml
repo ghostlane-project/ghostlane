@@ -383,6 +383,7 @@
     <string name="share_server_list_title">Server list</string>
     <string name="show_password">Show password</string>
     <string name="show_system_apps">Show system apps</string>
+    <string name="session_moved_to">This server stopped answering. Moved to %1$s</string>
     <string name="smart_blocked_checking">%1$s is blocked here, checking %2$s…</string>
     <string name="smart_checking">Checking %1$s…</string>
     <string name="smart_last_resort_through">Nothing else got through: connecting through %1$s</string>
@@ -451,6 +452,7 @@
     <string name="sub_server_list">Server list</string>
     <string name="sub_smart_connect">Smart connect</string>
     <string name="sub_smart_connect_note">When a server is published over several transports, they are checked before connecting and the first that gets through is used, ending on olcRTC of the same country.</string>
+    <string name="sub_smart_connect_session_note">While connected, when the server stops answering, the app moves to another server of the same country from the same list, and says so.</string>
     <string name="sub_update_interval">Update interval (h)</string>
     <string name="sub_update_on_open">Update on open</string>
     <string name="sub_updating">Updating</string>

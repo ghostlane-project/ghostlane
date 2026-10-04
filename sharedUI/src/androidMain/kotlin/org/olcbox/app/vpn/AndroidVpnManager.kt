@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
@@ -64,6 +65,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     override val logs: StateFlow<List<String>> = OlcboxVpnState.logs
     override val status: StateFlow<VpnStatus> = OlcboxVpnState.status
+    /** What the service did on its own, such as moving the session to another line of the country. */
+    override val notices: SharedFlow<String> = OlcboxVpnState.notices
     override val isConnected: StateFlow<Boolean> = OlcboxVpnState.isConnected
     override val connectedSince: StateFlow<Long?> = OlcboxVpnState.connectedSince
     override val traffic: StateFlow<TrafficCounters?> = OlcboxVpnState.traffic
