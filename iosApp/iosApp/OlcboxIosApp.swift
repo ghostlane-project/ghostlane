@@ -383,9 +383,61 @@ final class PacketTunnelController: ObservableObject {
         }
     }
 
-    func stop() {
-        manager?.connection.stopVPNTunnel()
+    /// Stops the tunnel, for good or before a restart.
+    ///
+    /// On-demand goes off first, and is saved, or iOS brings the tunnel straight
+    /// back: the rule that makes a kill switch of `includeAllNetworks` is the
+    /// same rule that would undo a Disconnect. `apply(killSwitch:)` turns it on
+    /// again at the next start that asks for it.
+    func stop() async {
+        guard let manager else { return }
+        if manager.isOnDemandEnabled {
+            manager.isOnDemandEnabled = false
+            do {
+                try await manager.saveToPreferences()
+                try await manager.loadFromPreferences()
+            } catch {
+                log.error("on-demand not switched off: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        manager.connection.stopVPNTunnel()
         log.info("stopVPNTunnel requested")
+    }
+
+    /// The kill switch, as far as iOS has one an app can ask for.
+    ///
+    /// `includeAllNetworks` sends every route into the tunnel, so that with the
+    /// tunnel gone traffic is dropped instead of leaving directly, and the
+    /// on-demand rule has the system bring the tunnel back by itself, from the
+    /// files the last start left in the App Group. The local network stays
+    /// reachable. What it costs is in the switch's own note: a tunnel that
+    /// cannot come back is a phone without network until the VPN is turned off
+    /// in Settings.
+    ///
+    /// Written into the profile before every start and only when it differs:
+    /// a save raises nothing here, but it is not free, and `prepare()` never
+    /// touches a profile that already exists.
+    func apply(killSwitch: Bool) async {
+        if manager == nil || manager?.isEnabled != true { await prepare() }
+        guard let manager,
+              let proto = manager.protocolConfiguration as? NETunnelProviderProtocol
+        else { return }
+        if proto.includeAllNetworks == killSwitch && manager.isOnDemandEnabled == killSwitch { return }
+
+        proto.includeAllNetworks = killSwitch
+        proto.excludeLocalNetworks = killSwitch
+        manager.protocolConfiguration = proto
+        manager.onDemandRules = killSwitch ? [NEOnDemandRuleConnect()] : nil
+        manager.isOnDemandEnabled = killSwitch
+        do {
+            try await manager.saveToPreferences()
+            // As in prepare(): a start from the object that was just saved fails
+            // with a stale-configuration error.
+            try await manager.loadFromPreferences()
+            log.info("kill switch \(killSwitch ? "on" : "off", privacy: .public)")
+        } catch {
+            log.error("kill switch not applied: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// A message to the running extension, dropped when nothing is running:
@@ -593,6 +645,9 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 
     func start(request: IosPacketTunnelStartRequest, callback: IosBridgeCallback) {
         let answer = SendableCallback(callback: callback)
+        // Read here, on the caller's side: the request does not cross into the
+        // task below, a Bool does.
+        let killSwitch = request.killSwitch
 
         // The Simulator has no Network Extension. `saveToPreferences` fails
         // there, so the manager stays nil and the app reported "no VPN
@@ -674,10 +729,13 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             // over a tunnel that is very much running, now that the app adopts
             // one. The old tunnel then survived the start, or, worse, the stop
             // Kotlin had already sent landed midway through it.
-            Self.controller.stop()
+            await Self.controller.stop()
             // Waited for, not slept through. A fixed 700 ms was a guess about
             // how long a teardown takes; this asks.
             await Self.controller.waitUntilDown()
+            // After the stop, which switches on-demand off, and before the
+            // start, which has to find the profile as this start wants it.
+            await Self.controller.apply(killSwitch: killSwitch)
             await Self.controller.start()
             let reason = await Self.controller.waitUntilUp()
             answer.callback.onResult(
@@ -748,7 +806,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     func stop() {
-        Task { @MainActor in Self.controller.stop() }
+        Task { @MainActor in await Self.controller.stop() }
     }
 
     /// The room list, to a running tunnel. The shape `PacketTunnelProvider`

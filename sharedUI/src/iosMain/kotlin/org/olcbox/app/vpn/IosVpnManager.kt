@@ -371,6 +371,7 @@ class IosVpnManager(
 
         val request = try {
             packetTunnelRequest(location, subscriptionUrl)
+                ?.copy(killSwitch = locationsRepository.getRoutingSettings().killSwitch)
         } catch (e: CancellationException) {
             throw e
         } catch (e: IllegalArgumentException) {

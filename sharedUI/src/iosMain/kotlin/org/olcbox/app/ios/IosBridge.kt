@@ -113,7 +113,14 @@ data class IosPacketTunnelStartRequest(
      * choice that put it there. Base64 because a Kotlin ByteArray crosses to
      * Swift as an object with a getter per byte.
      */
-    val ruleSets: Map<String, String> = emptyMap()
+    val ruleSets: Map<String, String> = emptyMap(),
+    /**
+     * RoutingSettings.killSwitch as it stands at this start. The bridge writes
+     * it into the VPN profile before it starts the tunnel (`includeAllNetworks`
+     * and on-demand), and the extension reads the profile, so one value governs
+     * both halves.
+     */
+    val killSwitch: Boolean = false
 )
 
 /**
