@@ -179,7 +179,7 @@ class DesktopVpnManager private constructor(
     private var lineGeneration = 0L
     /** Separates adapter names from adapters retained by an earlier app process. */
     private val windowsTunSessionId = UUID.randomUUID().toString().take(8)
-    private val linuxTunController = LinuxTunController(::addLog)
+    private val linuxTunController = LinuxTunController(::addLog) { olcRtcConfigNaming() }
     private val windowsTunController = WindowsTunController(::addLog)
     private val macOsTunController = MacOsTunController(::addLog)
 
@@ -732,7 +732,19 @@ class DesktopVpnManager private constructor(
             var letsEveryLineOut = true
 
             when (desktopMode) {
-                DesktopMode.LinuxTun -> startLinuxTun(effectiveSocksPort, requestGeneration)
+                DesktopMode.LinuxTun -> startLinuxTun(
+                    effectiveSocksPort,
+                    requestGeneration,
+                    // What hev has to send: the session's endpoint, as the tun's
+                    // outbound sends it on the other systems.
+                    login = LineSupervision.endpointOf(
+                        isOlcrtc = isOlcrtc,
+                        linePort = effectiveSocksPort,
+                        frontPort = frontPort,
+                        username = socksSettings.username,
+                        password = socksSettings.password
+                    ).login
+                )
                 DesktopMode.WindowsTun -> startWindowsTun(
                     effectiveSocksPort,
                     requestGeneration,
@@ -872,7 +884,6 @@ class DesktopVpnManager private constructor(
                         letsEveryLineOut = letsEveryLineOut
                     ),
                     endpoint = LineSupervision.endpointOf(
-                        mode = desktopMode,
                         isOlcrtc = isOlcrtc,
                         linePort = effectiveSocksPort,
                         frontPort = frontPort,
@@ -918,9 +929,15 @@ class DesktopVpnManager private constructor(
         }
     }
 
-    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long) {
+    private suspend fun startLinuxTun(socksPort: Int, requestGeneration: Long, login: SocksLogin?) {
         val hevBinary = DesktopNativeAssets.resolveHevSocks5TunnelBinary()
-        tunProcess = linuxTunController.start(hevBinary, socksPort, killSwitch = _socksProxySettings.value.killSwitch)
+        tunProcess = linuxTunController.start(
+            hevBinary,
+            socksPort,
+            killSwitch = _socksProxySettings.value.killSwitch,
+            username = login?.username.orEmpty(),
+            password = login?.password.orEmpty()
+        )
 
         if (requestGeneration != generation) {
             throw CancellationException("Desktop start superseded")
@@ -1588,6 +1605,9 @@ class DesktopVpnManager private constructor(
                     linuxTunController.holdAfterTunDeath(wanted = _socksProxySettings.value.killSwitch)
                 }
                 runCatching {
+                    // The room's engine runs as root here, as hev does, and the
+                    // stop further down does not reach it. What the tun's
+                    // cleanup runs as root ends it ([olcRtcConfigNaming]).
                     linuxTunController.stop(tunProcess)
                 }.onFailure {
                     addLog("Linux TUN stop failed: ${it.message}")
@@ -1767,10 +1787,20 @@ class DesktopVpnManager private constructor(
         return startedProcess
     }
 
+    /** Where an engine's config is written: the directory and how its file's name begins. */
+    private fun olcRtcConfigDir(): Path = DesktopPaths.appDataDir().resolve("runtime")
+
+    /**
+     * What every engine this app starts carries on its command line and
+     * nothing else does: its config's directory and the beginning of the
+     * file's name ([writeOlcRtcClientConfig]).
+     */
+    private fun olcRtcConfigNaming(): String = olcRtcConfigDir().resolve(OLCRTC_CONFIG_PREFIX).toString()
+
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
-        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        val runtimeDir = olcRtcConfigDir()
         Files.createDirectories(runtimeDir)
-        val path = Files.createTempFile(runtimeDir, "olcrtc-client-", ".yaml")
+        val path = Files.createTempFile(runtimeDir, OLCRTC_CONFIG_PREFIX, ".yaml")
         Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
         deleteOlcRtcConfig()
         olcRtcConfigPath = path
@@ -2803,6 +2833,8 @@ class DesktopVpnManager private constructor(
         const val LAN_HEALTH_INTERVAL_MS = 15_000L
         const val LAN_HEALTH_TIMEOUT_MS = 5_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
+        /** How the file of an engine's config begins its name; see [olcRtcConfigNaming]. */
+        const val OLCRTC_CONFIG_PREFIX = "olcrtc-client-"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
 
         internal fun isFatalOlcRtcStartupLine(line: String): Boolean {

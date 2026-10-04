@@ -170,6 +170,116 @@ class DesktopProxyModeTest {
         assertContains(config, "pre-down-script: /tmp/olcbox-down.sh")
     }
 
+    // The engine started with a SOCKS login turns away a client that offers
+    // none, and hev's config offered none: a room in the Linux tunnel said
+    // Connected and carried nothing.
+    @Test
+    fun linuxTunConfigCarriesTheLoginTheEngineDemands() {
+        val config = LinuxTunController.configContent(socksPort = 10808, username = "ghost", password = "it's")
+
+        assertContains(config, "  port: 10808\n  username: 'ghost'\n  password: 'it''s'\n")
+    }
+
+    // The app is not root and the tunnel's process is: the app cannot signal
+    // it. What the app runs as root ends it, by the tun it holds.
+    @Test
+    fun theLinuxCleanupEndsTheTunnelsProcessBeforeItRemovesAnything() {
+        val plain = LinuxTunController.downScriptContent("/tmp/state")
+        val script = LinuxTunController.withTunnelEnded(plain)
+        val lines = script.lines()
+
+        assertEquals("#!/bin/sh", lines.first())
+        // Only when the app runs it: hev hands its scripts the tun's name.
+        assertEquals("if [ \"\$#\" -eq 0 ]; then", lines[1])
+        assertContains(script, "grep -rls '^iff:[[:space:]]*olcbox0\$' /proc/[0-9]*/fdinfo")
+        // Asked once, left alone for two seconds, then killed: hev wedges on
+        // a second SIGINT, and the pre-down it runs holds the tun as well.
+        assertContains(script, "0) sig=INT ;;")
+        assertContains(script, "1|2) sig= ;;")
+        assertContains(script, "*) sig=KILL ;;")
+        // Everything the script did before is still there, after it and unchanged.
+        val ended = LinuxTunController.tunnelEndLines().lines()
+        assertEquals(plain.lines().drop(1), lines.drop(1 + ended.size))
+        assertTrue(script.indexOf("kill -") < script.indexOf("ip rule del"))
+    }
+
+    // The room's engine is root's too in the Linux tunnel. The cleanup ends
+    // it, found by the config it was started with.
+    @Test
+    fun theLinuxCleanupEndsTheEnginesTheAppCouldNot() {
+        val plain = LinuxTunController.downScriptContent("/tmp/state")
+        val naming = "/home/a/.olcbox/runtime/olcrtc-client-"
+        val script = LinuxTunController.withTunnelEnded(LinuxTunController.withEnginesEnded(plain, naming))
+        val lines = script.lines()
+
+        assertEquals("#!/bin/sh", lines.first())
+        // The words are a variable of the script's and go to grep on its
+        // standard input: on its command line grep would find itself.
+        assertContains(script, "naming='/home/a/.olcbox/runtime/olcrtc-client-'")
+        assertContains(script, "printf '%s\\n' \"\$naming\" | grep -lasF -f - /proc/[0-9]*/cmdline")
+        assertFalse(script.contains("grep -lasF -- "))
+        assertContains(script, "sig=TERM")
+        // The tunnel's process, then the engines, then the removal.
+        assertTrue(script.indexOf("iff:") < script.indexOf("naming="))
+        assertTrue(script.indexOf("naming=") < script.indexOf("ip rule del"))
+        // Each only when the app runs the script: hev hands its own the tun's name.
+        assertEquals(2, lines.count { it == "if [ \"\$#\" -eq 0 ]; then" })
+        // What the script did before is still there, after both and unchanged.
+        val added = LinuxTunController.tunnelEndLines().lines().size + LinuxTunController.engineEndLines(naming).lines().size
+        assertEquals(plain.lines().drop(1), lines.drop(1 + added))
+    }
+
+    // Whether an engine is left is asked of /proc by the app itself, before it
+    // asks for a password on that account alone.
+    @Test
+    fun anEnginesCommandLineNamesItsConfig() {
+        val naming = "/home/a/.olcbox/runtime/olcrtc-client-".toByteArray()
+        fun commandLine(vararg arguments: String) = arguments.joinToString("") { it + "\u0000" }.toByteArray()
+
+        assertTrue(
+            LinuxTunController.namedIn(
+                commandLine("/opt/ghostlane/olcrtc", "-config", "/home/a/.olcbox/runtime/olcrtc-client-123.yaml"),
+                naming
+            )
+        )
+        assertTrue(
+            LinuxTunController.namedIn(
+                commandLine("sudo", "-n", "/opt/ghostlane/olcrtc", "/home/a/.olcbox/runtime/olcrtc-client-9.yaml"),
+                naming
+            )
+        )
+        assertFalse(LinuxTunController.namedIn(commandLine("/opt/ghostlane/sing-box", "run", "-c", "/tmp/c.json"), naming))
+        assertFalse(LinuxTunController.namedIn(commandLine("/home/a/.olcbox/runtime/olcrtc-clien"), naming))
+        assertFalse(LinuxTunController.namedIn(ByteArray(0), naming))
+        assertFalse(LinuxTunController.namedIn(commandLine("anything"), ByteArray(0)))
+    }
+
+    @Test
+    fun aNameWithAQuoteIsOneWordToTheShell() {
+        val script = LinuxTunController.engineEndLines("/home/o'neil/.olcbox/runtime/olcrtc-client-")
+        assertContains(script, "naming='/home/o'\"'\"'neil/.olcbox/runtime/olcrtc-client-'")
+    }
+
+    @Test
+    fun endingATunnelLeftFromBeforeRemovesNothing() {
+        val script = LinuxTunController.endTunnelScriptContent()
+
+        assertTrue(script.startsWith("#!/bin/sh\n"))
+        assertContains(script, "kill -")
+        assertFalse(script.contains("ip rule"))
+        assertFalse(script.contains("ip route"))
+        assertFalse(script.contains("ip link"))
+    }
+
+    @Test
+    fun linuxTunConfigWithNoLoginIsWhatItWas() {
+        assertEquals(
+            LinuxTunController.configContent(socksPort = 10810),
+            LinuxTunController.configContent(socksPort = 10810, username = "", password = "ignored")
+        )
+        assertFalse(LinuxTunController.configContent(socksPort = 10810).contains("username"))
+    }
+
     @Test
     fun olcRtcCommandUsesDesktopWbStreamProviderAlias() {
         listOf(LocationConfig.PROVIDER_WB_STREAM, "wbstream").forEach { provider ->

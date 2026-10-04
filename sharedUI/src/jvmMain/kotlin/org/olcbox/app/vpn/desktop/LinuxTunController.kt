@@ -11,7 +11,15 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 
 internal class LinuxTunController(
-    private val addLog: (String) -> Unit
+    private val addLog: (String) -> Unit,
+    /**
+     * What every olcRTC engine of this app carries on its command line: the
+     * directory and the beginning of the file name of the config it is
+     * started with. In the Linux tunnel the engine runs as root, like hev,
+     * and what this controller runs as root at a stop ends it by that name
+     * ([engineEndLines]). Null where there is nothing to name.
+     */
+    private val enginesNaming: () -> String? = { null }
 ) {
     @Volatile private var routesInstalled = false
 
@@ -50,7 +58,10 @@ internal class LinuxTunController(
     suspend fun start(
         hevBinary: Path,
         socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
-        killSwitch: Boolean = false
+        killSwitch: Boolean = false,
+        /** The login the server on [socksPort] demands; blank when it demands none. */
+        username: String = "",
+        password: String = ""
     ): Process {
         // Over a block that is being held the scripts are the kill switch's,
         // whatever the setting says by now (it may have been switched off and
@@ -61,9 +72,54 @@ internal class LinuxTunController(
         // pre-down take the block away without having been asked. Without the
         // switch nothing reads it, and nothing is touched.
         if (withSwitch) Files.deleteIfExists(stopAskedPath())
+        // A tunnel process from before that nobody could end still holds the
+        // tun: the app is not root and could not signal it, or the app was
+        // killed with the tunnel up. A second one exits on finding the device
+        // taken ("Device or resource busy"), so no connect gets through until
+        // it is gone. Ending it needs root, which here is one more password,
+        // in the one case where nothing else would do.
+        if (interfaceExists(TUN_NAME)) {
+            addLog("Linux TUN: a tunnel process from before still holds $TUN_NAME; ending it first")
+            // What follows decides. Before the kill switch's scripts, the
+            // switch being on or its block held, only the process is ended
+            // and every rule stays as it is: a block that stands under that
+            // tunnel, held or not, is then never opened on the way to the new
+            // one, and those scripts only add or replace and keep the
+            // rp_filter values already saved. Before the plain scripts
+            // everything that tunnel put in goes with it, as at a stop. Its
+            // own pre-down is this file by now and removes nothing when hev
+            // runs it, so nothing else would put back the rp_filter values it
+            // saved, and the plain up script would save the zeroes that are
+            // there now in their place: the next stop would "restore" those,
+            // until the machine restarts.
+            // Not the engines, either way: the one this session started is
+            // running by now.
+            val ending = if (withSwitch) {
+                writeScript(CLEANUP_SCRIPT_NAME, endTunnelScriptContent())
+            } else {
+                writeCleanupScript(
+                    removeBlockDevice = interfaceExists(KILL_SWITCH_DEVICE),
+                    endTunnel = true,
+                    endEngines = false
+                )
+            }
+            runCatching { runPrivilegedScript(ending) }
+                .onFailure { addLog("Linux TUN: it could not be ended: ${it.message}") }
+            // Still there: the password was not given. A new hev started now
+            // would exit on finding the device taken, and until it did the
+            // old tun, with its rule and route in place, would pass for the
+            // new one being ready: Connected, said over a dialog that is
+            // still open.
+            if (interfaceExists(TUN_NAME)) {
+                error(
+                    "A tunnel from before still holds $TUN_NAME and could not be ended: that needs the " +
+                        "administrator's password. Connect again and give it"
+                )
+            }
+        }
         val upScript = writeUpScript(withSwitch)
         val downScript = writeDownScript(withSwitch)
-        val config = writeConfig(socksPort, upScript, downScript)
+        val config = writeConfig(socksPort, upScript, downScript, username, password)
         startedWithKillSwitch = withSwitch
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
         // Not over one that is still alive: a hev that could not be ended holds
@@ -128,10 +184,34 @@ internal class LinuxTunController(
         if (routesInstalled) {
             waitForRoutesRemoved()
         }
+        // The tunnel's process runs as root, and an app that does not cannot
+        // end it: by kill(2) only root signals a root process, so the stop
+        // above never arrived, and hev ignores the pipe the app closed. The
+        // process is then still there, holding the tun, and the next connect's
+        // would exit on finding the device taken. The cleanup runs as root,
+        // so the cleanup ends it. The tun exists exactly as long as a process
+        // holds it, which is what is asked here.
+        val tunnelStillUp = interfaceExists(TUN_NAME)
         val blockDevice = interfaceExists(KILL_SWITCH_DEVICE)
-        if (routeRuleExists() || routeTableExists() || Files.exists(rpFilterStatePath()) || blockDevice) {
-            runCatching { runPrivilegedScript(writeCleanupScript(removeBlockDevice = blockDevice)) }
-                .onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
+        // A room's engine is root's as well. One that is still there is
+        // reason enough for the cleanup by itself: a connect given up at the
+        // tunnel's password dialog has an engine joined to its room and
+        // nothing of a tunnel to remove.
+        val engineStillThere = enginesLeft()
+        if (tunnelStillUp || routeRuleExists() || routeTableExists() ||
+            Files.exists(rpFilterStatePath()) || blockDevice || engineStillThere
+        ) {
+            if (engineStillThere) {
+                addLog(
+                    "Linux TUN: the room's engine runs as root and the app's stop did not reach it; " +
+                        "the cleanup ends it, which needs the administrator's password"
+                )
+            }
+            runCatching {
+                runPrivilegedScript(
+                    writeCleanupScript(removeBlockDevice = blockDevice, endTunnel = tunnelStillUp, endEngines = true)
+                )
+            }.onFailure { addLog("Linux TUN route cleanup failed: ${it.message}") }
         }
         routesInstalled = false
         startedWithKillSwitch = false
@@ -201,16 +281,30 @@ internal class LinuxTunController(
         return held
     }
 
-    private fun writeConfig(socksPort: Int, upScript: Path, downScript: Path): Path {
+    private fun writeConfig(
+        socksPort: Int,
+        upScript: Path,
+        downScript: Path,
+        username: String,
+        password: String
+    ): Path {
         val config = configPath()
         Files.writeString(
             config,
             configContent(
                 socksPort = socksPort,
                 postUpScript = upScript.toString(),
-                preDownScript = downScript.toString()
+                preDownScript = downScript.toString(),
+                username = username,
+                password = password
             )
         )
+        // It may carry the SOCKS login now, and hev reads it as root: nobody
+        // else on the machine has a use for it.
+        runCatching {
+            config.toFile().setReadable(false, false)
+            config.toFile().setReadable(true, true)
+        }
         return config
     }
 
@@ -223,7 +317,7 @@ internal class LinuxTunController(
 
     private fun writeDownScript(killSwitch: Boolean): Path {
         return writeScript(
-            name = "linux-tun-down.sh",
+            name = CLEANUP_SCRIPT_NAME,
             body = downScriptContent(
                 rpFilterStatePath().toString(),
                 stopAskedPath = if (killSwitch) stopAskedPath().toString() else null
@@ -240,11 +334,20 @@ internal class LinuxTunController(
      * is the plain down script, so that for someone who never turned the
      * switch on, what runs as root at a disconnect is what ran before.
      */
-    private fun writeCleanupScript(removeBlockDevice: Boolean): Path {
+    private fun writeCleanupScript(
+        removeBlockDevice: Boolean,
+        endTunnel: Boolean,
+        endEngines: Boolean
+    ): Path {
         val statePath = rpFilterStatePath().toString()
+        val removal = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
+        // The tunnel's process first, then the engines, then the removal: read
+        // from the top of the file, since each is put right under the shebang.
+        val naming = enginesNaming().takeIf { endEngines }
+        val withEngines = if (naming != null) withEnginesEnded(removal, naming) else removal
         return writeScript(
-            name = "linux-tun-down.sh",
-            body = if (removeBlockDevice) cleanupScriptContent(statePath) else downScriptContent(statePath)
+            name = CLEANUP_SCRIPT_NAME,
+            body = if (endTunnel) withTunnelEnded(withEngines) else withEngines
         )
     }
 
@@ -388,6 +491,24 @@ internal class LinuxTunController(
 
     private fun configPath(): Path = DesktopPaths.appDataDir().resolve("linux-tun.yml")
 
+    /**
+     * Whether a process whose command line names an engine's config is
+     * running. Asked as the user: /proc tells anyone the command line of
+     * root's processes too.
+     */
+    private suspend fun enginesLeft(): Boolean = withContext(Dispatchers.IO) {
+        val naming = enginesNaming()?.toByteArray() ?: return@withContext false
+        runCatching {
+            Files.newDirectoryStream(Path("/proc")) { entry ->
+                entry.fileName.toString().all(Char::isDigit)
+            }.use { processes ->
+                processes.any { process ->
+                    runCatching { namedIn(Files.readAllBytes(process.resolve("cmdline")), naming) }.getOrDefault(false)
+                }
+            }
+        }.getOrDefault(false)
+    }
+
     private suspend fun waitForRoutesRemoved() {
         val deadline = System.currentTimeMillis() + ROUTE_CLEANUP_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
@@ -468,7 +589,9 @@ internal class LinuxTunController(
         fun configContent(
             socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
             postUpScript: String? = null,
-            preDownScript: String? = null
+            preDownScript: String? = null,
+            username: String = "",
+            password: String = ""
         ): String {
             return buildString {
                 appendLine("tunnel:")
@@ -486,6 +609,17 @@ internal class LinuxTunController(
                 appendLine("socks5:")
                 appendLine("  address: ${PacServer.LOCAL_SOCKS_HOST}")
                 appendLine("  port: $socksPort")
+                // The login the server on that port demands, when it demands
+                // one. The olcRTC engine started with a SOCKS login refuses a
+                // client that offers none, and this file carried none: with a
+                // login set in the settings a room in the Linux tunnel said
+                // Connected, because the check asks the engine directly, and
+                // carried nothing, because hev was turned away. A login is a
+                // username, as everywhere else that sends or demands one.
+                if (username.isNotBlank()) {
+                    appendLine("  username: '${yamlSingleQuoted(username)}'")
+                    appendLine("  password: '${yamlSingleQuoted(password)}'")
+                }
                 // Standard UDP ASSOCIATE. 'tcp' is hev's own UDP-in-TCP command (0x05),
                 // which none of the servers on this port speaks: sing-box, Xray and the
                 // olcRTC engine refuse it, so every UDP flow died at its first packet
@@ -747,6 +881,121 @@ internal class LinuxTunController(
             """.trimIndent()
             return head + "\n" + body
         }
+
+        /**
+         * Ends whatever process holds the tun. For the scripts the app runs
+         * as root, which is the only place it can be done from when the app
+         * itself is not root.
+         *
+         * The process is found by what it holds, not by its name or its
+         * binary's path: the kernel says of every open tun descriptor which
+         * device it is attached to (`iff:` in `/proc/<pid>/fdinfo`). It is
+         * asked to stop the way hev stops in order, on SIGINT, which runs its
+         * pre-down; one that has not gone after three seconds is killed.
+         *
+         * Asked once. hev's handler takes a second SIGINT, while it is
+         * stopping, for a stop it has to wait out and never ends; and it
+         * opens the tun without close-on-exec, so the pre-down it is then
+         * running holds the tun as well and would be interrupted half way.
+         * Tried against a stand-in that does both: asked every second, a
+         * pre-down of a second and a half was cut and the process hung until
+         * it was killed; asked once, it ended in order.
+         *
+         * hev runs its own scripts with the tun's name and index as
+         * arguments, and the app runs this one with none. The pre-down hev is
+         * told of is this same file, so without that test hev, stopping,
+         * would be asked by its own pre-down to stop.
+         */
+        internal fun tunnelEndLines(): String = """
+            if [ "${'$'}#" -eq 0 ]; then
+              attempt=0
+              while [ "${'$'}attempt" -lt 5 ]; do
+                holders=${'$'}(grep -rls '^iff:[[:space:]]*$TUN_NAME${'$'}' /proc/[0-9]*/fdinfo 2>/dev/null | cut -d/ -f3 | sort -u)
+                [ -n "${'$'}holders" ] || break
+                case "${'$'}attempt" in
+                  0) sig=INT ;;
+                  1|2) sig= ;;
+                  *) sig=KILL ;;
+                esac
+                if [ -n "${'$'}sig" ]; then
+                  for pid in ${'$'}holders; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                fi
+                attempt=${'$'}((attempt + 1))
+                sleep 1
+              done
+            fi
+        """.trimIndent()
+
+        /** [script] with the tunnel's process ended first: right under its first line, the shebang. */
+        internal fun withTunnelEnded(script: String): String {
+            val shebang = script.substringBefore('\n')
+            return shebang + "\n" + tunnelEndLines() + "\n" + script.substringAfter('\n')
+        }
+
+        /**
+         * Ends every process whose command line names [naming], for the
+         * cleanup the app runs as root. It is for the olcRTC engine, which in
+         * the Linux tunnel runs as root like hev, so that the app's own stop
+         * does not reach it either: it went on, joined to its room and
+         * holding the session's port, until the next line it wrote met the
+         * pipe the app had closed. [naming] is what the app's engine configs
+         * are called, a directory and the beginning of a file name, which the
+         * engine is started with: it finds the engine, and the sudo in front
+         * of it where that is what started it. A program that happens to be
+         * reading one of those files at that moment names it too and goes
+         * with them; the files are the app's own and nothing else has a use
+         * for them.
+         *
+         * The words go to grep on its standard input and not as an argument.
+         * As an argument they are on grep's own command line, the list of
+         * processes is made in the process that then becomes grep, and grep
+         * finds itself: every round would kill a number that no longer
+         * belongs to anyone, or by then to someone else.
+         *
+         * Asked to end, then killed after three seconds, and only when the
+         * app runs the script, as [tunnelEndLines].
+         */
+        internal fun engineEndLines(naming: String): String = """
+            if [ "${'$'}#" -eq 0 ]; then
+              naming=NAMING
+              attempt=0
+              while [ "${'$'}attempt" -lt 5 ]; do
+                engines=${'$'}(printf '%s\n' "${'$'}naming" | grep -lasF -f - /proc/[0-9]*/cmdline 2>/dev/null | cut -d/ -f3 | sort -u)
+                [ -n "${'$'}engines" ] || break
+                if [ "${'$'}attempt" -lt 3 ]; then sig=TERM; else sig=KILL; fi
+                for pid in ${'$'}engines; do kill -"${'$'}sig" "${'$'}pid" 2>/dev/null || true; done
+                attempt=${'$'}((attempt + 1))
+                sleep 1
+              done
+            fi
+        """.trimIndent().replace("NAMING", shellSingleQuote(naming))
+
+        /** Whether [words] stand somewhere in [commandLine], as /proc gives it: the arguments, each ended by a zero. */
+        internal fun namedIn(commandLine: ByteArray, words: ByteArray): Boolean {
+            if (words.isEmpty() || words.size > commandLine.size) return false
+            return (0..commandLine.size - words.size).any { at ->
+                words.indices.all { i -> commandLine[at + i] == words[i] }
+            }
+        }
+
+        /** [script] with the engines ended first: right under its first line, the shebang. */
+        internal fun withEnginesEnded(script: String, naming: String): String {
+            val shebang = script.substringBefore('\n')
+            return shebang + "\n" + engineEndLines(naming) + "\n" + script.substringAfter('\n')
+        }
+
+        /** Ends the tunnel's process and removes nothing: for a start over a tunnel left from before. */
+        internal fun endTunnelScriptContent(): String = "#!/bin/sh\n" + tunnelEndLines() + "\n"
+
+        /**
+         * The one script the app runs as root by itself. Its path is also the
+         * pre-down hev is told of, as it always was, so a sudoers or polkit
+         * rule that names it keeps covering both.
+         */
+        const val CLEANUP_SCRIPT_NAME = "linux-tun-down.sh"
+
+        /** Inside single quotes YAML has one escape: a quote is written twice. */
+        private fun yamlSingleQuoted(value: String): String = value.replace("'", "''")
 
         private fun shellSingleQuote(value: String): String {
             return "'${value.replace("'", "'\"'\"'")}'"
