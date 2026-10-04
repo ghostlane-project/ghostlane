@@ -424,10 +424,22 @@ class DesktopVpnManager private constructor(
             settings.lanNetworkId.isNotBlank() &&
             settings.lanNetworkId == DesktopLanProxy.networkIdentity(settings.lanAddress)
 
-    /** Apply LAN-only changes without tearing down and rebuilding the VPN tunnel. */
+    /**
+     * Apply LAN-only changes without tearing down and rebuilding the VPN tunnel.
+     *
+     * The settings are stored and nothing else: the system proxy keeps the
+     * target the session gave it. This used to go through
+     * [updateSocksProxySettings], which points the PAC at the port in the
+     * settings. That is the olcRTC engine's port, and the session's target is
+     * another one whenever a core carries the line or a front stands before the
+     * engine (see where [startSystemProxy] is called). So switching LAN sharing
+     * on or off in proxy mode left the browser asking a port nobody listened
+     * on, or the engine past the front and its routing rules, until the next
+     * connect.
+     */
     fun applyLanSharingSettings(settings: DesktopSocksProxySettings) {
         val normalized = settings.normalized()
-        updateSocksProxySettings(normalized)
+        _socksProxySettings.value = normalized
         lanControlJob?.cancel()
         lanWatchJob?.cancel()
         lanWatchJob = null
