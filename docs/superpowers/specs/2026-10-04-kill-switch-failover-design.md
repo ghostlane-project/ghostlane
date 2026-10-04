@@ -467,6 +467,14 @@ branch each belongs to:
   since v1.0.438; rooms leave nothing out and pass. Fixed on `main` (#103), and everything in stage D that
   touches a Windows tunnel session on a core's line waits on it.
 
+**The fixes were read in turn**, by another reader, since part of them runs as root. One of them was worse
+than what it replaced: a start over a tunnel left from before ran the whole cleanup unless a block was held, and
+a block under a tunnel that still carries is never held, so Connect opened it on the way to the new tunnel. What
+decides is the scripts that follow, the kill switch's or the plain ones (#100). The same reading found that hev
+wedges on a second SIGINT, so its process is asked to stop once; that the hold behind a leftover tunnel was lost
+at a stop whose dialog was closed (#99); and that an engine could still be left by a connect given up at the
+tunnel's dialog (#100).
+
 Left as they are, and known: for the whole of an outage the desktop's tun points at a port nobody holds, which
 another process on the machine can bind (Android stops tun2socks for this, A6; the desktop's tun cannot be
 stopped without opening the tunnel); in the Linux tunnel a room's engine that is replaced inside a session is
