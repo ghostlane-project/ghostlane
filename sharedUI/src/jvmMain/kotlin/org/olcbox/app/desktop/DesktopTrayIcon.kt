@@ -6,11 +6,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.painter.Painter
 import com.sun.jna.Native
 import com.sun.jna.Pointer
@@ -42,13 +44,22 @@ import kotlin.math.sin
  * - Linux: the coloured tile. Panels are light or dark by theme and desktop,
  *   there is no setting that says which, and an XEmbed tray often paints its own
  *   background behind the icon anyway.
+ *
+ * It also says whether the VPN is up, which is what a tray icon is looked at
+ * for, and says it the way each of those places can:
+ *
+ * - Windows: the mark turns green ([DesktopTrayIcon.LIVE]).
+ * - macOS: a template image has no colour to turn, AppKit paints it in the
+ *   menu bar's own. It has alpha: the mark is at full strength while the VPN
+ *   is up and dimmed while it is not, as the system dims what is switched off.
+ * - The coloured tile: a green frame around it ([LiveFramePainter]).
  */
 internal sealed interface TrayIconLook {
     /** The lane mark alone, in one colour, its ink [inkFraction] of the canvas. */
     data class Mark(val color: Color, val inkFraction: Float) : TrayIconLook
 
-    /** The coloured launcher tile. */
-    data object AppIcon : TrayIconLook
+    /** The coloured launcher tile, in the frame that says the VPN is up when [live]. */
+    data class AppIcon(val live: Boolean) : TrayIconLook
 }
 
 internal object DesktopTrayIcon {
@@ -65,15 +76,37 @@ internal object DesktopTrayIcon {
     /** A 16 px tray slot is filled nearly edge to edge, as the system icons are. */
     const val WINDOWS_INK_FRACTION = 0.94f
 
-    fun look(os: DesktopOs, windowsTaskbarIsLight: Boolean?): TrayIconLook = when (os) {
+    /**
+     * The colour of a VPN that is up: the lime of the dot that leads the lane
+     * in the app's own icon.
+     */
+    val LIVE = Color(0xFFB5F23D)
+
+    /**
+     * The same on a light taskbar: a darker green of that hue. Lime on
+     * near-white is a mark nobody finds.
+     */
+    val LIVE_ON_LIGHT = Color(0xFF4F7F00)
+
+    /**
+     * How much of its ink the menu bar mark keeps while the VPN is down. Half:
+     * plainly fainter than its neighbours, and still a mark one can find.
+     */
+    const val MAC_IDLE_ALPHA = 0.5f
+
+    /** [connected] is a tunnel that is up, not one on its way up. */
+    fun look(os: DesktopOs, windowsTaskbarIsLight: Boolean?, connected: Boolean): TrayIconLook = when (os) {
         // Black by convention: a template image is judged by its alpha alone.
-        DesktopOs.MacOS -> TrayIconLook.Mark(Color.Black, MAC_INK_FRACTION)
+        DesktopOs.MacOS -> TrayIconLook.Mark(
+            Color.Black.copy(alpha = if (connected) 1f else MAC_IDLE_ALPHA),
+            MAC_INK_FRACTION
+        )
         DesktopOs.Windows -> when (windowsTaskbarIsLight) {
-            true -> TrayIconLook.Mark(Color.Black, WINDOWS_INK_FRACTION)
-            false -> TrayIconLook.Mark(Color.White, WINDOWS_INK_FRACTION)
-            null -> TrayIconLook.AppIcon
+            true -> TrayIconLook.Mark(if (connected) LIVE_ON_LIGHT else Color.Black, WINDOWS_INK_FRACTION)
+            false -> TrayIconLook.Mark(if (connected) LIVE else Color.White, WINDOWS_INK_FRACTION)
+            null -> TrayIconLook.AppIcon(live = connected)
         }
-        DesktopOs.Linux, DesktopOs.Other -> TrayIconLook.AppIcon
+        DesktopOs.Linux, DesktopOs.Other -> TrayIconLook.AppIcon(live = connected)
     }
 }
 
@@ -81,11 +114,11 @@ internal object DesktopTrayIcon {
 private const val WINDOWS_THEME_POLL_MS = 3_000L
 
 /**
- * The tray icon for this platform; [appIcon] wherever the coloured tile is
- * still the right answer.
+ * The tray icon for this platform and this moment; [appIcon] wherever the
+ * coloured tile is still the right answer. [connected] is a tunnel that is up.
  */
 @Composable
-fun rememberDesktopTrayIcon(appIcon: Painter): Painter {
+fun rememberDesktopTrayIcon(appIcon: Painter, connected: Boolean): Painter {
     val os = remember { DesktopPaths.os }
     var windowsTaskbarIsLight by remember {
         mutableStateOf(if (os == DesktopOs.Windows) WindowsTaskbar.isLight() else null)
@@ -100,11 +133,45 @@ fun rememberDesktopTrayIcon(appIcon: Painter): Painter {
             }
         }
     }
-    return when (val look = DesktopTrayIcon.look(os, windowsTaskbarIsLight)) {
+    val appIconLive = remember(appIcon) { LiveFramePainter(appIcon) }
+    return when (val look = DesktopTrayIcon.look(os, windowsTaskbarIsLight, connected)) {
         // Remembered per look: Compose's Tray rebuilds the native image only
         // when it is handed a different painter.
         is TrayIconLook.Mark -> remember(look) { LaneMarkPainter(look.color, look.inkFraction) }
-        TrayIconLook.AppIcon -> appIcon
+        is TrayIconLook.AppIcon -> if (look.live) appIconLive else appIcon
+    }
+}
+
+/**
+ * [base], the tile, in the frame that says the VPN is up: the lime of
+ * [DesktopTrayIcon.LIVE] all round it.
+ *
+ * A frame and not a change of the tile's colour: the tile is a picture with
+ * colours of its own, and a panel may be any colour at all. Lime round a dark
+ * tile shows on a dark panel and on a light one. And not a dot in a corner:
+ * the tile has a lime dot already, and at 22 px two of them are a riddle.
+ *
+ * The tile is drawn a little smaller inside the frame's shape, so the frame
+ * has the tile's own corners and nothing of the panel between them.
+ */
+internal class LiveFramePainter(private val base: Painter) : Painter() {
+
+    override val intrinsicSize: Size get() = base.intrinsicSize
+
+    override fun DrawScope.onDraw() {
+        val side = min(size.width, size.height)
+        drawRoundRect(color = DesktopTrayIcon.LIVE, cornerRadius = CornerRadius(side * TILE_CORNER))
+        inset(side * FRAME) {
+            with(base) { draw(size) }
+        }
+    }
+
+    internal companion object {
+        /** The tile's corner: `radius=7 * u` of its 32-unit box in `tools/render-appicons.py`. */
+        const val TILE_CORNER = 7f / 32f
+
+        /** The frame's width, of the icon's side: two pixels in a 22 px slot. */
+        const val FRAME = 3f / 32f
     }
 }
 
