@@ -33,6 +33,9 @@ import multiplatform_app.sharedui.generated.resources.server_list_qr
 import multiplatform_app.sharedui.generated.resources.server_list_removed
 import multiplatform_app.sharedui.generated.resources.settings_title
 import multiplatform_app.sharedui.generated.resources.socks_saved
+import multiplatform_app.sharedui.generated.resources.status_connected
+import multiplatform_app.sharedui.generated.resources.status_connecting
+import multiplatform_app.sharedui.generated.resources.status_not_connected
 import multiplatform_app.sharedui.generated.resources.tray_open
 import multiplatform_app.sharedui.generated.resources.tray_quit
 import multiplatform_app.sharedui.generated.resources.unknown_error
@@ -68,6 +71,9 @@ enum class DesktopText(internal val resource: StringResource) {
     Stop(Res.string.action_stop),
     Settings(Res.string.settings_title),
     Quit(Res.string.tray_quit),
+    Connected(Res.string.status_connected),
+    Connecting(Res.string.status_connecting),
+    NotConnected(Res.string.status_not_connected),
     ServerListAdded(Res.string.server_list_added),
     LocationQr(Res.string.location_qr),
     ServerListQr(Res.string.server_list_qr),

@@ -365,12 +365,24 @@ private fun runDesktopApplication(args: Array<String>) = application {
         }
     }
 
+    // Up, and not on its way up: the icon turns only for a tunnel that carries.
+    val trayConnected = trayHomeState.isVpnConnected && !trayHomeState.isVpnLoading
+    val trayStatus = when {
+        trayConnected -> DesktopText.Connected
+        trayHomeState.isVpnLoading -> DesktopText.Connecting
+        else -> DesktopText.NotConnected
+    }
     Tray(
         state = trayState,
         // Monochrome where the platform's other tray icons are (a template image in
         // the macOS menu bar); the coloured tile where nothing says what is behind it.
-        icon = rememberDesktopTrayIcon(appIcon = painterResource("LinuxIcon.png")),
-        tooltip = "Ghostlane",
+        // And whether the VPN is up, in the way each of those can say it.
+        icon = rememberDesktopTrayIcon(
+            appIcon = painterResource("LinuxIcon.png"),
+            connected = trayConnected
+        ),
+        // In words as well: a colour is not something everyone tells apart.
+        tooltip = "Ghostlane: " + trayStatus.text(),
         menu = {
             Item(DesktopText.Open.text(), onClick = { isWindowVisible = true })
             Item(
