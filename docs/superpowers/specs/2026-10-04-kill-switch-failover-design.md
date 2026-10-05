@@ -232,6 +232,14 @@ release that carries it is submitted.
   hev on the descriptor it holds, and to hand the tun from one to the other when the engine changes. That is a
   design of its own. Whether `includeAllNetworks` covers the gap between the app's stop and its start is a
   question for the phone, not for this document.
+  *2026-10-05, after the first phone:* the code answered before the phone did. The app's stop switched
+  on-demand off, and with on-demand off the profile asks iOS to hold nothing, so the gap was open for as long
+  as it lasted: about a second on a change of server, the whole pause after a reconnect that failed. Since
+  then a restart replaces the tunnel with on-demand left on (`PacketTunnelController.replace`). What still
+  lowers it: a Disconnect, a Cancel, a first connect that failed, a restart that could not be asked for at all,
+  and "lowest latency" selection, which measures with the VPN stopped and moves to another exit by a stop and
+  a start. It is still a stop and a start. That iOS holds traffic across a stop the app asks for, as it was
+  seen to across one made in the system's Settings, has not been seen on a phone.
 - **I5. Another server of the same country, on iOS, is not in this release.** It was planned for the app's
   reconnect loop, while the app is awake. Reading that loop again decided against it: it runs only when the
   tunnel is down, and for a Reality or Hysteria2 line a dead server leaves the tunnel up and carrying nothing,

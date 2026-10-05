@@ -21,6 +21,9 @@ WHAT CHANGED
   brings the VPN back by itself. The note under the switch says what it can
   cost: if the VPN cannot come back, the phone has no network until you turn
   the VPN off in the system's Settings.
+• The switch stays up while the app itself restarts the tunnel: when you
+  change the server, and in the app's own reconnect. In the build before
+  this one it was lowered for that moment.
 • Server links that use the HTTP transport now connect, and so do VLESS
   servers with ordinary TLS, a self-signed certificate, or no TLS.
 
@@ -47,8 +50,15 @@ WHAT TO TEST
 7. Kill switch on: an olcRTC room and an XHTTP server must still carry
    traffic, and AirPlay or a printer on your Wi-Fi must still be reachable.
 8. Kill switch on, an address-check page open (ifconfig.me), change the
-   server in the app. Tell us whether your own address shows at any moment
-   while it changes.
-9. Kill switch off: everything as before.
-10. If the phone ends up with no network and the VPN will not come back:
+   server in the app and keep reloading the page while it changes. It must
+   fail to load or show a server's address, never your own. Tell us if
+   your own address shows at any moment.
+9. Kill switch on, connected: change to a server that fails to connect.
+   An olcRTC room that is gone is one; a Reality or Hysteria2 server that
+   is down still shows as connected, and is not this test. The app must
+   stay on "reconnecting", the phone must have no network meanwhile, and
+   Cancel must give its ordinary network back. Choosing a working server
+   instead must connect.
+10. Kill switch off: everything as before.
+11. If the phone ends up with no network and the VPN will not come back:
     Settings → VPN → turn it off. Tell us what you were doing.

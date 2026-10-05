@@ -398,7 +398,78 @@ final class PacketTunnelController: ObservableObject {
         }
     }
 
-    /// Stops the tunnel, for good or before a restart.
+    /// Brings a tunnel up for the files the app has just written, in place of
+    /// whatever is running.
+    ///
+    /// Starting an already-running tunnel does nothing at all, and the
+    /// extension keeps the config it was launched with — which looks exactly
+    /// like a working VPN that does not change your IP. So what is running is
+    /// stopped first, and what "running" means is asked of the system: a flag
+    /// this object kept of its own starts was false on every fresh launch,
+    /// including one over a tunnel that was very much running.
+    ///
+    /// Without the kill switch that is a stop and a start. With it, the stop
+    /// must not be the one a Disconnect makes. That one switches on-demand
+    /// off first, and from then until the next start the profile asks nothing
+    /// of iOS: whatever the phone sends goes out directly. Changing the
+    /// server and the app's own reconnect lowered the switch for that moment,
+    /// and a reconnect that failed lowered it for the whole of its pause. So
+    /// here the switch stays as it is, and the running tunnel is stopped
+    /// under it: on-demand is what has iOS hold traffic while there is no
+    /// tunnel, and bring one up by itself, from the same files, if this did
+    /// not.
+    ///
+    /// Only when the switch is in the profile already. A profile without it
+    /// is holding nothing, so there is nothing to keep up, and writing the
+    /// switch into it while a tunnel runs has iOS start a tunnel of its own at
+    /// a moment nobody chose: that one takes the stop and start it always
+    /// took, and gets the switch between the two.
+    ///
+    /// `onlyIfDown` is the app's own reconnect asking: it wants a tunnel, and
+    /// one that is up, or that iOS is bringing up from these same files, is
+    /// that tunnel.
+    func replace(killSwitch: Bool, onlyIfDown: Bool) async {
+        // Read here, with no await before the stop that acts on it.
+        let before = manager?.connection.status ?? .invalid
+        let down = before == .disconnected || before == .invalid
+        if onlyIfDown, !down, before != .disconnecting { return }
+
+        if killSwitch, switchIsUp {
+            if !down, let manager {
+                manager.connection.stopVPNTunnel()
+                log.info("stopVPNTunnel requested, on-demand left on")
+                let wasUp = before == .connected || before == .reasserting
+                // The system may be at the next tunnel already; a start on top
+                // of that one is not needed.
+                if await waitUntilReplaced(wasUp: wasUp) { return }
+            }
+            await start()
+            return
+        }
+
+        await stop()
+        // Waited for, not slept through. A fixed 700 ms was a guess about
+        // how long a teardown takes; this asks.
+        await waitUntilDown()
+        // After the stop, which switches on-demand off, and before the
+        // start, which has to find the profile as this start wants it.
+        await apply(killSwitch: killSwitch)
+        await start()
+    }
+
+    /// Whether the profile, as loaded, has the kill switch in it: on-demand
+    /// on, and every network in the tunnel.
+    private var switchIsUp: Bool {
+        guard let manager, manager.isEnabled, manager.isOnDemandEnabled,
+              let proto = manager.protocolConfiguration as? NETunnelProviderProtocol
+        else { return false }
+        return proto.includeAllNetworks
+    }
+
+    /// Stops the tunnel with the kill switch lowered: a Disconnect, a Cancel, a
+    /// first connect that failed, and the first half of a restart when the
+    /// switch is not wanted. A restart under the kill switch goes through
+    /// `replace`, and not through here.
     ///
     /// On-demand goes off first, and is saved, or iOS brings the tunnel straight
     /// back: the rule that makes a kill switch of `includeAllNetworks` is the
@@ -508,6 +579,34 @@ final class PacketTunnelController: ObservableObject {
             }
         }
         log.error("tunnel did not report itself down within \(timeout, privacy: .public)s")
+    }
+
+    /// After a stop that left on-demand on: waits for the tunnel that was
+    /// running to be gone, and says whether the system is connecting the next
+    /// one already. Under on-demand that can follow so closely that "down" is
+    /// never seen from here.
+    private func waitUntilReplaced(wasUp: Bool, timeout: TimeInterval = 5) async -> Bool {
+        guard let manager else { return false }
+        // A tunnel that was up cannot be "connecting" again without having
+        // gone down. One that was still connecting when it was stopped can be
+        // seen so before the stop reaches it: that reading is taken for the
+        // next tunnel only once the old one has been seen going.
+        var oldGoing = wasUp
+        for _ in 0..<Int((timeout / 0.15).rounded()) {
+            switch manager.connection.status {
+            case .disconnected, .invalid:
+                return false
+            case .disconnecting:
+                oldGoing = true
+            case .connecting:
+                if oldGoing { return true }
+            default:
+                break
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        log.error("tunnel did not report itself down within \(timeout, privacy: .public)s")
+        return false
     }
 
     /// Waits for the system to say the tunnel is actually up.
@@ -698,7 +797,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     ///
     /// A stop used to be one call into the system, and nothing could overtake
     /// it. Since the kill switch it first switches on-demand off and saves the
-    /// profile, which takes a moment, and Kotlin sends a stop just ahead of
+    /// profile, which takes a moment, and Kotlin sent a stop just ahead of
     /// every restart without waiting for it. That stop could reach
     /// `stopVPNTunnel()` after the start behind it had brought its tunnel up,
     /// and stop that one. The other way round, a stop sent while a start was
@@ -737,6 +836,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         // Read here, on the caller's side: the request does not cross into the
         // task below, a Bool does.
         let killSwitch = request.killSwitch
+        let onlyIfDown = request.onlyIfDown
 
         // The Simulator has no Network Extension. `saveToPreferences` fails
         // there, so the manager stays nil and the app reported "no VPN
@@ -755,9 +855,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: Self.appGroupId
         ) else {
-            answer.callback.onResult(
-                result: IosBridgeResult(success: false, message: "app group unavailable")
-            )
+            refuse("app group unavailable", answer)
             return
         }
 
@@ -797,10 +895,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             try Data(PacketTunnelController.requestedStage.utf8)
                 .write(to: container.appendingPathComponent("stage.txt"))
         } catch {
-            answer.callback.onResult(result: IosBridgeResult(
-                success: false,
-                message: "could not hand over the config: \(error.localizedDescription)"
-            ))
+            refuse("could not hand over the config: \(error.localizedDescription)", answer)
             return
         }
 
@@ -810,25 +905,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         let before = Self.lastOperation
         let asked: Task<Void, Never> = Task { @MainActor in
             _ = await before?.value
-            // Starting an already-running tunnel does nothing at all, and the
-            // extension keeps the config it was launched with — which looks
-            // exactly like a working VPN that does not change your IP.
-            //
-            // What "already running" means has to come from the system. It used
-            // to come from a flag this object set when it last started a tunnel
-            // itself, which is false on every fresh launch — including a launch
-            // over a tunnel that is very much running, now that the app adopts
-            // one. The old tunnel then survived the start, or, worse, the stop
-            // Kotlin had already sent landed midway through it. That stop has
-            // had its turn by now.
-            await Self.controller.stop()
-            // Waited for, not slept through. A fixed 700 ms was a guess about
-            // how long a teardown takes; this asks.
-            await Self.controller.waitUntilDown()
-            // After the stop, which switches on-demand off, and before the
-            // start, which has to find the profile as this start wants it.
-            await Self.controller.apply(killSwitch: killSwitch)
-            await Self.controller.start()
+            await Self.controller.replace(killSwitch: killSwitch, onlyIfDown: onlyIfDown)
         }
         Self.lastOperation = asked
         Self.operationLock.unlock()
@@ -907,12 +984,36 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     }
 
     func stop() {
+        queueStop()
+    }
+
+    /// A stop in its turn; see `lastOperation`.
+    @discardableResult
+    private func queueStop() -> Task<Void, Never> {
         Self.operationLock.lock()
         defer { Self.operationLock.unlock() }
         let before = Self.lastOperation
-        Self.lastOperation = Task { @MainActor in
+        let stop: Task<Void, Never> = Task { @MainActor in
             _ = await before?.value
             await Self.controller.stop()
+        }
+        Self.lastOperation = stop
+        return stop
+    }
+
+    /// Answers a start that could not be asked of the system at all.
+    ///
+    /// What is running then was started from other files, for the server
+    /// chosen before, and it is stopped first. Kotlin used to send a stop
+    /// ahead of every restart and no longer does; without one here the app
+    /// would hold its new selection over the old tunnel. The answer waits for
+    /// that stop: Kotlin asks the profile next whether the kill switch is
+    /// still up, and is to hear what is so after it.
+    private func refuse(_ message: String, _ answer: SendableCallback) {
+        let stopped = queueStop()
+        Task { @MainActor in
+            await stopped.value
+            answer.callback.onResult(result: IosBridgeResult(success: false, message: message))
         }
     }
 
