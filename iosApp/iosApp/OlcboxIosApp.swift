@@ -406,18 +406,27 @@ final class PacketTunnelController: ObservableObject {
     /// again at the next start that asks for it.
     func stop() async {
         guard let manager else { return }
-        if manager.isOnDemandEnabled {
+        // Twice at most. A save from an object the system's copy has moved on
+        // from fails, and the load that follows a failure makes the next one
+        // good; without the second go that Disconnect was undone by iOS, and
+        // it took a second tap.
+        var tries = 0
+        while manager.isOnDemandEnabled && tries < 2 {
+            tries += 1
             manager.isOnDemandEnabled = false
+            var saved = false
             do {
                 try await manager.saveToPreferences()
+                saved = true
                 try await manager.loadFromPreferences()
             } catch {
-                log.error("on-demand not switched off: \(error.localizedDescription, privacy: .public)")
-                // Not saved, so the profile still has it on, and this object
-                // has to say so as well: the next stop looks here, and one
-                // that found nothing to switch off would leave iOS bringing
-                // the tunnel back after every Disconnect.
-                do { try await manager.loadFromPreferences() } catch { manager.isOnDemandEnabled = true }
+                let what = saved ? "saved but not read back" : "not saved"
+                log.error("on-demand off: profile \(what, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                // This object has to say what the profile says: the next stop
+                // looks here, and one that found nothing to switch off would
+                // leave iOS bringing the tunnel back after every Disconnect.
+                // Read it again; failing that too, it is as the save left it.
+                do { try await manager.loadFromPreferences() } catch { manager.isOnDemandEnabled = !saved }
             }
             noteProfile()
         }
@@ -523,6 +532,9 @@ final class PacketTunnelController: ObservableObject {
         // reported the stage of a tunnel that had been up the whole time as
         // its death. Kotlin then stopped that tunnel.
         var left = Int((timeout / 0.25).rounded())
+        // The clock is asked one thing only: whether the request is as old as
+        // the whole wait. See where it is read.
+        let began = Date()
         // The look that follows a suspension. What the status says at the
         // moment of waking can be older than the tunnel, so "down" is not
         // taken from that one look.
@@ -536,7 +548,13 @@ final class PacketTunnelController: ObservableObject {
             case .disconnected, .invalid:
                 // Only after an attempt began: the status is still
                 // `disconnected` for a moment after the request is queued.
-                if sawAttempt && !justWoke {
+                // A request as old as the whole wait is past that moment
+                // whether an attempt was seen or not: the app was away while
+                // one was made and lost, and without this the screen stayed
+                // on "connecting" for the rest of the 45 s once it was back.
+                // An attempt that is under way keeps the time it has left.
+                let old = Date().timeIntervalSince(began) >= timeout
+                if (sawAttempt || old) && !justWoke {
                     return Self.lastStage() ?? "the tunnel stopped right after starting"
                 }
             case .disconnecting:
@@ -546,17 +564,10 @@ final class PacketTunnelController: ObservableObject {
             }
             let asked = Date()
             try? await Task.sleep(nanoseconds: 250_000_000)
-            let slept = Date().timeIntervalSince(asked)
             left -= 1
             // A quarter of a second that took seconds is the app having been
             // suspended.
-            justWoke = slept > 2
-            // One that took as long as the whole wait: the start has had its
-            // time, and what is left to wait for is the status catching up.
-            // Without this, a start that died while the app was away kept the
-            // screen on "connecting" for the rest of the 45 s once the app
-            // was back.
-            if slept >= timeout { left = min(left, 12) }
+            justWoke = Date().timeIntervalSince(asked) > 2
         }
         // The status once more: what it says now is the answer, whatever the
         // wait was like.

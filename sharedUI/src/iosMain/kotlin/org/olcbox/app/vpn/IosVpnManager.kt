@@ -887,7 +887,7 @@ class IosVpnManager(
             while (desiredConnected && isActive) {
                 val delayMs = nextReconnectDelay()
                 addLog("Reconnecting in ${delayMs / 1000}s")
-                delay(delayMs)
+                awakeDelay(delayMs)
                 if (!desiredConnected) return@launch
                 // Once more before anything is stopped: the tunnel can have
                 // come up while this waited, and stopping one that is up in
@@ -937,16 +937,48 @@ class IosVpnManager(
         if (adoptIfUp("The packet tunnel is up again; nothing to restart")) return true
         if (!packetTunnelBridge.restartsByItself()) return false
 
-        addLog("The kill switch is on, so iOS brings the tunnel back by itself; waiting for it")
+        addLog("iOS brings the tunnel back by itself (on-demand is on in the VPN profile); waiting for it")
         // Looked at after every wait, the last one too: what ends this is the
         // tunnel being up, and the count only says when to stop asking.
-        repeat(SYSTEM_RESTART_POLLS) {
-            delay(SYSTEM_RESTART_POLL_MS)
+        var left = SYSTEM_RESTART_POLLS
+        while (left > 0) {
+            val took = awakeDelay(SYSTEM_RESTART_POLL_MS)
+            left--
             if (!desiredConnected) return true
             if (adoptIfUp("iOS brought the packet tunnel back")) return true
+            // A wait that took as long as this whole one: iOS has had its
+            // time and more. A little is left in case it is at it this very
+            // moment, and no longer the rest of 45 s without network in front
+            // of someone who has just opened the app.
+            if (took >= SYSTEM_RESTART_POLLS * SYSTEM_RESTART_POLL_MS) left = minOf(left, SETTLE_POLLS)
         }
         addLog("iOS has not brought the tunnel back; restarting it from the app")
         return false
+    }
+
+    /**
+     * Waits [ms] of the app being awake, and says how long that took in all,
+     * by the wall clock.
+     *
+     * What `isRunning` answers is what the main thread last heard from the
+     * system, and at the moment the app wakes from a suspension it has not
+     * heard yet: a wait the app was suspended in ends the instant it wakes,
+     * however long ago it was due. So such a wait is followed by a short one,
+     * until one passes undisturbed, and the look that comes after this is at
+     * something current. The wall clock, because the other one stops while
+     * the phone sleeps.
+     */
+    private suspend fun awakeDelay(ms: Long): Long {
+        var total = 0L
+        var asked = ms
+        while (true) {
+            val before = kotlin.time.Clock.System.now()
+            delay(asked)
+            val took = (kotlin.time.Clock.System.now() - before).inWholeMilliseconds
+            total += took
+            if (took < asked + SUSPENDED_OVERRUN_MS) return total
+            asked = SETTLE_MS
+        }
     }
 
     /**
@@ -1110,6 +1142,12 @@ class IosVpnManager(
          */
         const val SYSTEM_RESTART_POLLS = 90
         const val SYSTEM_RESTART_POLL_MS = 500L
+        /** A wait that ran this much over was not waited: the app was suspended in it. */
+        const val SUSPENDED_OVERRUN_MS = 2_000L
+        /** After such a wait, what the main thread is given to hear from the system. */
+        const val SETTLE_MS = 1_000L
+        /** What is left of the wait for iOS after a suspension as long as all of it: 3 s. */
+        const val SETTLE_POLLS = 6
         const val RECONNECT_MAX_DELAY_MS = 30_000L
         const val MAX_RECONNECT_BACKOFF_POWER = 3
         const val POST_CONNECT_GRACE_MS = 4_000L
