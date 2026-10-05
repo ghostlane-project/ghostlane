@@ -398,7 +398,57 @@ final class PacketTunnelController: ObservableObject {
         }
     }
 
-    /// Stops the tunnel, for good or before a restart.
+    /// Brings a tunnel up for the files the app has just written, in place of
+    /// whatever is running.
+    ///
+    /// Starting an already-running tunnel does nothing at all, and the
+    /// extension keeps the config it was launched with — which looks exactly
+    /// like a working VPN that does not change your IP. So what is running is
+    /// stopped first, and what "running" means is asked of the system: a flag
+    /// this object kept of its own starts was false on every fresh launch,
+    /// including one over a tunnel that was very much running.
+    ///
+    /// Without the kill switch that is a stop and a start. With it, the stop
+    /// must not be the one a Disconnect makes. That one switches on-demand
+    /// off first, and from then until the next start the profile asks nothing
+    /// of iOS: whatever the phone sends goes out directly. Changing the
+    /// server and the app's own reconnect lowered the switch for that moment,
+    /// and a reconnect that failed lowered it for the whole of its pause. So
+    /// here the switch is written first and stays, and the running tunnel is
+    /// stopped under it: iOS holds traffic until the next one is up, and
+    /// would bring it up by itself, from the same files, if this did not.
+    func replace(killSwitch: Bool) async {
+        guard killSwitch else {
+            await stop()
+            // Waited for, not slept through. A fixed 700 ms was a guess about
+            // how long a teardown takes; this asks.
+            await waitUntilDown()
+            // After the stop, which switches on-demand off, and before the
+            // start, which has to find the profile as this start wants it.
+            await apply(killSwitch: false)
+            await start()
+            return
+        }
+        // Looked at before the switch is written: writing it into a profile
+        // that did not have it has iOS start the tunnel by itself, and that
+        // one is this start's own, not something to replace.
+        let before = manager?.connection.status ?? .invalid
+        await apply(killSwitch: true)
+        if before != .disconnected, before != .invalid, let manager {
+            manager.connection.stopVPNTunnel()
+            log.info("stopVPNTunnel requested, on-demand left on")
+            let wasUp = before == .connected || before == .reasserting
+            // The system may be at the next tunnel already; a start on top of
+            // that one is not needed.
+            if await waitUntilReplaced(wasUp: wasUp) { return }
+        }
+        await start()
+    }
+
+    /// Stops the tunnel with the kill switch lowered: a Disconnect, a Cancel, a
+    /// first connect that failed, and the first half of a restart when the
+    /// switch is not wanted. A restart under the kill switch goes through
+    /// `replace`, and not through here.
     ///
     /// On-demand goes off first, and is saved, or iOS brings the tunnel straight
     /// back: the rule that makes a kill switch of `includeAllNetworks` is the
@@ -508,6 +558,34 @@ final class PacketTunnelController: ObservableObject {
             }
         }
         log.error("tunnel did not report itself down within \(timeout, privacy: .public)s")
+    }
+
+    /// After a stop that left on-demand on: waits for the tunnel that was
+    /// running to be gone, and says whether the system is connecting the next
+    /// one already. Under on-demand that can follow so closely that "down" is
+    /// never seen from here.
+    private func waitUntilReplaced(wasUp: Bool, timeout: TimeInterval = 5) async -> Bool {
+        guard let manager else { return false }
+        // A tunnel that was up cannot be "connecting" again without having
+        // gone down. One that was still connecting when it was stopped can be
+        // seen so before the stop reaches it: that reading is taken for the
+        // next tunnel only once the old one has been seen going.
+        var oldGoing = wasUp
+        for _ in 0..<Int((timeout / 0.15).rounded()) {
+            switch manager.connection.status {
+            case .disconnected, .invalid:
+                return false
+            case .disconnecting:
+                oldGoing = true
+            case .connecting:
+                if oldGoing { return true }
+            default:
+                break
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        log.error("tunnel did not report itself down within \(timeout, privacy: .public)s")
+        return false
     }
 
     /// Waits for the system to say the tunnel is actually up.
@@ -810,25 +888,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         let before = Self.lastOperation
         let asked: Task<Void, Never> = Task { @MainActor in
             _ = await before?.value
-            // Starting an already-running tunnel does nothing at all, and the
-            // extension keeps the config it was launched with — which looks
-            // exactly like a working VPN that does not change your IP.
-            //
-            // What "already running" means has to come from the system. It used
-            // to come from a flag this object set when it last started a tunnel
-            // itself, which is false on every fresh launch — including a launch
-            // over a tunnel that is very much running, now that the app adopts
-            // one. The old tunnel then survived the start, or, worse, the stop
-            // Kotlin had already sent landed midway through it. That stop has
-            // had its turn by now.
-            await Self.controller.stop()
-            // Waited for, not slept through. A fixed 700 ms was a guess about
-            // how long a teardown takes; this asks.
-            await Self.controller.waitUntilDown()
-            // After the stop, which switches on-demand off, and before the
-            // start, which has to find the profile as this start wants it.
-            await Self.controller.apply(killSwitch: killSwitch)
-            await Self.controller.start()
+            await Self.controller.replace(killSwitch: killSwitch)
         }
         Self.lastOperation = asked
         Self.operationLock.unlock()

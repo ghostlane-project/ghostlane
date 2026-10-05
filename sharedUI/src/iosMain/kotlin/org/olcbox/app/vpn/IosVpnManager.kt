@@ -173,7 +173,9 @@ class IosVpnManager(
                 if (shouldRestart) {
                     setStatus(VpnStatus.Reconnecting)
                     addLog("Restarting the packet tunnel")
-                    packetTunnelBridge.stop()
+                    // No stop of the app's own first. The start replaces what
+                    // is running, and under the kill switch does it without
+                    // lowering the switch, which a stop would.
                     if (requestedGeneration != generation) return@withLock
                 }
 
@@ -424,7 +426,22 @@ class IosVpnManager(
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .forEach { addLog("engine: $it") }
-            packetTunnelBridge.stop()
+            if (isRestart && packetTunnelBridge.restartsByItself()) {
+                // The kill switch is in the profile, and what failed was a
+                // session being restarted. A stop here would switch on-demand
+                // off, and from then until the next attempt the phone would
+                // send everything directly, with the screen on "reconnecting".
+                // So nothing is stopped: iOS goes on trying from the same
+                // files and holds traffic meanwhile, and the reconnect goes on
+                // beside it until one of them is up or Cancel is pressed. A
+                // first connect that fails is not held like this: it ends in
+                // the error it shows, with the phone's own network back.
+                addLog("The kill switch stays up: iOS keeps trying, and so does the app")
+                setStatus(VpnStatus.Reconnecting)
+                scheduleReconnect("start failed", tunnelWentDown = true)
+            } else {
+                packetTunnelBridge.stop()
+            }
         }
     }
 
@@ -879,27 +896,33 @@ class IosVpnManager(
             setStatus(VpnStatus.Reconnecting)
             addLog("Auto-reconnect requested ($reason)")
 
-            if (tunnelWentDown && systemBringsTunnelBack()) return@launch
-
-            // Keep retrying with exponential backoff until we reconnect or the user
-            // turns the connection off. A single failed attempt (e.g. no network yet)
-            // must not give up — that is what left the transport dead before.
+            // Keep retrying until we reconnect or the user turns the connection
+            // off. A single failed attempt (e.g. no network yet) must not give
+            // up — that is what left the transport dead before.
             while (desiredConnected && isActive) {
-                val delayMs = nextReconnectDelay()
-                addLog("Reconnecting in ${delayMs / 1000}s")
-                awakeDelay(delayMs)
-                if (!desiredConnected) return@launch
-                // Once more before anything is stopped: the tunnel can have
-                // come up while this waited, and stopping one that is up in
-                // order to start one is what the phone showed this doing.
-                if (tunnelWentDown && adoptIfUp("The packet tunnel is up again; nothing to restart")) {
-                    return@launch
+                // iOS first, whenever it is going to act: before this loop's
+                // first attempt and between its attempts. An attempt of the
+                // app's own replaces the one iOS is making, so each is given
+                // its time, and the wait for iOS is what paces the loop.
+                if (tunnelWentDown && systemBringsTunnelBack()) return@launch
+                if (!tunnelWentDown || !packetTunnelBridge.restartsByItself()) {
+                    // Nobody else is bringing it back, so the loop paces itself.
+                    val delayMs = nextReconnectDelay()
+                    addLog("Reconnecting in ${delayMs / 1000}s")
+                    awakeDelay(delayMs)
+                    if (!desiredConnected) return@launch
+                    // Once more before anything is stopped: the tunnel can have
+                    // come up while this waited, and stopping one that is up in
+                    // order to start one is what the phone showed this doing.
+                    if (tunnelWentDown && adoptIfUp("The packet tunnel is up again; nothing to restart")) {
+                        return@launch
+                    }
                 }
 
                 val requestedGeneration = ++generation
                 val reconnected = mutex.withLock {
                     if (requestedGeneration != generation || !desiredConnected) return@withLock false
-                    packetTunnelBridge.stop()
+                    // No stop of the app's own first, as in startVpn.
                     startActiveLocation(requestedGeneration, isRestart = true)
                     _status.value is VpnStatus.Connected
                 }
