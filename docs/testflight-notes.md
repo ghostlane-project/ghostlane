@@ -53,10 +53,12 @@ WHAT TO TEST
    server in the app and keep reloading the page while it changes. It must
    fail to load or show a server's address, never your own. Tell us if
    your own address shows at any moment.
-9. Kill switch on, connected: choose a server that does not work. The app
-   must stay on "reconnecting" with the reason in red, the phone must have
-   no network meanwhile, and Cancel must give its ordinary network back.
-   Choosing a working server instead must connect.
+9. Kill switch on, connected: change to a server that fails to connect.
+   An olcRTC room that is gone is one; a Reality or Hysteria2 server that
+   is down still shows as connected, and is not this test. The app must
+   stay on "reconnecting", the phone must have no network meanwhile, and
+   Cancel must give its ordinary network back. Choosing a working server
+   instead must connect.
 10. Kill switch off: everything as before.
 11. If the phone ends up with no network and the VPN will not come back:
     Settings → VPN → turn it off. Tell us what you were doing.

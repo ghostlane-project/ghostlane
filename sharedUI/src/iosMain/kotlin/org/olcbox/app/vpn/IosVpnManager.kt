@@ -352,28 +352,49 @@ class IosVpnManager(
      * audio. It runs in the extension now, like the other three, so there is one
      * mechanism to reason about and the device's traffic goes through it.
      */
-    private suspend fun startActiveLocation(requestedGeneration: Long, isRestart: Boolean) {
+    private suspend fun startActiveLocation(
+        requestedGeneration: Long,
+        isRestart: Boolean,
+        onlyIfDown: Boolean = false
+    ) {
         val entry = locationsRepository.getActiveLocation()
         val location = entry?.location?.normalized()
         if (entry == null || location == null) {
             setStatus(VpnStatus.Error("No active location"))
             addLog("Add a location before connecting")
+            if (isRestart) stopWhatCannotBeReplaced()
             return
         }
-        startPacketTunnel(location, entry.subscriptionUrl, requestedGeneration, isRestart)
+        startPacketTunnel(location, entry.subscriptionUrl, requestedGeneration, isRestart, onlyIfDown)
+    }
+
+    /**
+     * A restart that could not even be asked for ends with the tunnel that
+     * was running stopped, as it did while a stop went out ahead of every
+     * restart. The screen is about to say Error, and has no Disconnect or
+     * Cancel in that state: an Error over a tunnel still carrying traffic for
+     * the server before, or over a kill switch still holding the phone's
+     * network, would be a state with no way out of it.
+     */
+    private fun stopWhatCannotBeReplaced() {
+        addLog("Stopping the tunnel that was running: its replacement could not be asked for")
+        packetTunnelBridge.stop()
     }
 
     private suspend fun startPacketTunnel(
         location: LocationConfig,
         subscriptionUrl: String?,
         requestedGeneration: Long,
-        isRestart: Boolean
+        isRestart: Boolean,
+        onlyIfDown: Boolean
     ) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
         val request = try {
-            packetTunnelRequest(location, subscriptionUrl)
-                ?.copy(killSwitch = locationsRepository.getRoutingSettings().killSwitch)
+            packetTunnelRequest(location, subscriptionUrl)?.copy(
+                killSwitch = locationsRepository.getRoutingSettings().killSwitch,
+                onlyIfDown = onlyIfDown
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: IllegalArgumentException) {
@@ -386,7 +407,10 @@ class IosVpnManager(
             setStatus(VpnStatus.Error("Could not prepare the packet tunnel configuration"))
             addLog("Packet tunnel configuration could not be prepared")
             null
-        } ?: return
+        } ?: run {
+            if (isRestart) stopWhatCannotBeReplaced()
+            return
+        }
         // What the extension actually runs: the two engines that speak their
         // transport behind a SOCKS port sit behind hev-socks5-tunnel (xhttp
         // since 1.0.426, olcRTC since 1.0.428; docs/ios-one-go-runtime.md);
@@ -437,6 +461,9 @@ class IosVpnManager(
                 // first connect that fails is not held like this: it ends in
                 // the error it shows, with the phone's own network back.
                 addLog("The kill switch stays up: iOS keeps trying, and so does the app")
+                // Whatever comes up from here on comes up from this location's
+                // files, whoever brings it up.
+                activeConfig = location
                 setStatus(VpnStatus.Reconnecting)
                 scheduleReconnect("start failed", tunnelWentDown = true)
             } else {
@@ -900,20 +927,20 @@ class IosVpnManager(
             // off. A single failed attempt (e.g. no network yet) must not give
             // up — that is what left the transport dead before.
             while (desiredConnected && isActive) {
-                // iOS first, whenever it is going to act: before this loop's
-                // first attempt and between its attempts. An attempt of the
-                // app's own replaces the one iOS is making, so each is given
-                // its time, and the wait for iOS is what paces the loop.
-                if (tunnelWentDown && systemBringsTunnelBack()) return@launch
-                if (!tunnelWentDown || !packetTunnelBridge.restartsByItself()) {
+                if (tunnelWentDown && packetTunnelBridge.restartsByItself()) {
+                    // iOS is bringing it back as well, before this loop's first
+                    // attempt and between its attempts, and the wait for it is
+                    // what paces the loop.
+                    if (systemBringsTunnelBack()) return@launch
+                } else {
                     // Nobody else is bringing it back, so the loop paces itself.
                     val delayMs = nextReconnectDelay()
                     addLog("Reconnecting in ${delayMs / 1000}s")
                     awakeDelay(delayMs)
                     if (!desiredConnected) return@launch
-                    // Once more before anything is stopped: the tunnel can have
-                    // come up while this waited, and stopping one that is up in
-                    // order to start one is what the phone showed this doing.
+                    // Looked at only here, after the wait. An attempt that
+                    // failed has a stop on its way behind it, and a tunnel that
+                    // came up a moment late under that stop is not one to take.
                     if (tunnelWentDown && adoptIfUp("The packet tunnel is up again; nothing to restart")) {
                         return@launch
                     }
@@ -922,8 +949,12 @@ class IosVpnManager(
                 val requestedGeneration = ++generation
                 val reconnected = mutex.withLock {
                     if (requestedGeneration != generation || !desiredConnected) return@withLock false
-                    // No stop of the app's own first, as in startVpn.
-                    startActiveLocation(requestedGeneration, isRestart = true)
+                    // No stop of the app's own first, as in startVpn. And when
+                    // the reason is a tunnel that went down, the bridge starts
+                    // one only if there is still none: this request takes a
+                    // moment to put together, the tunnel may be back by then,
+                    // and under the kill switch iOS is at the same attempt.
+                    startActiveLocation(requestedGeneration, isRestart = true, onlyIfDown = tunnelWentDown)
                     _status.value is VpnStatus.Connected
                 }
 
@@ -939,8 +970,8 @@ class IosVpnManager(
      * With the kill switch on, a tunnel that went down has two owners: iOS,
      * which brings it back by itself (the on-demand rule the kill switch
      * writes into the VPN profile) and holds traffic until it is back, and
-     * this app's own reconnect, which begins by stopping whatever tunnel
-     * there is. Left to race, the reconnect stopped the tunnel iOS had just
+     * this app's own reconnect, which used to begin by stopping whatever
+     * tunnel there was. Left to race, the reconnect stopped the tunnel iOS had just
      * brought up, 0.66 s after it came up on the phone this was found on, and
      * started another. So when iOS is going to act it goes first: this waits
      * for the tunnel it is bringing back and takes it as the session's. The
@@ -1018,6 +1049,15 @@ class IosVpnManager(
             lastReadyMark = timeSource.markNow()
             setStatus(VpnStatus.Connected)
             addLog(how)
+            // What a start of the app's own does when it succeeds. A session
+            // can get here without one: its start was reported failed, the
+            // kill switch was left up, and iOS then brought the tunnel up. It
+            // has no watchdog yet, and its Hysteria2 tunnel was never asked
+            // whether it carries anything.
+            startWatchdog()
+            activeConfig
+                ?.takeIf { it.kind == LocationKind.Hysteria2 && udpFailoverArmed }
+                ?.let { taken -> scope.launch { checkHysteria2Carries(taken, generation) } }
             true
         }
     }

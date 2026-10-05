@@ -1,8 +1,10 @@
-This release changes the iPhone app only. Android, Windows, macOS and Linux are built from the code of 1.0.447 and behave as it does.
+For Android this release is the code of 1.0.447, and it behaves as that one does.
 
 ### iPhone: the kill switch stays up while the app itself restarts the tunnel
 
-When the app restarted the tunnel itself, to change the server or in its own reconnect, it first switched off the rule that has iOS hold traffic, and wrote it again with the next start. In between nothing told iOS to hold anything, so the phone could send traffic directly; after a reconnect that failed, for the whole pause before the next attempt. A restart now leaves that rule on, and iOS holds traffic until the next tunnel is up. When a restart fails, the app no longer lowers the switch either: iOS and the app keep trying, the screen says so, and Cancel gives the phone its own network back. A first connect that fails ends in its error as before, with the network as it was.
+When the app restarted the tunnel itself, to change the server or in its own reconnect, it first switched off the rule that has iOS hold traffic, and wrote it again with the next start. In between nothing told iOS to hold anything, so the phone could send traffic directly; after a reconnect that failed, for the whole pause before the next attempt. A restart now leaves that rule on, so that iOS goes on holding traffic until the next tunnel is up. When a restart fails, the app no longer lowers the switch either: iOS and the app keep trying, the screen says so, and Cancel gives the phone its own network back. A first connect that fails ends in its error as before, and the phone has its own network back.
+
+One thing still lowers the switch without being asked: with "lowest latency" selection on, the app moves to another exit after a reconnect that failed by stopping the VPN and starting it again, and it measures the exits with the VPN stopped.
 
 ### iPhone: the kill switch no longer fights the app's own reconnect
 
