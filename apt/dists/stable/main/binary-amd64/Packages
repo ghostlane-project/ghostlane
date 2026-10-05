@@ -1,0 +1,17 @@
+Package: ghostlane-cli
+Version: 1.0.456-1
+Architecture: amd64
+Maintainer: Ghostlane contributors <ghostlane-project@users.noreply.github.com>
+Installed-Size: 69837
+Homepage: https://github.com/ghostlane-project/ghostlane
+Priority: optional
+Section: net
+Filename: pool/main/g/ghostlane-cli/ghostlane-cli_1.0.456-1_amd64.deb
+Size: 25656534
+SHA256: 7d92914d8e4ffab5c35c7ee98d713f3a62ad1a2fe501fb49c54b1381b255f689
+SHA1: 1a8289875ff42e18c5d12cb5b83c75430ba31c66
+MD5sum: 960ab49e30566efdb2e9b911ac39acde
+Description: Ghostlane tunnel for Linux servers and boxes.
+ Joins olcRTC rooms (a tunnel inside a video call) with carrier failover and
+ routes the machine through a tun, or serves a local SOCKS5/HTTP proxy.
+
