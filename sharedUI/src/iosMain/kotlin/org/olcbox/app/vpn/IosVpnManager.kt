@@ -362,7 +362,7 @@ class IosVpnManager(
         if (entry == null || location == null) {
             setStatus(VpnStatus.Error("No active location"))
             addLog("Add a location before connecting")
-            if (isRestart) stopWhatCannotBeReplaced()
+            if (isRestart || packetTunnelBridge.restartsByItself()) stopWhatCannotBeReplaced()
             return
         }
         startPacketTunnel(location, entry.subscriptionUrl, requestedGeneration, isRestart, onlyIfDown)
@@ -374,7 +374,9 @@ class IosVpnManager(
      * restart. The screen is about to say Error, and has no Disconnect or
      * Cancel in that state: an Error over a tunnel still carrying traffic for
      * the server before, or over a kill switch still holding the phone's
-     * network, would be a state with no way out of it.
+     * network, would be a state with no way out of it. The second can be met
+     * by a first connect as well, in an app opened over a phone that iOS is
+     * holding, so the callers ask the profile too.
      */
     private fun stopWhatCannotBeReplaced() {
         addLog("Stopping the tunnel that was running: its replacement could not be asked for")
@@ -408,7 +410,7 @@ class IosVpnManager(
             addLog("Packet tunnel configuration could not be prepared")
             null
         } ?: run {
-            if (isRestart) stopWhatCannotBeReplaced()
+            if (isRestart || packetTunnelBridge.restartsByItself()) stopWhatCannotBeReplaced()
             return
         }
         // What the extension actually runs: the two engines that speak their
@@ -926,6 +928,10 @@ class IosVpnManager(
             // Keep retrying until we reconnect or the user turns the connection
             // off. A single failed attempt (e.g. no network yet) must not give
             // up — that is what left the transport dead before.
+            //
+            // How many attempts in a row have left alone whatever was on its
+            // way up, and seen it not arrive.
+            var leftAlone = 0
             while (desiredConnected && isActive) {
                 if (tunnelWentDown && packetTunnelBridge.restartsByItself()) {
                     // iOS is bringing it back as well, before this loop's first
@@ -947,18 +953,22 @@ class IosVpnManager(
                 }
 
                 val requestedGeneration = ++generation
+                // No stop of the app's own first, as in startVpn. And when the
+                // reason is a tunnel that went down, the bridge starts one
+                // only if there is still none: this request takes a moment to
+                // put together, the tunnel may be back by then, and under the
+                // kill switch iOS is at the same attempt. Not without end,
+                // though: an attempt that hangs is "on its way" for ever, and
+                // only a replacement gets a session out from behind it.
+                val onlyIfDown = tunnelWentDown && leftAlone < ATTEMPTS_LEFT_ALONE
                 val reconnected = mutex.withLock {
                     if (requestedGeneration != generation || !desiredConnected) return@withLock false
-                    // No stop of the app's own first, as in startVpn. And when
-                    // the reason is a tunnel that went down, the bridge starts
-                    // one only if there is still none: this request takes a
-                    // moment to put together, the tunnel may be back by then,
-                    // and under the kill switch iOS is at the same attempt.
-                    startActiveLocation(requestedGeneration, isRestart = true, onlyIfDown = tunnelWentDown)
+                    startActiveLocation(requestedGeneration, isRestart = true, onlyIfDown = onlyIfDown)
                     _status.value is VpnStatus.Connected
                 }
 
                 if (reconnected || !desiredConnected) return@launch
+                leftAlone = if (onlyIfDown) leftAlone + 1 else 0
                 // startActiveLocation reports failure via Error status; keep the
                 // user-facing state as Reconnecting so the retry loop stays coherent.
                 if (_status.value !is VpnStatus.Reconnecting) setStatus(VpnStatus.Reconnecting)
@@ -1055,9 +1065,12 @@ class IosVpnManager(
             // has no watchdog yet, and its Hysteria2 tunnel was never asked
             // whether it carries anything.
             startWatchdog()
+            // The generation as it is now, not as it will be when the check
+            // gets to run: a restart in between is what it has to notice.
+            val takenAt = generation
             activeConfig
                 ?.takeIf { it.kind == LocationKind.Hysteria2 && udpFailoverArmed }
-                ?.let { taken -> scope.launch { checkHysteria2Carries(taken, generation) } }
+                ?.let { taken -> scope.launch { checkHysteria2Carries(taken, takenAt) } }
             true
         }
     }
@@ -1203,6 +1216,11 @@ class IosVpnManager(
          */
         const val SYSTEM_RESTART_POLLS = 90
         const val SYSTEM_RESTART_POLL_MS = 500L
+        /**
+         * How many of the reconnect's attempts in a row may leave alone a
+         * tunnel that is on its way up. The next one replaces it.
+         */
+        const val ATTEMPTS_LEFT_ALONE = 2
         /** A wait that ran this much over was not waited: the app was suspended in it. */
         const val SUSPENDED_OVERRUN_MS = 2_000L
         /** After such a wait, what the main thread is given to hear from the system. */
