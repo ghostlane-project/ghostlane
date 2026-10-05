@@ -1,6 +1,0 @@
-- The tunnel now stays up for the whole session: nothing goes around it while the app reconnects or you pick another server.
-- When your server stops answering, the app moves to another server of the same country and tells you.
-- Fixed: connected, but nothing loaded.
-- Fixed: servers named by a hostname did not connect.
-- More server links work: HTTP transport, VLESS without Reality.
-- Settings show whether Android blocks traffic without the VPN.
