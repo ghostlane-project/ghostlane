@@ -761,7 +761,7 @@ class IosVpnManager(
                 ?.let { it < POST_CONNECT_GRACE_MS }
                 ?: false
             if (recentlyReady) return
-            scheduleReconnect("RTC transport lost")
+            scheduleReconnect("RTC transport lost", tunnelWentDown = false)
         }
     }
 
@@ -857,13 +857,19 @@ class IosVpnManager(
                     !packetTunnelBridge.isRunning()
                 if (stalled) {
                     addLog("Watchdog: the packet tunnel is down")
-                    scheduleReconnect("transport stopped")
+                    scheduleReconnect("transport stopped", tunnelWentDown = true)
                 }
             }
         }
     }
 
-    private fun scheduleReconnect(reason: String) {
+    /**
+     * [tunnelWentDown] is the watchdog's reason: the tunnel is not there. A
+     * reconnect asked for that has nothing to do once the tunnel is up again,
+     * so it looks before it stops anything. The other reason, a transport lost
+     * under a tunnel that is up, has a running tunnel to replace.
+     */
+    private fun scheduleReconnect(reason: String, tunnelWentDown: Boolean) {
         if (!desiredConnected) return
         if (reconnectJob?.isActive == true) return
         val status = _status.value
@@ -873,14 +879,22 @@ class IosVpnManager(
             setStatus(VpnStatus.Reconnecting)
             addLog("Auto-reconnect requested ($reason)")
 
+            if (tunnelWentDown && systemBringsTunnelBack()) return@launch
+
             // Keep retrying with exponential backoff until we reconnect or the user
             // turns the connection off. A single failed attempt (e.g. no network yet)
             // must not give up — that is what left the transport dead before.
             while (desiredConnected && isActive) {
                 val delayMs = nextReconnectDelay()
                 addLog("Reconnecting in ${delayMs / 1000}s")
-                delay(delayMs)
+                awakeDelay(delayMs)
                 if (!desiredConnected) return@launch
+                // Once more before anything is stopped: the tunnel can have
+                // come up while this waited, and stopping one that is up in
+                // order to start one is what the phone showed this doing.
+                if (tunnelWentDown && adoptIfUp("The packet tunnel is up again; nothing to restart")) {
+                    return@launch
+                }
 
                 val requestedGeneration = ++generation
                 val reconnected = mutex.withLock {
@@ -895,6 +909,93 @@ class IosVpnManager(
                 // user-facing state as Reconnecting so the retry loop stays coherent.
                 if (_status.value !is VpnStatus.Reconnecting) setStatus(VpnStatus.Reconnecting)
             }
+        }
+    }
+
+    /**
+     * With the kill switch on, a tunnel that went down has two owners: iOS,
+     * which brings it back by itself (the on-demand rule the kill switch
+     * writes into the VPN profile) and holds traffic until it is back, and
+     * this app's own reconnect, which begins by stopping whatever tunnel
+     * there is. Left to race, the reconnect stopped the tunnel iOS had just
+     * brought up, 0.66 s after it came up on the phone this was found on, and
+     * started another. So when iOS is going to act it goes first: this waits
+     * for the tunnel it is bringing back and takes it as the session's. The
+     * app's own restart is what follows only when the system has not managed.
+     *
+     * Whether iOS is going to act is asked of the profile
+     * ([IosPacketTunnelBridge.restartsByItself]), not of the app's setting.
+     *
+     * The wait is counted in polls and not by the clock. iOS suspends the app
+     * in the background, and a wait measured by the clock is over the moment
+     * the app wakes, before it has looked at anything.
+     *
+     * True when nothing is left for the app's own restart to do.
+     */
+    private suspend fun systemBringsTunnelBack(): Boolean {
+        // Up again already, between the watchdog's look and this one.
+        if (adoptIfUp("The packet tunnel is up again; nothing to restart")) return true
+        if (!packetTunnelBridge.restartsByItself()) return false
+
+        addLog("iOS brings the tunnel back by itself (on-demand is on in the VPN profile); waiting for it")
+        // Looked at after every wait, the last one too: what ends this is the
+        // tunnel being up, and the count only says when to stop asking.
+        //
+        // The count is not cut short after a long suspension, though iOS has
+        // then had more than its time. From here it cannot be told whether
+        // iOS has given up or is at it this very moment, its attempt frozen
+        // with the phone and now running again; cutting in on that one would
+        // stop a tunnel on its way up and lower the switch for a restart
+        // nobody needed. Someone looking at the screen meanwhile can press
+        // Cancel or choose a server, and both act at once.
+        repeat(SYSTEM_RESTART_POLLS) {
+            awakeDelay(SYSTEM_RESTART_POLL_MS)
+            if (!desiredConnected) return true
+            if (adoptIfUp("iOS brought the packet tunnel back")) return true
+        }
+        addLog("iOS has not brought the tunnel back; restarting it from the app")
+        return false
+    }
+
+    /**
+     * Waits [ms] of the app being awake.
+     *
+     * What `isRunning` answers is what the main thread last heard from the
+     * system, and at the moment the app wakes from a suspension it has not
+     * heard yet: a wait the app was suspended in ends the instant it wakes,
+     * however long ago it was due. So such a wait is followed by a short one,
+     * until one passes undisturbed, and the look that comes after this is at
+     * something current. The wall clock, because the other one stops while
+     * the phone sleeps.
+     */
+    private suspend fun awakeDelay(ms: Long) {
+        var asked = ms
+        while (true) {
+            val before = kotlin.time.Clock.System.now()
+            delay(asked)
+            val took = (kotlin.time.Clock.System.now() - before).inWholeMilliseconds
+            if (took < asked + SUSPENDED_OVERRUN_MS) return
+            asked = SETTLE_MS
+        }
+    }
+
+    /**
+     * Takes a tunnel that is up as this session's, and says whether there was
+     * one. Under the lock, like every other step to Connected, and with a
+     * second look inside it: a Disconnect pressed while this was looking has
+     * its turn before or after, never across it. Without the lock the status
+     * could be written after that Disconnect's, and the screen said Connected
+     * over a tunnel the app had just stopped.
+     */
+    private suspend fun adoptIfUp(how: String): Boolean {
+        if (!packetTunnelBridge.isRunning()) return false
+        return mutex.withLock {
+            if (!desiredConnected || !packetTunnelBridge.isRunning()) return@withLock false
+            reconnectAttempt = 0
+            lastReadyMark = timeSource.markNow()
+            setStatus(VpnStatus.Connected)
+            addLog(how)
+            true
         }
     }
 
@@ -1030,6 +1131,19 @@ class IosVpnManager(
         const val SYSTEM_SYNC_INTERVAL_MS = 3_000L
         const val ADOPT_AFTER_STOP_GRACE_MS = 10_000L
         const val RECONNECT_BASE_DELAY_MS = 2_000L
+        /**
+         * How long the system is given to bring a tunnel back under the kill
+         * switch: 45 s of the app being awake, what a start of the app's own
+         * is given (`waitUntilUp` on the Swift side). A room usually opens in
+         * about eight seconds, but reaching it may take twenty, and giving up
+         * first stops a tunnel that was seconds from coming up.
+         */
+        const val SYSTEM_RESTART_POLLS = 90
+        const val SYSTEM_RESTART_POLL_MS = 500L
+        /** A wait that ran this much over was not waited: the app was suspended in it. */
+        const val SUSPENDED_OVERRUN_MS = 2_000L
+        /** After such a wait, what the main thread is given to hear from the system. */
+        const val SETTLE_MS = 1_000L
         const val RECONNECT_MAX_DELAY_MS = 30_000L
         const val MAX_RECONNECT_BACKOFF_POWER = 3
         const val POST_CONNECT_GRACE_MS = 4_000L
