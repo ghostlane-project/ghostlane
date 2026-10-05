@@ -260,6 +260,14 @@ final class PacketTunnelController: ObservableObject {
     /// milliseconds, or 0 when nothing is up.
     nonisolated(unsafe) private(set) static var systemConnectedSinceMs: Int64 = 0
 
+    /// Whether the profile, as it was last loaded, has the system bring a
+    /// tunnel back by itself: on-demand on, which is how the kill switch is
+    /// written into it. Kotlin's reconnect asks, so as to wait for the system
+    /// only when the system is going to act. The app's own setting does not
+    /// answer that: a tunnel started from Settings after a Disconnect runs
+    /// with the switch chosen in the app and no on-demand in the profile.
+    nonisolated(unsafe) private(set) static var systemOnDemand = false
+
     private var manager: NETunnelProviderManager?
     // Touched from deinit, which is not actor-isolated, so it cannot be either.
     private nonisolated(unsafe) var observer: NSObjectProtocol?
@@ -314,6 +322,11 @@ final class PacketTunnelController: ObservableObject {
             : 0
     }
 
+    /// Reads `systemOnDemand` off the profile. After every load of it.
+    private func noteProfile() {
+        Self.systemOnDemand = manager?.isEnabled == true && manager?.isOnDemandEnabled == true
+    }
+
     /// Adopts whatever the system is doing right now, rather than waiting to be
     /// told about the next change.
     ///
@@ -333,6 +346,7 @@ final class PacketTunnelController: ObservableObject {
         let connection = manager.connection
         Self.adopt(connection.status, connectedDate: connection.connectedDate)
         status = Self.describe(connection.status)
+        noteProfile()
     }
 
     /// Creates the VPN configuration if it is missing. The first save is what
@@ -358,6 +372,7 @@ final class PacketTunnelController: ObservableObject {
             try await manager.loadFromPreferences()
 
             self.manager = manager
+            noteProfile()
             Self.adopt(manager.connection.status, connectedDate: manager.connection.connectedDate)
             status = Self.describe(manager.connection.status)
             log.info("configuration ready")
@@ -398,7 +413,13 @@ final class PacketTunnelController: ObservableObject {
                 try await manager.loadFromPreferences()
             } catch {
                 log.error("on-demand not switched off: \(error.localizedDescription, privacy: .public)")
+                // Not saved, so the profile still has it on, and this object
+                // has to say so as well: the next stop looks here, and one
+                // that found nothing to switch off would leave iOS bringing
+                // the tunnel back after every Disconnect.
+                do { try await manager.loadFromPreferences() } catch { manager.isOnDemandEnabled = true }
             }
+            noteProfile()
         }
         manager.connection.stopVPNTunnel()
         log.info("stopVPNTunnel requested")
@@ -437,7 +458,12 @@ final class PacketTunnelController: ObservableObject {
             log.info("kill switch \(killSwitch ? "on" : "off", privacy: .public)")
         } catch {
             log.error("kill switch not applied: \(error.localizedDescription, privacy: .public)")
+            // As in stop(): what was not saved must not stay in this object,
+            // or the next start finds the profile already as it wants it and
+            // never writes it.
+            try? await manager.loadFromPreferences()
         }
+        noteProfile()
     }
 
     /// A message to the running extension, dropped when nothing is running:
@@ -496,8 +522,12 @@ final class PacketTunnelController: ObservableObject {
         // with its deadline long gone: it left the loop without looking, and
         // reported the stage of a tunnel that had been up the whole time as
         // its death. Kotlin then stopped that tunnel.
-        let polls = Int((timeout / 0.25).rounded())
-        for _ in 0..<polls {
+        var left = Int((timeout / 0.25).rounded())
+        // The look that follows a suspension. What the status says at the
+        // moment of waking can be older than the tunnel, so "down" is not
+        // taken from that one look.
+        var justWoke = false
+        while left > 0 {
             switch manager.connection.status {
             case .connected:
                 return nil
@@ -506,13 +536,27 @@ final class PacketTunnelController: ObservableObject {
             case .disconnected, .invalid:
                 // Only after an attempt began: the status is still
                 // `disconnected` for a moment after the request is queued.
-                if sawAttempt { return Self.lastStage() ?? "the tunnel stopped right after starting" }
+                if sawAttempt && !justWoke {
+                    return Self.lastStage() ?? "the tunnel stopped right after starting"
+                }
             case .disconnecting:
                 break
             @unknown default:
                 break
             }
+            let asked = Date()
             try? await Task.sleep(nanoseconds: 250_000_000)
+            let slept = Date().timeIntervalSince(asked)
+            left -= 1
+            // A quarter of a second that took seconds is the app having been
+            // suspended.
+            justWoke = slept > 2
+            // One that took as long as the whole wait: the start has had its
+            // time, and what is left to wait for is the status catching up.
+            // Without this, a start that died while the app was away kept the
+            // screen on "connecting" for the rest of the 45 s once the app
+            // was back.
+            if slept >= timeout { left = min(left, 12) }
         }
         // The status once more: what it says now is the answer, whatever the
         // wait was like.
@@ -660,7 +704,7 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
     ///
     /// A start queues its way to `startVPNTunnel()` and no more. Its wait for
     /// the tunnel to come up, as long as 45 s, is outside the queue: a stop
-    /// has to be able to end it.
+    /// must not have to wait behind it.
     nonisolated(unsafe) private static var lastOperation: Task<Void, Never>?
     private static let operationLock = NSLock()
 
@@ -877,6 +921,9 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
 
     /// What the system says, not what we asked for. See `systemConnected`.
     func isRunning() -> Bool { PacketTunnelController.systemConnected }
+
+    /// See `systemOnDemand`.
+    func restartsByItself() -> Bool { PacketTunnelController.systemOnDemand }
 
     /// See `systemConnectedSinceMs`. Zero when nothing is up, which Kotlin
     /// reads as "no session".

@@ -158,6 +158,15 @@ interface IosPacketTunnelBridge {
     fun isRunning(): Boolean
 
     /**
+     * Whether iOS brings the tunnel back by itself when it goes down: the VPN
+     * profile, as the app last loaded it, has on-demand on, which is how the
+     * kill switch is written into it. Not the app's own setting: the two part
+     * for a tunnel started from the system's Settings after a Disconnect, and
+     * after a save of the profile that failed.
+     */
+    fun restartsByItself(): Boolean
+
+    /**
      * Hands a running olcRTC tunnel the current room list. Best effort: with
      * nothing running, or a tunnel on another transport, the message goes
      * nowhere, and the extension re-reads the list itself in any case.

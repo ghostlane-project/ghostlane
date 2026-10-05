@@ -761,7 +761,7 @@ class IosVpnManager(
                 ?.let { it < POST_CONNECT_GRACE_MS }
                 ?: false
             if (recentlyReady) return
-            scheduleReconnect("RTC transport lost")
+            scheduleReconnect("RTC transport lost", tunnelWentDown = false)
         }
     }
 
@@ -857,13 +857,19 @@ class IosVpnManager(
                     !packetTunnelBridge.isRunning()
                 if (stalled) {
                     addLog("Watchdog: the packet tunnel is down")
-                    scheduleReconnect("transport stopped")
+                    scheduleReconnect("transport stopped", tunnelWentDown = true)
                 }
             }
         }
     }
 
-    private fun scheduleReconnect(reason: String) {
+    /**
+     * [tunnelWentDown] is the watchdog's reason: the tunnel is not there. A
+     * reconnect asked for that has nothing to do once the tunnel is up again,
+     * so it looks before it stops anything. The other reason, a transport lost
+     * under a tunnel that is up, has a running tunnel to replace.
+     */
+    private fun scheduleReconnect(reason: String, tunnelWentDown: Boolean) {
         if (!desiredConnected) return
         if (reconnectJob?.isActive == true) return
         val status = _status.value
@@ -873,7 +879,7 @@ class IosVpnManager(
             setStatus(VpnStatus.Reconnecting)
             addLog("Auto-reconnect requested ($reason)")
 
-            if (systemBringsTunnelBack()) return@launch
+            if (tunnelWentDown && systemBringsTunnelBack()) return@launch
 
             // Keep retrying with exponential backoff until we reconnect or the user
             // turns the connection off. A single failed attempt (e.g. no network yet)
@@ -883,6 +889,12 @@ class IosVpnManager(
                 addLog("Reconnecting in ${delayMs / 1000}s")
                 delay(delayMs)
                 if (!desiredConnected) return@launch
+                // Once more before anything is stopped: the tunnel can have
+                // come up while this waited, and stopping one that is up in
+                // order to start one is what the phone showed this doing.
+                if (tunnelWentDown && adoptIfUp("The packet tunnel is up again; nothing to restart")) {
+                    return@launch
+                }
 
                 val requestedGeneration = ++generation
                 val reconnected = mutex.withLock {
@@ -907,12 +919,12 @@ class IosVpnManager(
      * this app's own reconnect, which begins by stopping whatever tunnel
      * there is. Left to race, the reconnect stopped the tunnel iOS had just
      * brought up, 0.66 s after it came up on the phone this was found on, and
-     * started another. So with the switch on the system goes first: this waits
+     * started another. So when iOS is going to act it goes first: this waits
      * for the tunnel it is bringing back and takes it as the session's. The
      * app's own restart is what follows only when the system has not managed.
      *
-     * Not for a tunnel that is up: a reconnect asked for because a room was
-     * lost has a running tunnel to replace, and that is the app's to do.
+     * Whether iOS is going to act is asked of the profile
+     * ([IosPacketTunnelBridge.restartsByItself]), not of the app's setting.
      *
      * The wait is counted in polls and not by the clock. iOS suspends the app
      * in the background, and a wait measured by the clock is over the moment
@@ -921,15 +933,9 @@ class IosVpnManager(
      * True when nothing is left for the app's own restart to do.
      */
     private suspend fun systemBringsTunnelBack(): Boolean {
-        if (packetTunnelBridge.isRunning()) return false
-        val killSwitch = try {
-            locationsRepository.getRoutingSettings().killSwitch
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            false
-        }
-        if (!killSwitch) return false
+        // Up again already, between the watchdog's look and this one.
+        if (adoptIfUp("The packet tunnel is up again; nothing to restart")) return true
+        if (!packetTunnelBridge.restartsByItself()) return false
 
         addLog("The kill switch is on, so iOS brings the tunnel back by itself; waiting for it")
         // Looked at after every wait, the last one too: what ends this is the
@@ -937,16 +943,30 @@ class IosVpnManager(
         repeat(SYSTEM_RESTART_POLLS) {
             delay(SYSTEM_RESTART_POLL_MS)
             if (!desiredConnected) return true
-            if (packetTunnelBridge.isRunning()) {
-                reconnectAttempt = 0
-                lastReadyMark = timeSource.markNow()
-                setStatus(VpnStatus.Connected)
-                addLog("iOS brought the packet tunnel back")
-                return true
-            }
+            if (adoptIfUp("iOS brought the packet tunnel back")) return true
         }
         addLog("iOS has not brought the tunnel back; restarting it from the app")
         return false
+    }
+
+    /**
+     * Takes a tunnel that is up as this session's, and says whether there was
+     * one. Under the lock, like every other step to Connected, and with a
+     * second look inside it: a Disconnect pressed while this was looking has
+     * its turn before or after, never across it. Without the lock the status
+     * could be written after that Disconnect's, and the screen said Connected
+     * over a tunnel the app had just stopped.
+     */
+    private suspend fun adoptIfUp(how: String): Boolean {
+        if (!packetTunnelBridge.isRunning()) return false
+        return mutex.withLock {
+            if (!desiredConnected || !packetTunnelBridge.isRunning()) return@withLock false
+            reconnectAttempt = 0
+            lastReadyMark = timeSource.markNow()
+            setStatus(VpnStatus.Connected)
+            addLog(how)
+            true
+        }
     }
 
     private fun nextReconnectDelay(): Long {
