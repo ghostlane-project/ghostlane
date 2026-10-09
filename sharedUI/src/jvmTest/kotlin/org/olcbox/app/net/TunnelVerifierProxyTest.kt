@@ -14,6 +14,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.system.measureTimeMillis
 
 /**
  * The verifier decides whether the app is allowed to say "connected", so the part
@@ -33,9 +35,10 @@ class TunnelVerifierProxyTest {
         closeables.forEach { runCatching { it.close() } }
     }
 
-    private fun traceServer(body: String): HttpServer =
+    private fun traceServer(body: String, responseDelayMs: Long = 0): HttpServer =
         HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
             createContext("/cdn-cgi/trace") { exchange ->
+                if (responseDelayMs > 0) Thread.sleep(responseDelayMs)
                 val bytes = body.toByteArray()
                 exchange.sendResponseHeaders(200, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
@@ -160,20 +163,50 @@ class TunnelVerifierProxyTest {
     }
 
     @Test
+    fun concurrentProbesUseTheFastEndpointWhileTheFirstIsStillWaiting() {
+        val slow = traceServer("ip=203.0.113.1\nloc=US\n", responseDelayMs = 1_500)
+        val fast = traceServer("ip=203.0.113.7\nloc=DE\n")
+        val proxy = socksProxy(username = "olcbox", password = "s3cret")
+
+        var exit: TunnelExit? = null
+        val elapsedMs = measureTimeMillis {
+            exit = runBlocking {
+                TunnelVerifier.verify(
+                    socksHost = "127.0.0.1",
+                    socksPort = proxy.port,
+                    username = "olcbox",
+                    password = "s3cret",
+                    timeoutMs = 2_000,
+                    probeUrls = listOf(probeUrl(slow), probeUrl(fast)),
+                    concurrentProbes = true
+                )
+            }
+        }
+
+        assertEquals("203.0.113.7", exit?.ip)
+        assertTrue(elapsedMs < 1_400, "the slow first endpoint delayed the answer by ${elapsedMs}ms")
+    }
+
+    @Test
     fun aDeadProxyReadsAsNoTraffic() {
         // Nothing listening: the shape of a core that died right after start.
         val free = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+        val failures = mutableListOf<Pair<Int, String>>()
 
         val exit = runBlocking {
             TunnelVerifier.verify(
                 socksHost = "127.0.0.1",
                 socksPort = free,
                 timeoutMs = 2_000,
-                probeUrls = listOf("http://127.0.0.1:1/cdn-cgi/trace")
+                probeUrls = listOf("http://127.0.0.1:1/cdn-cgi/trace"),
+                onProbeFailure = { index, reason -> failures += index to reason }
             )
         }
 
         assertNull(exit)
+        assertEquals(1, failures.single().first)
+        assertTrue(failures.single().second.isNotBlank())
+        assertTrue("127.0.0.1" !in failures.single().second)
     }
 }
 

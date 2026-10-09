@@ -1136,7 +1136,14 @@ class OlcboxVpnService : VpnService() {
             socksHost = AndroidSocksProxySettings.connectHost(socksListenHost),
             socksPort = activeCorePort ?: socksListenPort,
             username = username,
-            password = password
+            password = password,
+            timeoutMs = if (activeCorePort == null) {
+                TunnelVerifier.OLCRTC_CONTROL_PLANE_TIMEOUT_MS
+            } else {
+                TunnelVerifier.DEFAULT_TIMEOUT_MS
+            },
+            concurrentProbes = activeCorePort == null,
+            onProbeFailure = { index, reason -> addLog("Tunnel probe $index failed: $reason") }
         )
     }
 
