@@ -3,6 +3,9 @@ package org.olcbox.app.net
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.datasource.withProxyAuthentication
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
@@ -68,6 +71,10 @@ object TunnelVerifier {
 
     const val DEFAULT_TIMEOUT_MS = 8_000L
 
+    // A VP8 control-plane peer may take up to 90 seconds to acknowledge the
+    // first CONNECT. Both fallback endpoints share this window on Android.
+    const val OLCRTC_CONTROL_PLANE_TIMEOUT_MS = 95_000L
+
     /**
      * Parses the `key=value` lines Cloudflare returns. Kept pure and separate from
      * the request so the format is covered by tests without a network.
@@ -100,7 +107,9 @@ object TunnelVerifier {
         username: String = "",
         password: String = "",
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
-        probeUrls: List<String> = DEFAULT_PROBE_URLS
+        probeUrls: List<String> = DEFAULT_PROBE_URLS,
+        concurrentProbes: Boolean = false,
+        onProbeFailure: ((Int, String) -> Unit)? = null
     ): TunnelExit? {
         val proxy = SubscriptionFetchProxy(
             host = socksHost,
@@ -120,7 +129,10 @@ object TunnelVerifier {
             // description alone does nothing. olcRTC's local proxy is the one that
             // demands a login, so without this a working olcRTC tunnel would fail
             // its own verification and be reported as dead.
-            withProxyAuthentication(proxy) { firstAnswer(client, probeUrls) }
+            withProxyAuthentication(proxy) {
+                if (concurrentProbes) firstConcurrentAnswer(client, probeUrls, onProbeFailure)
+                else firstAnswer(client, probeUrls, onProbeFailure)
+            }
         } catch (e: CancellationException) {
             // A superseded connect must stay cancelled, not be reported as a dead
             // tunnel — CancellationException is an Exception and would be swallowed
@@ -167,18 +179,60 @@ object TunnelVerifier {
      * The first URL that answers with a trace wins, so one unreachable
      * endpoint cannot condemn a working tunnel.
      */
-    private suspend fun firstAnswer(client: HttpClient, probeUrls: List<String>): TunnelExit? {
-        for (url in probeUrls) {
+    private suspend fun firstAnswer(
+        client: HttpClient,
+        probeUrls: List<String>,
+        onProbeFailure: ((Int, String) -> Unit)? = null
+    ): TunnelExit? {
+        for ((index, url) in probeUrls.withIndex()) {
             val exit = try {
-                parseTrace(client.get(url).bodyAsText())
+                parseTrace(client.get(url).bodyAsText()).also {
+                    if (it == null) onProbeFailure?.invoke(index + 1, "invalid trace response")
+                }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                onProbeFailure?.invoke(index + 1, e::class.simpleName ?: "request error")
                 null
             }
             if (exit != null) return exit
         }
         return null
     }
+
+    /** Give slow control-plane transports one deadline, not one per fallback URL. */
+    private suspend fun firstConcurrentAnswer(
+        client: HttpClient,
+        probeUrls: List<String>,
+        onProbeFailure: ((Int, String) -> Unit)?
+    ): TunnelExit? =
+        coroutineScope {
+            if (probeUrls.isEmpty()) return@coroutineScope null
+            val answers = Channel<TunnelExit?>(probeUrls.size)
+            val probes = probeUrls.mapIndexed { index, url ->
+                launch {
+                    val exit = try {
+                        parseTrace(client.get(url).bodyAsText()).also {
+                            if (it == null) onProbeFailure?.invoke(index + 1, "invalid trace response")
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        onProbeFailure?.invoke(index + 1, e::class.simpleName ?: "request error")
+                        null
+                    }
+                    answers.send(exit)
+                }
+            }
+            try {
+                repeat(probes.size) {
+                    answers.receive()?.let { return@coroutineScope it }
+                }
+                null
+            } finally {
+                probes.forEach { it.cancel() }
+                answers.close()
+            }
+        }
 
 }
