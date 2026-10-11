@@ -10,8 +10,10 @@ it makes. What the gate uploads is the report, the plan and the logs of a leg;
 this runs over them first (spec section 10, engine plan A9):
 
 1. Secrets, longest first: every entry of GATE_TELEMOST_ROOMS,
-   GATE_WBSTREAM_ROOMS and GATE_VKCALLS_ROOMS, its query-less form and its last path segment (a room
-   link's id) become <room>; GATE_JITSI_HOSTS entries become <jitsi-host>;
+   GATE_WBSTREAM_ROOMS, GATE_VKCALLS_ROOMS and GATE_MTSLINK_ROOMS, its
+   query-less form and its last path segment (a room link's id) become <room>,
+   and so does the segment before the last of an MTS Link entry (the account
+   the room belongs to); GATE_JITSI_HOSTS entries become <jitsi-host>;
    GATE_WBSTREAM_TOKEN becomes <token>. Each also in its JSON-escaped forms
    (Go escapes <, > and & as \\u003c, \\u003e, \\u0026) and percent-encoded, and
    matched without regard to case. The values come from the environment, the
@@ -48,8 +50,12 @@ LISTS = (
     ("GATE_TELEMOST_ROOMS", b"<room>"),
     ("GATE_WBSTREAM_ROOMS", b"<room>"),
     ("GATE_VKCALLS_ROOMS", b"<room>"),
+    ("GATE_MTSLINK_ROOMS", b"<room>"),
     ("GATE_JITSI_HOSTS", b"<jitsi-host>"),
 )
+# An MTS Link entry is .../j/<owner>/<event>: the segment before the last, the
+# account the room belongs to, becomes <room> as well.
+OWNED = ("GATE_MTSLINK_ROOMS",)
 TOKEN = ("GATE_WBSTREAM_TOKEN", b"<token>")
 KEY_RE = re.compile(rb"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64,}(?![0-9A-Fa-f])")
 ROOM_RE = re.compile(rb"gate-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
@@ -61,8 +67,10 @@ def entries(value):
     return [e.strip() for e in re.split(r"[,\r\n]", value or "") if e.strip()]
 
 
-def forms(entry):
+def forms(entry, owned=False):
     """The entry, without its query or fragment, and its last path segment.
+
+    An entry of an OWNED list has the segment before the last as well.
 
     A Jitsi host has only itself: gate-resolve.sh check refuses one with a
     scheme, a port or a path, which is what keeps the bare host that a Go
@@ -71,7 +79,10 @@ def forms(entry):
     out = {entry}
     base = re.split(r"[?#]", entry, maxsplit=1)[0]
     out.add(base)
-    out.add(base.rstrip("/").rsplit("/", 1)[-1])
+    segments = base.rstrip("/").rsplit("/", 2)
+    out.add(segments[-1])
+    if owned and len(segments) > 1:
+        out.add(segments[-2])
     return out
 
 
@@ -91,7 +102,7 @@ def secret_table(env):
     table = {}
     for name, placeholder in LISTS:
         for entry in entries(env.get(name, "")):
-            for form in forms(entry):
+            for form in forms(entry, owned=name in OWNED):
                 for spelled in encodings(form):
                     table.setdefault(spelled.encode().lower(), placeholder)
     token = (env.get(TOKEN[0]) or "").strip()

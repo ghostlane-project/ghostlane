@@ -47,6 +47,10 @@ JITSI_HOST = "jitsi.example.invalid"
 VK_ROOM = "https://vk.example.invalid/call/join/FakeVkRoom0001"
 VK_ID = "FakeVkRoom0001"
 VK_SPARE = "https://vk.example.invalid/call/join/FakeVkRoom0002"
+MTS_ROOM = "https://mts.example.invalid/j/100200300/400500600700"
+MTS_OWNER = "100200300"
+MTS_EVENT = "400500600700"
+MTS_SPARE = "https://mts.example.invalid/j/100200301/400500600701"
 SESSION_KEY = "ab" * 32
 JITSI_ROOM = "gate-0123456789ab"
 FAKE_JWT = "eyJhbGciOiJub25lIn0.eyJmYWtlIjoidGVzdCJ9.ZmFrZS1zaWduYXR1cmU"
@@ -58,6 +62,11 @@ PIN_VERSION = f"v0.0.0-{PIN_TIME}-{PIN_REV}"
 PIN_SHA = "0123456789abcdef0123456789abcdef01234567"
 PIN_DATE = "2026-01-02T03:04:05Z"
 ENGINE = "/repos/ghostlane-project/olcrtc"
+
+# gate-resolve.sh's two lists: every provider a leg can be named for, and the
+# legs of a run that names none.
+PROVIDERS = ["jitsi", "telemost", "wbstream", "salutejazz", "vkcalls", "mtslink"]
+DEFAULT_PROVIDERS = ["jitsi", "telemost", "salutejazz", "vkcalls", "mtslink"]
 
 
 def pin_routes(date=PIN_DATE, sha=PIN_SHA, gate=True):
@@ -266,16 +275,19 @@ class Resolve(unittest.TestCase):
             return self.box.run("gate-resolve.sh", env=self.box.env(
                 gh.url, GITHUB_REF_NAME="main", GITHUB_SHA="1234567" + "0" * 33, **env))
 
-    def test_a_scheduled_run_is_a_leg_per_provider_against_the_pin(self):
+    def legs(self, out):
+        return [leg["provider"] for leg in json.loads(out["legs"])["include"]]
+
+    def test_a_scheduled_run_is_a_leg_per_default_provider_against_the_pin(self):
         r = self.resolve(pin_routes(), GATE_EVENT="schedule")
         self.assertEqual(0, r.returncode, r.stderr)
         out = outputs(r.stdout)
         self.assertEqual("scheduled", out["mode"])
         self.assertEqual(PIN_SHA, out["engine_sha"])
-        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "wbstream"},
-                                      {"provider": "salutejazz"}, {"provider": "vkcalls"}]},
+        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "salutejazz"},
+                                      {"provider": "vkcalls"}, {"provider": "mtslink"}]},
                          json.loads(out["legs"]))
-        self.assertEqual("jitsi,telemost,wbstream,salutejazz,vkcalls", out["providers"])
+        self.assertEqual("jitsi,telemost,salutejazz,vkcalls,mtslink", out["providers"])
         self.assertEqual("false", out["skip"])
         self.assertEqual("false", out["limited"])
         self.assertEqual("warn", out["severity"])
@@ -295,6 +307,18 @@ class Resolve(unittest.TestCase):
         self.assertEqual("release", out["mode"])
         self.assertEqual("v1.0.999", out["current_tag"])
         self.assertEqual(5, len(json.loads(out["legs"])["include"]))
+
+    def test_a_release_walks_the_default_legs_and_wbstream_is_not_one(self):
+        # WB Stream closed to the public on 2026-10-10 and answers every join
+        # 401, so its leg can only fail: nothing walks it but a manual run that
+        # names it. A release names no providers, whatever its env holds.
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_CALL_MODE="release",
+                         GATE_CALL_ENGINE_SHA=PIN_SHA, GATE_CALL_APP_VERSION="1.0.999", GATE_PROVIDERS="wbstream")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual(DEFAULT_PROVIDERS, self.legs(out))
+        self.assertNotIn("wbstream", out["legs"] + out["providers"])
+        self.assertEqual("false", out["limited"])
 
     def test_a_release_for_another_engine_than_the_pin_is_refused(self):
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_CALL_MODE="release",
@@ -336,10 +360,45 @@ class Resolve(unittest.TestCase):
         self.assertEqual({"include": [{"provider": "salutejazz"}]}, json.loads(out["legs"]))
         self.assertEqual("true", out["limited"])
 
+    def test_a_manual_run_that_names_no_provider_walks_the_default_legs(self):
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS="  ")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual("manual", out["mode"])
+        self.assertEqual(DEFAULT_PROVIDERS, self.legs(out))
+        self.assertEqual("false", out["limited"])
+
+    def test_wbstream_is_a_leg_only_when_a_manual_run_names_it(self):
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS="wbstream")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual({"include": [{"provider": "wbstream"}]}, json.loads(out["legs"]))
+        self.assertEqual("true", out["limited"])
+        # Named beside every default leg it is a sixth, in its place in the
+        # list, and nothing is left out: not a limited run.
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch",
+                         GATE_PROVIDERS=",".join(DEFAULT_PROVIDERS + ["wbstream"]))
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual(PROVIDERS, self.legs(out))
+        self.assertEqual(",".join(PROVIDERS), out["providers"])
+        self.assertEqual("false", out["limited"])
+        # In a default leg's place it makes five legs again, and a limited run.
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch",
+                         GATE_PROVIDERS="jitsi,telemost,wbstream,salutejazz,vkcalls")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual(5, len(self.legs(out)))
+        self.assertEqual("true", out["limited"])
+
     def test_a_manual_run_refuses_an_unknown_provider_or_none(self):
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS="zoom")
         self.assertEqual(1, r.returncode)
         self.assertIn("unknown provider", r.stderr)
+        # The refusal lists every name it would have taken, wbstream among them.
+        named = re.search(r"unknown provider 'zoom' \(([^)]*)\)", r.stderr)
+        self.assertIsNotNone(named, r.stderr)
+        self.assertEqual(PROVIDERS, named.group(1).split(", "))
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS=" , ,")
         self.assertEqual(1, r.returncode)
         self.assertIn("no provider chosen", r.stderr)
@@ -366,7 +425,8 @@ class Check(unittest.TestCase):
         return self.box.run("gate-resolve.sh", "check", provider, env=self.box.env(**secrets))
 
     def assert_no_value(self, r):
-        for value in (TELEMOST_URL, TELEMOST_ID, WB_ROOM, WB_TOKEN, JITSI_HOST, VK_ROOM, VK_ID, "abc"):
+        for value in (TELEMOST_URL, TELEMOST_ID, WB_ROOM, WB_TOKEN, JITSI_HOST, VK_ROOM, VK_ID, MTS_ROOM, MTS_EVENT,
+                      MTS_OWNER, "abc"):
             self.assertNotIn(value, r.stdout + r.stderr)
 
     def test_the_wbstream_leg_needs_its_rooms_and_its_token(self):
@@ -438,6 +498,47 @@ class Check(unittest.TestCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assert_no_value(r)
 
+    def test_the_mtslink_leg_needs_its_rooms(self):
+        # As vkcalls: a guest joins by link, so there is no token; without a
+        # room the leg fails by name, and another leg's secret does not stand
+        # in for it.
+        r = self.check("mtslink", GATE_VKCALLS_ROOMS=VK_ROOM)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("needs the repository secret GATE_MTSLINK_ROOMS", r.stderr)
+        self.assertIn("https://my.mts-link.ru/j/<owner>/<event>", r.stderr)
+        self.assertIn("never skipped", r.stderr)
+        self.assert_no_value(r)
+        r = self.check("mtslink", GATE_MTSLINK_ROOMS=f"{MTS_ROOM}, abc")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("GATE_MTSLINK_ROOMS, entry 2", r.stderr)
+        self.assert_no_value(r)
+        r = self.check("mtslink", GATE_MTSLINK_ROOMS=f"{MTS_ROOM}\n{MTS_SPARE}")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assert_no_value(r)
+
+    def test_an_mtslink_entry_is_a_join_link_whose_two_ids_can_be_masked(self):
+        # The mask and the scrubber take the event from the last path segment
+        # and the owner from the one before it. So an entry is the join link
+        # and nothing else, each id long enough to mask: behind /session/<id>,
+        # which the engine reads too, the last two segments are neither id.
+        host = "https://mts.example.invalid"
+        for entry, why in ((f"{host}/j/12345/{MTS_EVENT}", "the owner id is shorter than 6 characters"),
+                           (f"{host}/j/{MTS_OWNER}/12345", "the event id is shorter than 6 characters"),
+                           (f"{MTS_ROOM}/session/700800900", "not a join link"),
+                           (f"{host}/lobby/j/{MTS_OWNER}/{MTS_EVENT}", "not a join link"),
+                           (f"{host}/{MTS_OWNER}/{MTS_EVENT}", "not a join link"),
+                           (f"mts.example.invalid/j/{MTS_OWNER}/{MTS_EVENT}", "not a join link"),
+                           (MTS_EVENT, "not a join link"),
+                           (f"{host}/j/{MTS_OWNER} /{MTS_EVENT}", "contains whitespace")):
+            r = self.check("mtslink", GATE_MTSLINK_ROOMS=f"{MTS_SPARE},{entry}")
+            self.assertEqual(1, r.returncode, entry)
+            self.assertIn(f"GATE_MTSLINK_ROOMS, entry 2: {why}", r.stderr)
+            self.assert_no_value(r)
+        # A query, a fragment and a slash behind the event are not part of it.
+        r = self.check("mtslink", GATE_MTSLINK_ROOMS=f" {MTS_ROOM}/?from=fake#top ")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assert_no_value(r)
+
     def test_a_leg_with_what_it_needs_passes(self):
         r = self.check("wbstream", GATE_WBSTREAM_ROOMS=f"{WB_ROOM}\n{WB_SPARE}", GATE_WBSTREAM_TOKEN=WB_TOKEN)
         self.assertEqual(0, r.returncode, r.stderr)
@@ -473,6 +574,23 @@ class Mask(unittest.TestCase):
     def test_a_percent_is_escaped_so_the_runner_masks_the_value_itself(self):
         r = self.box.run("gate-mask.sh", env=self.box.env(GATE_WBSTREAM_TOKEN="fake%41token-value"))
         self.assertEqual("::add-mask::fake%2541token-value\n", r.stdout)
+
+    def test_an_mtslink_entry_masks_its_owner_too_and_no_other_pools_entry_does(self):
+        # .../j/<owner>/<event>: the link, the event and the account the room
+        # belongs to, each on its own. In another pool the segment before the
+        # id is a word of the path, and a masked word shreds the log.
+        r = self.box.run("gate-mask.sh", env=self.box.env(
+            GATE_MTSLINK_ROOMS=f" {MTS_ROOM}?from=fake ,\n{MTS_SPARE}/",
+            GATE_VKCALLS_ROOMS="https://vk.example.invalid/call/joined/FakeVkRoom0001"))
+        self.assertEqual(0, r.returncode, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertTrue(all(line.startswith("::add-mask::") for line in lines), lines)
+        masked = {line[len("::add-mask::"):] for line in lines}
+        for value in (f"{MTS_ROOM}?from=fake", MTS_ROOM, MTS_EVENT, MTS_OWNER, f"{MTS_SPARE}/", "400500600701",
+                      "100200301", VK_ID):
+            self.assertIn(value, masked)
+        self.assertNotIn("joined", masked)
+        self.assertEqual("", r.stderr)
 
 
 class Run(unittest.TestCase):
@@ -574,6 +692,36 @@ class Run(unittest.TestCase):
         r = self.gate_run("run", "cli", str(self.leg / "vkcalls" / "cli"), GATE_PROVIDER="vkcalls")
         self.assertEqual(1, r.returncode)
         self.assertIn("the vkcalls leg needs GATE_VKCALLS_ROOMS", r.stderr)
+
+    def test_the_mtslink_leg_hands_the_engine_its_first_room_by_env_only(self):
+        d = self.leg / "mtslink" / "mobile"
+        r = self.gate_run("run", "mobile", str(d), GATE_PROVIDER="mtslink",
+                          GATE_MTSLINK_ROOMS=f" {MTS_ROOM} , {MTS_SPARE}")
+        self.assertEqual(0, r.returncode, r.stderr)
+        (call,) = self.box.go_calls()
+        self.assertIn("-olcrtc.gate-providers=mtslink", call["argv"])
+        self.assertFalse([a for a in call["argv"] if MTS_EVENT in a or MTS_OWNER in a], call["argv"])
+        self.assertEqual(MTS_ROOM, call["env"]["OLCRTC_GATE_MTSLINK_ROOMS"])
+        self.assertNotIn("GATE_MTSLINK_ROOMS", call["env"])
+        r = self.gate_run("run", "cli", str(self.leg / "mtslink" / "cli"), GATE_PROVIDER="mtslink")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("the mtslink leg needs GATE_MTSLINK_ROOMS", r.stderr)
+
+    def test_the_mtslink_room_reaches_no_dry_run_and_no_other_leg(self):
+        # Under the repository's name or the engine's, whatever the step's env holds.
+        held = dict(GATE_MTSLINK_ROOMS=MTS_ROOM, OLCRTC_GATE_MTSLINK_ROOMS=MTS_SPARE)
+        d = self.leg / "mtslink" / "cli"
+        r = self.gate_run("plan", "cli", str(d), GATE_PROVIDER="mtslink",
+                          STUB_GO_PLAN="engine-linux/mtslink/vp8channel/cli/S0", **held)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(["engine-linux/mtslink/vp8channel/cli/S0"], (d / "plan.txt").read_text().splitlines())
+        r = self.gate_run("run", "cli", str(self.leg / "salutejazz" / "cli"), GATE_PROVIDER="salutejazz", **held)
+        self.assertEqual(0, r.returncode, r.stderr)
+        plan, run = self.box.go_calls()
+        self.assertIn("-olcrtc.gate-dry", plan["argv"])
+        self.assertIn("-olcrtc.gate-providers=salutejazz", run["argv"])
+        for call in (plan, run):
+            self.assertFalse([k for k in call["env"] if "ROOMS" in k], call["env"])
 
     def test_the_salutejazz_leg_runs_with_no_room_or_token_and_an_unknown_provider_is_refused(self):
         d = self.leg / "salutejazz" / "mobile"
@@ -722,6 +870,33 @@ class Scrub(unittest.TestCase):
     def test_short_values_do_not_become_patterns(self):
         table = scrub.secret_table({"GATE_TELEMOST_ROOMS": "abc", "GATE_WBSTREAM_TOKEN": ""})
         self.assertEqual({}, table)
+
+    def test_an_mtslink_room_its_event_and_its_owner_come_out_clean(self):
+        env = {"GATE_MTSLINK_ROOMS": f"{MTS_ROOM},{MTS_SPARE}"}
+        log = self.dir / "mobile" / "mtslink-vp8channel" / "mobile-S0.log"
+        log.parent.mkdir(parents=True)
+        log.write_text(f"joining {MTS_ROOM}\nevent {MTS_EVENT} of {MTS_OWNER}\nspare 400500600701 of 100200301\n")
+        report = self.dir / "mobile" / "gate-report.json"
+        report.write_text(json.dumps({"cells": [{"failures": [f"join {MTS_ROOM}: refused", f"owner {MTS_OWNER}"]}]}))
+        r = self.run_scrub(env=env)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("joining <room>\nevent <room> of <room>\nspare <room> of <room>\n", log.read_text())
+        self.assertEqual({"cells": [{"failures": ["join <room>: refused", "owner <room>"]}]},
+                         json.loads(report.read_text()))
+        self.assertEqual(0, self.run_scrub("--check-only", env=env).returncode)
+
+    def test_only_an_mtslink_entry_has_an_owner(self):
+        # The segment before another pool's id is a word of its path
+        # (/call/join/<id>), which would leave the logs as a row of <room>.
+        link = "https://rooms.example.invalid/owner-part/room-part"
+        for name in ("GATE_TELEMOST_ROOMS", "GATE_WBSTREAM_ROOMS", "GATE_VKCALLS_ROOMS", "GATE_JITSI_HOSTS"):
+            table = scrub.secret_table({name: link})
+            self.assertIn(b"room-part", table, name)
+            self.assertNotIn(b"owner-part", table, name)
+        table = scrub.secret_table({"GATE_MTSLINK_ROOMS": link})
+        self.assertEqual((b"<room>", b"<room>"), (table[b"room-part"], table[b"owner-part"]))
+        # An owner too short to mask is no pattern: gate-resolve.sh check refuses the entry.
+        self.assertNotIn(b"12345", scrub.secret_table({"GATE_MTSLINK_ROOMS": f"https://h.invalid/j/12345/{MTS_EVENT}"}))
 
 
 # Issues of the engine's known list, as its report names them.
@@ -1113,7 +1288,11 @@ class Wiring(unittest.TestCase):
 
     workflows = REPO / ".github" / "workflows"
     OWNER = {"GATE_TELEMOST_ROOMS": "telemost", "GATE_WBSTREAM_ROOMS": "wbstream",
-             "GATE_WBSTREAM_TOKEN": "wbstream", "GATE_JITSI_HOSTS": "jitsi", "GATE_VKCALLS_ROOMS": "vkcalls"}
+             "GATE_WBSTREAM_TOKEN": "wbstream", "GATE_JITSI_HOSTS": "jitsi", "GATE_VKCALLS_ROOMS": "vkcalls",
+             "GATE_MTSLINK_ROOMS": "mtslink"}
+    # The steps of a suite leg that hold its secrets.
+    HOLDERS = ("Mask the leg's secrets", "Check the leg's secrets", "Run the cli flavour (default build)",
+               "Run the mobile flavour (lean build)", "Scrub the leg's artifacts")
     ENGINE_NAMES = r"-olcrtc\.gate|OLCRTC_GATE_|olcrtc_lean|cmd/gate-report"
 
     def read(self, name):
@@ -1135,6 +1314,21 @@ class Wiring(unittest.TestCase):
             self.assertEqual(m.group(1), m.group(3), line)
             self.assertEqual(self.OWNER[m.group(1)], m.group(2), line)
 
+    def test_every_step_that_holds_a_legs_secrets_holds_them_all(self):
+        # A step short of one runs, masks or scrubs without it, and the scrub
+        # is what keeps a room out of an artifact anyone can download. The
+        # caller hands over the same names, one by one.
+        names = sorted(self.OWNER)
+        gate = self.read("gate.yml")
+        for name in self.HOLDERS:
+            held = re.findall(r"^          (GATE_[A-Z_]+): .*secrets\.", self.step("gate.yml", name), re.M)
+            self.assertEqual(names, sorted(held), name)
+        self.assertEqual(len(self.HOLDERS) * len(names), gate.count("secrets."))
+        declared = gate.split("\n    secrets:\n", 1)[1].split("\n  workflow_dispatch:\n", 1)[0]
+        self.assertEqual(names, sorted(re.findall(r"^      (GATE_[A-Z_]+):\n        required: false$", declared, re.M)))
+        handed = re.findall(r"^      (GATE_[A-Z_]+): \$\{\{ secrets\.(GATE_[A-Z_]+) \}\}$", self.read("release.yml"), re.M)
+        self.assertEqual([(name, name) for name in names], sorted(handed))
+
     def test_the_verdict_finds_every_leg_in_one_layout_however_many_uploaded(self):
         # download-artifact extracts a pattern that matches one artifact
         # straight into its path and several into path/<artifact>/. Merged, with
@@ -1155,10 +1349,12 @@ class Wiring(unittest.TestCase):
     def test_every_provider_is_named_wherever_providers_are_listed(self):
         # One list, gate-resolve.sh's: a provider added there and missing from
         # a list a person or a script reads is a leg that fails or a doc that
-        # lies. (salutejazz joined as the fourth, vkcalls as the fifth.)
+        # lies. (salutejazz joined as the fourth, vkcalls as the fifth, mtslink
+        # as the sixth.) wbstream stays in every such list: it is left out of
+        # the default legs, not of what a manual run may name.
         resolve = (HERE / "gate-resolve.sh").read_text()
         providers = re.search(r"^readonly PROVIDERS=\(([^)]*)\)$", resolve, re.M).group(1).split()
-        self.assertEqual(["jitsi", "telemost", "wbstream", "salutejazz", "vkcalls"], providers)
+        self.assertEqual(PROVIDERS, providers)
         run = (HERE / "gate-run.sh").read_text()
         accepted = re.search(r"^ +([a-z| ]+)\) ;;\n +\*\) die \"GATE_PROVIDER must be", run, re.M).group(1)
         self.assertEqual(providers, [p.strip() for p in accepted.split("|")])

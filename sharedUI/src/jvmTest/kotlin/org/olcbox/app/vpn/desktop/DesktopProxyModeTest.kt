@@ -341,6 +341,26 @@ class DesktopProxyModeTest {
         assertContains(command, "id: 'https://vk.ru/call/join/AbC-12_xyz'")
     }
 
+    @Test
+    fun olcRtcCommandSelectsMtslinkEngineNameWithTheWholeJoinLink() {
+        val command = OlcRtcCommand(
+            binary = Path.of("/tmp/olcrtc"),
+            location = LocationConfig(
+                name = "MTS",
+                id = "https://my.mts-link.ru/j/100200300/20300400500",
+                key = "f".repeat(64),
+                bypassProvider = "mts",
+                transport = LocationConfig.TRANSPORT_DATACHANNEL
+            ),
+            dnsServer = "192.168.43.1:53"
+        ).yaml()
+
+        assertContains(command, "provider: 'mtslink'")
+        // Asked for DataChannel, run over the one lane MTS Link has.
+        assertContains(command, "transport: '${LocationConfig.TRANSPORT_VP8CHANNEL}'")
+        assertContains(command, "id: 'https://my.mts-link.ru/j/100200300/20300400500'")
+    }
+
     // The engine reads `dtls.profile`; the yaml of a default run carries no
     // dtls block at all, so it is the one an engine without the setting read.
     @Test

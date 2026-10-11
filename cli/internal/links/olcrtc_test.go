@@ -22,6 +22,8 @@ func TestParseOlcrtcPartnerShapes(t *testing.T) {
 			"salutejazz", "datachannel", "53a942:cb3gjji2", "🇨🇦 CA · SJ"},
 		{"olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60W-XIZsCXbDpgg#" + key + "$🇨🇦 CA · VP8",
 			"vkcalls", "vp8channel", "https://vk.ru/call/join/v60W-XIZsCXbDpgg", "🇨🇦 CA · VP8"},
+		{"olcrtc://mtslink?vp8channel@https://my.mts-link.ru/j/100200300/20300400500#" + key + "$DE · olcRTC · MTS",
+			"mtslink", "vp8channel", "https://my.mts-link.ru/j/100200300/20300400500", "DE · olcRTC · MTS"},
 		// ProofKit's own list names lines "DE · olcRTC"
 		{"olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/99#" + key + "$DE · olcRTC",
 			"telemost", "vp8channel", "https://telemost.yandex.ru/j/99", "DE · olcRTC"},
@@ -86,7 +88,8 @@ func TestParseOlcrtcRefusals(t *testing.T) {
 func TestNormalizers(t *testing.T) {
 	for in, want := range map[string]string{"Telemost": "telemost", "yandex_telemost": "telemost",
 		"wb-stream": "wbstream", "wildberries": "wbstream", "jitsi-meet": "jitsi", "sberjazz": "salutejazz",
-		"jazz": "salutejazz", "vk": "vkcalls", "vk_calls": "vkcalls"} {
+		"jazz": "salutejazz", "vk": "vkcalls", "vk_calls": "vkcalls",
+		"MTSLink": "mtslink", "mts": "mtslink", "mts-link": "mtslink", "mts_link": "mtslink"} {
 		got, ok := NormalizeProvider(in)
 		if !ok || got != want {
 			t.Fatalf("NormalizeProvider(%q) = %q,%v", in, got, ok)

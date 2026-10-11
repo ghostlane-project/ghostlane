@@ -630,6 +630,7 @@ private fun roomIdPlaceholder(provider: String): String {
         LocationConfig.PROVIDER_JITSI -> "https://meet.example.com/room"
         LocationConfig.PROVIDER_SALUTEJAZZ -> "code:password"
         LocationConfig.PROVIDER_VKCALLS -> "https://vk.ru/call/join/…"
+        LocationConfig.PROVIDER_MTSLINK -> "https://my.mts-link.ru/j/…"
         else -> stringResource(Res.string.location_room_id_placeholder)
     }
 }
@@ -658,10 +659,11 @@ private fun isJitsiProvider(provider: String): Boolean {
     return LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_JITSI
 }
 
-/** Jitsi and VK Calls name a room by its whole link, the others by an id. */
+/** Jitsi, VK Calls and MTS Link name a room by its whole link, the others by an id. */
 private fun roomIsLink(provider: String): Boolean {
     return isJitsiProvider(provider) ||
-        LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_VKCALLS
+        LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_VKCALLS ||
+        LocationConfig.normalizeProvider(provider) == LocationConfig.PROVIDER_MTSLINK
 }
 
 private enum class ConnectionType {

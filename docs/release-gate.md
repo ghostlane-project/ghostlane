@@ -22,7 +22,7 @@ hand.
 | --- | --- | --- |
 | `resolve` | Resolves the engine revision to a full commit, checks that it carries `internal/gate` and `cmd/gate-report`, and decides the mode and the legs | none |
 | `unit` (x2) | `go test -race ./...` of the engine, default build and lean build | none |
-| `suite` (x5) | One leg per provider: `jitsi`, `telemost`, `wbstream`, `salutejazz`, `vkcalls` | that provider's own (`salutejazz` has none) |
+| `suite` (x5) | One leg per provider: `jitsi`, `telemost`, `salutejazz`, `vkcalls`, `mtslink`; a sixth, `wbstream`, only when a manual run names it | that provider's own (`salutejazz` has none) |
 | `verdict` | Merges the legs, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
 
 Each suite leg runs the same steps:
@@ -46,7 +46,14 @@ one room per provider is enough. The `salutejazz` leg has no pool: the suite
 makes a fresh room per pair through Sber's anonymous create call, the one the
 engine's `salutejazz` auth provider makes, so it needs no secret and leaves its
 rooms behind (Sber has no delete). The `vkcalls` leg joins a VK Calls link as a
-guest, server and clients alike, so its one secret is the room.
+guest, server and clients alike, so its one secret is the room. The `mtslink`
+leg does the same with the join link of an MTS Link permanent meeting.
+
+The `wbstream` leg is not among the default ones. WB Stream closed to the
+public on 2026-10-10 and answers every join `401`, so the leg can only fail,
+and a red leg is a red gate. A release, the daily run, a pin push and a manual
+run that names no providers leave it out. A manual run that names `wbstream`
+still walks it, with its secrets, as before.
 
 The target is **local**: the suite builds `cmd/olcrtc` and starts it as the
 server for each provider and transport pair, then points the client at it
@@ -61,13 +68,17 @@ report format belong to the engine. See `docs/gate.md` in
 | `release` | `release.yml`, job `gate`, before every build | Every build job and `publish-nightly` need it |
 | `scheduled` | Daily, 04:17 UTC | A canary. It blocks nothing. Named so to avoid `nightly`, which is `release.yml`'s rolling release tag |
 | `pin` | A push to any branch that changes `scripts/cores-pins.sh`, `scripts/olcrtc-pin.sh`, `scripts/gate-*` or `gate.yml` | Runs once per push. Tag pushes never trigger it. `pr-checks.yml` does not run the gate |
-| `manual` | Actions → Release gate → Run workflow | `engine_ref` gates a candidate commit, branch or tag instead of the pin. `providers` and `transports` narrow the run, which is then labelled limited and is never a release gate |
+| `manual` | Actions → Release gate → Run workflow | `engine_ref` gates a candidate commit, branch or tag instead of the pin. `providers` and `transports` narrow the run, which is then labelled limited and is never a release gate. `providers` is also the one way to walk `wbstream` |
+
+`providers` left empty is the five default legs. A run that leaves one of them
+out is limited, whatever else it names; `wbstream` named beside all five is a
+sixth leg and limits nothing.
 
 `transports` is passed to every chosen provider. Pick transports each of them
 carries: Telemost has `vp8channel` and `videochannel`; WB Stream has
 `vp8channel`, `videochannel` and `seichannel`; SaluteJazz has `datachannel`
 alone (Sber admits a guest to data channels only); VK Calls has `vp8channel`
-alone; Jitsi has all four. Otherwise the
+alone; MTS Link has `vp8channel` alone; Jitsi has all four. Otherwise the
 engine refuses the plan. `videochannel` runs only when named here: the default
 plan leaves it out because it moves about 7.5 KiB/s, too little for the 5 MB
 transfers of S0, and the phone build does not link it.
@@ -173,6 +184,10 @@ would have hit.
 | `GATE_WBSTREAM_TOKEN` | wbstream | yes | A WB Stream account access token. WB refuses a guest as the first participant of an idle room (`403 guests cannot create rooms`), so the suite's server signs in with it. The client stays a guest, as the app is |
 | `GATE_JITSI_HOSTS` | jitsi | no | Bare Jitsi host names, for example `meet.example.org`: no scheme, no port, no path. When set, they replace the engine's `docs/jitsi.instances.yaml` |
 | `GATE_VKCALLS_ROOMS` | vkcalls | yes | VK Calls join links, `https://vk.ru/call/join/<id>`. The gate joins the **first**. VK hands a call's first lone guest a peer-to-peer (DIRECT) call, where the engine cannot run; a call that has had three guests at once is served through VK's SFU for good, so warm a new link that way before it goes in here, and only ever leave it as its organizer, never end it for everyone (that kills the link for guests) |
+| `GATE_MTSLINK_ROOMS` | mtslink | yes | MTS Link join links, `https://my.mts-link.ru/j/<owner>/<event>`, and nothing behind the event. The gate joins the **first**. The meeting must be a permanent one («постоянная встреча»), which a guest enters with no organizer inside |
+
+The two `wbstream` secrets are required by their leg, and that leg runs only
+when a manual run names it: a release needs neither.
 
 The `salutejazz` leg has no secret. Its rooms are made at run time, so no mask
 can know them in advance: the engine's own scrubber withholds each room, its
@@ -186,7 +201,11 @@ Rules:
   16. A mask shorter than that shreds every log line it matches, so a shorter
   value fails the check instead of running unmasked. A Jitsi host with a port
   fails the check too: a Go error prints the host without its port
-  (`lookup <host>`), and only the entry as given is masked and scrubbed.
+  (`lookup <host>`), and only the entry as given is masked and scrubbed. An
+  MTS Link entry is the join link as it is, `https://<host>/j/<owner>/<event>`,
+  with each of its two ids at least 6 characters: the mask and the scrubber
+  take them from the last two path segments, so a link with `/session/<id>`
+  behind the event, which the engine would also read, fails the check.
 - **Which entry is used.** A leg always uses the first entry of its pool. Later
   entries are spares. To replace a room that stopped working, move a spare to
   the front. The engine picks from its pool by run number, which would differ
@@ -198,8 +217,10 @@ Rules:
   `verdict` hold none.
 - **Masking.** In each leg, the first step that holds the secrets registers
   every entry, its query-less form, its last path segment, each Jitsi host and
-  the token with `::add-mask::` (`scripts/gate-mask.sh`). GitHub masks only a
-  secret's whole value, and a pool is a whole list.
+  the token with `::add-mask::` (`scripts/gate-mask.sh`), and of an MTS Link
+  entry the segment before the last as well: the id of the account the room
+  belongs to. GitHub masks only a secret's whole value, and a pool is a whole
+  list.
 - **What is uploaded.** Everything a leg uploads is scrubbed first
   (`scripts/gate-scrub.py`):
   - the secrets become `<room>`, `<jitsi-host>` and `<token>`, in raw,
@@ -220,6 +241,7 @@ Set them from standard input, never on a command line:
     gh secret set GATE_WBSTREAM_TOKEN --repo ghostlane-project/ghostlane
     gh secret set GATE_JITSI_HOSTS    --repo ghostlane-project/ghostlane   # optional
     gh secret set GATE_VKCALLS_ROOMS  --repo ghostlane-project/ghostlane
+    gh secret set GATE_MTSLINK_ROOMS  --repo ghostlane-project/ghostlane
 
 ### Disjoint from the engine repository
 
@@ -341,8 +363,8 @@ depends on:
 - **Builds.** cli has no tags. mobile has `-tags olcrtc_lean`, and asking for
   it in any other build is a plan error.
 - **Environment.** `OLCRTC_GATE_TELEMOST_ROOMS`, `OLCRTC_GATE_WBSTREAM_ROOMS`,
-  `OLCRTC_GATE_WBSTREAM_TOKEN`, `OLCRTC_GATE_JITSI_HOSTS` and
-  `OLCRTC_GATE_VKCALLS_ROOMS`, never argv. The
+  `OLCRTC_GATE_WBSTREAM_TOKEN`, `OLCRTC_GATE_JITSI_HOSTS`,
+  `OLCRTC_GATE_VKCALLS_ROOMS` and `OLCRTC_GATE_MTSLINK_ROOMS`, never argv. The
   engine's `-olcrtc.gate-telemost-rooms`, `-olcrtc.gate-wbstream-rooms` and
   `-olcrtc.gate-jitsi-hosts` flags are deliberately unused. Report metadata goes
   in `OLCRTC_GATE_ENGINE_COMMIT`, `OLCRTC_GATE_ENGINE_REF` and

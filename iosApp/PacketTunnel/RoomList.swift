@@ -112,6 +112,7 @@ enum RoomList {
         case "jitsi", "jitsi-meet", "jitsi_meet", "meet": return "jitsi"
         case "salutejazz", "jazz", "sberjazz", "sber_jazz": return "salutejazz"
         case "vkcalls", "vk", "vkcall", "vk_calls", "vk-calls": return "vkcalls"
+        case "mtslink", "mts", "mts-link", "mts_link": return "mtslink"
         default: return value
         }
     }

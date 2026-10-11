@@ -21,7 +21,7 @@ var (
 // OlcrtcLine is one room: olcrtc://<provider>?<transport>[&k=v…]@<room>#<key>[%<client>][$<label>]
 // (the grammar of LocationsDatasource.parseOlcRtcUri in the app).
 type OlcrtcLine struct {
-	Provider  string // telemost | wbstream | jitsi | salutejazz | vkcalls
+	Provider  string // telemost | wbstream | jitsi | salutejazz | vkcalls | mtslink
 	Transport string // datachannel | vp8channel | seichannel | videochannel
 	Room      string
 	Key       string // 64 hex characters
@@ -130,6 +130,8 @@ func NormalizeProvider(s string) (string, bool) {
 		return "salutejazz", true
 	case "vkcalls", "vk", "vkcall", "vk_calls", "vk-calls":
 		return "vkcalls", true
+	case "mtslink", "mts", "mts-link", "mts_link":
+		return "mtslink", true
 	}
 	return "", false
 }

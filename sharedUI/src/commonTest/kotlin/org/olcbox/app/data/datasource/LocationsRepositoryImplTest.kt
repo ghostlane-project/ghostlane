@@ -265,6 +265,27 @@ class LocationsRepositoryImplTest {
         assertEquals("My VK room", location.name)
     }
 
+    // The sixth carrier (MTS Link, olcrtc#57). The room is a permanent
+    // meeting's whole join link, two path segments past `/j/`, carried in the
+    // room segment as it is: the engine takes the link.
+    @Test
+    fun importsMtslinkOlcRtcUri() = runTest {
+        val source = FakeLocationsDataSource()
+        val key = "f".repeat(64)
+        val input = "olcrtc://mtslink?vp8channel@https://my.mts-link.ru/j/100200300/20300400500#$key${'$'}DE · olcRTC · MTS"
+
+        LocationsRepositoryImpl(source).importText(input)
+
+        val imported = source.stored
+        assertNotNull(imported)
+        val location = imported.locations.single().location
+        assertEquals(LocationConfig.PROVIDER_MTSLINK, location.bypassProvider)
+        assertEquals(LocationConfig.TRANSPORT_VP8CHANNEL, location.transport)
+        assertEquals("https://my.mts-link.ru/j/100200300/20300400500", location.id)
+        assertEquals(key, location.key)
+        assertEquals("DE · olcRTC · MTS", location.name)
+    }
+
     // The engine carries a Jitsi room over DataChannel only, so the app runs
     // one over DataChannel whatever the link says - and used to say nothing
     // about it. A server set up for vp8channel then waited for a peer that
