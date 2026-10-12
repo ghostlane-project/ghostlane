@@ -169,10 +169,12 @@ import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.share.SubscriptionShareItem
 import org.olcbox.app.ui.components.kit.pkSubscriptionSourceLine
 import org.olcbox.app.ui.components.kit.PkBrand
+import org.olcbox.app.ui.components.kit.PkNameLine
 import org.olcbox.app.ui.components.kit.PkScreenHeader
 import org.olcbox.app.ui.components.kit.PkSectionEyebrow
 import org.olcbox.app.ui.components.kit.PkSectionLabel
 import org.olcbox.app.ui.components.kit.pkMono
+import org.olcbox.app.ui.components.kit.pkTied
 import org.olcbox.app.ui.components.kit.pkScreenBackground
 import org.olcbox.app.ui.components.kit.pkTopBarsPadding
 import org.olcbox.app.ui.components.kit.pkVersionLine
@@ -529,6 +531,10 @@ private fun SharedSettingsHubContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Seven rows and a footer are a screen and a half on a small phone
+            // with the text enlarged. Unscrolled, the rows took the height and the
+            // footer under them was squeezed to a sliver.
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
             .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -634,6 +640,7 @@ private fun SharedConnectionSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(top = 16.dp, bottom = 32.dp)
     ) {
@@ -723,6 +730,7 @@ private fun SharedConnectionModeSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -778,6 +786,7 @@ private fun SharedRoutingSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -854,6 +863,7 @@ private fun SharedSocksProxySettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -1154,7 +1164,7 @@ private fun SharedUpdatesSettingsContent(
             onClick = onCheckUpdatesClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .heightIn(min = 52.dp)
         ) {
             Text(stringResource(Res.string.action_check_now))
         }
@@ -1230,27 +1240,38 @@ private fun SharedLogsSettingsContent(
             .padding(horizontal = 24.dp)
             .padding(top = 16.dp, bottom = 24.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SharedDetailHeader(
-                title = stringResource(Res.string.app_logs_title),
-                subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
-                onBack = onBack,
-                modifier = Modifier.weight(1f)
-            )
-
-            TextButton(
-                enabled = logs.isNotEmpty(),
-                onClick = onSaveClick
-            ) {
-                Text(stringResource(Res.string.action_save))
+        // The page's name first; its two buttons beside it only while the name
+        // is whole there, and under it otherwise.
+        PkNameLine(
+            modifier = Modifier.fillMaxWidth(),
+            gap = 4.dp,
+            lineGap = 0.dp,
+            name = {
+                SharedDetailHeader(
+                    title = stringResource(Res.string.app_logs_title),
+                    subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
+                    onBack = onBack
+                )
+            },
+            end = {
+                // Wraps: at a large text size the two do not fit a narrow line even
+                // with the line to themselves.
+                FlowRow(horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        enabled = logs.isNotEmpty(),
+                        onClick = onSaveClick
+                    ) {
+                        Text(stringResource(Res.string.action_save), maxLines = 1, softWrap = false)
+                    }
+                    TextButton(
+                        enabled = logs.isNotEmpty(),
+                        onClick = onShareClick
+                    ) {
+                        Text(stringResource(Res.string.action_share), maxLines = 1, softWrap = false)
+                    }
+                }
             }
-            TextButton(
-                enabled = logs.isNotEmpty(),
-                onClick = onShareClick
-            ) {
-                Text(stringResource(Res.string.action_share))
-            }
-        }
+        )
 
         Spacer(Modifier.height(16.dp))
 
@@ -1360,7 +1381,7 @@ private fun SharedSubscriptionRow(
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
@@ -1374,14 +1395,14 @@ private fun SharedSubscriptionRow(
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
-                maxLines = 1,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = item.subscriptionSummary(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
-                maxLines = 2,
+                maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
             // Wraps: four buttons in a language with long words do not fit one line.
@@ -1445,15 +1466,18 @@ private fun SharedNavigationRow(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    // A row's name is what the row is for. On a narrow phone
+                    // "Server list updates" was cut at one line in the language it
+                    // is longest in, and at any larger text size in all of them.
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = value,
+                    text = pkTied(value),
                     style = pkMono(10, 0.5),
                     color = LocalPkPalette.current.textDim,
-                    maxLines = 2,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1564,16 +1588,17 @@ private fun SharedSelectableSettingsCard(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = subtitle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
-                    // Two, not one: the routing cards say what a list contains,
-                    // and a subtitle that ends in "…" says nothing.
-                    maxLines = 2,
+                    // As many lines as it takes, within reason: the routing cards
+                    // say what a list contains, and a subtitle that ends in "…"
+                    // says nothing.
+                    maxLines = 6,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1622,7 +1647,8 @@ private fun SharedEmptyState(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(128.dp),
+            // At least this; a fixed height held two lines of text at one size.
+            .heightIn(min = 128.dp),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)

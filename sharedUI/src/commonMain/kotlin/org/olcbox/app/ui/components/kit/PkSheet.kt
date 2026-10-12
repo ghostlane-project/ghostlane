@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -98,7 +97,8 @@ fun PkSheetSurface(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = 22.sp,
+                    fontSize = pkDisplaySp(22),
+                    lineHeight = pkDisplaySp(28),
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.3).sp
                 ),
@@ -107,15 +107,22 @@ fun PkSheetSurface(
             if (!subtitle.isNullOrBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = subtitle.uppercase(),
+                    text = pkTied(subtitle.uppercase()),
                     style = pkMono(10, 1.0),
                     color = palette.textDim,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(Modifier.height(16.dp))
-            content()
+            // What is left of the screen's height, and no more. A sheet is as tall
+            // as what is in it until that is taller than the screen; from there on
+            // it is the content that gives — scrolls, in a sheet that says which
+            // part of it does — and never the title above it or the margin below.
+            // Without this a sheet with large text ran off the bottom of the phone
+            // and took its buttons with it, and on two of them a button is the
+            // only way out.
+            Column(modifier = Modifier.weight(1f, fill = false), content = content)
             Spacer(Modifier.height(28.dp))
         }
     }
@@ -191,6 +198,16 @@ private fun PkRowDivider(show: Boolean) {
     )
 }
 
+/**
+ * A settings row: what it is, a line or two about it, and its control.
+ *
+ * [value] is what the setting is set to now, where the row shows that. It stands
+ * on the label's line while the label is whole beside it, and goes under the
+ * label when it is not — the label is what says which setting this is. It used to
+ * be the other way round: the value took the width it wanted and the label had
+ * the rest, so "Mode" beside "All traffic through VPN" on a narrow phone was one
+ * letter to a line.
+ */
 @Composable
 private fun PkRowScaffold(
     label: String,
@@ -198,6 +215,7 @@ private fun PkRowScaffold(
     enabled: Boolean,
     showDivider: Boolean,
     onClick: (() -> Unit)?,
+    value: (@Composable () -> Unit)? = null,
     trailing: @Composable () -> Unit
 ) {
     val palette = LocalPkPalette.current
@@ -218,17 +236,25 @@ private fun PkRowScaffold(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface.copy(
-                        alpha = if (enabled) 1f else 0.45f
-                    ),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                PkNameLine(
+                    modifier = Modifier.fillMaxWidth(),
+                    lineGap = 3.dp,
+                    name = {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface.copy(
+                                alpha = if (enabled) 1f else 0.45f
+                            ),
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    end = value
                 )
                 if (!sub.isNullOrBlank()) {
                     Spacer(Modifier.height(3.dp))
@@ -236,7 +262,7 @@ private fun PkRowScaffold(
                         text = sub,
                         style = pkMono(10, 0.5),
                         color = palette.textDim.copy(alpha = if (enabled) 1f else 0.45f),
-                        maxLines = 2,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -324,27 +350,26 @@ fun PkLinkRow(
         sub = sub,
         enabled = enabled,
         showDivider = showDivider,
-        onClick = if (enabled) onClick else null
-    ) {
-        Row(
-            modifier = modifier,
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (!value.isNullOrBlank()) {
+        onClick = if (enabled) onClick else null,
+        value = if (value.isNullOrBlank()) {
+            null
+        } else {
+            {
                 Text(
                     text = value,
                     style = pkMono(10, 0.4),
                     color = valueColor ?: palette.textDim,
-                    maxLines = 1
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            Icon(
-                imageVector = icon ?: PkIcons.ChevronRight,
-                contentDescription = null,
-                tint = palette.textMuted,
-                modifier = Modifier.size(17.dp)
-            )
         }
+    ) {
+        Icon(
+            imageVector = icon ?: PkIcons.ChevronRight,
+            contentDescription = null,
+            tint = palette.textMuted,
+            modifier = modifier.size(17.dp)
+        )
     }
 }

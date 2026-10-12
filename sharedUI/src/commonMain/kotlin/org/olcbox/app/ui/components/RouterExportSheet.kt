@@ -9,12 +9,12 @@ import multiplatform_app.sharedui.generated.resources.router_export_title
 import multiplatform_app.sharedui.generated.resources.router_none
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +34,7 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.RouterExport
 import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.ui.components.kit.PkBottomSheet
+import org.olcbox.app.ui.components.kit.pkTied
 import org.olcbox.app.ui.components.kit.pkSubscriptionIsSecret
 import org.olcbox.app.ui.features.home.components.PkSheetButton
 import org.olcbox.app.ui.features.locations.LocationItem
@@ -73,6 +74,12 @@ fun RouterExportSheet(entries: List<RouterEntry>, onCopy: (String) -> Unit, onDi
         onDismiss = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The note and the servers scroll together in what the button under
+            // them leaves; the button closes the sheet and is always there.
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
             Text(
                 stringResource(Res.string.router_export_note),
                 style = MaterialTheme.typography.bodySmall,
@@ -86,21 +93,25 @@ fun RouterExportSheet(entries: List<RouterEntry>, onCopy: (String) -> Unit, onDi
                 )
             }
             Column(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 entries.forEachIndexed { index, entry ->
                     Column {
                         Text(
-                            entry.name,
+                            pkTied(entry.name),
+                            // No tracking, for the flag a server's name opens with.
+                            style = LocalTextStyle.current.copy(letterSpacing = 0.sp),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(entry.spec.routerLabel(), fontSize = 12.sp, color = palette.textDim)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Wraps: three buttons do not fit a narrow phone's line at
+                        // a large text size, and the third was a column of letters.
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             val forms = listOfNotNull(
                                 LINK to entry.link,
                                 RouterExport.singBoxOutbound(entry.spec)?.let { SING_BOX to it },
@@ -123,6 +134,7 @@ fun RouterExportSheet(entries: List<RouterEntry>, onCopy: (String) -> Unit, onDi
                         }
                     }
                 }
+            }
             }
             PkSheetButton(label = stringResource(Res.string.action_close), onClick = onDismiss)
         }

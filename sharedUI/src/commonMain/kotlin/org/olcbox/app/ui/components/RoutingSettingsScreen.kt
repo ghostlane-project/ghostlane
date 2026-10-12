@@ -80,12 +80,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.ui.components.kit.PkScreenHeader
+import org.olcbox.app.ui.components.kit.PkEvenRow
+import org.olcbox.app.ui.components.kit.PkNameLine
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
 
@@ -198,7 +201,7 @@ private fun RoutingChoiceRow(selected: Boolean, icon: ImageVector, title: String
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), fontSize = 12.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
         }
         if (selected) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha), modifier = Modifier.size(20.dp))
     }
@@ -214,11 +217,23 @@ private fun RoutingValueRow(icon: ImageVector, title: String, subtitle: String, 
         Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
-            Text(subtitle, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
+            // The setting's name first, and what it is set to beside it only while
+            // the name is whole. The value used to take what it wanted and leave
+            // the name the rest: "Mode" beside "All traffic through VPN" on a
+            // narrow phone was one letter to a line.
+            PkNameLine(
+                modifier = Modifier.fillMaxWidth(),
+                gap = 10.dp,
+                lineGap = 2.dp,
+                name = {
+                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+                },
+                end = {
+                    Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary.copy(alpha = alpha))
+                }
+            )
+            Text(subtitle, fontSize = 12.sp, maxLines = 6, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
         }
-        Spacer(Modifier.width(10.dp))
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary.copy(alpha = alpha))
         Spacer(Modifier.width(5.dp))
         Icon(PkIcons.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), modifier = Modifier.size(18.dp))
     }
@@ -285,17 +300,15 @@ private fun CustomRulesCard(settings: RoutingSettings, enabled: Boolean, onChang
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                 modifier = Modifier.fillMaxWidth()
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PkEvenRow(gap = 8.dp) {
                 OutlinedButton(
                     onClick = { add(toTunnel = false) },
-                    enabled = enabled && input.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(Res.string.routing_rules_add_direct), maxLines = 1) }
+                    enabled = enabled && input.isNotBlank()
+                ) { Text(stringResource(Res.string.routing_rules_add_direct), textAlign = TextAlign.Center) }
                 OutlinedButton(
                     onClick = { add(toTunnel = true) },
-                    enabled = enabled && input.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                ) { Text(stringResource(Res.string.routing_rules_add_tunnel), maxLines = 1) }
+                    enabled = enabled && input.isNotBlank()
+                ) { Text(stringResource(Res.string.routing_rules_add_tunnel), textAlign = TextAlign.Center) }
             }
         }
     }
@@ -318,7 +331,7 @@ private fun RuleList(title: String, entries: List<String>, enabled: Boolean, onR
                     entry,
                     modifier = Modifier.weight(1f),
                     fontSize = 14.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )

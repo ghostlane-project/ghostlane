@@ -14,12 +14,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.olcbox.app.ui.components.kit.PkBottomSheet
 import org.olcbox.app.ui.components.kit.PkCardSunken
+import org.olcbox.app.ui.components.kit.PkEvenRow
 import org.olcbox.app.ui.components.kit.PkSwitch
 import org.olcbox.app.ui.theme.LocalPkPalette
 
@@ -51,6 +52,13 @@ fun LogsSheet(
         onDismiss = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Everything above the buttons scrolls in the height they leave. The
+            // log is four hundred points of it on its own; on a small phone the
+            // note and the two buttons under it were what paid for that.
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
             PkCardSunken(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -88,20 +96,18 @@ fun LogsSheet(
                 color = LocalPkPalette.current.textMuted
             )
 
-            Spacer(Modifier.height(2.dp))
+            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            PkEvenRow(gap = 9.dp) {
                 PkSheetButton(
                     label = stringResource(Res.string.action_export),
                     onClick = onSaveClick,
-                    enabled = logs.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
+                    enabled = logs.isNotEmpty()
                 )
                 PkSheetButton(
                     label = stringResource(Res.string.action_share),
                     onClick = onShareClick,
-                    enabled = logs.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
+                    enabled = logs.isNotEmpty()
                 )
             }
         }

@@ -82,6 +82,12 @@ internal fun VpnDisclosureBody(onAccept: () -> Unit, onDecline: () -> Unit) {
                 // Bounded and scrollable so the whole text can be read on a
                 // small screen — and so it can be scrolled through slowly on
                 // camera, which is what the Play declaration video has to show.
+                //
+                // At most this, and less where the screen has less: the two
+                // buttons under it are measured first and this has what is left.
+                // Sized on its own it pushed "Not now" off the bottom of a small
+                // phone with large text, and that is the only way to decline.
+                .weight(1f, fill = false)
                 .heightIn(max = 380.dp)
                 .verticalScroll(rememberScrollState())
                 .padding(15.dp),

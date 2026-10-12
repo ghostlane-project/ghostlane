@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -48,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.ui.components.kit.PkBottomSheet
+import org.olcbox.app.ui.components.kit.PkBalancedText
 import org.olcbox.app.ui.components.kit.pkMono
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
@@ -113,7 +116,12 @@ internal fun AddConfigurationBody(
     onUpdateSubscriptionsClick: () -> Unit,
     onAddCustomLocationClick: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // Six rows are taller than a small phone once the text is enlarged; the sheet
+    // gives them what height it has and they scroll in it.
+    Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         // No row here points at a purchase. Someone with nothing yet gets the
         // import actions below and nothing else — where they obtained a server
         // list is not this app's business.
@@ -224,10 +232,13 @@ fun PkSheetActionRow(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontSize = 15.sp,
+                    lineHeight = 20.sp,
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                // The row is the whole of a choice: what it says it does is not
+                // something to cut at the first line. "Paste a link or…" was.
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.size(3.dp))
@@ -235,7 +246,7 @@ fun PkSheetActionRow(
                 text = subtitle,
                 style = pkMono(10, 0.5),
                 color = palette.textDim,
-                maxLines = 2,
+                maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -279,18 +290,17 @@ fun PkSheetButton(
                 }
             )
             .clickable(enabled = enabled, onClickLabel = label, role = Role.Button) { onClick() }
-            .padding(vertical = 17.dp),
+            .padding(horizontal = 14.dp, vertical = 17.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
+        PkBalancedText(
             text = label.uppercase(),
             style = pkMono(12, 1.5).copy(fontWeight = FontWeight.SemiBold),
             color = when {
                 !enabled -> palette.textMuted
                 primary -> MaterialTheme.colorScheme.onTertiary
                 else -> MaterialTheme.colorScheme.onSurface
-            },
-            maxLines = 1
+            }
         )
     }
 }

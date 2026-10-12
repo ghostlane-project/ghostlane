@@ -9,11 +9,12 @@ import multiplatform_app.sharedui.generated.resources.update_size_unknown
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -28,8 +29,10 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.olcbox.app.ui.components.kit.PkEvenRow
 import org.olcbox.app.update.AppUpdateInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,6 +59,7 @@ fun ApplicationUpdateOfferSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -104,20 +108,18 @@ fun ApplicationUpdateOfferSheet(
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PkEvenRow(gap = 12.dp) {
                 OutlinedButton(
                     onClick = onLater,
-                    modifier = Modifier.weight(1f),
                     enabled = downloadProgress == null
                 ) {
-                    Text(stringResource(Res.string.action_later))
+                    Text(stringResource(Res.string.action_later), textAlign = TextAlign.Center)
                 }
                 Button(
                     onClick = onDownload,
-                    modifier = Modifier.weight(1f),
                     enabled = downloadProgress == null
                 ) {
-                    Text(stringResource(Res.string.action_download))
+                    Text(stringResource(Res.string.action_download), textAlign = TextAlign.Center)
                 }
             }
         }

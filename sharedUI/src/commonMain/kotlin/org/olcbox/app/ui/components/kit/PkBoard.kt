@@ -33,6 +33,7 @@ import multiplatform_app.sharedui.generated.resources.action_collapse
 import multiplatform_app.sharedui.generated.resources.action_expand
 import multiplatform_app.sharedui.generated.resources.board_key_gone_caps
 import multiplatform_app.sharedui.generated.resources.measure_latency
+import multiplatform_app.sharedui.generated.resources.room_measure_caps
 import multiplatform_app.sharedui.generated.resources.room_your_seat_caps
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -44,22 +45,29 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -71,14 +79,21 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
+import kotlin.math.max
 
 /**
  * The board: a list of rooms, grouped by the list they came from.
@@ -224,7 +239,6 @@ fun PkRoomCard(
     connectedHere: Boolean,
     blocked: Boolean,
     seats: SeatDisplay,
-    seatCountText: String?,
     freeText: String?,
     freeIsFull: Boolean,
     freeIsTight: Boolean,
@@ -281,121 +295,160 @@ fun PkRoomCard(
                 onClick = { if (!blocked) onClick() },
                 onLongClick = onLongClick
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            // Twelve above and below a name set on a twenty-point line: the card a
+            // one-line name makes is the height it was when the line was twenty-four
+            // and the padding ten, and a name on two lines is no longer two lines
+            // with a third's worth of air between them.
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!emoji.isNullOrBlank()) {
-                Text(text = emoji, fontSize = 15.sp)
-                Spacer(Modifier.width(6.dp))
+        val columns = LocalPkBoardColumns.current
+        val ping = pingReading(
+            pingMs = pingMs,
+            isMeasuring = isMeasuring,
+            failed = isOffline,
+            connectedHere = connectedHere,
+            words = boardWords()
+        )
+        PkNameLine(
+            modifier = Modifier.fillMaxWidth(),
+            // On one line the tag stands against the latency, where it always
+            // stood; the name has everything before them.
+            notesAtEnd = true,
+            // The latency keeps the card's top corner while the name can wrap to
+            // two lines beside it. A name that could not — the text is large, or
+            // "no ping" in the user's language is — has the whole line, and the
+            // latency goes under with the tag.
+            nameLines = 2,
+            lineGap = 5.dp,
+            name = {
+                Row {
+                    if (!emoji.isNullOrBlank()) {
+                        // No tracking: a flag is two letters that the font joins
+                        // into one glyph, and letter-spacing is what stops a
+                        // shaper joining them.
+                        Text(
+                            text = emoji,
+                            style = LocalTextStyle.current.copy(fontSize = 15.sp, letterSpacing = 0.sp),
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.alignByBaseline()
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        text = pkTied(title),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
+                        // Three lines before an ellipsis. A name is the one thing on
+                        // this card nothing else repeats, and "CA · olcRTC · …" is
+                        // five rooms that read as one.
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.alignByBaseline()
+                    )
+                }
+            },
+            notes = if (tag.isNullOrBlank() && !connectedHere) {
+                null
+            } else {
+                {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!tag.isNullOrBlank()) {
+                            Text(
+                                text = tag,
+                                style = pkMono(9, 0.6),
+                                color = palette.textMuted,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                        // No "SELECTED" badge: the lime border and the lime name
+                        // already say that, three times over. "YOUR SEAT" stays
+                        // because it says something else — that the session
+                        // running right now is on this card.
+                        if (connectedHere) {
+                            PkBadge(text = stringResource(Res.string.room_your_seat_caps), highlighted = true)
+                        }
+                    }
+                }
+            },
+            end = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (trailing != null) {
+                        trailing()
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = ping.label,
+                        style = pkMono(10, 0.4),
+                        color = when (ping.state) {
+                            PkPingState.Measured -> pkPingColor(pingMs ?: 0)
+                            // Amber, not red: a probe that got nothing is a fact about
+                            // the attempt, and red here read as a verdict on the server.
+                            PkPingState.NoAnswer -> palette.accent2
+                            PkPingState.Measuring, PkPingState.Unmeasured -> palette.textMuted
+                        },
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        softWrap = false,
+                        // As wide as the widest thing this column says, in the
+                        // user's language and at the user's text size, so the tags
+                        // before it line up down the list. It was fifty-four points
+                        // whatever the text: "нет пинга" did not fit at any size.
+                        modifier = Modifier.widthIn(min = columns.ping)
+                    )
+                }
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
-                color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                // The name takes the room, and the tag beside it is one word. Both
-                // used to be sized to their content with the tag carrying the whole
-                // of `protocolLabels()`, which left "United States" nine characters
-                // and an ellipsis.
-                modifier = Modifier.weight(1f)
-            )
-            if (!tag.isNullOrBlank()) {
-                Spacer(Modifier.width(8.dp))
-                Text(text = tag, style = pkMono(9, 0.6), color = palette.textMuted, maxLines = 1)
-            }
-            if (trailing != null) {
-                Spacer(Modifier.width(4.dp))
-                trailing()
-            }
-            // No "SELECTED" badge: the lime border and the lime name already say
-            // that, three times over. "YOUR SEAT" stays because it says something
-            // else — that the session running right now is on this card.
-            if (connectedHere) {
-                Spacer(Modifier.width(8.dp))
-                PkBadge(text = stringResource(Res.string.room_your_seat_caps), highlighted = true)
-            }
-            // The title carries the weight, so nothing after it is pushed apart on
-            // its own — without this the tag and the seat count ran together as
-            // "SEI7 free".
-            Spacer(Modifier.width(10.dp))
-            if (!freeText.isNullOrBlank()) {
-                Text(
-                    text = freeText,
-                    style = pkMono(10, 0.4),
-                    color = when {
-                        freeIsFull -> palette.danger
-                        freeIsTight -> palette.accent2
-                        else -> palette.accent
-                    },
-                    maxLines = 1
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            val ping = pingReading(
-                pingMs = pingMs,
-                isMeasuring = isMeasuring,
-                failed = isOffline,
-                connectedHere = connectedHere,
-                words = boardWords()
-            )
-            Text(
-                text = ping.label,
-                style = pkMono(10, 0.4),
-                color = when (ping.state) {
-                    PkPingState.Measured -> pkPingColor(pingMs ?: 0)
-                    // Amber, not red: a probe that got nothing is a fact about the
-                    // attempt, and red here read as a verdict on the server.
-                    PkPingState.NoAnswer -> palette.accent2
-                    PkPingState.Measuring, PkPingState.Unmeasured -> palette.textMuted
-                },
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                modifier = Modifier.width(54.dp)
-            )
-        }
+        )
 
         // Said where the seats would be, because their absence is the symptom the
         // user sees first — and said at all, because silence here is what makes a
         // revoked key look like a broken app.
+        //
+        // On as many lines as they take. Each of these is the reason a card will
+        // not connect and what to do about it; cut after "KEY NO LONGER VALID ·"
+        // it is half a reason and no instruction.
         if (keyGone) {
             Text(
-                text = stringResource(Res.string.board_key_gone_caps),
+                text = pkTied(stringResource(Res.string.board_key_gone_caps)),
                 style = pkMono(9, 1.1),
                 color = palette.accent2,
-                maxLines = 1,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
         }
         if (notice != null) {
             Text(
-                text = notice,
+                text = pkTied(notice),
                 style = pkMono(9, 1.1),
                 color = palette.accent2,
-                maxLines = 1,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
         if (seats != SeatDisplay.None) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PkSeats(display = seats, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(10.dp))
-                PkSparkline(history = history, mine = connectedHere)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = seatCountText.orEmpty(),
-                    style = pkMono(10, 0.2),
-                    color = palette.textDim,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    modifier = Modifier.width(44.dp)
-                )
-            }
+            PkSeatsLine(
+                seats = seats,
+                history = history,
+                mine = connectedHere,
+                free = freeText.orEmpty(),
+                freeColor = when {
+                    freeIsFull -> palette.danger
+                    freeIsTight -> palette.accent2
+                    else -> palette.accent
+                },
+                freeColumn = columns.free
+            )
         }
 
         if (selected) {
@@ -405,35 +458,163 @@ fun PkRoomCard(
                     .height(1.dp)
                     .background(MaterialTheme.colorScheme.outlineVariant)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = wire.uppercase(),
-                    style = pkMono(9, 0.8),
-                    color = palette.textMuted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (onMeasure != null) {
-                    Spacer(Modifier.width(10.dp))
+            PkNameLine(
+                modifier = Modifier.fillMaxWidth(),
+                // The sentence wraps beside the button while two lines there hold
+                // it; when they do not, the button goes under it.
+                nameLines = 2,
+                gap = 10.dp,
+                name = {
                     Text(
-                        text = if (isMeasuring) "···" else "MEASURE",
-                        style = pkMono(10, 1.2),
-                        color = palette.link,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                            .clickable(
-                                onClickLabel = stringResource(Res.string.measure_latency),
-                                role = Role.Button
-                            ) { onMeasure() }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                        text = pkTied(wire.uppercase()),
+                        style = pkMono(9, 0.8),
+                        color = palette.textMuted,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
+                },
+                end = if (onMeasure != null) {
+                    {
+                        Text(
+                            text = if (isMeasuring) "···" else stringResource(Res.string.room_measure_caps),
+                            style = pkMono(10, 1.2),
+                            color = palette.link,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .clickable(
+                                    onClickLabel = stringResource(Res.string.measure_latency),
+                                    role = Role.Button
+                                ) { onMeasure() }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        )
+                    }
+                } else {
+                    null
                 }
+            )
+        }
+    }
+}
+
+/**
+ * How wide the two columns at the ends of a card's lines are: the latency, and
+ * the count of free seats.
+ *
+ * Measured from the words themselves rather than set in points. A column sized in
+ * points holds the text of one language at one text size.
+ */
+@Immutable
+data class PkBoardColumns(val ping: Dp = Dp.Unspecified, val free: Dp = Dp.Unspecified)
+
+/** Unspecified outside a board: a card on its own takes each text at its own width. */
+val LocalPkBoardColumns = staticCompositionLocalOf { PkBoardColumns() }
+
+/** The columns for a board in the user's language, at the user's text size. */
+@Composable
+fun rememberBoardColumns(words: BoardWords = boardWords()): PkBoardColumns {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val style = pkMono(10, 0.4)
+    return remember(words, style, density) {
+        fun widest(vararg texts: String): Dp = with(density) {
+            texts.maxOf { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width }.toDp()
+        }
+        PkBoardColumns(
+            // Three digits, not four: a latency over a second is rare enough to
+            // push its own card's tag aside rather than every card's.
+            ping = widest(words.pingMs.fill(888), words.noPing, "···"),
+            free = widest(words.seatsFree.fill(88), words.seatsFull)
+        )
+    }
+}
+
+/**
+ * The seats, how they have been moving, and how many are free.
+ *
+ * In that order of claim on the line: the words are drawn whole, the seats take
+ * what is left, and the trace is there only when the seats can spare it. Where
+ * even the seats would be squeezed into a barcode, they take a line to themselves
+ * and the words go under them.
+ */
+@Composable
+private fun PkSeatsLine(
+    seats: SeatDisplay,
+    history: List<Float>,
+    mine: Boolean,
+    free: String,
+    freeColor: Color,
+    freeColumn: Dp
+) {
+    val least = seatsLeastWidth(seats)
+    Layout(
+        modifier = Modifier.fillMaxWidth(),
+        content = {
+            PkSeats(display = seats)
+            PkSparkline(history = history, mine = mine)
+            Text(
+                text = free,
+                style = pkMono(10, 0.4),
+                color = freeColor,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = freeColumn)
+            )
+        }
+    ) { measurables, constraints ->
+        val (seatsSlot, traceSlot, wordsSlot) = measurables
+        val gap = 10.dp.roundToPx()
+        val leastPx = least.roundToPx()
+        val traceWidth = traceSlot.maxIntrinsicWidth(Constraints.Infinity)
+        // Asked how wide it would like to be, rather than told: as wide as the
+        // least it reads well at.
+        val width = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            leastPx + gap + traceWidth + gap + wordsSlot.maxIntrinsicWidth(Constraints.Infinity)
+        }
+        val wordsP = wordsSlot.measure(Constraints(maxWidth = width))
+        val beside = width - wordsP.width - if (wordsP.width > 0) gap else 0
+
+        if (beside >= leastPx) {
+            val traced = beside - traceWidth - gap >= leastPx
+            val traceP = if (traced) traceSlot.measure(Constraints()) else null
+            val seatsWidth = if (traced) beside - traceWidth - gap else beside
+            val seatsP = seatsSlot.measure(Constraints.fixedWidth(seatsWidth))
+            val height = maxOf(seatsP.height, wordsP.height, traceP?.height ?: 0)
+            layout(width, height) {
+                seatsP.placeRelative(0, (height - seatsP.height) / 2)
+                traceP?.placeRelative(seatsWidth + gap, (height - traceP.height) / 2)
+                wordsP.placeRelative(width - wordsP.width, (height - wordsP.height) / 2)
+            }
+        } else {
+            val seatsP = seatsSlot.measure(Constraints.fixedWidth(width))
+            val traced = width - wordsP.width - gap >= traceWidth
+            val traceP = if (traced) traceSlot.measure(Constraints()) else null
+            val under = seatsP.height + 6.dp.roundToPx()
+            val second = max(wordsP.height, traceP?.height ?: 0)
+            layout(width, under + second) {
+                seatsP.placeRelative(0, 0)
+                traceP?.placeRelative(0, under + (second - traceP.height) / 2)
+                wordsP.placeRelative(width - wordsP.width, under + (second - wordsP.height) / 2)
             }
         }
     }
+}
+
+/**
+ * The least width at which seats still read as seats.
+ *
+ * Six points a pip: under that sixteen of them are a barcode, and the count of
+ * them — which is the thing pips are for — cannot be taken in.
+ */
+internal fun seatsLeastWidth(display: SeatDisplay): Dp = when (display) {
+    is SeatDisplay.Pips -> (display.seats.size * 6).coerceAtLeast(56).dp
+    is SeatDisplay.Bar -> 56.dp
+    SeatDisplay.None -> 0.dp
 }
 
 @Composable
@@ -477,68 +658,112 @@ fun PkGroupHeader(
 ) {
     val palette = LocalPkPalette.current
     val turn by animateFloatAsState(if (collapsed) 0f else 90f, label = "groupChevron")
-    Row(
+    PkNameLine(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(10.dp))
-                .then(
-                    if (collapsible) {
-                        Modifier.clickable(
-                            onClickLabel = stringResource(if (collapsed) Res.string.action_expand else Res.string.action_collapse),
-                            role = Role.Button
-                        ) { onToggle() }
-                    } else {
+        // The list's name is whole before its buttons are beside it: where it
+        // does not fit there on one line, they go under it. There are three to
+        // five of them; on a phone they left "Encrypted list" seven letters, and
+        // the same seven to every other list on the screen.
+        notesIndent = if (collapsible) GROUP_TITLE_INDENT else 0.dp,
+        gap = 9.dp,
+        lineGap = 2.dp,
+        name = {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .then(
+                        if (collapsible) {
+                            Modifier.clickable(
+                                onClickLabel = stringResource(if (collapsed) Res.string.action_expand else Res.string.action_collapse),
+                                role = Role.Button
+                            ) { onToggle() }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(vertical = 6.dp)
+            ) {
+                // Beside the title's first line, not its middle: under a title
+                // that has wrapped, a chevron centred on both lines points at the
+                // gap between them.
+                val firstLine = with(LocalDensity.current) { GROUP_TITLE_LINE.toDp() }
+                if (collapsible) {
+                    Icon(
+                        imageVector = PkIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = palette.textDim,
+                        modifier = Modifier
+                            .padding(top = ((firstLine - 17.dp) / 2).coerceAtLeast(0.dp))
+                            .size(17.dp)
+                            .rotate(turn)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    text = pkTied(title),
+                    // No tracking, for the flag a provider may open its name with.
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 14.sp,
+                        lineHeight = GROUP_TITLE_LINE,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                // Folded away, a group still has to admit it holds the exit in use —
+                // otherwise the screen shows no selection at all.
+                if (collapsed && holdsSelection) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
                         Modifier
-                    }
-                )
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (collapsible) {
-                Icon(
-                    imageVector = PkIcons.ChevronRight,
-                    contentDescription = null,
-                    tint = palette.textDim,
-                    modifier = Modifier.size(17.dp).rotate(turn)
-                )
-                Spacer(Modifier.width(8.dp))
+                            .padding(top = ((firstLine - 7.dp) / 2).coerceAtLeast(0.dp))
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(palette.accent)
+                    )
+                }
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-            // Folded away, a group still has to admit it holds the exit in use —
-            // otherwise the screen shows no selection at all.
-            if (collapsed && holdsSelection) {
-                Spacer(Modifier.width(6.dp))
-                Box(Modifier.size(7.dp).clip(CircleShape).background(palette.accent))
-            }
-            if (!meta.isNullOrBlank()) {
-                Spacer(Modifier.width(9.dp))
+        },
+        notes = if (meta.isNullOrBlank()) {
+            null
+        } else {
+            {
                 Text(
                     text = meta,
                     style = pkMono(9, 1.0),
                     color = palette.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+        },
+        end = {
+            Row(
+                modifier = Modifier.offset(x = PK_GROUP_BUTTON_OVERHANG),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), content = actions)
-    }
+    )
 }
+
+/** The chevron and the space after it: where a title starts, and so where what is under it does. */
+private val GROUP_TITLE_INDENT = 25.dp
+
+/** The line a list's title is set on. */
+private val GROUP_TITLE_LINE = 19.sp
+
+/**
+ * How far a group's last button reaches past the cards' edge.
+ *
+ * Its target is forty points and its square thirty-two, so the square sits four
+ * points inside the target. Moved out by those four, the square is flush with the
+ * cards under it and the part of the target nobody sees is over the margin.
+ */
+val PK_GROUP_BUTTON_OVERHANG = 4.dp
 
 /**
  * What is left of a plan, as a bar.
@@ -588,18 +813,22 @@ fun PkPlanBar(
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label.uppercase(),
-                style = pkMono(9, 1.2),
-                color = palette.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(text = value, style = pkMono(10, 0.2), color = color, maxLines = 1)
-        }
+        PkNameLine(
+            modifier = Modifier.fillMaxWidth(),
+            lineGap = 3.dp,
+            name = {
+                Text(
+                    text = label.uppercase(),
+                    style = pkMono(9, 1.2),
+                    color = palette.textMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            end = {
+                Text(text = value, style = pkMono(10, 0.2), color = color, maxLines = 1, softWrap = false)
+            }
+        )
         Box(
             Modifier
                 .fillMaxWidth()

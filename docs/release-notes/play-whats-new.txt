@@ -1,0 +1,5 @@
+- The room list fits small screens and large text: a room's name is never cut, and what does not fit beside it goes under it.
+- Traffic is a chart now: download and upload as separate bars, with the current speed in figures.
+- Sheets and settings scroll and wrap instead of cutting their text or hiding their buttons.
+- A flag at the start of a server's name is drawn as a flag.
+- olcRTC rooms on one more meeting service connect.
