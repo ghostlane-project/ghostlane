@@ -4,18 +4,20 @@
 #
 # GitHub masks a secret's whole value, and a pool is a whole comma list, so
 # none of its entries on its own is masked until this says so. For every entry
-# of GATE_TELEMOST_ROOMS, GATE_WBSTREAM_ROOMS, GATE_VKCALLS_ROOMS and
-# GATE_JITSI_HOSTS (commas or
-# newlines separate, whitespace trimmed) it masks the entry, the entry without
-# its query or fragment, and its last path segment - a room URL's id, which is
-# what a log line that builds its own URL prints - and it masks
-# GATE_WBSTREAM_TOKEN whole.
+# of GATE_TELEMOST_ROOMS, GATE_WBSTREAM_ROOMS, GATE_VKCALLS_ROOMS,
+# GATE_MTSLINK_ROOMS and GATE_JITSI_HOSTS (commas or newlines separate,
+# whitespace trimmed) it masks the entry, the entry without its query or
+# fragment, and its last path segment - a room URL's id, which is what a log
+# line that builds its own URL prints - and it masks GATE_WBSTREAM_TOKEN
+# whole. An MTS Link entry is .../j/<owner>/<event>, two ids: the segment
+# before the last, the account the room belongs to, is masked as well.
 #
 # Nothing shorter than six characters is registered: a mask that short shreds
 # every log line it matches. gate-resolve.sh check refuses such a value before
 # anything runs with it, so it never reaches the suite unmasked. It also
 # refuses a Jitsi host with a scheme, a port or a path, so a host entry is
-# exactly the string an error prints ("lookup <host>").
+# exactly the string an error prints ("lookup <host>"), and an MTS Link entry
+# that is anything but its join link, so its last two segments are its ids.
 #
 # Prints nothing but ::add-mask:: lines. Workflow-command data is unescaped by
 # the runner (%25, %0D, %0A), so those three are escaped first; an unescaped %
@@ -33,11 +35,12 @@ mask() {
   printf '::add-mask::%s\n' "${v}"
 }
 
+# mask_list <list> [owner]: with owner, the path segment before the last too.
 mask_list() {
   local list="${1//$'\r'/,}"
   list="${list//$'\n'/,}"
   local -a parts
-  local e base seg
+  local e base seg owner
   IFS=',' read -r -a parts <<<"${list}"
   for e in "${parts[@]}"; do
     e="${e#"${e%%[![:space:]]*}"}"
@@ -49,6 +52,11 @@ mask_list() {
     base="${base%/}"
     seg="${base##*/}"
     [ "${seg}" = "${e}" ] || mask "${seg}"
+    if [ "${2:-}" = owner ]; then
+      owner="${base%/*}"
+      owner="${owner##*/}"
+      [ "${owner}" = "${seg}" ] || mask "${owner}"
+    fi
   done
 }
 
@@ -56,6 +64,7 @@ mask_list "${GATE_TELEMOST_ROOMS:-}"
 mask_list "${GATE_WBSTREAM_ROOMS:-}"
 mask_list "${GATE_JITSI_HOSTS:-}"
 mask_list "${GATE_VKCALLS_ROOMS:-}"
+mask_list "${GATE_MTSLINK_ROOMS:-}" owner
 token="${GATE_WBSTREAM_TOKEN:-}"
 token="${token#"${token%%[![:space:]]*}"}"
 token="${token%"${token##*[![:space:]]}"}"

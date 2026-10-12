@@ -148,6 +148,15 @@ data class LocationConfig(
          * (vk.com too), which the engine takes whole.
          */
         const val PROVIDER_VKCALLS = "vkcalls"
+        /**
+         * The sixth carrier (MTS Link, joined as a guest), in the engine since
+         * 2026-10-11 (olcrtc#57). Forwarded verbatim like the others; the room
+         * is a permanent meeting's join link,
+         * `https://my.mts-link.ru/j/<owner>/<event>`, which the engine takes
+         * whole. Its relay forwards VP9 and no VP8: the lane is still
+         * `vp8channel`, and the engine dresses the frames itself.
+         */
+        const val PROVIDER_MTSLINK = "mtslink"
         const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
@@ -163,7 +172,8 @@ data class LocationConfig(
             PROVIDER_WB_STREAM,
             PROVIDER_JITSI,
             PROVIDER_SALUTEJAZZ,
-            PROVIDER_VKCALLS
+            PROVIDER_VKCALLS,
+            PROVIDER_MTSLINK
         )
 
         val supportedTransports = listOf(
@@ -181,6 +191,9 @@ data class LocationConfig(
                 // The engine gates VK Calls on vp8channel alone: its SFU
                 // forwards a guest's camera, and that is the lane.
                 PROVIDER_VKCALLS -> listOf(TRANSPORT_VP8CHANNEL)
+                // MTS Link relays a guest's camera and nothing else: no data
+                // between guests, so vp8channel is the one lane.
+                PROVIDER_MTSLINK -> listOf(TRANSPORT_VP8CHANNEL)
                 else -> supportedTransports
             }
         }
@@ -192,6 +205,7 @@ data class LocationConfig(
                 PROVIDER_JITSI, "jitsi-meet", "jitsi_meet", "meet" -> PROVIDER_JITSI
                 PROVIDER_SALUTEJAZZ, "jazz", "sberjazz", "sber_jazz" -> PROVIDER_SALUTEJAZZ
                 PROVIDER_VKCALLS, "vk", "vkcall", "vk_calls", "vk-calls" -> PROVIDER_VKCALLS
+                PROVIDER_MTSLINK, "mts", "mts-link", "mts_link" -> PROVIDER_MTSLINK
                 else -> DEFAULT_BYPASS_PROVIDER
             }
         }
@@ -226,6 +240,7 @@ data class LocationConfig(
                 PROVIDER_JITSI -> "Jitsi"
                 PROVIDER_SALUTEJAZZ -> "SaluteJazz"
                 PROVIDER_VKCALLS -> "VK Calls"
+                PROVIDER_MTSLINK -> "MTS Link"
                 else -> "WB Stream"
             }
         }

@@ -25,9 +25,11 @@
 #   app_version, current_tag    current_tag is v<app_version> for a release, else empty
 #   severity                    compare severity: warn unless a caller asks for fail
 #   skip                        true only for a release dispatched with gate: skip
-#   limited                     true when a manual run narrowed providers or transports
+#   limited                     true when a manual run left a default provider out
+#                               or named its transports
 #   providers, transports
-#   legs                        {"include":[{"provider":"jitsi"},...]}, one per provider
+#   legs                        {"include":[{"provider":"jitsi"},...]}, one per
+#                               provider the run walks
 #
 # Outputs carry no secret: this job holds none. The legs check their own.
 set -euo pipefail
@@ -36,7 +38,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/gate-api.sh
 . "${here}/gate-api.sh"
 
-readonly PROVIDERS=(jitsi telemost wbstream salutejazz vkcalls)
+# PROVIDERS is every provider a leg can be named for; DEFAULT_PROVIDERS is the
+# legs of a run that names none: a release, the daily run, a pin push and a
+# manual run with no providers. wbstream is in the first alone: WB Stream closed
+# to the public on 2026-10-10 and answers every join 401, so its leg can only
+# fail, and it runs when a manual run names it.
+readonly PROVIDERS=(jitsi telemost wbstream salutejazz vkcalls mtslink)
+readonly DEFAULT_PROVIDERS=(jitsi telemost salutejazz vkcalls mtslink)
 # Masks shorter than this shred every log line they match (gate-mask.sh).
 readonly MIN=6
 readonly MIN_TOKEN=16
@@ -144,17 +152,21 @@ resolve() {
     for p in "${picked[@]}"; do
       case " ${PROVIDERS[*]} " in
         *" ${p} "*) ;;
-        *) die "unknown provider '${p}' (jitsi, telemost, wbstream, salutejazz, vkcalls)" ;;
+        *) die "unknown provider '${p}' (jitsi, telemost, wbstream, salutejazz, vkcalls, mtslink)" ;;
       esac
     done
     for p in "${PROVIDERS[@]}"; do
       case " ${picked[*]} " in *" ${p} "*) providers+=("${p}") ;; esac
     done
   else
-    providers=("${PROVIDERS[@]}")
+    providers=("${DEFAULT_PROVIDERS[@]}")
   fi
   [ "${#providers[@]}" -gt 0 ] || die "no provider chosen"
-  [ "${#providers[@]}" -eq "${#PROVIDERS[@]}" ] || limited=true
+  # A default leg left out is what limits a run; wbstream on top of them all
+  # leaves none out.
+  for p in "${DEFAULT_PROVIDERS[@]}"; do
+    case " ${providers[*]} " in *" ${p} "*) ;; *) limited=true ;; esac
+  done
   if [ "${mode}" = manual ] && [ -n "$(trim "${GATE_TRANSPORTS:-}")" ]; then
     mapfile -t picked < <(entries "${GATE_TRANSPORTS}")
     for t in "${picked[@]}"; do
@@ -215,15 +227,16 @@ describe() {
     GATE_WBSTREAM_TOKEN) echo "a WB Stream account access token; WB refuses a guest as the first participant of an idle room" ;;
     GATE_JITSI_HOSTS) echo "Jitsi host names, comma-separated" ;;
     GATE_VKCALLS_ROOMS) echo "VK Calls join links (https://vk.ru/call/join/<id>), comma-separated; the gate joins the first, which must already be a SERVER-topology call" ;;
+    GATE_MTSLINK_ROOMS) echo "MTS Link join links (https://my.mts-link.ru/j/<owner>/<event>), comma-separated; the gate joins the first, which must be a permanent meeting's" ;;
   esac
 }
 
-# check_list <provider> <secret> <required|optional> <room|host>. Messages name
-# the secret and the entry's position, never a value.
+# check_list <provider> <secret> <required|optional> <room|event|host>. Messages
+# name the secret and the entry's position, never a value.
 check_list() {
   local provider="$1" name="$2" need="$3" kind="$4"
   local -a items
-  local e base seg i=0 bad=0
+  local e base seg owner i=0 bad=0
   mapfile -t items < <(entries "${!name:-}")
   if [ "${#items[@]}" -eq 0 ]; then
     if [ "${need}" = required ]; then
@@ -244,6 +257,32 @@ check_list() {
           bad=1
         elif [ "${#seg}" -lt "${MIN}" ]; then
           err "${name}, entry ${i}: the room id is shorter than ${MIN} characters, too short to mask in a log"
+          bad=1
+        fi
+        ;;
+      event)
+        # An MTS Link join link and nothing else. gate-mask.sh and
+        # gate-scrub.py take the event from the last path segment and the
+        # owner from the one before it; the engine reads the two segments
+        # behind the first /j/ of the path, and lets /session/<id> follow
+        # them. Only in this shape are those always the same two, so no id
+        # runs unmasked or leaves unscrubbed.
+        base="${e%%[?#]*}"
+        base="${base%/}"
+        seg="${base##*/}"
+        owner="${base%/*}"
+        owner="${owner##*/}"
+        if [[ "${e}" =~ [[:space:]] ]]; then
+          err "${name}, entry ${i}: contains whitespace"
+          bad=1
+        elif [[ ! "${base}" =~ ^https?://[^/]+/j/[^/]+/[^/]+$ ]]; then
+          err "${name}, entry ${i}: not a join link (https://<host>/j/<owner>/<event>, nothing behind the event)"
+          bad=1
+        elif [ "${#seg}" -lt "${MIN}" ]; then
+          err "${name}, entry ${i}: the event id is shorter than ${MIN} characters, too short to mask in a log"
+          bad=1
+        elif [ "${#owner}" -lt "${MIN}" ]; then
+          err "${name}, entry ${i}: the owner id is shorter than ${MIN} characters, too short to mask in a log"
           bad=1
         fi
         ;;
@@ -305,7 +344,11 @@ check() {
       # Guests join by link, so no token; the room itself is the secret.
       check_list vkcalls GATE_VKCALLS_ROOMS required room || bad=1
       ;;
-    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream|salutejazz|vkcalls>" ;;
+    mtslink)
+      # As vkcalls: a guest joins a permanent meeting by its link, no token.
+      check_list mtslink GATE_MTSLINK_ROOMS required event || bad=1
+      ;;
+    *) die "usage: gate-resolve.sh check <jitsi|telemost|wbstream|salutejazz|vkcalls|mtslink>" ;;
   esac
   [ "${bad}" -eq 0 ] || exit 1
   echo "the ${provider} leg's secrets are in place" >&2

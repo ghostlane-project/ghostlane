@@ -70,6 +70,10 @@ enum RoomListTests {
               "vk is VK Calls, and its room is the whole join link")
         check(RoomList.parse("olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/V1#\(key)", keyHex: key, carrier: "wbstream") == nil,
               "a VK Calls line is not WB Stream's")
+        check(RoomList.parse("olcrtc://MTS?vp8channel@https://my.mts-link.ru/j/1/2#\(key)", keyHex: key, carrier: "mtslink")?.primary == "https://my.mts-link.ru/j/1/2",
+              "mts is MTS Link, and its room is the whole join link")
+        check(RoomList.parse("olcrtc://mtslink?vp8channel@https://my.mts-link.ru/j/1/2#\(key)", keyHex: key, carrier: "wbstream") == nil,
+              "an MTS Link line is not WB Stream's")
 
         // A carrier this file does not know joins no known carrier's group,
         // where Kotlin's picker would have called it WB Stream.

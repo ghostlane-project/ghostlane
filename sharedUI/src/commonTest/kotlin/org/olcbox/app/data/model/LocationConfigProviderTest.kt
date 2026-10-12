@@ -53,4 +53,26 @@ class LocationConfigProviderTest {
         )
         assertEquals(1, LocationConfig.supportedBypassProviders.count { it == LocationConfig.PROVIDER_VKCALLS })
     }
+
+    /**
+     * A name this table does not know falls to the default carrier, so before
+     * MTS Link had one here its line imported as a WB Stream location and the
+     * engine was sent into WB with a mts-link.ru join link for a room id.
+     */
+    @Test
+    fun mtsLinkIsItsOwnCarrierOverVp8Only() {
+        for (name in listOf("mtslink", "MTSLink", " mts ", "mts-link", "mts_link")) {
+            assertEquals(LocationConfig.PROVIDER_MTSLINK, LocationConfig.normalizeProvider(name), name)
+        }
+        assertEquals("MTS Link", LocationConfig.providerDisplayName("mts"))
+        assertEquals(
+            listOf(LocationConfig.TRANSPORT_VP8CHANNEL),
+            LocationConfig.supportedTransportsForProvider(LocationConfig.PROVIDER_MTSLINK)
+        )
+        assertEquals(
+            LocationConfig.TRANSPORT_VP8CHANNEL,
+            LocationConfig.normalizeTransport(LocationConfig.TRANSPORT_DATACHANNEL, LocationConfig.PROVIDER_MTSLINK)
+        )
+        assertEquals(1, LocationConfig.supportedBypassProviders.count { it == LocationConfig.PROVIDER_MTSLINK })
+    }
 }

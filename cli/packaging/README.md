@@ -2,8 +2,8 @@
 
 One binary, one service. It connects the lines of your subscription — an
 olcRTC room (a tunnel inside a video call: Telemost, WB Stream, SaluteJazz, VK
-Calls), VLESS Reality, Hysteria2 or XHTTP — with failover between them, and
-routes the machine through the tunnel.
+Calls, MTS Link), VLESS Reality, Hysteria2 or XHTTP — with failover between
+them, and routes the machine through the tunnel.
 
     ghostlane add <list-url>            # your subscription (plain or encrypted), or one olcrtc:// / vless:// / hy2:// line
     ghostlane list                      # every line, with its country and carrier
@@ -29,10 +29,10 @@ daemon runs as user `ghostlane` with CAP_NET_ADMIN; its files live under
 selection survives a reboot: the service reconnects at boot.
 
 Lines. `connect DE` tries the country's lines in the list's order (rooms:
-Telemost, WB Stream, SaluteJazz, VK Calls; then servers); a line that does not
-answer within a minute, or three failed liveness probes in a row, moves it to
-the next; the last working line is tried first next time. `connect 6` names
-one line by its number in `list`.
+Telemost, WB Stream, MTS Link, SaluteJazz, VK Calls; then servers); a line
+that does not answer within a minute, or three failed liveness probes in a
+row, moves it to the next; the last working line is tried first next time.
+`connect 6` names one line by its number in `list`.
 
 Not in this version: VLESS over grpc/ws, trojan, shadowsocks, vmess; IPv6
 through the tunnel. Full guide: docs/cli.md in the repository.

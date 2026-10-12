@@ -2,9 +2,10 @@
 
 The headless Ghostlane: one static binary and a systemd service that connect
 the lines of your subscription — an olcRTC room (a tunnel inside an ordinary
-video call on Yandex Telemost, WB Stream, Sber SaluteJazz or VK Calls), VLESS
-Reality, Hysteria2 or XHTTP — with failover between them, and route a Linux
-box through the tunnel. Servers, VPS boxes, routers, anything without a screen.
+video call on Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls or MTS
+Link), VLESS Reality, Hysteria2 or XHTTP — with failover between them, and
+route a Linux box through the tunnel. Servers, VPS boxes, routers, anything
+without a screen.
 
 ```sh
 curl -fsSL https://github.com/ghostlane-project/ghostlane/releases/latest/download/install.sh | sh
