@@ -208,11 +208,16 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 #      .github/workflows/ios-frameworks.yml's env;
 #   3. run "iOS Frameworks" so the Cores for the new CORES_TAG exist;
 #   4. push (the push runs the gate against the new pin), then release.
+# f9edaa7f1ab5 -> bac09891b3b4 (olcrtc#57): the mtslink carrier - the engine joins an
+# endless meeting as a guest, dresses vp8channel as VP9 for an SFU that forwards no VP8,
+# and the gate walks it on a pool room (GATE_MTSLINK_ROOMS); telemost's cells are known
+# failures under olcrtc#58 until the service forwards guest tracks again, and WB Stream
+# runs only when named (the service closed its beta). Same API.
 # The pin must carry internal/gate. aaffe1e05c3b predates it and the gate refuses
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260929121845-f9edaa7f1ab5}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261012005350-bac09891b3b4}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -286,7 +291,7 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20260929121845-f9edaa7f1ab5}"
 # 33 -> 34: the engine pin above (f9edaa7f1ab5, olcrtc#52): the vkcalls carrier
 # (VK Calls, guest join, vp8channel) and a DTLS ClientHello profile; the API
 # grew Runtime.SetDTLSProfile, which the extension and the app's probes call.
-CORES_BUILD="${CORES_BUILD:-34}"
+CORES_BUILD="${CORES_BUILD:-35}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
