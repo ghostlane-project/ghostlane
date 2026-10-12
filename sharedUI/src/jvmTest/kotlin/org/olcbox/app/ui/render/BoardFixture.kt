@@ -4,6 +4,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.SubscriptionMetadata
@@ -190,7 +192,9 @@ internal object BoardFixture {
         /** No server list at all: the screen a new user opens. */
         val empty: Boolean = false,
         /** Something went wrong, said in the band under the status strip. */
-        val notice: String? = null
+        val notice: String? = null,
+        /** How far down the list the screen opens, in points: for a picture of what is under the fold. */
+        val scrolledBy: Int = 0
     )
 
     @Composable
@@ -337,7 +341,7 @@ internal object BoardFixture {
                 onGetSubscriptionClick = {},
                 canPing = { it.kind == LocationKind.Olcrtc }
             ),
-            scrollState = rememberScrollState(),
+            scrollState = rememberScrollState(initial = with(LocalDensity.current) { scene.scrolledBy.dp.roundToPx() }),
             snackbarHostState = remember { SnackbarHostState() }
         )
     }

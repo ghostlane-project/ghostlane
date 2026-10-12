@@ -29,7 +29,10 @@ class BoardRenderTest {
             "idle" to BoardFixture.Scene(connected = false, selectedId = BoardFixture.FLAGGED, seats = false),
             "admin" to BoardFixture.Scene(connected = true, admin = true, lowest = true),
             "new" to BoardFixture.Scene(connected = false, empty = true),
-            "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE)
+            "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE),
+            // The list itself where the head has scrolled away with it: what a
+            // short screen with large text shows once it is scrolled.
+            "in-room-scrolled" to BoardFixture.Scene(connected = true, scrolledBy = 560)
         )
         for ((sceneName, scene) in scenes) {
             for (phone in phones) for (scale in scales) for (language in languages) {
