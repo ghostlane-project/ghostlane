@@ -37,6 +37,31 @@ require(androidAbiFilters.isNotEmpty()) {
     "olcbox.android.abiFilters must contain at least one Android ABI"
 }
 
+composeCompiler {
+    // No Compose mapping file in a minified build.
+    //
+    // The plugin makes one for every minified variant — a table that turns the
+    // group keys in a Compose stack trace back into names — and to make it,
+    // downloads a tool with the compiler's own version:
+    // org.jetbrains.kotlin:compose-group-mapping:2.4.10-375. That version is a
+    // development build, and the repository that held it keeps development
+    // builds for a while: on 2026-10-12 the tool was gone (404, with 2.4.10 and
+    // the 2.4.2x builds listed beside the gap) while the compiler itself was
+    // still there. The release build failed in its first twenty seconds,
+    // resolving `composeMappingProducerClasspath`. It had gone on working until
+    // then only because the runner kept the jar in a cache, and a cache lives a
+    // week from its last use, which was the previous release.
+    //
+    // Nothing reads the table: the app turns no Compose diagnostic traces on, and
+    // the R8 mapping that deobfuscates an ordinary stack trace is made as before.
+    // The debug build and the pull-request checks never asked for the tool, which
+    // is why they stayed green over a release build that could not start.
+    //
+    // The cure is a compiler that is a release rather than a build of one; this
+    // is what lets a release be built until the pin moves.
+    includeComposeMappingFile.set(false)
+}
+
 android {
     namespace = "org.olcbox.app"
     compileSdk = 37
