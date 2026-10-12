@@ -263,11 +263,17 @@ fun PkThroughput(traffic: ThroughputWindow, modifier: Modifier = Modifier) {
         }
     ) { measurables, constraints ->
         val (chartSlot, receivedSlot, sentSlot) = measurables
-        val width = constraints.maxWidth
+        val gap = RATES_GAP.roundToPx()
+        // Asked how wide it would like to be: a second to a bar, and the rates.
+        val width = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            (BAR_SLOT * traffic.seconds).roundToPx() + gap +
+                max(receivedSlot.maxIntrinsicWidth(Constraints.Infinity), sentSlot.maxIntrinsicWidth(Constraints.Infinity))
+        }
         val receivedP = receivedSlot.measure(Constraints(maxWidth = width))
         val sentP = sentSlot.measure(Constraints(maxWidth = width))
         val rates = max(receivedP.width, sentP.width)
-        val gap = RATES_GAP.roundToPx()
         val beside = width - rates - gap
 
         if (beside >= CHART_LEAST_WIDTH.roundToPx()) {

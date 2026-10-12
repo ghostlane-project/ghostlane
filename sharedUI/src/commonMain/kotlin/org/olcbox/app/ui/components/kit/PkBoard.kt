@@ -566,12 +566,18 @@ private fun PkSeatsLine(
         }
     ) { measurables, constraints ->
         val (seatsSlot, traceSlot, wordsSlot) = measurables
-        val width = constraints.maxWidth
         val gap = 10.dp.roundToPx()
-        val wordsP = wordsSlot.measure(Constraints(maxWidth = width))
-        val traceWidth = traceSlot.maxIntrinsicWidth(Constraints.Infinity)
-        val beside = width - wordsP.width - if (wordsP.width > 0) gap else 0
         val leastPx = least.roundToPx()
+        val traceWidth = traceSlot.maxIntrinsicWidth(Constraints.Infinity)
+        // Asked how wide it would like to be, rather than told: as wide as the
+        // least it reads well at.
+        val width = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            leastPx + gap + traceWidth + gap + wordsSlot.maxIntrinsicWidth(Constraints.Infinity)
+        }
+        val wordsP = wordsSlot.measure(Constraints(maxWidth = width))
+        val beside = width - wordsP.width - if (wordsP.width > 0) gap else 0
 
         if (beside >= leastPx) {
             val traced = beside - traceWidth - gap >= leastPx

@@ -249,12 +249,18 @@ fun PkHeaderRow(
             }
         }
     ) { measurables, constraints ->
-        val width = constraints.maxWidth
         val brandSlot = measurables[0]
         val tagSlot = measurables[1]
         val buttonSlots = measurables.drop(2)
 
         val brandWanted = brandSlot.maxIntrinsicWidth(Constraints.Infinity)
+        // Asked how wide it would like to be: everything, at full size.
+        val width = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            brandWanted + HEADER_TAG_GAP.roundToPx() + tagSlot.maxIntrinsicWidth(Constraints.Infinity) +
+                HEADER_BUTTON_GAP.roundToPx() + buttonSlots.size * (HEADER_BUTTON + HEADER_BUTTON_GAP).roundToPx()
+        }
         val fit = headerFit(
             width = width,
             brand = brandWanted,
@@ -532,15 +538,22 @@ private fun PkStatusLines(
         }
     ) { measurables, constraints ->
         val (dotSlot, labelSlot, metaSlot, valueSlot) = measurables
-        val width = constraints.maxWidth
         val dotP = dotSlot.measure(Constraints())
         val lead = dotP.width + STATUS_DOT_GAP.roundToPx()
+        val labelWanted = labelSlot.maxIntrinsicWidth(Constraints.Infinity)
+        val metaWanted = metaSlot.maxIntrinsicWidth(Constraints.Infinity)
+        // Asked how wide it would like to be: wide enough for the shape it had
+        // when there was room.
+        val width = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            lead + max(labelWanted, metaWanted) + STATUS_VALUE_GAP.roundToPx() +
+                valueSlot.maxIntrinsicWidth(Constraints.Infinity)
+        }
         val column = (width - lead).coerceAtLeast(0)
         val valueP = valueSlot.measure(Constraints(maxWidth = column))
         val valueRoom = if (valueP.width > 0) valueP.width + STATUS_VALUE_GAP.roundToPx() else 0
         val beside = (column - valueRoom).coerceAtLeast(0)
-        val labelWanted = labelSlot.maxIntrinsicWidth(Constraints.Infinity)
-        val metaWanted = metaSlot.maxIntrinsicWidth(Constraints.Infinity)
         val textGap = STATUS_TEXT_GAP.roundToPx()
 
         when {
