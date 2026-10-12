@@ -414,4 +414,28 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "jvmTe
     // so a machine set to another language must not change what they see.
     systemProperty("user.language", "en")
     systemProperty("user.country", "US")
+
+    // The layout tests measure text, and a text is as wide as its font. What the
+    // app's own fonts do not cover — Cyrillic in the display face, for one — is
+    // drawn in whatever the machine has, which is one font on this runner and
+    // another on the next, and a test that passes by the width of a stranger's
+    // font is not a test. With fontconfig shown the app's fonts and no others,
+    // every Linux machine measures the same letters. (A Mac has no fontconfig and
+    // falls back as a Mac does.)
+    val testFonts = layout.buildDirectory.dir("test-fonts")
+    val appFonts = layout.projectDirectory.dir("src/commonMain/composeResources/font")
+    doFirst {
+        val dir = testFonts.get().asFile.apply { mkdirs() }
+        dir.resolve("fonts.conf").writeText(
+            """
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+            <fontconfig>
+              <dir>${appFonts.asFile.absolutePath}</dir>
+              <cachedir>${dir.resolve("cache").absolutePath}</cachedir>
+            </fontconfig>
+            """.trimIndent() + "\n"
+        )
+    }
+    environment("FONTCONFIG_FILE", testFonts.get().asFile.resolve("fonts.conf").absolutePath)
 }
