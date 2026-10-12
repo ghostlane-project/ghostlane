@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +76,10 @@ internal fun CameraRationaleBody(onContinue: () -> Unit) {
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(1.dp, palette.hairline, RoundedCornerShape(16.dp))
+                // The button under this is the only way out of the sheet, so it is
+                // measured first and the reasons scroll in what is left.
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
                 .padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {

@@ -248,39 +248,6 @@ fun appendOccupancy(history: List<Float>?, slots: OlcrtcSlots): List<Float> {
     return ((history ?: emptyList()) + value).takeLast(OCCUPANCY_HISTORY_LIMIT)
 }
 
-// ── the live throughput trace ──────────────────────────────────────────────
-
-/** How many one-second samples the status strip's trace remembers. */
-const val THROUGHPUT_TRACE_LIMIT = 44
-
-/**
- * The floor the trace scales against, per one-second sample.
- *
- * Scaling purely against the window's own peak would make any traffic at all fill
- * the height — a trickle of keepalives would draw the same mountain range as a
- * download, which is a lie told confidently. Below this the trace stays near the
- * floor and reads as "barely anything", which is what it is.
- */
-const val THROUGHPUT_TRACE_FLOOR_BYTES = 96L * 1024L
-
-/** Appends one sample of bytes-since-last-tick. Negative deltas read as zero. */
-fun appendThroughput(history: List<Long>, deltaBytes: Long): List<Long> =
-    (history + deltaBytes.coerceAtLeast(0L)).takeLast(THROUGHPUT_TRACE_LIMIT)
-
-/**
- * Scales a throughput window into 0f..1f for drawing.
- *
- * Against the window's own peak, so the shape of the last minute is always
- * legible whatever the absolute rate — but never below
- * [THROUGHPUT_TRACE_FLOOR_BYTES], so an idle tunnel draws a flat line along the
- * bottom instead of a dramatic one made of nothing.
- */
-fun throughputTrace(history: List<Long>): List<Float> {
-    if (history.isEmpty()) return emptyList()
-    val peak = maxOf(history.max(), THROUGHPUT_TRACE_FLOOR_BYTES)
-    return history.map { (it.toDouble() / peak).coerceIn(0.0, 1.0).toFloat() }
-}
-
 // ── the action bar ─────────────────────────────────────────────────────────
 
 enum class PkActionKind {
@@ -354,15 +321,26 @@ internal fun shortenExitName(raw: String, max: Int = ACTION_NAME_MAX): String {
     val name = raw.trim()
     if (name.length <= max) return name
     val head = name.take(max)
-    val cut = head.indexOfLast { it == ' ' || it == '-' || it == '·' || it == ',' }
+    val cut = head.indexOfLast { it in NAME_SEPARATORS }
     // A separator too near the start would leave a stub, which reads worse than
     // an ellipsis on a name that simply is one long word.
     //
     // [max] is the budget for the finished string, so the ellipsis comes out of
     // it rather than being added on top — the button has a width, not a
     // character count.
-    return if (cut >= max / 2) head.take(cut).trimEnd() else name.take(max - 1).trimEnd() + "…"
+    //
+    // The separator the name was cut at goes with what was cut. A name's parts
+    // are joined by " · ", which is three characters and two places to cut at:
+    // cut at its second space, "DE · olcRTC · WB" came out as "DE · olcRTC ·" —
+    // a name that ends by promising another part.
+    return if (cut >= max / 2) {
+        head.take(cut).trimEnd { it in NAME_SEPARATORS }
+    } else {
+        name.take(max - 1).trimEnd() + "…"
+    }
 }
+
+private const val NAME_SEPARATORS = " -·,"
 
 // ── board head ─────────────────────────────────────────────────────────────
 

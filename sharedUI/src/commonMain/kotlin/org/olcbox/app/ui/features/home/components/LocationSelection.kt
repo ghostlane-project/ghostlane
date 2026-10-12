@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,6 +58,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -76,6 +78,8 @@ import org.olcbox.app.net.OlcrtcSlots
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.kit.PkDashedAction
+import org.olcbox.app.ui.components.kit.LocalPkBoardColumns
+import org.olcbox.app.ui.components.kit.PK_GROUP_BUTTON_OVERHANG
 import org.olcbox.app.ui.components.kit.PkFilterChip
 import org.olcbox.app.ui.components.kit.PkGroupHeader
 import org.olcbox.app.ui.components.kit.PkIconButton
@@ -88,8 +92,8 @@ import org.olcbox.app.ui.components.kit.pkSubscriptionHost
 import org.olcbox.app.ui.components.kit.pkSubscriptionIsSecret
 import org.olcbox.app.update.currentUpdatePlatform
 import org.olcbox.app.ui.components.kit.planFraction
+import org.olcbox.app.ui.components.kit.rememberBoardColumns
 import org.olcbox.app.ui.components.kit.roomIsBlocked
-import org.olcbox.app.ui.components.kit.seatCountText
 import org.olcbox.app.ui.components.kit.seatDisplay
 import org.olcbox.app.ui.components.kit.seatFreeText
 import org.olcbox.app.ui.components.kit.transportTag
@@ -344,6 +348,9 @@ fun RoomBoard(
         saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })
     ) { mutableStateListOf<String>() }
 
+    // One measurement for the whole board, so the columns at the ends of the
+    // cards' lines are the same width on every card.
+    CompositionLocalProvider(LocalPkBoardColumns provides rememberBoardColumns()) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (pingsStale) {
             Text(stringResource(Res.string.pings_stale), style = MaterialTheme.typography.labelSmall)
@@ -400,7 +407,8 @@ fun RoomBoard(
                             contentDescription = stringResource(Res.string.provider_site),
                             onClick = { onOpenUrl(url) },
                             size = 32,
-                            corner = 9
+                            corner = 9,
+                            touch = 40
                         )
                     }
                     subscription?.supportUrl?.takeIf { it.isNotBlank() }?.let { url ->
@@ -409,7 +417,8 @@ fun RoomBoard(
                             contentDescription = stringResource(Res.string.provider_support),
                             onClick = { onOpenUrl(url) },
                             size = 32,
-                            corner = 9
+                            corner = 9,
+                            touch = 40
                         )
                     }
                     if (group.locations.any { it.config?.let(canPing) == true }) {
@@ -426,7 +435,13 @@ fun RoomBoard(
                         PkIconButton(
                             icon = PkIcons.Delete,
                             contentDescription = stringResource(Res.string.remove_server_list),
-                            onClick = { onDeleteSubscriptionClick(groupUrl) }
+                            onClick = { onDeleteSubscriptionClick(groupUrl) },
+                            // The size of the four beside it. It was the header's
+                            // forty points, by the default, and stood a head taller
+                            // than the row it closes.
+                            size = 32,
+                            corner = 9,
+                            touch = 40
                         )
                     }
                 }
@@ -463,7 +478,6 @@ fun RoomBoard(
                                 connectedHere = lowestSelected && isConnected,
                                 blocked = false,
                                 seats = SeatDisplay.None,
-                                seatCountText = null,
                                 freeText = null,
                                 freeIsFull = false,
                                 freeIsTight = false,
@@ -523,7 +537,8 @@ fun RoomBoard(
                     if (model.customLocations.any { it.config?.let(canPing) == true }) {
                         LatencyButton(
                             isRunning = isCustomPinging,
-                            onClick = { onMeasure(customIds) }
+                            onClick = { onMeasure(customIds) },
+                            modifier = Modifier.offset(x = PK_GROUP_BUTTON_OVERHANG)
                         )
                     }
                 }
@@ -568,6 +583,7 @@ fun RoomBoard(
             icon = Icons.Outlined.Add,
             onClick = onAddSubscriptionClick
         )
+    }
     }
 }
 
@@ -619,7 +635,6 @@ private fun BoardRoomCard(
         connectedHere = connectedHere,
         blocked = roomIsBlocked(slots, mine = connectedHere),
         seats = seats,
-        seatCountText = seatCountText(slots),
         freeText = seatFreeText(slots, boardWords()),
         freeIsFull = slots != null && slots.slots_free <= 0,
         freeIsTight = slots != null && slots.slots_free in 1..2,

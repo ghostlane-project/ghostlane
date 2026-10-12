@@ -220,6 +220,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.olcbox.app.ui.components.kit.PkNameLine
 import org.olcbox.app.ui.components.kit.PkScreenHeader
 import org.olcbox.app.ui.components.kit.PkSwitch
 import org.olcbox.app.ui.components.kit.pkMono
@@ -512,6 +513,9 @@ private fun AppSettingsHubContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Scrolls: these rows are taller than a small phone once the text is
+            // enlarged, and unscrolled the last of them were squeezed out of sight.
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -590,6 +594,7 @@ private fun ConnectionSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(top = 16.dp, bottom = 32.dp)
     ) {
@@ -697,6 +702,7 @@ private fun ConnectionModeSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -752,6 +758,7 @@ private fun SocksProxySettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -814,6 +821,7 @@ private fun SplitTunnelingSettingsContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
             .padding(bottom = 32.dp)
     ) {
@@ -1204,27 +1212,38 @@ private fun ApplicationLogsSettingsContent(
             .padding(horizontal = 24.dp)
             .padding(top = 16.dp, bottom = 24.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SettingsDetailHeader(
-                title = stringResource(Res.string.app_logs_title),
-                subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
-                onBack = onBack,
-                modifier = Modifier.weight(1f)
-            )
-
-            TextButton(
-                enabled = logs.isNotEmpty(),
-                onClick = onSaveClick
-            ) {
-                Text(stringResource(Res.string.action_save))
+        // The page's name first; its two buttons beside it only while the name
+        // is whole there, and under it otherwise.
+        PkNameLine(
+            modifier = Modifier.fillMaxWidth(),
+            gap = 4.dp,
+            lineGap = 0.dp,
+            name = {
+                SettingsDetailHeader(
+                    title = stringResource(Res.string.app_logs_title),
+                    subtitle = if (logs.isEmpty()) stringResource(Res.string.logs_no_entries) else pluralStringResource(Res.plurals.logs_entries, logs.size, logs.size),
+                    onBack = onBack
+                )
+            },
+            end = {
+                // Wraps: at a large text size the two do not fit a narrow line even
+                // with the line to themselves.
+                FlowRow(horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        enabled = logs.isNotEmpty(),
+                        onClick = onSaveClick
+                    ) {
+                        Text(stringResource(Res.string.action_save), maxLines = 1, softWrap = false)
+                    }
+                    TextButton(
+                        enabled = logs.isNotEmpty(),
+                        onClick = onShareClick
+                    ) {
+                        Text(stringResource(Res.string.action_share), maxLines = 1, softWrap = false)
+                    }
+                }
             }
-            TextButton(
-                enabled = logs.isNotEmpty(),
-                onClick = onShareClick
-            ) {
-                Text(stringResource(Res.string.action_share))
-            }
-        }
+        )
 
         Spacer(Modifier.height(16.dp))
 
@@ -1328,7 +1347,7 @@ private fun UpdatesSettingsContent(
             onClick = onCheckUpdatesClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .heightIn(min = 52.dp)
         ) {
             Text(stringResource(Res.string.action_check_now))
         }
@@ -1438,7 +1457,7 @@ private fun SubscriptionShareRow(
                         color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
@@ -1452,7 +1471,7 @@ private fun SubscriptionShareRow(
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -1462,7 +1481,7 @@ private fun SubscriptionShareRow(
                 text = item.subscriptionSummary(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
-                maxLines = 2,
+                maxLines = 5,
                 overflow = TextOverflow.Ellipsis
             )
 
@@ -1529,7 +1548,7 @@ private fun SettingsNavigationRow(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(3.dp))
@@ -1537,7 +1556,7 @@ private fun SettingsNavigationRow(
                     text = value,
                     style = pkMono(10, 0.5),
                     color = LocalPkPalette.current.textDim,
-                    maxLines = 2,
+                    maxLines = 5,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1567,7 +1586,8 @@ private fun SettingsSwitchRow(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
+            // At least this: a row as tall as its text, not a text cut to its row.
+            .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled) { onCheckedChange(!checked) },
         shape = RoundedCornerShape(18.dp),
@@ -1575,7 +1595,7 @@ private fun SettingsSwitchRow(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -1599,14 +1619,14 @@ private fun SettingsSwitchRow(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = value,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1690,7 +1710,8 @@ private fun SplitTunnelRoutingOption(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(74.dp)
+            // At least this: a row as tall as its text, not a text cut to its row.
+            .heightIn(min = 74.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
@@ -1698,7 +1719,7 @@ private fun SplitTunnelRoutingOption(
         border = BorderStroke(1.dp, borderColor)
     ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, end = 10.dp),
+            modifier = Modifier.padding(start = 16.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -1730,14 +1751,14 @@ private fun SplitTunnelRoutingOption(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = subtitle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1780,7 +1801,8 @@ private fun SelectableSettingsCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(82.dp)
+            // At least this: a row as tall as its text, not a text cut to its row.
+            .heightIn(min = 82.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
@@ -1788,7 +1810,7 @@ private fun SelectableSettingsCard(
         border = BorderStroke(1.dp, borderColor)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -1820,14 +1842,14 @@ private fun SelectableSettingsCard(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = subtitle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1888,14 +1910,14 @@ private fun SplitTunnelStatusCard(
                     text = settings.mode.statusTitle(settings),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = splitTunnelStatusSubtitle(selectedMode, isConnectionActive),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1938,14 +1960,14 @@ private fun SplitTunnelNoListCard() {
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = stringResource(Res.string.split_same_route),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -2230,7 +2252,8 @@ private fun SplitTunnelAppRow(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(76.dp)
+            // At least this: a row as tall as its text, not a text cut to its row.
+            .heightIn(min = 76.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
@@ -2238,7 +2261,7 @@ private fun SplitTunnelAppRow(
         border = BorderStroke(1.dp, borderColor)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -2274,7 +2297,7 @@ private fun SplitTunnelAppRow(
                     color = colors.onSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
 
@@ -2282,7 +2305,7 @@ private fun SplitTunnelAppRow(
                     text = app.packageName,
                     color = colors.onSurfaceVariant,
                     fontSize = 12.sp,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -2324,7 +2347,7 @@ private fun EmptyAppsState(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(128.dp),
+            .heightIn(min = 128.dp),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)

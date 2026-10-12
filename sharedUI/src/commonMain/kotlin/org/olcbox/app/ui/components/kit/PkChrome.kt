@@ -11,10 +11,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -44,27 +47,28 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
+import kotlin.math.max
 
 /**
  * The furniture around the board: the header row, the status strip, the head of
@@ -117,7 +121,17 @@ fun PkPulseDot(color: Color, pulse: Boolean, size: Int = 8) {
 
 // ── icon buttons ───────────────────────────────────────────────────────────
 
-/** A bordered square, not a Material ripple circle. 40dp in the header, 32dp in a group. */
+/**
+ * A bordered square, not a Material ripple circle. 40dp in the header, 32dp in a group.
+ *
+ * [touch] is how large the thing a finger lands on is, where that is more than
+ * the square that is drawn: a group's buttons are thirty-two points to look at
+ * and forty to press, which is the difference between a row of five that can be
+ * used and one that takes two tries.
+ *
+ * [iconModifier] is for what moves — the arrows that turn while a list is
+ * fetched. Turning the whole button turned its border with it.
+ */
 @Composable
 fun PkIconButton(
     icon: ImageVector,
@@ -127,30 +141,55 @@ fun PkIconButton(
     size: Int = 40,
     corner: Int = 12,
     tint: Color? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    touch: Int = size,
+    iconModifier: Modifier = Modifier
 ) {
     val palette = LocalPkPalette.current
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
-            .size(size.dp)
-            .clip(RoundedCornerShape(corner.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(corner.dp))
-            .clickable(enabled = enabled, onClickLabel = contentDescription, role = Role.Button) {
-                onClick()
-            },
+            .size(max(size, touch).dp)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClickLabel = contentDescription,
+                role = Role.Button
+            ) { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = (tint ?: palette.textDim).copy(alpha = if (enabled) 1f else 0.4f),
-            modifier = Modifier.size((size * 0.475f).dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(size.dp)
+                .clip(RoundedCornerShape(corner.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(corner.dp))
+                // The press is shown on the square, wherever in the target it landed.
+                .indication(interaction, LocalIndication.current),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = (tint ?: palette.textDim).copy(alpha = if (enabled) 1f else 0.4f),
+                modifier = iconModifier.size((size * 0.475f).dp)
+            )
+        }
     }
 }
 
 // ── header row ─────────────────────────────────────────────────────────────
+
+/** One button of the header: what it shows, what it is called, what it does. */
+@Immutable
+data class PkHeaderAction(
+    val icon: ImageVector,
+    val label: String,
+    val onClick: () -> Unit,
+    /** Drawn at full strength: the one a new user needs first. */
+    val strong: Boolean = false
+)
 
 /**
  * Brand and tag on the left, actions on the right.
@@ -158,50 +197,135 @@ fun PkIconButton(
  * [onBrandTap] carries the hidden admin gesture that used to live on the app
  * bar's title — seven taps inside three seconds. It has no indication and no
  * ripple, which is the point of it.
+ *
+ * The three do not have equal claims on the row. The wordmark is drawn whole; the
+ * buttons come next, at forty points where there is room and smaller where there
+ * is not; and the tag is there only when all of it is, because half a tag —
+ * `OLCRTC COR…` — reads as a mistake where no tag reads as nothing.
  */
 @Composable
 fun PkHeaderRow(
     tag: String,
     onBrandTap: () -> Unit,
-    modifier: Modifier = Modifier,
-    actions: @Composable RowScope.() -> Unit
+    actions: List<PkHeaderAction>,
+    modifier: Modifier = Modifier
 ) {
     val palette = LocalPkPalette.current
     val tapInteraction = remember { MutableInteractionSource() }
-    Row(
+    val tap = Modifier.clickable(interactionSource = tapInteraction, indication = null) { onBrandTap() }
+    Layout(
         modifier = modifier
             .fillMaxWidth()
             .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(interactionSource = tapInteraction, indication = null) { onBrandTap() },
-            verticalAlignment = Alignment.Bottom
-        ) {
+        content = {
             Text(
                 text = PkBrand.name,
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = 19.sp,
+                    fontSize = pkMarkSp(19),
+                    lineHeight = pkMarkSp(28),
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.2).sp
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                modifier = tap
             )
-            Spacer(Modifier.width(8.dp))
             Text(
                 text = tag,
-                style = pkMono(9, 1.4),
+                style = pkMono(9, 1.4).copy(fontSize = pkMarkSp(9), lineHeight = pkMarkSp(16)),
                 color = palette.textMuted,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 2.dp)
+                softWrap = false,
+                modifier = tap
             )
+            actions.forEach { action ->
+                PkIconButton(
+                    icon = action.icon,
+                    contentDescription = action.label,
+                    onClick = action.onClick,
+                    tint = if (action.strong) MaterialTheme.colorScheme.onSurface else null
+                )
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
+    ) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val brandSlot = measurables[0]
+        val tagSlot = measurables[1]
+        val buttonSlots = measurables.drop(2)
+
+        val brandWanted = brandSlot.maxIntrinsicWidth(Constraints.Infinity)
+        val fit = headerFit(
+            width = width,
+            brand = brandWanted,
+            tag = tagSlot.maxIntrinsicWidth(Constraints.Infinity),
+            buttons = buttonSlots.size,
+            full = HEADER_BUTTON.roundToPx(),
+            least = HEADER_BUTTON_LEAST.roundToPx(),
+            gap = HEADER_BUTTON_GAP.roundToPx(),
+            tightGap = HEADER_BUTTON_TIGHT_GAP.roundToPx(),
+            tagGap = HEADER_TAG_GAP.roundToPx()
+        )
+        val buttons = buttonSlots.map { it.measure(Constraints.fixed(fit.button, fit.button)) }
+        val buttonsWidth = fit.button * buttons.size + fit.gap * (buttons.size - 1).coerceAtLeast(0)
+        val brandP = brandSlot.measure(
+            Constraints(maxWidth = (width - buttonsWidth - fit.gap).coerceAtLeast(0))
+        )
+        val tagP = if (fit.showTag) tagSlot.measure(Constraints()) else null
+        val line = alignOnLine(brandP, tagP)
+        val height = max(line.height, fit.button)
+        val lettersTop = (height - line.height) / 2
+
+        layout(width, height) {
+            brandP.placeRelative(0, lettersTop + line.ys[0])
+            tagP?.placeRelative(brandP.width + HEADER_TAG_GAP.roundToPx(), lettersTop + line.ys[1])
+            var x = width - buttonsWidth
+            buttons.forEach { button ->
+                button.placeRelative(x, (height - fit.button) / 2)
+                x += fit.button + fit.gap
+            }
+        }
     }
+}
+
+private val HEADER_BUTTON = 40.dp
+private val HEADER_BUTTON_LEAST = 26.dp
+private val HEADER_BUTTON_GAP = 8.dp
+private val HEADER_BUTTON_TIGHT_GAP = 5.dp
+private val HEADER_TAG_GAP = 8.dp
+
+/** How wide the header's buttons are, how far apart, and whether the tag is drawn. */
+internal data class PkHeaderFit(val button: Int, val gap: Int, val showTag: Boolean)
+
+/**
+ * Divides the header's width, in pixels.
+ *
+ * The buttons keep their full size while they and the wordmark fit. When they do
+ * not — a narrow phone with the admin's two extra buttons — they close up and
+ * then shrink, down to [least]: small for a thumb, and reached only by five
+ * buttons on the narrowest phone with its text enlarged, which is the admin's own
+ * screen. The tag asks last and gets only a whole place.
+ */
+internal fun headerFit(
+    width: Int,
+    brand: Int,
+    tag: Int,
+    buttons: Int,
+    full: Int,
+    least: Int,
+    gap: Int,
+    tightGap: Int,
+    tagGap: Int
+): PkHeaderFit {
+    if (buttons <= 0) return PkHeaderFit(button = full, gap = gap, showTag = brand + tagGap + tag <= width)
+    val gaps = buttons - 1
+    val room = width - brand - gap
+    val fullWidth = buttons * full + gaps * gap
+    if (fullWidth <= room) {
+        return PkHeaderFit(button = full, gap = gap, showTag = tag > 0 && tag + tagGap <= room - fullWidth)
+    }
+    val tight = (room - gaps * tightGap) / buttons
+    return PkHeaderFit(button = tight.coerceIn(least, full), gap = tightGap, showTag = false)
 }
 
 /**
@@ -243,20 +367,23 @@ fun PkScreenHeader(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = 17.sp,
+                    fontSize = pkDisplaySp(17),
+                    lineHeight = pkDisplaySp(22),
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                // Two lines before it is cut: "Routing" in another language at a
+                // larger size is one word that does not fit one line.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             if (!subtitle.isNullOrBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = subtitle.uppercase(),
+                    text = pkTied(subtitle.uppercase()),
                     style = pkMono(9, 1.3),
                     color = palette.textDim,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -294,7 +421,8 @@ fun PkStatusStrip(
      */
     meta: () -> String = { "" },
     value: () -> String = { "" },
-    trafficTrace: () -> List<Float> = { emptyList() }
+    /** The session's traffic, second by second; drawn while a session is up. */
+    traffic: ThroughputWindow? = null
 ) {
     val palette = LocalPkPalette.current
     val stateColor = when {
@@ -315,96 +443,155 @@ fun PkStatusStrip(
             .border(1.dp, borderColor, RoundedCornerShape(16.dp))
             .padding(horizontal = 15.dp, vertical = 13.dp)
     ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        PkPulseDot(color = stateColor, pulse = isActive)
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label.uppercase(),
-                style = pkMono(10, 1.5),
-                color = stateColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                text = meta(),
-                style = pkMono(10, 0.6),
-                color = palette.textDim,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        val valueText = value()
-        if (valueText.isNotBlank()) {
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = valueText,
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 1.sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
-            )
-        }
-    }
+        PkStatusLines(
+            dot = { PkPulseDot(color = stateColor, pulse = isActive) },
+            label = {
+                Text(
+                    text = pkTied(label.uppercase()),
+                    style = pkMono(10, 1.5),
+                    color = stateColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            meta = {
+                val metaText = meta()
+                if (metaText.isNotBlank()) {
+                    Text(
+                        text = metaText,
+                        // By what it says: counters and protocol names run left to
+                        // right in every language, a sentence in the user's runs
+                        // the way that language does.
+                        style = pkMono(10, 0.6).copy(textDirection = TextDirection.ContentOrLtr),
+                        color = palette.textDim,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            },
+            value = {
+                val valueText = value()
+                if (valueText.isNotBlank()) {
+                    Text(
+                        text = valueText,
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = pkDisplaySp(17),
+                            lineHeight = pkDisplaySp(20),
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 1.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        )
 
         // The one thing on this screen that moves by itself. Occupancy answers
         // "how full is the room" and barely changes; this answers "is anything
         // actually going through", which is the question a user stares at the
         // screen to have answered.
-        val trace = trafficTrace()
-        if (isActive && trace.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            PkTrafficTrace(trace = trace, modifier = Modifier.fillMaxWidth())
+        if (isActive && traffic != null) {
+            PkThroughput(traffic = traffic, modifier = Modifier.padding(top = 10.dp))
         }
     }
 }
 
 /**
- * A throughput waveform: the line, and the area under it.
+ * The strip's three texts, arranged by how much line there is.
  *
- * The fill is what makes it read as a signal rather than a graph — and it is why
- * a busy second is legible at fourteen density-independent pixels, which is all
- * the room a status strip has.
+ * With room, it is the shape it always had: the state over its detail on the
+ * left, the one number on the right, level with both. That needs the detail —
+ * `↓ 2.6 GB   ↑ 516 MB · HTTP 143ms` — to fit beside the number, which it does on
+ * a wide phone at the default text size and on little else; everywhere else it
+ * was cut at `· HT…`, and the latency, which is the part that changes, was the
+ * part that went.
+ *
+ * So where the detail does not fit beside the number, the number moves up to the
+ * state's line and the detail has the strip's whole width, on as many lines as
+ * it needs. And where the state and the number cannot share a line either, each
+ * of the three has its own — the state is not wrapped to keep the number beside
+ * it: `IN A ROOM ·` over `OLCRTC` is a worse line than one more line.
  */
 @Composable
-fun PkTrafficTrace(trace: List<Float>, modifier: Modifier = Modifier) {
-    val palette = LocalPkPalette.current
-    val line = palette.accent
-    val fill = palette.accent.copy(alpha = 0.16f)
-    val floor = palette.seatFree
-    Canvas(modifier = modifier.height(22.dp)) {
-        drawLine(
-            color = floor,
-            start = Offset(0f, size.height - 1f),
-            end = Offset(size.width, size.height - 1f),
-            strokeWidth = 1.dp.toPx()
-        )
-        val points = sparklinePoints(trace, size.width, size.height, inset = 2f)
-        if (points.isEmpty()) return@Canvas
-
-        val area = Path().apply {
-            moveTo(points.first().x, size.height)
-            points.forEach { lineTo(it.x, it.y) }
-            lineTo(points.last().x, size.height)
-            close()
+private fun PkStatusLines(
+    dot: @Composable () -> Unit,
+    label: @Composable () -> Unit,
+    meta: @Composable () -> Unit,
+    value: @Composable () -> Unit
+) {
+    Layout(
+        modifier = Modifier.fillMaxWidth(),
+        content = {
+            Box { dot() }
+            Box { label() }
+            Box { meta() }
+            Box { value() }
         }
-        drawPath(path = area, color = fill)
+    ) { measurables, constraints ->
+        val (dotSlot, labelSlot, metaSlot, valueSlot) = measurables
+        val width = constraints.maxWidth
+        val dotP = dotSlot.measure(Constraints())
+        val lead = dotP.width + STATUS_DOT_GAP.roundToPx()
+        val column = (width - lead).coerceAtLeast(0)
+        val valueP = valueSlot.measure(Constraints(maxWidth = column))
+        val valueRoom = if (valueP.width > 0) valueP.width + STATUS_VALUE_GAP.roundToPx() else 0
+        val beside = (column - valueRoom).coerceAtLeast(0)
+        val labelWanted = labelSlot.maxIntrinsicWidth(Constraints.Infinity)
+        val metaWanted = metaSlot.maxIntrinsicWidth(Constraints.Infinity)
+        val textGap = STATUS_TEXT_GAP.roundToPx()
 
-        val stroke = Path().apply {
-            moveTo(points.first().x, points.first().y)
-            points.drop(1).forEach { lineTo(it.x, it.y) }
+        when {
+            labelWanted <= beside && metaWanted <= beside -> {
+                val labelP = labelSlot.measure(Constraints(maxWidth = beside))
+                val metaP = metaSlot.measure(Constraints(maxWidth = beside))
+                val texts = labelP.height + if (metaP.height > 0) textGap + metaP.height else 0
+                val height = maxOf(texts, valueP.height, dotP.height)
+                val top = (height - texts) / 2
+                layout(width, height) {
+                    dotP.placeRelative(0, (height - dotP.height) / 2)
+                    labelP.placeRelative(lead, top)
+                    metaP.placeRelative(lead, top + labelP.height + textGap)
+                    valueP.placeRelative(width - valueP.width, (height - valueP.height) / 2)
+                }
+            }
+
+            labelWanted <= beside -> {
+                val labelP = labelSlot.measure(Constraints(maxWidth = beside))
+                val metaP = metaSlot.measure(Constraints(maxWidth = column))
+                val line = alignOnLine(labelP, valueP)
+                val first = max(line.height, dotP.height)
+                val lettersTop = (first - line.height) / 2
+                val under = if (metaP.height > 0) first + textGap else first
+                layout(width, under + metaP.height) {
+                    dotP.placeRelative(0, (first - dotP.height) / 2)
+                    labelP.placeRelative(lead, lettersTop + line.ys[0])
+                    valueP.placeRelative(width - valueP.width, lettersTop + line.ys[1])
+                    metaP.placeRelative(lead, under)
+                }
+            }
+
+            else -> {
+                val labelP = labelSlot.measure(Constraints(maxWidth = column))
+                val metaP = metaSlot.measure(Constraints(maxWidth = column))
+                val first = max(labelP.height, dotP.height)
+                val metaTop = if (metaP.height > 0) first + textGap else first
+                val valueTop = metaTop + metaP.height + if (valueP.height > 0) textGap else 0
+                layout(width, valueTop + valueP.height) {
+                    dotP.placeRelative(0, (first - dotP.height) / 2)
+                    labelP.placeRelative(lead, (first - labelP.height) / 2)
+                    metaP.placeRelative(lead, metaTop)
+                    valueP.placeRelative(lead, valueTop)
+                }
+            }
         }
-        drawPath(
-            path = stroke,
-            color = line,
-            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-        )
     }
 }
+
+private val STATUS_DOT_GAP = 12.dp
+private val STATUS_VALUE_GAP = 10.dp
+private val STATUS_TEXT_GAP = 3.dp
 
 // ── board head ─────────────────────────────────────────────────────────────
 
@@ -427,54 +614,61 @@ fun PkBoardHead(
 ) {
     val palette = LocalPkPalette.current
     Column(modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Row(
+        PkNameLine(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = heading,
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.3).sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (showSort) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(10.dp)
+            // The control that orders the list goes under the list's name before
+            // the name is cut, or wrapped, to make room for it.
+            name = {
+                Text(
+                    text = heading,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontSize = pkDisplaySp(21),
+                        lineHeight = pkDisplaySp(28),
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.3).sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            end = if (showSort) {
+                {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable(onClickLabel = stringResource(Res.string.change_sorting), role = Role.Button) {
+                                onSortClick()
+                            }
+                            .padding(horizontal = 11.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = PkIcons.SwapVert,
+                            contentDescription = null,
+                            tint = palette.textDim,
+                            modifier = Modifier.size(13.dp)
                         )
-                        .clickable(onClickLabel = stringResource(Res.string.change_sorting), role = Role.Button) {
-                            onSortClick()
-                        }
-                        .padding(horizontal = 11.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = PkIcons.SwapVert,
-                        contentDescription = null,
-                        tint = palette.textDim,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        text = sortLabel,
-                        style = pkMono(10, 1.1),
-                        color = palette.textDim,
-                        maxLines = 1
-                    )
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            text = sortLabel,
+                            style = pkMono(10, 1.1),
+                            color = palette.textDim,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
+            } else {
+                null
             }
-        }
+        )
         if (chips != null) {
             Spacer(Modifier.height(9.dp))
             chips()
@@ -544,7 +738,9 @@ fun PkActionBar(
                 // holds sits above the home indicator rather than under it.
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
-                .height(56.dp)
+                // At least the height it always had, and more when its sentence —
+                // which names the room it acts on — needs a second line.
+                .heightIn(min = 56.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(background)
                 .clickable(enabled = enabled, onClickLabel = action.label, role = Role.Button) {
@@ -556,7 +752,10 @@ fun PkActionBar(
                 .semantics { contentDescription = action.label },
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (action.kind == PkActionKind.Busy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(17.dp),
@@ -565,16 +764,17 @@ fun PkActionBar(
                     )
                     Spacer(Modifier.width(10.dp))
                 }
-                Text(
-                    text = action.label,
+                PkBalancedText(
+                    text = pkTied(action.label),
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 1.5.sp
                     ),
                     color = foreground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    // Not weighted to fill: the spinner and the words are centred
+                    // together, as they were when the words were one line.
+                    modifier = Modifier.weight(1f, fill = false)
                 )
             }
         }
@@ -602,7 +802,15 @@ fun PkDashedAction(
     ) {
         Icon(icon, contentDescription = null, tint = palette.textDim, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(9.dp))
-        Text(label.uppercase(), style = pkMono(10, 1.3), color = palette.textDim)
+        Text(
+            text = label.uppercase(),
+            style = pkMono(10, 1.3),
+            color = palette.textDim,
+            textAlign = TextAlign.Center,
+            // Not weighted: the icon and the words are centred together, and a
+            // weighted text would take the whole row and push the icon to its edge.
+            modifier = Modifier.weight(1f, fill = false)
+        )
     }
 }
 

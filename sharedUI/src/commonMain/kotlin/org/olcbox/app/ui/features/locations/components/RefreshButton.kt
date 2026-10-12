@@ -61,11 +61,13 @@ fun SubscriptionRefreshButton(
         icon = Icons.Rounded.Refresh,
         contentDescription = stringResource(Res.string.refresh_server_list),
         onClick = onClick,
-        modifier = modifier.rotate(rotation),
+        modifier = modifier,
         size = 32,
         corner = 9,
+        touch = 40,
         tint = tint ?: MaterialTheme.colorScheme.primary,
-        enabled = !isRefreshing
+        enabled = !isRefreshing,
+        iconModifier = Modifier.rotate(rotation)
     )
 }
 
@@ -106,6 +108,7 @@ fun LatencyButton(
         modifier = modifier,
         size = 32,
         corner = 9,
+        touch = 40,
         tint = (tint ?: MaterialTheme.colorScheme.primary).copy(alpha = pulse),
         enabled = !isRunning
     )

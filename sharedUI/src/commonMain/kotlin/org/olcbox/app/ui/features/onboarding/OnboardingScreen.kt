@@ -29,10 +29,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -56,6 +59,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.ui.components.kit.pkMono
+import org.olcbox.app.ui.components.kit.PkBalancedText
+import org.olcbox.app.ui.components.kit.pkDisplaySp
 import org.olcbox.app.ui.components.kit.pkScreenBackground
 import org.olcbox.app.ui.components.kit.pkTopBarsPadding
 import org.olcbox.app.ui.theme.LocalPkPalette
@@ -116,7 +121,10 @@ fun OnboardingScreen(
             }
 
             Column(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                // Centred while it fits, scrolled when it does not. Fixed between
+                // the counter and the button, the body under a large-text title
+                // ran behind the button and stopped mid-sentence.
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -133,7 +141,8 @@ fun OnboardingScreen(
                 Text(
                     text = stringResource(current.title),
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 29.sp,
+                        fontSize = pkDisplaySp(29),
+                        lineHeight = pkDisplaySp(36),
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.4).sp
                     ),
@@ -176,7 +185,7 @@ fun OnboardingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 24.dp)
-                    .height(56.dp)
+                    .heightIn(min = 56.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(palette.accent)
                     .clickable(onClickLabel = stringResource(current.cta), role = Role.Button) {
@@ -192,10 +201,11 @@ fun OnboardingScreen(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                PkBalancedText(
                     text = stringResource(current.cta),
                     style = pkMono(13, 1.6).copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onTertiary
+                    color = MaterialTheme.colorScheme.onTertiary,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
                 )
             }
         }

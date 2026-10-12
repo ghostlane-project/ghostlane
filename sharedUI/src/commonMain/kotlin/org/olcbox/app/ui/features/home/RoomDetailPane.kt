@@ -20,13 +20,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,8 +45,10 @@ import org.olcbox.app.ui.components.kit.PkSeats
 import org.olcbox.app.ui.components.kit.PkSectionEyebrow
 import org.olcbox.app.ui.components.kit.PkSparkline
 import org.olcbox.app.ui.components.kit.SeatDisplay
+import org.olcbox.app.ui.components.kit.pkDisplaySp
 import org.olcbox.app.ui.components.kit.pkMono
 import org.olcbox.app.ui.components.kit.pkPingColor
+import org.olcbox.app.ui.components.kit.pkTied
 import org.olcbox.app.ui.components.kit.seatCountText
 import org.olcbox.app.ui.components.kit.seatDisplay
 import org.olcbox.app.ui.components.kit.seatFreeText
@@ -100,26 +105,39 @@ fun RoomDetailPane(
     ) {
         PkSectionEyebrow(stringResource(if (board.isConnected) Res.string.room_your_seat else Res.string.room_selected))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row {
             if (emoji.isNotBlank()) {
-                Text(text = emoji, fontSize = 26.sp)
-                Spacer(Modifier.padding(horizontal = 5.dp))
+                // No tracking, so a flag stays one glyph; see PkRoomCard.
+                Text(
+                    text = emoji,
+                    style = LocalTextStyle.current.copy(
+                        fontSize = pkDisplaySp(26),
+                        lineHeight = pkDisplaySp(36),
+                        letterSpacing = 0.sp
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.alignByBaseline()
+                )
+                Spacer(Modifier.width(10.dp))
             }
             Text(
-                text = name,
+                text = pkTied(name),
                 style = MaterialTheme.typography.headlineMedium.copy(
-                    fontSize = 28.sp,
+                    fontSize = pkDisplaySp(28),
+                    lineHeight = pkDisplaySp(36),
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.4).sp
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.alignByBaseline()
             )
         }
 
         Text(
-            text = wireShape(config, boardWords()).uppercase(),
+            text = pkTied(wireShape(config, boardWords()).uppercase()),
             style = pkMono(10, 1.2),
             color = palette.textDim
         )
@@ -133,7 +151,14 @@ fun RoomDetailPane(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            // A row while the four fit in one, and as many rows as they need when
+            // they do not. In a fixed row the last of them was given what was left,
+            // and at a large text size on a tablet that was one letter's width:
+            // "LATENCY" stood down the pane's edge a letter to a line.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 DetailStat(label = stringResource(Res.string.label_transport), value = transportTag(config) ?: "—")
                 slots?.let {
                     DetailStat(label = stringResource(Res.string.room_seats), value = seatCountText(it).orEmpty())
@@ -167,6 +192,7 @@ fun RoomDetailPane(
                         color = palette.textMuted,
                         modifier = Modifier.weight(1f)
                     )
+                    Spacer(Modifier.width(10.dp))
                     PkSparkline(
                         history = board.occupancyHistory[selected.storageId].orEmpty(),
                         mine = board.isConnected
@@ -202,13 +228,14 @@ private fun DetailStat(
 ) {
     val palette = LocalPkPalette.current
     Column {
-        Text(text = label.uppercase(), style = pkMono(9, 1.2), color = palette.textMuted)
+        Text(text = label.uppercase(), style = pkMono(9, 1.2), color = palette.textMuted, maxLines = 1, softWrap = false)
         Spacer(Modifier.height(5.dp))
         Text(
             text = value,
-            style = pkMono(15, 0.4).copy(fontWeight = FontWeight.Medium),
+            style = pkMono(15, 0.4).copy(fontWeight = FontWeight.Medium, lineHeight = 20.sp),
             color = color ?: MaterialTheme.colorScheme.onSurface,
-            maxLines = 1
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

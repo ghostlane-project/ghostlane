@@ -277,43 +277,6 @@ class PkBoardModelTest {
         assertEquals(listOf(0f), history)
     }
 
-    // ── the live throughput trace ──────────────────────────────────────────
-
-    @Test
-    fun theTraceKeepsOnlyItsWindow() {
-        var h = emptyList<Long>()
-        repeat(THROUGHPUT_TRACE_LIMIT + 10) { h = appendThroughput(h, it.toLong()) }
-        assertEquals(THROUGHPUT_TRACE_LIMIT, h.size)
-        assertEquals((THROUGHPUT_TRACE_LIMIT + 9).toLong(), h.last())
-    }
-
-    @Test
-    fun aCounterThatWentBackwardsReadsAsIdleRatherThanNegative() {
-        assertEquals(listOf(0L), appendThroughput(emptyList(), -500L))
-    }
-
-    @Test
-    fun anIdleTunnelDrawsAlongTheBottom() {
-        // The point of the floor: without it a window of keepalives would scale to
-        // its own peak and draw a mountain range made of nothing.
-        val trace = throughputTrace(listOf(0L, 200L, 0L, 400L))
-        assertTrue(trace.all { it < 0.02f }, "a trickle must not fill the height")
-    }
-
-    @Test
-    fun realTrafficUsesTheWholeHeight() {
-        val peak = 4L * 1024 * 1024
-        val trace = throughputTrace(listOf(0L, peak / 2, peak))
-        assertEquals(0f, trace.first())
-        assertEquals(0.5f, trace[1], 0.01f)
-        assertEquals(1f, trace.last())
-    }
-
-    @Test
-    fun anEmptyWindowDrawsNothing() {
-        assertTrue(throughputTrace(emptyList()).isEmpty())
-    }
-
     // ── the action bar ─────────────────────────────────────────────────────
 
     private fun action(
@@ -392,6 +355,15 @@ class PkBoardModelTest {
     fun aLongExitNameIsCutAtASeparatorRatherThanMidWord() {
         assertEquals("Netherlands", shortenExitName("Netherlands-Amsterdam-03"))
         assertEquals("Frankfurt am", shortenExitName("Frankfurt am Main Datacenter", max = 14))
+    }
+
+    @Test
+    fun aNameCutAtASeparatorDoesNotKeepTheSeparator() {
+        // " · " is two places to cut at. Cut at the second, the name ended with
+        // the dot that introduces the part it had just lost.
+        assertEquals("DE · olcRTC", shortenExitName("DE · olcRTC · WB", max = 14))
+        assertEquals("United States", shortenExitName("United States · New York", max = 16))
+        assertEquals("Paris", shortenExitName("Paris, - Île-de-France", max = 9))
     }
 
     @Test

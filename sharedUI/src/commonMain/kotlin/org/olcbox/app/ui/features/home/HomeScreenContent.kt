@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -34,6 +33,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.OlcrtcSlots
@@ -41,10 +42,11 @@ import org.olcbox.app.ui.components.kit.PkAction
 import org.olcbox.app.ui.components.kit.PkActionBar
 import org.olcbox.app.ui.components.kit.PkBoardHead
 import org.olcbox.app.ui.components.kit.PkHairline
+import org.olcbox.app.ui.components.kit.PkHeaderAction
 import org.olcbox.app.ui.components.kit.PkHeaderRow
-import org.olcbox.app.ui.components.kit.PkIconButton
 import org.olcbox.app.ui.components.kit.PkStatusStrip
 import org.olcbox.app.ui.components.kit.PkVersionFooter
+import org.olcbox.app.ui.components.kit.ThroughputWindow
 import org.olcbox.app.ui.components.kit.pkScreenBackground
 import org.olcbox.app.ui.components.kit.pkTopBarsPadding
 import org.olcbox.app.ui.features.home.components.BoardFilterChips
@@ -73,7 +75,8 @@ data class HomeChrome(
     val statusValue: () -> String,
     val isActive: Boolean,
     val isBusy: Boolean,
-    val trafficTrace: () -> List<Float>,
+    /** The session's traffic by the second. One object for the screen's life; its readers are told when it moves. */
+    val traffic: ThroughputWindow,
     val notice: String?,
     /** Whether [notice] is a failure the user may wave away, rather than a block. */
     val noticeDismissible: Boolean,
@@ -154,12 +157,31 @@ fun HomeScreenContent(
         // is "is there room for two panes", the answer is a number, and the
         // desktop gets the same layout for free without a new dependency.
         val twoPane = maxWidth >= TWO_PANE_BREAKPOINT
+        // The status strip and the board's head stay over the list where the
+        // screen has the height for them and a list besides. Where it does not —
+        // a small phone, or any phone with the text set large — they scroll away
+        // with the list they head, and what is pinned is the brand and its buttons.
+        val headPinned = twoPane || headStaysPinned(maxHeight, LocalDensity.current.fontScale)
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) },
-            topBar = { HomeTopBands(chrome, board, callbacks, twoPane = twoPane) },
+            topBar = {
+                Column(modifier = Modifier.pkTopBarsPadding()) {
+                    HomeHeader(chrome, callbacks)
+                    if (headPinned) {
+                        HomeStatus(chrome, callbacks)
+                        HomeBoardHead(chrome, board, callbacks, twoPane = twoPane)
+                    } else {
+                        // What went wrong stays in sight wherever the list has
+                        // been scrolled to; a failure nobody sees is one nobody
+                        // can act on.
+                        HomeNotice(chrome, callbacks, below = false)
+                        PkHairline()
+                    }
+                }
+            },
             bottomBar = {
                 // On one pane the bar spans the screen. On two it belongs under
                 // the room it acts on, which is the right one.
@@ -196,12 +218,41 @@ fun HomeScreenContent(
                     board = board,
                     callbacks = callbacks,
                     scrollState = scrollState,
-                    modifier = Modifier.fillMaxSize().padding(innerPadding)
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    head = if (headPinned) {
+                        null
+                    } else {
+                        {
+                            Spacer(Modifier.height(12.dp))
+                            HomeStatus(chrome, callbacks, withNotice = false)
+                            HomeBoardHead(chrome, board, callbacks, twoPane = false)
+                        }
+                    }
                 )
             }
         }
     }
 }
+
+/**
+ * Whether a screen this tall, read at this text size, has room for the pinned
+ * head and still shows a list under it.
+ *
+ * The head is the status strip, the heading and the filter chips: about two
+ * hundred points at the default text size, growing with the text. What counts is
+ * the height measured in the reader's own text — a tall phone at twice the size
+ * is a short phone — so the height is divided by the scale before it is compared.
+ * On the phone this was reported from, the pinned head and the button left the
+ * list one card.
+ */
+internal fun headStaysPinned(height: Dp, fontScale: Float): Boolean =
+    height / fontScale.coerceAtLeast(0.5f) >= PINNED_HEAD_LEAST_HEIGHT
+
+/**
+ * A 4.7-inch iPhone at the default text size keeps its head, with two and a half
+ * cards under it; anything shorter in its own text does not.
+ */
+internal val PINNED_HEAD_LEAST_HEIGHT = 620.dp
 
 /**
  * The board's own column, with pull-to-refresh over it.
@@ -215,7 +266,9 @@ private fun HomeBoardColumn(
     board: HomeBoard,
     callbacks: HomeCallbacks,
     scrollState: ScrollState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The status strip and the board's head, where they scroll with the list rather than over it. */
+    head: (@Composable () -> Unit)? = null
 ) {
     // Pull down on the list to fetch the server lists again. It was reachable
     // only from a menu item inside the "+" sheet, which is not where anyone
@@ -225,18 +278,20 @@ private fun HomeBoardColumn(
         onRefresh = callbacks.onPullToRefresh,
         modifier = modifier
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(14.dp))
-            HomeRoomBoard(board, callbacks)
-            Spacer(Modifier.height(20.dp))
-            PkVersionFooter()
-            Spacer(Modifier.height(16.dp))
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(scrollState)) {
+            // Outside the board's own margins: the head carries its own, and its
+            // rule runs the width of the screen.
+            head?.invoke()
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(14.dp))
+                HomeRoomBoard(board, callbacks)
+                Spacer(Modifier.height(20.dp))
+                PkVersionFooter()
+                Spacer(Modifier.height(16.dp))
+            }
         }
     }
 }
@@ -248,58 +303,72 @@ private val TWO_PANE_BREAKPOINT = 720.dp
 private const val BOARD_PANE_WEIGHT = 1.25f
 private const val DETAIL_PANE_WEIGHT = 1f
 
+/** The brand and its buttons: the band that is pinned on every screen. */
 @Composable
-private fun HomeTopBands(
-    chrome: HomeChrome,
-    board: HomeBoard,
-    callbacks: HomeCallbacks,
-    twoPane: Boolean
-) {
-    Column(modifier = Modifier.pkTopBarsPadding()) {
-        PkHeaderRow(tag = chrome.tag, onBrandTap = callbacks.onBrandTap) {
-            PkIconButton(
-                icon = PkIcons.History,
-                contentDescription = stringResource(Res.string.settings_diagnostics),
-                onClick = callbacks.onDiagnosticsClick
+private fun HomeHeader(chrome: HomeChrome, callbacks: HomeCallbacks) {
+    PkHeaderRow(
+        tag = chrome.tag,
+        onBrandTap = callbacks.onBrandTap,
+        actions = buildList {
+            add(
+                PkHeaderAction(
+                    icon = PkIcons.History,
+                    label = stringResource(Res.string.settings_diagnostics),
+                    onClick = callbacks.onDiagnosticsClick
+                )
             )
             if (chrome.showLock) {
-                PkIconButton(
-                    icon = Icons.Outlined.Lock,
-                    contentDescription = stringResource(Res.string.lock_admin),
-                    onClick = callbacks.onLockClick
+                add(
+                    PkHeaderAction(
+                        icon = Icons.Outlined.Lock,
+                        label = stringResource(Res.string.lock_admin),
+                        onClick = callbacks.onLockClick
+                    )
                 )
             }
             if (chrome.showSplitTunnelingButton) {
-                PkIconButton(
-                    icon = PkIcons.Shield,
-                    contentDescription = stringResource(Res.string.split_tunneling),
-                    onClick = callbacks.onSplitTunnelingClick
+                add(
+                    PkHeaderAction(
+                        icon = PkIcons.Shield,
+                        label = stringResource(Res.string.split_tunneling),
+                        onClick = callbacks.onSplitTunnelingClick
+                    )
                 )
             }
-            PkIconButton(
-                icon = Icons.Outlined.Add,
-                contentDescription = stringResource(Res.string.add_connection),
-                onClick = callbacks.onAddClick,
-                tint = MaterialTheme.colorScheme.onSurface
+            add(
+                PkHeaderAction(
+                    icon = Icons.Outlined.Add,
+                    label = stringResource(Res.string.add_connection),
+                    onClick = callbacks.onAddClick,
+                    strong = true
+                )
             )
             if (chrome.showAppSettingsButton) {
-                PkIconButton(
-                    icon = Icons.Outlined.Settings,
-                    contentDescription = stringResource(Res.string.app_settings),
-                    onClick = callbacks.onSettingsClick
+                add(
+                    PkHeaderAction(
+                        icon = Icons.Outlined.Settings,
+                        label = stringResource(Res.string.app_settings),
+                        onClick = callbacks.onSettingsClick
+                    )
                 )
             }
         }
+    )
+}
 
-        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            PkStatusStrip(
-                label = chrome.statusLabel,
-                isActive = chrome.isActive,
-                isBusy = chrome.isBusy,
-                meta = chrome.statusMeta,
-                value = chrome.statusValue,
-                trafficTrace = chrome.trafficTrace
-            )
+/** The status strip, and under it whatever has gone wrong. */
+@Composable
+private fun HomeStatus(chrome: HomeChrome, callbacks: HomeCallbacks, withNotice: Boolean = true) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        PkStatusStrip(
+            label = chrome.statusLabel,
+            isActive = chrome.isActive,
+            isBusy = chrome.isBusy,
+            meta = chrome.statusMeta,
+            value = chrome.statusValue,
+            traffic = chrome.traffic
+        )
+        if (withNotice) {
             chrome.notice?.let { notice ->
                 Spacer(Modifier.height(11.dp))
                 RelayNotice(
@@ -307,36 +376,58 @@ private fun HomeTopBands(
                     onDismiss = callbacks.onDismissNotice.takeIf { chrome.noticeDismissible }
                 )
             }
-            Spacer(Modifier.height(12.dp))
         }
-
-        // The head sits over the board, so on two panes it is only as wide as the
-        // board is — a heading centred over a room detail it does not describe is
-        // the stretched-phone problem in miniature.
-        PkBoardHead(
-            heading = chrome.heading,
-            sortLabel = chrome.sortLabel,
-            onSortClick = callbacks.onSortClick,
-            showSort = !board.model.isEmpty,
-            modifier = if (twoPane) {
-                Modifier.fillMaxWidth(BOARD_PANE_WEIGHT / (BOARD_PANE_WEIGHT + DETAIL_PANE_WEIGHT))
-            } else {
-                Modifier
-            },
-            chips = if (board.model.showChips) {
-                {
-                    BoardFilterChips(
-                        model = board.model,
-                        activeFilterKey = board.transportFilter,
-                        onFilterSelected = callbacks.onFilterSelected
-                    )
-                }
-            } else {
-                null
-            }
-        )
-        PkHairline()
+        Spacer(Modifier.height(12.dp))
     }
+}
+
+/** The notice alone, for the screen whose status strip is not pinned. */
+@Composable
+private fun HomeNotice(chrome: HomeChrome, callbacks: HomeCallbacks, below: Boolean) {
+    val notice = chrome.notice ?: return
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        if (below) Spacer(Modifier.height(11.dp))
+        RelayNotice(
+            text = notice,
+            onDismiss = callbacks.onDismissNotice.takeIf { chrome.noticeDismissible }
+        )
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun HomeBoardHead(
+    chrome: HomeChrome,
+    board: HomeBoard,
+    callbacks: HomeCallbacks,
+    twoPane: Boolean
+) {
+    // The head sits over the board, so on two panes it is only as wide as the
+    // board is — a heading centred over a room detail it does not describe is
+    // the stretched-phone problem in miniature.
+    PkBoardHead(
+        heading = chrome.heading,
+        sortLabel = chrome.sortLabel,
+        onSortClick = callbacks.onSortClick,
+        showSort = !board.model.isEmpty,
+        modifier = if (twoPane) {
+            Modifier.fillMaxWidth(BOARD_PANE_WEIGHT / (BOARD_PANE_WEIGHT + DETAIL_PANE_WEIGHT))
+        } else {
+            Modifier
+        },
+        chips = if (board.model.showChips) {
+            {
+                BoardFilterChips(
+                    model = board.model,
+                    activeFilterKey = board.transportFilter,
+                    onFilterSelected = callbacks.onFilterSelected
+                )
+            }
+        } else {
+            null
+        }
+    )
+    PkHairline()
 }
 
 @Composable

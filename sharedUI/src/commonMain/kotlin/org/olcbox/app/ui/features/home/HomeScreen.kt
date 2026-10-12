@@ -58,14 +58,13 @@ import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.AdminPasswordDialog
 import org.olcbox.app.ui.components.CameraRationaleSheet
 import org.olcbox.app.ui.components.VpnDisclosureScreen
-import org.olcbox.app.ui.components.kit.appendThroughput
+import org.olcbox.app.ui.components.kit.ThroughputWindow
 import org.olcbox.app.ui.components.kit.boardAction
 import org.olcbox.app.ui.components.kit.boardHeading
 import org.olcbox.app.ui.components.kit.nextSort
 import org.olcbox.app.ui.components.kit.roomIsBlocked
 import org.olcbox.app.ui.components.kit.shortenExitName
 import org.olcbox.app.ui.components.kit.sortLabel
-import org.olcbox.app.ui.components.kit.throughputTrace
 import org.olcbox.app.ui.features.home.components.AddConfigurationSheet
 import org.olcbox.app.ui.features.home.components.LogsSheet
 import org.olcbox.app.ui.features.home.components.buildBoardModel
@@ -171,9 +170,9 @@ fun HomeScreen(
     // a number nobody is reading.
     //
     // The same tick samples throughput. The platform counters are cumulative, so
-    // what the trace wants is the difference between two of them — which means
-    // remembering the previous reading, and forgetting it when the session ends
-    // so the next one does not open with a spike the size of the last one's total.
+    // what the chart wants is the difference between two of them — which the
+    // window keeps, and forgets when the session ends, so the next one does not
+    // open with a bar the size of the last one's total.
     //
     // Held in state objects that nothing in this function reads. The strip reads
     // them, through the lambdas below, so a second passing recomposes a strip
@@ -183,15 +182,15 @@ fun HomeScreen(
     // for the same reason: collectAsState here would subscribe this function to
     // something that changes every second.
     val nowTick = remember { mutableStateOf(nowMillis()) }
-    val trafficSamples = remember { mutableStateOf(emptyList<Long>()) }
+    val traffic = remember { ThroughputWindow() }
     val bytesLine = remember { mutableStateOf("") }
     LaunchedEffect(state.isVpnConnected, connectedSince) {
+        // Whichever way this runs, it is a session's edge: one ended, or one began.
+        traffic.reset()
         if (!state.isVpnConnected) {
-            trafficSamples.value = emptyList()
             bytesLine.value = ""
             return@LaunchedEffect
         }
-        var previousTotal: Long? = null
         while (state.isVpnConnected) {
             delay(1_000)
             nowTick.value = nowMillis()
@@ -199,11 +198,7 @@ fun HomeScreen(
             if (counters != null) {
                 bytesLine.value =
                     "↓ ${formatByteSize(counters.bytesIn)}   ↑ ${formatByteSize(counters.bytesOut)}"
-                val total = counters.bytesIn + counters.bytesOut
-                previousTotal?.let {
-                    trafficSamples.value = appendThroughput(trafficSamples.value, total - it)
-                }
-                previousTotal = total
+                traffic.record(counters.bytesIn, counters.bytesOut)
             }
         }
     }
@@ -534,7 +529,7 @@ fun HomeScreen(
             },
             isActive = state.isVpnConnected,
             isBusy = state.isVpnLoading,
-            trafficTrace = { throughputTrace(trafficSamples.value) },
+            traffic = traffic,
             notice = state.notice(keyGone = selectedId != null && selectedId in locationViewModel.olcrtcRevoked)
                 ?.let { localizedNotice(it) },
             noticeDismissible = state.noticeDismissible,
