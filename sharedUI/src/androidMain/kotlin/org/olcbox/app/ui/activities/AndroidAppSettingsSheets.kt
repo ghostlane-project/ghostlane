@@ -1481,7 +1481,7 @@ private fun SubscriptionShareRow(
                 text = item.subscriptionSummary(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
-                maxLines = 5,
+                maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
 

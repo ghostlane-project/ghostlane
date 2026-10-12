@@ -311,7 +311,7 @@ fun PkBalancedText(
                 style = style,
                 color = color,
                 textAlign = TextAlign.Center,
-                maxLines = 3,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.semantics { hideFromAccessibility() }
             )

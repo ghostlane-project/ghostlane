@@ -344,10 +344,10 @@ fun PkRoomCard(
                             fontWeight = FontWeight.SemiBold
                         ),
                         color = if (selected) palette.accent else MaterialTheme.colorScheme.onSurface,
-                        // Two lines before an ellipsis. A name is the one thing on
+                        // Three lines before an ellipsis. A name is the one thing on
                         // this card nothing else repeats, and "CA · olcRTC · …" is
                         // five rooms that read as one.
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.alignByBaseline()
                     )

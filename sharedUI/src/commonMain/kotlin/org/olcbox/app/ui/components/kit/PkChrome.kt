@@ -372,9 +372,10 @@ fun PkScreenHeader(
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
-                // Two lines before it is cut: "Routing" in another language at a
-                // larger size is one word that does not fit one line.
-                maxLines = 2,
+                // Three lines before it is cut. A title is two or three words; on a
+                // narrow phone at a large size each can need a line, and in a
+                // font a little wider than ours "Server lists and sharing" did.
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
             if (!subtitle.isNullOrBlank()) {

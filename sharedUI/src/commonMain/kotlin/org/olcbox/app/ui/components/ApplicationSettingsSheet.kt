@@ -1164,7 +1164,7 @@ private fun SharedUpdatesSettingsContent(
             onClick = onCheckUpdatesClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .heightIn(min = 52.dp)
         ) {
             Text(stringResource(Res.string.action_check_now))
         }
@@ -1402,7 +1402,7 @@ private fun SharedSubscriptionRow(
                 text = item.subscriptionSummary(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
-                maxLines = 4,
+                maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
             // Wraps: four buttons in a language with long words do not fit one line.

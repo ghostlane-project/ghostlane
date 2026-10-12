@@ -14,6 +14,10 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class ScreensFitTest {
     private val shapes = listOf(
+        // Narrower than any phone: the margin for a phone whose own font is wider
+        // than the ones these tests measure. See BoardFitsTest.
+        Phone("margin", 300, 650, 1.6f, "ru"),
+        Phone("margin", 300, 650, 2f, "en"),
         Phone("zoomed", 320, 693, 1f, "ru"),
         Phone("zoomed", 320, 693, 1.6f, "ru"),
         Phone("zoomed", 320, 693, 2f, "ru"),
@@ -39,7 +43,11 @@ class ScreensFitTest {
         // new each time, and what it opens is held to the same two rules. A row
         // that opens nothing leaves the hub, which passes as it did above.
         val settings = Screens.all.getValue("settings")
-        val found = listOf(Phone("zoomed", 320, 693, 1.6f, "ru"), Phone("iphone", 393, 852, 1f, "en")).flatMap { phone ->
+        val found = listOf(
+            Phone("margin", 300, 650, 1.6f, "ru"),
+            Phone("zoomed", 320, 693, 2f, "ru"),
+            Phone("iphone", 393, 852, 1f, "en")
+        ).flatMap { phone ->
             val rows = measuredOn(phone, settings) { onAllNodes(hasClickAction()).fetchSemanticsNodes().size }
             val opened = mutableSetOf<String>()
             val wrong = (0 until rows).flatMap { row ->
