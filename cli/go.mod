@@ -2,10 +2,10 @@ module github.com/ghostlane-project/ghostlane/cli
 
 go 1.26.3
 
-replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olcrtc v0.0.0-20260929121845-f9edaa7f1ab5
+replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olcrtc v0.0.0-20261012005350-bac09891b3b4
 
 require (
-	github.com/openlibrecommunity/olcrtc v0.0.0-20260929121845-f9edaa7f1ab5
+	github.com/openlibrecommunity/olcrtc v0.0.0-20261012005350-bac09891b3b4
 	github.com/sagernet/sing v0.8.11
 	github.com/sagernet/sing-box v1.13.14
 	github.com/vishvananda/netlink v1.3.1
