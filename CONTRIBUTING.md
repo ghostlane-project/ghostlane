@@ -42,6 +42,19 @@ each platform needs installed. The short version:
 The iOS and macOS applications need Xcode and a Mac; the engine's frameworks are
 fetched from a pinned release rather than built locally.
 
+The shared tests also lay every screen out on phones nobody here owns: widths
+from 320 points up, text sizes up to twice the default, four languages
+(`BoardFitsTest`, `ScreensFitTest`). A change that cuts a text or puts a button
+where it cannot be reached fails them. To look at what they measured:
+
+```bash
+OLCBOX_RENDER_DIR=/tmp/renders ./gradlew :sharedUI:jvmTest --tests '*RenderTest*'
+```
+
+writes a picture of each screen on each of those phones. The pictures are drawn
+with the machine's own fonts, so they show a layout, not what a phone's
+typeface makes of it.
+
 ## Sending a pull request
 
 - One subject per pull request. Six features in one branch cannot be reviewed,

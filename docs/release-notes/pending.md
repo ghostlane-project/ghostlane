@@ -2,3 +2,23 @@
 ### olcRTC: MTS Link rooms
 
 Ghostlane now connects to olcRTC rooms on MTS Link, the sixth meeting service after Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls and Jitsi. Import a link that names `mtslink`, or choose MTS Link as the service in a location's settings and paste the meeting's join link (`https://my.mts-link.ru/j/…`). An MTS Link room runs over VP8 alone. Until this release a link that named MTS Link was taken for a WB Stream room and did not connect.
+
+### The board fits the phone it is on
+
+On a narrow phone, or with the system's text size raised, the list of rooms lost what it was a list of. The tag, the badge, the seat count and the latency each took the width they wanted and the name had what was left — which on a 320-point screen with large text was nothing: a card that read "VP8 · YOUR SEAT" and no name. Every line of the board is now laid out name first. What does not fit beside the name goes under it: the tag and the badge on a second line, a list's buttons under its title, the sort control under the heading. Nothing on the board is cut on any width from 320 points up, at any text size up to twice the default, in English, Russian, Persian or Chinese; and on an ordinary phone at the default size a card is the one line it was.
+
+- The status strip shows the whole of its second line, traffic and latency; the timer moves up beside the state when that line needs the room.
+- On a short screen — a small phone, or any phone with large text — the status strip and the list's heading scroll with the list instead of holding a third of the screen above it.
+- Text sizes above twice the default are held at twice. The wordmark and the headings grow at half the rate of the text.
+- A card says how many seats are free once, beside the seats, instead of twice.
+- Sheets scroll under their buttons. On a small phone with large text the disclosure's "Not now" and the camera sheet's "Continue" were below the bottom edge of the screen.
+- Settings rows wrap instead of cutting their titles, settings pages scroll, and a setting's value goes under its name when the two do not fit on one line: "Mode" beside its value was one letter to a line on a narrow phone.
+- "MEASURE" on a selected card is in the user's language.
+
+### Traffic, as a chart
+
+The line under the status said that something was moving and nothing more: received and sent were added together, scaled to the busiest second in view, with no figure to read the line against. It is now two rows of bars on one scale — received above the rule, sent below it — and the current rate of each stands in figures beside the newest bar. A bar's height follows the square root of its traffic, so a page that loads is visible beside a video that plays. It costs no more than the line did: the last 44 seconds are two fixed arrays, a second that passes redraws the bars and resets two short texts, and nothing animates in between.
+
+### Flags in server names
+
+A server name that opens with a flag was cut between the flag's two letters: the card showed a boxed letter where the flag belongs, and the connect button and the status strip showed the name beginning with the other one. The flag is now taken whole, as is any emoji made of several code points.
