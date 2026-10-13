@@ -222,6 +222,10 @@ expect "and ends in a refusal of everything else" "$(tail -1 <<<"$RULES")" '^blo
 expect "the system asks the tunnel for names" "$(first_resolver)" '^172\.19\.0\.2$'
 expect "the tun names the app's own program, asked as the app asks" "$(the_app_asks)" '^answered 127\.0\.0\.53 '
 expect "and gives nobody else that answer" "$(as_user dig +time=2 +tries=1 "$PROBE" @172.19.0.2 2>&1 | awk '/status:/{print $6}' | tr -d ',')" '^NXDOMAIN$'
+# RFC 9462: whether the resolver names an encrypted one of its own. The tun is
+# a forwarder and keeps the question; passed on, 1.1.1.1 answers it with two
+# records about itself, and the system goes to what they name.
+expect "the question about a resolver of its own is answered by the tun: none, and no error" "$(as_user dig +time=3 +tries=1 _dns.resolver.arpa TYPE64 @172.19.0.2 2>&1 | awk '/status:/{s=$6} /ANSWER:/{for(i=1;i<NF;i++) if($i=="ANSWER:") a=$(i+1)} END{print s, a}' | tr -d ',')" '^NOERROR 0$'
 expect "a request elsewhere is carried by the tunnel" "$(code_of "http://$ELSEWHERE/" 3)" '^[1-5][0-9][0-9]$'
 expect "a request to the server leaves beside it" "$(code_of "http://$SERVER/" 3)" '^[1-5][0-9][0-9]$'
 expect "a name asked by the system gets an address of the tunnel's" "$(name_by_system www.debian.org)" '^198\.1[89]\.'
