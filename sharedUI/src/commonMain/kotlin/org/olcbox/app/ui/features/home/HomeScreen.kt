@@ -9,6 +9,7 @@ import multiplatform_app.sharedui.generated.resources.imported_from_clipboard
 import multiplatform_app.sharedui.generated.resources.latency_nothing_measurable
 import multiplatform_app.sharedui.generated.resources.latency_on_connected
 import multiplatform_app.sharedui.generated.resources.lowest_selected
+import multiplatform_app.sharedui.generated.resources.pinned_named
 import multiplatform_app.sharedui.generated.resources.reconnecting_lowest
 import multiplatform_app.sharedui.generated.resources.reconnecting_new_location
 import multiplatform_app.sharedui.generated.resources.reconnecting_through
@@ -26,6 +27,7 @@ import multiplatform_app.sharedui.generated.resources.status_no_server_list
 import multiplatform_app.sharedui.generated.resources.status_not_connected
 import multiplatform_app.sharedui.generated.resources.status_room_full
 import multiplatform_app.sharedui.generated.resources.this_server_list
+import multiplatform_app.sharedui.generated.resources.unpinned_named
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.getPluralString
 import org.jetbrains.compose.resources.pluralStringResource
@@ -70,6 +72,7 @@ import org.olcbox.app.ui.features.home.components.LogsSheet
 import org.olcbox.app.ui.features.home.components.buildBoardModel
 import org.olcbox.app.ui.features.home.components.formatSessionDuration
 import org.olcbox.app.ui.features.home.components.locationDisplayParts
+import org.olcbox.app.ui.features.home.components.pin
 import org.olcbox.app.ui.features.home.components.pingFor
 import org.olcbox.app.ui.features.home.components.rememberBoardModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -424,6 +427,7 @@ fun HomeScreen(
         activeFilterKey = transportFilter,
         sort = subscriptionSettings.sort,
         lowestSubscriptionUrls = lowestSubscriptionUrls,
+        pinned = subscriptionSettings.pinnedLocations,
         pingsState = pingsState
     )
     val lowestActive = selectedItem?.subscriptionUrl?.trim()?.let { it in lowestSubscriptionUrls } == true
@@ -654,6 +658,30 @@ fun HomeScreen(
                 // leave the two apart from then on.
                 val fold = !viewModel.subscriptionSettings.value.isFolded(url)
                 viewModel.changeSubscriptionSettings { it.withFolded(url, folded = fold) }
+            },
+            onPinToggle = { id ->
+                locations.firstOrNull { it.storageId == id }?.let { item ->
+                    val pin = item.pin()
+                    // Said as what the room becomes, for the reason above.
+                    val pinned = !viewModel.subscriptionSettings.value.isPinned(pin)
+                    viewModel.changeSubscriptionSettings { it.withPinned(pin, pinned = pinned) }
+                    // The card leaves from under the finger: to the top of its
+                    // list, or back down into it. From the middle of a hundred
+                    // rooms that is a card that vanished, unless it is said
+                    // where it went. Nothing is said of a change that was not
+                    // made — the settings had not arrived.
+                    if (viewModel.subscriptionSettings.value.isPinned(pin) == pinned) {
+                        val name = locationDisplayParts(item).second.ifBlank { item.fullName }
+                        scope.launch {
+                            // One pin after another is one line that changes,
+                            // not a queue of them four seconds each.
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            snackbarHostState.showSnackbar(
+                                getString(if (pinned) Res.string.pinned_named else Res.string.unpinned_named, name)
+                            )
+                        }
+                    }
+                }
             },
             onLocationSettingsClick = { id -> onOpenLocationSettings(id) },
             onMeasure = { ids -> refreshHttpPings(ids) },

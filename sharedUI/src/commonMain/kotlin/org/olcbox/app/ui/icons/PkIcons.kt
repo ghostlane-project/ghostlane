@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.dp
 /**
  * The icons we use that live only in material-icons-extended.
  *
- * That artifact is 36 MB — thousands of icons for the sixteen below — and it
+ * That artifact is 36 MB — thousands of icons for the few below — and it
  * shipped whole inside a 155 MB DMG, which is a rough download for someone on a
  * throttled connection, and thousands more files for Apple's notary service to
  * scan. The other thirteen icons the app uses come from material-icons-core,
@@ -132,6 +132,22 @@ object PkIcons {
         materialIcon(
             "PowerSettingsNew",
             "M12 3c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1s1-.45 1-1V4c0-.55-.45-1-1-1zm5.14 2.86c-.39.39-.38 1-.01 1.39 1.13 1.2 1.83 2.8 1.87 4.57.09 3.83-3.08 7.13-6.91 7.17C8.18 19.05 5 15.9 5 12c0-1.84.71-3.51 1.87-4.76.37-.39.37-1-.01-1.38-.4-.4-1.05-.39-1.43.02C3.98 7.42 3.07 9.47 3 11.74c-.14 4.88 3.83 9.1 8.71 9.25 5.1.16 9.29-3.93 9.29-9 0-2.37-.92-4.51-2.42-6.11-.38-.41-1.04-.42-1.44-.02z",
+        )
+    }
+
+    /** Material outlined, content. A room that can be pinned. */
+    val PushPin: ImageVector by lazy {
+        materialIcon(
+            "PushPin",
+            "M14,4v5c0,1.12,0.37,2.16,1,3H9c0.65-0.86,1-1.9,1-3V4H14 M17,2H7C6.45,2,6,2.45,6,3c0,0.55,0.45,1,1,1c0,0,0,0,0,0l1,0v5 c0,1.66-1.34,3-3,3v2h5.97v7l1,1l1-1v-7H19v-2c0,0,0,0,0,0c-1.66,0-3-1.34-3-3V4l1,0c0,0,0,0,0,0c0.55,0,1-0.45,1-1 C18,2.45,17.55,2,17,2L17,2z",
+        )
+    }
+
+    /** Material filled, content. A room that is pinned. */
+    val PushPinFilled: ImageVector by lazy {
+        materialIcon(
+            "PushPinFilled",
+            "M16,9V4l1,0c0.55,0,1-0.45,1-1v0c0-0.55-0.45-1-1-1H7C6.45,2,6,2.45,6,3v0 c0,0.55,0.45,1,1,1l1,0v5c0,1.66-1.34,3-3,3h0v2h5.97v7l1,1l1-1v-7H19v-2h0C17.34,12,16,10.66,16,9z",
         )
     }
 

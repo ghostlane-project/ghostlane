@@ -25,6 +25,11 @@ WHAT CHANGED
   the line, upload bars below it, the current speed of each in figures.
 • A flag at the start of a server's name is a flag, not a boxed letter.
 • olcRTC rooms on one more meeting service connect.
+• Every card has a pin. A pinned room stands first in its list and stays
+  on the screen when the list is folded away.
+• A folded list is still folded when the app is opened again.
+• The status opens when you press connect and keeps its height: the chart
+  no longer arrives two seconds later and pushes the list down.
 
 WHAT TO TEST
 
@@ -48,3 +53,12 @@ WHAT TO TEST
 6. If your server list has a line for the new meeting service: it must
    connect and carry traffic like the other rooms.
 7. Rotate an iPad, and use Split View: nothing may be cut in either pane.
+8. Press the pin on a room in the middle of a long list. It must move to
+   the top of its list, a line at the bottom must say so, and the room you
+   are connected to must not change. Press the pin again: it goes back.
+9. Pin two or three rooms, fold the list away with the arrow beside its
+   name: only the pinned rooms stay. Close the app from the app switcher,
+   open it again: the list is still folded and the rooms still pinned.
+   Refresh the list (pull down): the pins stay on the same rooms.
+10. Press connect and watch the top of the screen: the status opens once,
+   smoothly, and nothing under it jumps a moment later.

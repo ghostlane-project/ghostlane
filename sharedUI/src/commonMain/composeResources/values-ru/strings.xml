@@ -263,6 +263,7 @@
     <string name="ping_tap_to_check">Нажмите, чтобы проверить доступность</string>
     <string name="ping_title">Проверка связи</string>
     <string name="pings_stale">Прошлые замеры сети · нажмите «Измерить», чтобы обновить</string>
+    <string name="pinned_named">Закреплено вверху списка: %1$s</string>
     <string name="plan_resets_in">Трафик · сброс через %1$d дн.</string>
     <string name="plan_resets_today">Трафик · сброс сегодня</string>
     <string name="plan_traffic">Трафик</string>
@@ -313,8 +314,10 @@
     <string name="room_latency">Задержка</string>
     <string name="room_measure_caps">ИЗМЕРИТЬ</string>
     <string name="room_pick_hint">Выберите комнату слева</string>
+    <string name="room_pin">Закрепить вверху</string>
     <string name="room_seats">Места</string>
     <string name="room_selected">Выбрано</string>
+    <string name="room_unpin">Открепить</string>
     <string name="room_your_seat">Ваше место</string>
     <string name="room_your_seat_caps">ВАШЕ МЕСТО</string>
     <string name="router_copy_link">Ссылка</string>
@@ -469,6 +472,7 @@
     <string name="tray_open">Открыть</string>
     <string name="tray_quit">Выйти</string>
     <string name="unknown_error">неизвестная ошибка</string>
+    <string name="unpinned_named">Откреплено: %1$s</string>
     <string name="unsaved_change">Изменение не сохранено</string>
     <string name="update_allow_install">Разрешите Ghostlane устанавливать обновления и снова нажмите «Скачать»</string>
     <string name="update_already_downloaded">Последняя версия (%1$s) уже скачана</string>

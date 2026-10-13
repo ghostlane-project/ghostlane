@@ -33,6 +33,36 @@ enum class SubscriptionSort {
  * which is the whole point of asking for it. A new field with a default reads
  * back cleanly from a bundle written before it existed.
  */
+/**
+ * A room pinned to the top of its list, as the board knows it again.
+ *
+ * By what a person would call the same room: the list it is in, how it is
+ * reached, and its name. Not by its storage id, and not by its link. A fetch of
+ * the list gives an entry a new id whenever its link changed, and a room's link
+ * changes with the meeting it is held in — which a service ends and a server
+ * replaces as a matter of course. A pin that followed the link would be gone
+ * after the first of those, from a list that still shows the room under the
+ * same name.
+ */
+@Serializable
+data class PinnedLocation(
+    /** The list it is in, by address. Empty for a location added by hand. */
+    @SerialName("list")
+    val subscriptionUrl: String = "",
+
+    /**
+     * How it is reached: the protocol, and for a room the meeting service and
+     * the transport inside the call. A list names one exit's rooms alike, one
+     * to a service, and this is what tells them apart.
+     */
+    val wire: String = "",
+
+    /** Its name, as the list gives it. */
+    val name: String = ""
+) {
+    fun normalized(): PinnedLocation = copy(subscriptionUrl = subscriptionUrl.trim(), wire = wire.trim(), name = name.trim())
+}
+
 @Serializable
 data class SubscriptionSettings(
     /** Choose once before connecting; keep the native core for each transport. */
@@ -100,12 +130,28 @@ data class SubscriptionSettings(
      * choice about the list, like its order, and is kept where that is.
      */
     @SerialName("folded_subscription_urls")
-    val foldedSubscriptionUrls: Set<String> = emptySet()
+    val foldedSubscriptionUrls: Set<String> = emptySet(),
+
+    /**
+     * The rooms pinned to the top of their lists, in the order they were
+     * pinned: the first is the one somebody reaches for without looking, and
+     * a later pin goes under it.
+     */
+    @SerialName("pinned_locations")
+    val pinnedLocations: List<PinnedLocation> = emptyList()
 ) {
     fun normalized(): SubscriptionSettings = copy(
         updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
         lowestSubscriptionUrls = lowestSubscriptionUrls.addresses(),
-        foldedSubscriptionUrls = foldedSubscriptionUrls.addresses()
+        foldedSubscriptionUrls = foldedSubscriptionUrls.addresses(),
+        pinnedLocations = pinnedLocations
+            .map { it.normalized() }
+            .filter { it.name.isNotEmpty() }
+            .distinct()
+            // The newest stay. A room can leave its list for good, and its pin
+            // stays written where nobody sees it: this is what keeps that from
+            // growing for as long as the app is installed.
+            .takeLast(MAX_PINNED)
     )
 
     /** The old global flag remains a read-only migration fallback. */
@@ -164,7 +210,19 @@ data class SubscriptionSettings(
         if (url.isEmpty()) return this
         return copy(
             lowestSubscriptionUrls = lowestSubscriptionUrls - url,
-            foldedSubscriptionUrls = foldedSubscriptionUrls - url
+            foldedSubscriptionUrls = foldedSubscriptionUrls - url,
+            pinnedLocations = pinnedLocations.filterNot { it.subscriptionUrl.trim() == url }
+        ).normalized()
+    }
+
+    fun isPinned(pin: PinnedLocation): Boolean = pin.normalized() in pinnedLocations
+
+    /** Pins a room under the ones already pinned, or takes its pin out and leaves the rest in their order. */
+    fun withPinned(pin: PinnedLocation, pinned: Boolean): SubscriptionSettings {
+        val room = pin.normalized()
+        if (room.name.isEmpty()) return this
+        return copy(
+            pinnedLocations = if (pinned) pinnedLocations + room else pinnedLocations.filterNot { it.normalized() == room }
         ).normalized()
     }
 
@@ -176,6 +234,12 @@ data class SubscriptionSettings(
 
         /** A week. Past this the setting is indistinguishable from "off". */
         const val MAX_INTERVAL_HOURS = 168
+
+        /**
+         * The most rooms that stay pinned. Far more than anybody pins — a pin's
+         * whole point is that there are few — and a bound on what is written.
+         */
+        const val MAX_PINNED = 48
 
         /** Offered in the picker; anything else is reachable by neither. */
         val INTERVAL_CHOICES = listOf(1, 3, 6, 12, 24, 48, 168)

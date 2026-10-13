@@ -105,4 +105,85 @@ class SubscriptionSettingsTest {
         assertFalse(settings.lowestEnabledFor("https://two.example/sub"))
         assertFalse(settings.hasAnyLowest())
     }
+
+    // ── which rooms are pinned to the top of their lists ───────────────────
+
+    private fun pin(name: String, list: String = "https://one.example/sub", wire: String = "olcrtc:telemost:vp8channel") =
+        PinnedLocation(subscriptionUrl = list, wire = wire, name = name)
+
+    @Test fun pinsAreKeptInTheOrderTheyWereMade() {
+        // The first room somebody pinned is the one they reach for without
+        // looking; a later pin goes under it, not over it.
+        val settings = SubscriptionSettings()
+            .withPinned(pin("ES"), pinned = true)
+            .withPinned(pin("DE"), pinned = true)
+            .withPinned(pin("CA"), pinned = true)
+        assertEquals(listOf("ES", "DE", "CA"), settings.pinnedLocations.map { it.name })
+        assertTrue(settings.isPinned(pin("DE")))
+        assertFalse(settings.isPinned(pin("FR")))
+    }
+
+    @Test fun pinningARoomTwiceIsOnePinWhereItWas() {
+        val settings = SubscriptionSettings()
+            .withPinned(pin("ES"), pinned = true)
+            .withPinned(pin("DE"), pinned = true)
+            .withPinned(pin(" ES "), pinned = true)
+        assertEquals(listOf("ES", "DE"), settings.pinnedLocations.map { it.name })
+    }
+
+    @Test fun unpinningTakesOutThatRoomAndLeavesTheOrderOfTheRest() {
+        val settings = SubscriptionSettings()
+            .withPinned(pin("ES"), pinned = true)
+            .withPinned(pin("DE"), pinned = true)
+            .withPinned(pin("CA"), pinned = true)
+            .withPinned(pin("DE"), pinned = false)
+        assertEquals(listOf("ES", "CA"), settings.pinnedLocations.map { it.name })
+        assertFalse(settings.isPinned(pin("DE")))
+    }
+
+    @Test fun aRoomIsPinnedInItsOwnListAndOnItsOwnWire() {
+        // A list names one exit's rooms alike, a room to a meeting service; and
+        // two lists may both have an "ES".
+        val settings = SubscriptionSettings().withPinned(pin("ES"), pinned = true)
+        assertFalse(settings.isPinned(pin("ES", list = "https://two.example/sub")))
+        assertFalse(settings.isPinned(pin("ES", wire = "olcrtc:vkcalls:vp8channel")))
+        assertTrue(settings.isPinned(pin("ES")))
+    }
+
+    @Test fun aRoomWithNoNameCannotBePinned() {
+        assertEquals(SubscriptionSettings(), SubscriptionSettings().withPinned(pin("   "), pinned = true))
+    }
+
+    @Test fun pinsAreWrittenAndReadBackInOrder() {
+        val json = Json { ignoreUnknownKeys = true }
+        val settings = SubscriptionSettings().withPinned(pin("ES"), pinned = true).withPinned(pin("DE"), pinned = true)
+        val read = json.decodeFromString(SubscriptionSettings.serializer(), json.encodeToString(SubscriptionSettings.serializer(), settings))
+        assertEquals(settings.pinnedLocations, read.pinnedLocations)
+    }
+
+    @Test fun settingsStoredBeforePinsWereKeptHaveNone() {
+        val settings = Json { ignoreUnknownKeys = true }.decodeFromString(SubscriptionSettings.serializer(), """{"sort":"name"}""")
+        assertEquals(emptyList(), settings.pinnedLocations)
+    }
+
+    @Test fun aListThatIsRemovedTakesItsPinsWithIt() {
+        val gone = "https://one.example/sub"
+        val kept = "https://two.example/sub"
+        val settings = SubscriptionSettings()
+            .withPinned(pin("ES", list = gone), pinned = true)
+            .withPinned(pin("DE", list = kept), pinned = true)
+            .withPinned(pin("Mine", list = ""), pinned = true)
+            .withoutSubscription(gone)
+        assertEquals(listOf("DE", "Mine"), settings.pinnedLocations.map { it.name })
+    }
+
+    @Test fun thereIsAMostThatCanBePinnedAndTheOldestGiveWay() {
+        // A pin's rooms can leave their list for good, and their pins stay
+        // written where nobody sees them. The most keeps that from growing.
+        var settings = SubscriptionSettings()
+        repeat(SubscriptionSettings.MAX_PINNED + 3) { settings = settings.withPinned(pin("room-$it"), pinned = true) }
+        assertEquals(SubscriptionSettings.MAX_PINNED, settings.pinnedLocations.size)
+        assertEquals("room-3", settings.pinnedLocations.first().name)
+        assertEquals("room-${SubscriptionSettings.MAX_PINNED + 2}", settings.pinnedLocations.last().name)
+    }
 }

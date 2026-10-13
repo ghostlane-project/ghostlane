@@ -34,6 +34,8 @@ import multiplatform_app.sharedui.generated.resources.action_expand
 import multiplatform_app.sharedui.generated.resources.board_key_gone_caps
 import multiplatform_app.sharedui.generated.resources.measure_latency
 import multiplatform_app.sharedui.generated.resources.room_measure_caps
+import multiplatform_app.sharedui.generated.resources.room_pin
+import multiplatform_app.sharedui.generated.resources.room_unpin
 import multiplatform_app.sharedui.generated.resources.room_your_seat_caps
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -80,6 +82,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -256,6 +259,17 @@ fun PkRoomCard(
     onLongClick: (() -> Unit)? = null,
     onMeasure: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** Whether this room is pinned to the top of its list. */
+    pinned: Boolean = false,
+    /**
+     * Pins the room or takes its pin out; null for a row that cannot be pinned.
+     *
+     * A control on the card and not a long press, which nothing announces, nor
+     * something a chosen card grows: choosing a room while a session is up
+     * moves the session to it, and nobody should have to do that to mark the
+     * room they like.
+     */
+    onPinToggle: (() -> Unit)? = null,
     /**
      * One more line said where the seats would be, when there is something the
      * user should know before pressing connect — a link that asked for a
@@ -383,6 +397,10 @@ fun PkRoomCard(
             },
             end = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onPinToggle != null) {
+                        PkPinToggle(pinned = pinned, onToggle = onPinToggle)
+                        Spacer(Modifier.width(if (trailing != null) 8.dp else 2.dp))
+                    }
                     if (trailing != null) {
                         trailing()
                         Spacer(Modifier.width(4.dp))
@@ -498,6 +516,51 @@ fun PkRoomCard(
         }
     }
 }
+
+/**
+ * The pin on a card: drawn small, pressed large.
+ *
+ * It takes sixteen points of the line's height, which is less than a name does,
+ * so a card is no taller for having it — a hundred cards, each a few points
+ * taller, is a screen more to scroll. What takes the press is forty points
+ * square, centred on it and reaching past its place into the card's own margin
+ * and the gap under the name: the card around it is itself a button, and a press
+ * that missed fifteen points of drawing would choose the room, which with a
+ * session up moves the session there.
+ *
+ * Muted until it is pinned, so that a list of a hundred rooms is not a hundred
+ * marks; the app's own lime when it is.
+ */
+@Composable
+private fun PkPinToggle(pinned: Boolean, onToggle: () -> Unit) {
+    val palette = LocalPkPalette.current
+    val label = stringResource(if (pinned) Res.string.room_unpin else Res.string.room_pin)
+    Box(
+        modifier = Modifier
+            .layout { measurable, _ ->
+                val press = PIN_PRESS.roundToPx()
+                val placeable = measurable.measure(Constraints.fixed(press, press))
+                val width = PIN_PLACE_WIDTH.roundToPx()
+                val height = PIN_PLACE_HEIGHT.roundToPx()
+                layout(width, height) { placeable.place((width - press) / 2, (height - press) / 2) }
+            }
+            .clip(CircleShape)
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onToggle),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (pinned) PkIcons.PushPinFilled else PkIcons.PushPin,
+            contentDescription = label,
+            tint = if (pinned) palette.accent else palette.textMuted.copy(alpha = 0.75f),
+            modifier = Modifier.size(15.dp)
+        )
+    }
+}
+
+/** The room the pin takes on the name's line, and the square that takes the press. */
+private val PIN_PLACE_WIDTH = 22.dp
+private val PIN_PLACE_HEIGHT = 16.dp
+private val PIN_PRESS = 40.dp
 
 /**
  * How wide the two columns at the ends of a card's lines are: the latency, and

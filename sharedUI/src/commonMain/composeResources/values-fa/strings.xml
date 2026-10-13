@@ -263,6 +263,7 @@
     <string name="ping_tap_to_check">برای بررسی دسترسی‌پذیری بزنید</string>
     <string name="ping_title">بررسی اتصال</string>
     <string name="pings_stale">اندازه‌گیری‌های قبلی شبکه · برای به‌روزرسانی «اندازه‌گیری» را بزنید</string>
+    <string name="pinned_named">در بالای فهرست سنجاق شد: %1$s</string>
     <string name="plan_resets_in">ترافیک · بازنشانی تا %1$d روز دیگر</string>
     <string name="plan_resets_today">ترافیک · امروز بازنشانی می‌شود</string>
     <string name="plan_traffic">ترافیک</string>
@@ -313,8 +314,10 @@
     <string name="room_latency">تأخیر</string>
     <string name="room_measure_caps">اندازه‌گیری</string>
     <string name="room_pick_hint">یک اتاق را از سمت چپ انتخاب کنید</string>
+    <string name="room_pin">سنجاق کردن در بالا</string>
     <string name="room_seats">صندلی‌ها</string>
     <string name="room_selected">انتخاب‌شده</string>
+    <string name="room_unpin">برداشتن سنجاق</string>
     <string name="room_your_seat">صندلی شما</string>
     <string name="room_your_seat_caps">صندلی شما</string>
     <string name="router_copy_link">پیوند</string>
@@ -469,6 +472,7 @@
     <string name="tray_open">باز کردن</string>
     <string name="tray_quit">خروج</string>
     <string name="unknown_error">خطای ناشناخته</string>
+    <string name="unpinned_named">سنجاق برداشته شد: %1$s</string>
     <string name="unsaved_change">تغییر ذخیره‌نشده</string>
     <string name="update_allow_install">به Ghostlane اجازهٔ نصب به‌روزرسانی بدهید و دوباره «دانلود» را بزنید</string>
     <string name="update_already_downloaded">آخرین نسخهٔ %1$s از قبل دانلود شده</string>

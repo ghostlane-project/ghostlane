@@ -142,6 +142,11 @@ controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
 - Sorting by ping or name, filtering by protocol, duplicate server lists
   refreshed rather than added twice, and a location or a whole list removed from
   the board itself.
+- A room pinned to the top of its list with the pin on its card. Pinned rooms
+  stay on the board when their list is folded away, so a list of a hundred
+  rooms folds down to the three in use; the pins and the folds are still there
+  the next time the app opens, and a pin stays on its room when the list is
+  fetched again.
 - A failure that says what failed: a link asking for a transport its provider
   cannot carry, a dead key, an empty room, a tunnel that came up but carried
   nothing.
