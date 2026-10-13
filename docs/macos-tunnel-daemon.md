@@ -396,6 +396,8 @@ called unverified is a bad way to earn that authorisation.
 | launchd plist | `/Applications/ProofKit.app/Contents/Library/LaunchDaemons/org.olcbox.app.desktopApp.tunneld.plist` |
 | the core it runs | `/Applications/ProofKit.app/Contents/Resources/sing-box`, copied to `/Library/Application Support/org.olcbox.app/bin/sing-box` |
 | the step into a group | the daemon's own binary, copied to `/Library/Application Support/org.olcbox.app/bin/as-group` |
+| a room's engine, under the switch | the app's `olcrtc-darwin-*`, copied to `/Library/Application Support/org.olcbox.app.lines/` (root's, everybody's to read) and run from there as the app's user, in the tunnel's group |
+| what that engine prints | a file beside its config in the app's own `runtime` directory, named as the config with `.out` after it |
 | generated config | `/Library/Application Support/org.olcbox.app/tun.json` (root, 0600) |
 | control socket | `/var/run/org.olcbox.app.tunneld.sock` |
 | the system's resolver, while a tunnel runs | `State:/Network/Service/org.olcbox.app.tunnel/DNS` in the dynamic store |
