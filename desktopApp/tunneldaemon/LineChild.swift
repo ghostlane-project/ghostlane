@@ -16,14 +16,15 @@
 // the way (GroupExec). The app reads what it says from a file of its own, and
 // ends it as it ends any process of its user.
 //
-// Sending what is bound into the tun instead, with a `route-to` rule in the
-// block, was tried and is not done: when the tun dies under such a rule the
-// machine never answers again (macOS 14, 15 and 26, each asked).
+// Run this way the engine is the one a session without the switch runs: it
+// joins its room before there is a tunnel, by the interface it would use
+// anyway, and nothing it sends passes through the tun on its way out.
 //
 // The program is not run from where the app keeps it, which its user can
 // write: the group is for this team's engine and not for whatever lies there.
 // It is copied into a directory of root's that everybody can read, checked
-// where it then lies, and run from there.
+// where it then lies, and run from there. Only a file that is its asker's own
+// is copied: the daemon reads as root, and the copy is for everybody to read.
 import Foundation
 
 final class LineChild {
@@ -61,7 +62,7 @@ final class LineChild {
         }
         guard plain else { throw DaemonError.message("a line's program has a plain file name") }
 
-        let target = try install(program, as: name)
+        let target = try install(program, as: name, askedBy: user)
 
         let task = Process()
         task.executableURL = step
@@ -118,7 +119,7 @@ final class LineChild {
     /// else's to change: the directory can be read by everybody, so a copy
     /// that was its user's for a moment could be held open and rewritten after
     /// the check. A link is not followed, on either side.
-    private func install(_ program: String, as name: String) throws -> URL {
+    private func install(_ program: String, as name: String, askedBy user: uid_t) throws -> URL {
         let everybodyReads: [FileAttributeKey: Any] = [
             .posixPermissions: 0o755, .ownerAccountID: 0, .groupOwnerAccountID: 0,
         ]
@@ -134,10 +135,13 @@ final class LineChild {
         guard fstat(input, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
             throw DaemonError.message("\(program) is not a file")
         }
+        guard info.st_uid == user else {
+            throw DaemonError.message("\(program) is not a file of the user who asks")
+        }
 
         let target = Self.directory.appendingPathComponent(name)
         unlink(target.path)
-        let output = open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o755)
+        let output = open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o700)
         guard output >= 0 else {
             throw DaemonError.message("cannot write \(target.path): \(String(cString: strerror(errno)))")
         }
@@ -160,11 +164,15 @@ final class LineChild {
                 written += step
             }
         }
-        guard fchown(output, 0, 0) == 0, fchmod(output, 0o755) == 0 else {
+        guard fchown(output, 0, 0) == 0 else {
             throw DaemonError.message("cannot make \(target.path) root's")
         }
         guard isTrusted(target) else {
             throw DaemonError.message("\(name) is not signed by this team")
+        }
+        // Root's alone until here; now everybody's to read and to run.
+        guard fchmod(output, 0o755) == 0 else {
+            throw DaemonError.message("cannot let \(target.path) be run")
         }
         copied = true
         return target

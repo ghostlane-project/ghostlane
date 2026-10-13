@@ -32,6 +32,11 @@ internal class TunnelDaemonClient(
 
     suspend fun release(): DaemonReply = send(TunnelDaemonProtocol.releaseRequest())
 
+    suspend fun line(program: String, arguments: List<String>, output: String): DaemonReply =
+        send(TunnelDaemonProtocol.lineRequest(program, arguments, output))
+
+    suspend fun lineStop(): DaemonReply = send(TunnelDaemonProtocol.lineStopRequest())
+
     suspend fun status(): DaemonReply = send(TunnelDaemonProtocol.statusRequest())
 
     suspend fun isReachable(): Boolean = status() is DaemonReply.Ok

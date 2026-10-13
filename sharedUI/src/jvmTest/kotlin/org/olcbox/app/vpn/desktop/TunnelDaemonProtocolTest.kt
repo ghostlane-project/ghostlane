@@ -120,4 +120,31 @@ class TunnelDaemonProtocolTest {
         assertIs<DaemonReply.Failure>(TunnelDaemonProtocol.parseReply(""))
         assertIs<DaemonReply.Failure>(TunnelDaemonProtocol.parseReply("""{"state":"running"}"""))
     }
+
+    // The fourth protocol: the daemon runs a line's own program for the app.
+    @Test fun aLinesProgramIsNamedWithItsArgumentsAndWhereItWrites() {
+        assertEquals(
+            """{"verb":"line","program":"/Users/a/bin/olcrtc","arguments":["/tmp/room.yaml"],"output":"/tmp/room.yaml.out"}""" + "\n",
+            TunnelDaemonProtocol.lineRequest("/Users/a/bin/olcrtc", listOf("/tmp/room.yaml"), "/tmp/room.yaml.out")
+        )
+        assertEquals("{\"verb\":\"line-stop\"}\n", TunnelDaemonProtocol.lineStopRequest())
+    }
+
+    @Test fun aReplySaysWhichProcessTheLineIsAndWhereItsCopyLies() {
+        val started = assertIs<DaemonReply.Ok>(
+            TunnelDaemonProtocol.parseReply(
+                """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":true,"line":4711,""" +
+                    """"program":"/Library/Application Support/org.olcbox.app.lines/olcrtc-darwin-arm64"}"""
+            )
+        )
+        assertEquals(4711L, started.line)
+        assertEquals("${TunnelDaemonProtocol.LINES_DIR}/olcrtc-darwin-arm64", started.program)
+        assertEquals(TunnelDaemonProtocol.PROTOCOL_LINE, started.protocol)
+        // A daemon from before lines says nothing of one, and runs none.
+        val before = assertIs<DaemonReply.Ok>(
+            TunnelDaemonProtocol.parseReply("""{"ok":true,"state":"idle","logTail":"","protocol":3,"hold":false}""")
+        )
+        assertEquals(0L, before.line)
+        assertEquals(null, before.program)
+    }
 }

@@ -825,19 +825,23 @@ class DesktopVpnManager private constructor(
 
             // The Mac's kill switch ([MacKillSwitch]). Behind a block that
             // stands, from a tunnel that died or from a session being
-            // restarted, nothing of a line gets out except through a tunnel's
-            // own process: a room's engine could not reach its meeting
-            // service, and no name could be asked. So there the tunnel comes
-            // first and the line is started behind it, as a line that came
-            // later in a session is.
-            //
-            // And a room under the switch is always started that way. Joined
-            // first, its engine would have every connection it had just made
-            // refused the moment the block was loaded, a moment before the
-            // tunnel that is to carry them exists.
+            // restarted, nothing of a core's gets out except through a
+            // tunnel's own process, and no name can be asked. So there the
+            // tunnel comes first and the core is started behind it, as a line
+            // that came later in a session is.
             val helper = if (desktopMode == DesktopMode.MacTun) macOsTunController.helperNow() else null
             val underSwitch = helper != null && helper.canHold && _socksProxySettings.value.killSwitch
-            val tunFirst = helper != null && (helper.blockStands || (underSwitch && isOlcrtc))
+            // A room's engine under the switch is the helper's to run, in the
+            // group the block lets out, and is then started as it is without
+            // the switch: first, by the interface that carries the internet,
+            // whether a block stands or not. Behind its tunnel instead (as a
+            // helper that cannot run it still has it), its sockets, which it
+            // binds to that interface's address, left beside the tunnel in its
+            // own name and were refused: a carrier with UDP alone could not be
+            // joined at all.
+            val order = MacKillSwitch.order(helper, _socksProxySettings.value.killSwitch, isRoom = isOlcrtc)
+            val engineByHelper = order.engineByHelper
+            val tunFirst = order.tunFirst
             val tunResolver = listOf(org.olcbox.app.net.SingBoxConfig.DESKTOP_TUN_RESOLVER)
             // What the session's first line asks for names. Behind its tunnel,
             // the tunnel. Before it, the machine's own, as ever, except a
@@ -867,6 +871,7 @@ class DesktopVpnManager private constructor(
                         startupFailure = startupFailure,
                         logOutput = true,
                         privileged = desktopMode == DesktopMode.LinuxTun,
+                        byHelper = engineByHelper,
                         directRulesFile = engineRules,
                         dtlsProfile = dtlsProfile,
                         dnsServer = tunResolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current()
@@ -1288,7 +1293,12 @@ class DesktopVpnManager private constructor(
         val bundled = buildList<Path> {
             runCatching { DesktopNativeAssets.resolveSingBoxBinary() }.getOrNull()?.let { add(it) }
             runCatching { DesktopNativeAssets.resolveXrayBinary() }.getOrNull()?.let { add(it) }
-            addAll(runCatching { DesktopNativeAssets.resolveOlcRtcBinaryCandidates() }.getOrDefault(emptyList()))
+            val engines = runCatching { DesktopNativeAssets.resolveOlcRtcBinaryCandidates() }.getOrDefault(emptyList())
+            addAll(engines)
+            // And where the Mac's helper keeps the copy it runs under the kill switch.
+            if (DesktopPaths.os == DesktopOs.MacOS) {
+                engines.forEach { add(Path.of(macOsTunController.lineProgram(it))) }
+            }
         }
         return LineConfigs.processPaths(running, bundled)
     }
@@ -1809,13 +1819,15 @@ class DesktopVpnManager private constructor(
         return canConnectToSocks(port)
     }
 
-    private fun startOlcRtcProcessWithFallback(
+    private suspend fun startOlcRtcProcessWithFallback(
         location: LocationConfig,
         socksSettings: DesktopSocksProxySettings,
         ready: CompletableDeferred<Unit>,
         startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean,
+        /** Run by the Mac's tunnel helper, in the group the kill switch's block lets out. */
+        byHelper: Boolean = false,
         directRulesFile: Path?,
         dtlsProfile: String,
         dnsServer: String = DesktopDnsResolver.current()
@@ -1835,6 +1847,7 @@ class DesktopVpnManager private constructor(
                     startupFailure = startupFailure,
                     logOutput = logOutput,
                     privileged = privileged,
+                    byHelper = byHelper,
                     dnsServer = dnsServer,
                     directRulesFile = directRulesFile,
                     dtlsProfile = dtlsProfile
@@ -2013,7 +2026,7 @@ class DesktopVpnManager private constructor(
         tunLogJob = null
     }
 
-    private fun startOlcRtcProcess(
+    private suspend fun startOlcRtcProcess(
         binary: Path,
         location: LocationConfig,
         socksSettings: DesktopSocksProxySettings,
@@ -2021,6 +2034,7 @@ class DesktopVpnManager private constructor(
         startupFailure: CompletableDeferred<String>,
         logOutput: Boolean,
         privileged: Boolean,
+        byHelper: Boolean,
         dnsServer: String,
         directRulesFile: Path?,
         dtlsProfile: String
@@ -2060,7 +2074,16 @@ class DesktopVpnManager private constructor(
         processBuilder.environment()["no_proxy"] = "127.0.0.1,localhost"
 
         val startedProcess = try {
-            processBuilder.start()
+            if (byHelper) {
+                addLog("macOS TUN: the room's engine is run by the tunnel helper, in the group the kill switch lets out")
+                // What it prints, where this app reads it: a file beside its config, the app's own.
+                val said = configPath.resolveSibling("${configPath.fileName}$LINE_OUTPUT_SUFFIX")
+                Files.deleteIfExists(said)
+                Files.createFile(said)
+                macOsTunController.startLine(binary, listOf(configPath.toString()), said)
+            } else {
+                processBuilder.start()
+            }
         } catch (e: Exception) {
             runCatching { Files.deleteIfExists(configPath) }
             if (olcRtcConfigPath == configPath) {
@@ -2128,6 +2151,7 @@ class DesktopVpnManager private constructor(
     private fun deleteOlcRtcConfig() {
         olcRtcConfigPath?.let { path ->
             runCatching { Files.deleteIfExists(path) }
+            runCatching { Files.deleteIfExists(path.resolveSibling("${path.fileName}$LINE_OUTPUT_SUFFIX")) }
         }
         olcRtcConfigPath = null
     }
@@ -3583,6 +3607,8 @@ class DesktopVpnManager private constructor(
             startupFailure = startupFailure,
             logOutput = true,
             privileged = line.desktopMode == DesktopMode.LinuxTun,
+            byHelper = line.desktopMode == DesktopMode.MacTun &&
+                macOsTunController.runsLineUnder(_socksProxySettings.value.killSwitch),
             directRulesFile = line.engineRules,
             dtlsProfile = line.dtlsProfile,
             dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current()
@@ -3788,6 +3814,9 @@ class DesktopVpnManager private constructor(
         const val CORE_SOCKS_POLL_MS = 200L
         /** As on the phones: a WB Stream join alone may take the engine's 25 s. */
         const val OLC_READY_TIMEOUT_MS = 35_000L
+
+        /** What a helper-run engine prints is in a file named as its config is, with this after it. */
+        const val LINE_OUTPUT_SUFFIX = ".out"
         const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TCP_CONNECT_TIMEOUT_MS = 250L

@@ -60,6 +60,68 @@ class MacKillSwitchTest {
     // On Linux either way out is a password dialog, and its sentence says so.
     // A Mac's helper was approved once, when it was installed: its sentence
     // must not promise a dialog that never opens.
+    // Which comes first, and who runs a room's engine.
+    @Test
+    fun aRoomUnderTheSwitchIsJoinedFirstByAnEngineTheHelperRuns() {
+        val can = MacOsTunController.Helper(blockStands = false, canHold = true, runsLines = true)
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = false, engineByHelper = true),
+            MacKillSwitch.order(can, switchOn = true, isRoom = true)
+        )
+        // Behind a block that stands as well, and whatever the switch says now.
+        for (switchOn in listOf(true, false)) {
+            assertEquals(
+                MacKillSwitch.Order(tunFirst = false, engineByHelper = true),
+                MacKillSwitch.order(can.copy(blockStands = true), switchOn, isRoom = true),
+                "switch on: $switchOn"
+            )
+        }
+        // With neither it is the app's own child, started first, as ever.
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = false, engineByHelper = false),
+            MacKillSwitch.order(can, switchOn = false, isRoom = true)
+        )
+    }
+
+    @Test
+    fun aHelperThatCannotRunARoomsEngineStillHasItBehindItsTunnel() {
+        val cannot = MacOsTunController.Helper(blockStands = false, canHold = true, runsLines = false)
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = true, engineByHelper = false),
+            MacKillSwitch.order(cannot, switchOn = true, isRoom = true)
+        )
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = true, engineByHelper = false),
+            MacKillSwitch.order(cannot.copy(blockStands = true), switchOn = false, isRoom = true)
+        )
+    }
+
+    @Test
+    fun aCoreComesBehindItsTunnelOnlyWhereABlockStands() {
+        val can = MacOsTunController.Helper(blockStands = false, canHold = true, runsLines = true)
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = false, engineByHelper = false),
+            MacKillSwitch.order(can, switchOn = true, isRoom = false)
+        )
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = true, engineByHelper = false),
+            MacKillSwitch.order(can.copy(blockStands = true), switchOn = true, isRoom = false)
+        )
+    }
+
+    @Test
+    fun withoutAHelperOrOneThatCanHoldNothingIsOrderedDifferently() {
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = false, engineByHelper = false),
+            MacKillSwitch.order(null, switchOn = true, isRoom = true)
+        )
+        val old = MacOsTunController.Helper(blockStands = false, canHold = false, runsLines = false)
+        assertEquals(
+            MacKillSwitch.Order(tunFirst = false, engineByHelper = false),
+            MacKillSwitch.order(old, switchOn = true, isRoom = true)
+        )
+    }
+
     @Test
     fun aMacsSentenceNamesNoPassword() {
         assertTrue("password" in KILL_SWITCH_HOLDS_TRAFFIC)

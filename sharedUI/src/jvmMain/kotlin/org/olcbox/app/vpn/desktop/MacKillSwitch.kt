@@ -69,4 +69,35 @@ internal object MacKillSwitch {
      */
     fun keptForWhatComesNext(switchOn: Boolean, nextMode: DesktopMode): Boolean =
         switchOn && nextMode == DesktopMode.MacTun
+
+    /** How a connect is ordered: what comes first, and who runs a room's engine. */
+    data class Order(
+        /** The tunnel is started before the line, and the line behind it. */
+        val tunFirst: Boolean,
+        /** A room's engine is the helper's to run, in the group the block lets out. */
+        val engineByHelper: Boolean
+    )
+
+    /**
+     * The order of a connect, by what the helper says of itself ([helper], null
+     * where no tunnel of the helper's is asked for), the switch, and whether the
+     * line is a room.
+     *
+     * A room's engine under the switch, or behind a block that stands, is run
+     * by a helper that can run one, and then started as it is without the
+     * switch: first. Behind its tunnel instead, the sockets it binds to the
+     * address of the interface that carries the internet left beside the
+     * tunnel in its own name and were refused, and a carrier with UDP alone
+     * could not be joined. A helper that cannot run it still has it that way.
+     *
+     * A core comes behind its tunnel only where a block stands already:
+     * nothing of it gets out through one except by a tunnel's own process.
+     */
+    fun order(helper: MacOsTunController.Helper?, switchOn: Boolean, isRoom: Boolean): Order {
+        if (helper == null) return Order(tunFirst = false, engineByHelper = false)
+        val underSwitch = helper.canHold && switchOn
+        val engineByHelper = isRoom && helper.runsLines && (helper.blockStands || underSwitch)
+        val tunFirst = !engineByHelper && (helper.blockStands || (underSwitch && isRoom))
+        return Order(tunFirst = tunFirst, engineByHelper = engineByHelper)
+    }
 }
