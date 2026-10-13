@@ -80,6 +80,12 @@ wait_for() {
   for _ in $(seq 1 60); do found=$(grep -E "$1" "$2" 2>/dev/null | tail -1); [ -n "$found" ] && break; sleep 0.1; done
   printf '%s' "${found:-nothing}"
 }
+# How many lines of a file match, once so many do or six seconds have passed.
+count_of() {
+  local found=0
+  for _ in $(seq 1 60); do found=$(grep -cE "$1" "$2" 2>/dev/null); [ "${found:-0}" -ge "$3" ] && break; sleep 0.1; done
+  printf '%s' "${found:-0}"
+}
 
 say "the machine"
 sw_vers | tr '\n' ' '; echo
@@ -182,6 +188,23 @@ the_app_asks() { ( cd "$root/scripts/macos-helper-check" && as_user "$JAVA" AskT
 
 say "at rest"
 expect "the helper speaks the fourth protocol, holds nothing and runs no line" "$(ask "$(request status)")" '^ok=True state=idle hold=False protocol=4 line=no '
+expect "no rule stands" "$(rules_standing)" '^0$'
+
+say "a line that came before the block"
+# The order of a first connect to a room: its engine is run when there is no
+# tunnel and no block, joins its room and holds that connection, and the start
+# that follows puts the block in place over it.
+HELD="$work/line/held"
+: > "$HELD"; chown "$WHO" "$HELD"; chmod 600 "$HELD"
+expect "the helper runs a line with no tunnel and no block" "$(ask "$(request line "$STAND_IN" "$HELD" "$MINE" "$STUN_IP" "$STUN_PORT" held "$ELSEWHERE" 80 one.one.one.one)")" '^ok=True state=idle hold=False protocol=4 line=yes '
+expect "it holds one connection open and is answered over it, time after time" "$(count_of '^held answered' "$HELD" 3) answers, $(grep -c '^held broken' "$HELD") broken" '^[3-9] answers, 0 broken$'
+expect "a tunnel is started after it, behind a block" "$(ask "$(request start utun225 names hold "$SERVER")")" '^ok=True state=running hold=True protocol=4 line=yes '
+: > "$HELD"
+expect "the connection that is older than the block is answered still" "$(wait_for '^held' "$HELD")" '^held answered$'
+expect "and goes on being answered" "$(count_of '^held answered' "$HELD" 4) answers, $(grep -c '^held broken' "$HELD") broken" '^[4-9] answers, 0 broken$'
+expect "what it binds to the way out is answered under the block" "$(wait_for '^bound' "$HELD")" '^bound answered$'
+expect "stopped, and the block with it" "$(ask "$(request stop)")" '^ok=True state=idle hold=False '
+expect "the line stopped by the helper" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=False protocol=4 line=no '
 expect "no rule stands" "$(rules_standing)" '^0$'
 
 say "a start behind the block, with names"
