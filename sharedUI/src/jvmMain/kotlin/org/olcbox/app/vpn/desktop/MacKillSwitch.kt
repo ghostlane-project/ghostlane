@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.desktop
 
+import org.olcbox.app.vpn.DesktopMode
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC_MAC
 import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.vpn.shownUnderKillSwitch
@@ -34,9 +35,10 @@ import org.olcbox.app.vpn.shownUnderKillSwitch
  * deleted). Unlike on Linux none of them asks for a password, so the switch
  * turned off takes effect at once, under a running tunnel too. A tunnel that
  * died, a Cancel, a quit from a held state, a reconnect that fails: none of
- * those removes it. Nor does a session that is restarted in full, for another
- * routing or another mode: the block is kept across the restart, and the new
- * tunnel comes up behind it.
+ * those removes it. Nor does a session that is restarted in full into another
+ * tunnel, for another routing: the block is kept across the restart, and the
+ * new tunnel comes up behind it. Restarted as a proxy's, it goes with the
+ * tunnel ([keptForWhatComesNext]).
  *
  * Behind a block that stands, a line cannot be started before its tunnel: a
  * room's engine has to reach a meeting service whose addresses nobody knows in
@@ -54,4 +56,17 @@ internal object MacKillSwitch {
      */
     fun shown(status: VpnStatus, holdsTraffic: Boolean): VpnStatus =
         shownUnderKillSwitch(status, holdsTraffic, KILL_SWITCH_HOLDS_TRAFFIC_MAC)
+
+    /**
+     * Whether the block under a verified session's tunnel is kept when that
+     * tunnel is taken down by anything but a Disconnect: only with the switch
+     * still on, and only when what comes next is a tunnel again, by the mode
+     * the user has chosen now ([nextMode]).
+     *
+     * A proxy has no tunnel for a block to stand behind. Kept across a change
+     * to proxy mode, the block would refuse the proxy's own line, and the
+     * Mac would have no network for a setting having been changed.
+     */
+    fun keptForWhatComesNext(switchOn: Boolean, nextMode: DesktopMode): Boolean =
+        switchOn && nextMode == DesktopMode.MacTun
 }

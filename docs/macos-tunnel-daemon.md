@@ -212,10 +212,11 @@ that fails, a quit from a held state: the block stays, the status says "The
 tunnel is down and the kill switch is blocking traffic", and Connect or the
 switch are the two ways out.
 
-**A session restarted in full keeps it.** Another routing mode or another
-connection mode is a new tunnel, and between the old one and the new the Mac's
-traffic went out directly. With the switch on the old tunnel is stopped with
-its block kept, and the new one comes up behind it.
+**A session restarted in full keeps it.** Another routing mode is a new
+tunnel, and between the old one and the new the Mac's traffic went out
+directly. With the switch on the old tunnel is stopped with its block kept,
+and the new one comes up behind it. Changed to proxy mode, the block goes with
+the tunnel: a proxy has no tunnel for it to stand behind.
 
 **Behind a block that stands, the tunnel comes first.** A connect has always
 started its line and then the tunnel. Under a block nothing of a line gets out

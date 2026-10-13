@@ -1937,9 +1937,15 @@ class DesktopVpnManager private constructor(
                     // its block. Its tunnel died, or the app is on its way to
                     // another tunnel, for another location or other settings,
                     // and with the block gone the Mac's traffic would go out
-                    // directly until that tunnel is up.
+                    // directly until that tunnel is up. Not on its way to a
+                    // proxy: nothing there would ever stand in front of it.
                     if (!finalStatus && hadSession) {
-                        macOsTunController.holdAfterSessionEnd(wanted = _socksProxySettings.value.killSwitch)
+                        macOsTunController.holdAfterSessionEnd(
+                            wanted = MacKillSwitch.keptForWhatComesNext(
+                                switchOn = _socksProxySettings.value.killSwitch,
+                                nextMode = DesktopMode.current()
+                            )
+                        )
                     }
                     runCatching {
                         macOsTunController.stop()
