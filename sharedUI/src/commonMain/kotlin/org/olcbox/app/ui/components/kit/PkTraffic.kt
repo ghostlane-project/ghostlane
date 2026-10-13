@@ -2,7 +2,6 @@ package org.olcbox.app.ui.components.kit
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -20,7 +19,6 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -188,6 +186,21 @@ class ThroughputWindow(val seconds: Int = THROUGHPUT_SECONDS) {
 /** `1.2 MB/s`: a second's bytes as a rate. */
 fun throughputRate(bytesInOneSecond: Long): String = "${formatByteSize(bytesInOneSecond.coerceAtLeast(0L))}/s"
 
+/** What stands where a rate will, until there is a second to give the rate of. */
+const val THROUGHPUT_PENDING = "…"
+
+/**
+ * The newest second of one direction as a rate, or [THROUGHPUT_PENDING] while no
+ * second is on record.
+ *
+ * The chart stands from the moment a session is asked for, and the first second
+ * is counted two seconds into one: the first reading is only where the counting
+ * starts. "0 B/s" in between would be a measurement nobody made — and it is what
+ * an idle tunnel reads, which is something else.
+ */
+fun ThroughputWindow.newestRate(sent: Boolean): String =
+    if (!hasData) THROUGHPUT_PENDING else throughputRate(if (sent) sentAgo(0) else receivedAgo(0))
+
 private const val RECEIVED_MARK = "↓"
 private const val SENT_MARK = "↑"
 
@@ -196,10 +209,14 @@ private const val SENT_MARK = "↑"
  *
  * Beside it where there is room for a chart worth the name next to them; under
  * it where there is not, which is a narrow phone or large text.
+ *
+ * Drawn whether or not there is anything on it yet: a rule and two rates still
+ * to come. It used to wait for the first second of traffic, which is counted two
+ * seconds into a session — so the strip that holds it opened short, and then
+ * grew by the chart's height under a list somebody was already reading.
  */
 @Composable
 fun PkThroughput(traffic: ThroughputWindow, modifier: Modifier = Modifier) {
-    if (!traffic.hasData) return
     val palette = LocalPkPalette.current
     val receivedColor = palette.accent
     val sentColor = palette.link
@@ -258,22 +275,29 @@ fun PkThroughput(traffic: ThroughputWindow, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            PkRate(RECEIVED_MARK, { traffic.receivedAgo(0) }, receivedColor, style, rateColumn)
-            PkRate(SENT_MARK, { traffic.sentAgo(0) }, sentColor, style, rateColumn)
+            PkRate(RECEIVED_MARK, { traffic.newestRate(sent = false) }, receivedColor, style)
+            PkRate(SENT_MARK, { traffic.newestRate(sent = true) }, sentColor, style)
         }
     ) { measurables, constraints ->
         val (chartSlot, receivedSlot, sentSlot) = measurables
         val gap = RATES_GAP.roundToPx()
+        // The room a rate is given is the width of the widest rate there is, so
+        // that nothing here is a pixel wider one second and narrower the next:
+        // not the chart beside the rates, not the place of the second rate
+        // after the first, not which of the two arrangements this is.
+        val column = rateColumn.roundToPx()
         // Asked how wide it would like to be: a second to a bar, and the rates.
         val width = if (constraints.hasBoundedWidth) {
             constraints.maxWidth
         } else {
-            (BAR_SLOT * traffic.seconds).roundToPx() + gap +
+            (BAR_SLOT * traffic.seconds).roundToPx() + gap + max(
+                column,
                 max(receivedSlot.maxIntrinsicWidth(Constraints.Infinity), sentSlot.maxIntrinsicWidth(Constraints.Infinity))
+            )
         }
         val receivedP = receivedSlot.measure(Constraints(maxWidth = width))
         val sentP = sentSlot.measure(Constraints(maxWidth = width))
-        val rates = max(receivedP.width, sentP.width)
+        val rates = max(column, max(receivedP.width, sentP.width))
         val beside = width - rates - gap
 
         if (beside >= CHART_LEAST_WIDTH.roundToPx()) {
@@ -292,15 +316,18 @@ fun PkThroughput(traffic: ThroughputWindow, modifier: Modifier = Modifier) {
         } else {
             val chartP = chartSlot.measure(Constraints.fixed(width, CHART_HEIGHT.roundToPx()))
             val under = chartP.height + RATES_UNDER_GAP.roundToPx()
-            // Side by side under the chart where both fit, one over the other
-            // where the text is too large even for that.
-            val sideBySide = receivedP.width + gap + sentP.width <= width
+            // Side by side under the chart where two of those rooms fit, one
+            // over the other where the text is too large even for that. Each
+            // starts where the chart does: a rate is as wide as its own figure,
+            // and a short one set to the far end of its room stood adrift in
+            // the middle of the strip.
+            val sideBySide = rates + gap + rates <= width
             val height = under + if (sideBySide) max(receivedP.height, sentP.height) else receivedP.height + sentP.height
             layout(width, height) {
                 chartP.placeRelative(0, 0)
                 receivedP.placeRelative(0, under)
                 if (sideBySide) {
-                    sentP.placeRelative(receivedP.width + gap, under)
+                    sentP.placeRelative(rates + gap, under)
                 } else {
                     sentP.placeRelative(0, under + receivedP.height)
                 }
@@ -316,18 +343,8 @@ private fun barHeight(bytes: Long, peak: Long, room: Float, least: Float): Float
 }
 
 @Composable
-private fun PkRate(mark: String, bytes: () -> Long, color: Color, style: TextStyle, column: Dp) {
-    Text(
-        text = "$mark ${throughputRate(bytes())}",
-        style = style,
-        color = color,
-        textAlign = TextAlign.End,
-        maxLines = 1,
-        softWrap = false,
-        // The column is the width of the widest rate, so the chart beside it is
-        // not a pixel wider one second and narrower the next.
-        modifier = Modifier.widthIn(min = column)
-    )
+private fun PkRate(mark: String, rate: () -> String, color: Color, style: TextStyle) {
+    Text(text = "$mark ${rate()}", style = style, color = color, maxLines = 1, softWrap = false)
 }
 
 @Composable

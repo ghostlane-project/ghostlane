@@ -182,6 +182,8 @@ internal object BoardFixture {
     data class Scene(
         /** The session is up, and on [selectedId]. */
         val connected: Boolean,
+        /** The tunnel has been asked for and has not answered: no timer, nothing counted. */
+        val connecting: Boolean = false,
         val selectedId: String = ROOM_IN_USE,
         /** The admin's two extra header buttons, which is the header at its widest. */
         val admin: Boolean = false,
@@ -242,7 +244,8 @@ internal object BoardFixture {
             }
         }
 
-        val traffic = remember { session() }
+        // A session that has only been asked for has moved nothing yet.
+        val traffic = remember { if (scene.connecting) ThroughputWindow() else session() }
 
         val selected = locations.firstOrNull { it.storageId == scene.selectedId }
         val selectedConfig = selected?.config
@@ -256,7 +259,7 @@ internal object BoardFixture {
                 tag = "OLCRTC CORE",
                 statusLabel = statusLabel(
                     isConnected = scene.connected,
-                    isConnecting = false,
+                    isConnecting = scene.connecting,
                     requiresSetup = scene.empty,
                     hasSeats = selectedSlots != null,
                     transportLabel = selectedConfig?.transportKind()?.label(),
@@ -281,7 +284,7 @@ internal object BoardFixture {
                     )
                 },
                 isActive = scene.connected,
-                isBusy = false,
+                isBusy = scene.connecting,
                 traffic = traffic,
                 notice = scene.notice,
                 noticeDismissible = scene.notice != null,
@@ -290,7 +293,7 @@ internal object BoardFixture {
                 action = boardAction(
                     requiresSetup = scene.empty,
                     isConnected = scene.connected,
-                    isConnecting = false,
+                    isConnecting = scene.connecting,
                     selectedIsRoom = selectedConfig?.transportKind() == TransportKind.Olcrtc,
                     selectedIsFull = roomIsBlocked(selectedSlots, mine = scene.connected),
                     exitName = selectedName,
