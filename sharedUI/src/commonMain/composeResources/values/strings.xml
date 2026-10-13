@@ -263,6 +263,7 @@
     <string name="ping_tap_to_check">Click To Verify Reachability</string>
     <string name="ping_title">Connectivity Check</string>
     <string name="pings_stale">Previous network measurements · tap Measure to refresh</string>
+    <string name="pinned_named">Pinned to the top of its list: %1$s</string>
     <string name="plan_resets_in">Traffic · resets in %1$dd</string>
     <string name="plan_resets_today">Traffic · resets today</string>
     <string name="plan_traffic">Traffic</string>
@@ -313,8 +314,10 @@
     <string name="room_latency">Latency</string>
     <string name="room_measure_caps">MEASURE</string>
     <string name="room_pick_hint">Pick a room on the left</string>
+    <string name="room_pin">Pin to the top</string>
     <string name="room_seats">Seats</string>
     <string name="room_selected">Selected</string>
+    <string name="room_unpin">Unpin</string>
     <string name="room_your_seat">Your seat</string>
     <string name="room_your_seat_caps">YOUR SEAT</string>
     <string name="router_copy_link">Link</string>
@@ -469,6 +472,7 @@
     <string name="tray_open">Open</string>
     <string name="tray_quit">Quit</string>
     <string name="unknown_error">unknown error</string>
+    <string name="unpinned_named">Unpinned: %1$s</string>
     <string name="unsaved_change">Unsaved change</string>
     <string name="update_allow_install">Allow Ghostlane to install updates, then tap Download again</string>
     <string name="update_already_downloaded">Latest %1$s is already downloaded</string>

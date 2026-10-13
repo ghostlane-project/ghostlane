@@ -28,3 +28,11 @@ A server name that opens with a flag was cut between the flag's two letters: the
 ### A folded list stays folded
 
 Fold a server list away, leave the app, and it was unfolded on the way back in: which lists were folded was kept in the screen's own memory, and a phone throws that away with the process. It is kept with the rest of what the app knows about its lists now, on every platform, and forgotten when the list is removed — along with the list's address, which the settings used to keep after the list was gone if it had been set to choose its fastest server.
+
+### Pinned rooms
+
+Every card has a pin. A pinned room stands first in its own list, in the order the pins were made, above whatever the list is sorted by; and it stays on the board when its list is folded away. Fold a list of a hundred rooms and what is left is the ones that are pinned in it — the board of somebody who uses three of them. Pins are kept like folds, so they are there the next time the app opens.
+
+A pin follows the room and not its link. An olcRTC room's link changes whenever its meeting is replaced, which a meeting service and a server do as a matter of course, and a pin that followed the link would be gone at the next fetch of the list from a room that is still there under the same name. A room is the list it is in, the service it is on and its name: one exit's rooms on different services are pinned one at a time, and a room of the same name in another list is another room.
+
+The pin is drawn small and pressed large, forty points square, because the card around it is itself a button: a press that missed it would choose the room, and with a session up that moves the session. A card is no taller for having one.

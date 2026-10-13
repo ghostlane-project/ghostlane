@@ -263,6 +263,7 @@
     <string name="ping_tap_to_check">点击检查连通性</string>
     <string name="ping_title">连通性检查</string>
     <string name="pings_stale">之前的网络测量结果 · 点按“测量”以刷新</string>
+    <string name="pinned_named">已在列表中置顶：%1$s</string>
     <string name="plan_resets_in">流量 · %1$d 天后重置</string>
     <string name="plan_resets_today">流量 · 今天重置</string>
     <string name="plan_traffic">流量</string>
@@ -313,8 +314,10 @@
     <string name="room_latency">延迟</string>
     <string name="room_measure_caps">测量</string>
     <string name="room_pick_hint">在左侧选择一个房间</string>
+    <string name="room_pin">置顶</string>
     <string name="room_seats">座位</string>
     <string name="room_selected">已选择</string>
+    <string name="room_unpin">取消置顶</string>
     <string name="room_your_seat">你的座位</string>
     <string name="room_your_seat_caps">你的座位</string>
     <string name="router_copy_link">链接</string>
@@ -469,6 +472,7 @@
     <string name="tray_open">打开</string>
     <string name="tray_quit">退出</string>
     <string name="unknown_error">未知错误</string>
+    <string name="unpinned_named">已取消置顶：%1$s</string>
     <string name="unsaved_change">有未保存的更改</string>
     <string name="update_allow_install">请允许 Ghostlane 安装更新，然后再次点按“下载”</string>
     <string name="update_already_downloaded">最新的 %1$s 版本已下载</string>

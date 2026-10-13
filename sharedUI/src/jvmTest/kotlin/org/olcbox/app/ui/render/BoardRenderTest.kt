@@ -33,7 +33,18 @@ class BoardRenderTest {
             "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE),
             // The list itself where the head has scrolled away with it: what a
             // short screen with large text shows once it is scrolled.
-            "in-room-scrolled" to BoardFixture.Scene(connected = true, scrolledBy = 560)
+            "in-room-scrolled" to BoardFixture.Scene(connected = true, scrolledBy = 560),
+            "pinned" to BoardFixture.Scene(
+                connected = true,
+                pinned = listOf(BoardFixture.ROOM_IN_USE, "ours-ES-VK", "theirs-nl"),
+                folded = setOf(BoardFixture.THEIR_LIST)
+            ),
+            // Every list folded: what is left is what was pinned.
+            "pinned-folded" to BoardFixture.Scene(
+                connected = true,
+                pinned = listOf(BoardFixture.ROOM_IN_USE, "ours-ES-VK", "theirs-nl"),
+                folded = setOf(BoardFixture.OUR_LIST, BoardFixture.THEIR_LIST)
+            )
         )
         for ((sceneName, scene) in scenes) {
             for (phone in phones) for (scale in scales) for (language in languages) {
