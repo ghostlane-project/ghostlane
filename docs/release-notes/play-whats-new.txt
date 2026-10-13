@@ -1,7 +1,0 @@
-- The room list fits small screens and large text: a room's name is never cut.
-- Pin a room to the top of its list. Fold the list away and the pinned rooms stay.
-- A folded list is still folded when you open the app again.
-- Traffic is a chart: download and upload as separate bars, with the current speed in figures.
-- Sheets and settings scroll instead of hiding their buttons.
-- A flag at the start of a server's name is drawn as a flag.
-- olcRTC rooms on one more meeting service connect.
