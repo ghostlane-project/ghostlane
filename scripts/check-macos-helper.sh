@@ -214,9 +214,10 @@ expect "the tunnel runs in the group the block lets out" "$(ps -o gid= -p "$PID"
 expect "it took the name the block was written for" "$(ifconfig utun225 2>/dev/null | grep -c 'inet 172.19.0.1 ')" '^1$'
 RULES="$(pfctl -a "$ANCHOR" -s rules 2>/dev/null)"
 expect "the block lets the tunnel's interface out" "$(grep -c 'pass quick on utun225 all' <<<"$RULES")" '^1$'
-expect "and the tunnel's own process, by its group" "$(grep -c "group = $GROUP" <<<"$RULES")" '^2$'
-expect "and the server the tun keeps out of itself" "$(grep -c "to $SERVER" <<<"$RULES")" '^1$'
-expect "and refuses port 53 before it lets the local network out" "$(awk '/port = 53/{refused=NR} /__automatic/{local=NR} END{print (refused && local && refused < local) ? "before" : "not before"}' <<<"$RULES")" '^before$'
+expect "and the tunnel's own process, by its group" "$(grep -c "group = $GROUP" <<<"$RULES")" '^3$'
+expect "one of the three for what its group had open before the block" "$(grep "group = $GROUP" <<<"$RULES" | grep -c 'proto tcp .* no state *$')" '^1$'
+expect "and the server the tun keeps out of itself, as new and as open before" "$(grep -c "to $SERVER" <<<"$RULES") rules, $(grep "to $SERVER" <<<"$RULES" | grep -c 'no state *$') without state" '^2 rules, 1 without state$'
+expect "and refuses port 53 before it lets the local network out" "$(awk '/port = 53/{refused=NR} /__automatic/ && !local{local=NR} END{print (refused && local && refused < local) ? "before" : "not before"}' <<<"$RULES")" '^before$'
 expect "and ends in a refusal of everything else" "$(tail -1 <<<"$RULES")" '^block return out quick all$'
 expect "the system asks the tunnel for names" "$(first_resolver)" '^172\.19\.0\.2$'
 expect "the tun names the app's own program, asked as the app asks" "$(the_app_asks)" '^answered 127\.0\.0\.53 '
@@ -244,7 +245,7 @@ expect "the helper says a line runs" "$(ask "$(request status)")" '^ok=True stat
 say "the tunnel's process killed"
 kill -9 "$PID"; sleep 1.5
 expect "the helper says no tunnel and the block standing" "$(ask "$(request status)")" '^ok=True state=idle hold=True '
-expect "the rules are where they were" "$(rules_standing)" '^1[0-9]$'
+expect "the rules are where they were" "$([ "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null)" = "$RULES" ] && echo "the same $(rules_standing)" || echo changed)" '^the same [12][0-9]$'
 expect "the system asks whom it asked before" "$(first_resolver)" "^$RESOLVER\$"
 expect "the key is gone" "$(key_standing)" '^0$'
 expect "a request elsewhere is refused" "$(code_of "http://$ELSEWHERE/")" '^000$'
