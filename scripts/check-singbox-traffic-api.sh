@@ -19,7 +19,9 @@ set -euo pipefail
 bin="${SINGBOX_BIN:-sing-box}"
 "$bin" version | head -1
 
-work="$(mktemp -d)"
+# With its links resolved, which is how sing-box names a program: on a Mac a
+# temporary directory is under /var, and /var is a link to /private/var.
+work="$(cd "$(mktemp -d)" && pwd -P)"
 pids=()
 cleanup() {
   for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done
@@ -60,8 +62,14 @@ pids+=("$!")
 pids+=("$!")
 
 api="http://127.0.0.1:18822/connections"
-for _ in $(seq 1 50); do
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$api" || true)" = "401" ]; then break; fi
+# Three things were started and none of them is up the moment it is: the API,
+# the two listeners a flow passes, and the server at the far end. A flow sent
+# before the last of them is refused, and the list of flows is then empty.
+for _ in $(seq 1 100); do
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$api" || true)" = "401" ] &&
+     [ "$("$user" -s -o /dev/null -w '%{http_code}' --socks5-hostname 127.0.0.1:18820 http://127.0.0.1:18823/upstream.json || true)" = "200" ]; then
+    break
+  fi
   sleep 0.1
 done
 
