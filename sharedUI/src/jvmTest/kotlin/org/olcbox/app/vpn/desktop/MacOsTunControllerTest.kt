@@ -251,10 +251,13 @@ class MacOsTunControllerTest {
 
     // --- a helper that points the system's resolver at the tun, and holds the block ---
 
-    private val idle3 = """{"ok":true,"state":"idle","logTail":"","protocol":3,"hold":false}"""
+    private val idle3 = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":false}"""
     private val running3 = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":3,"hold":false}"""
-    private val runningHeld = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":3,"hold":true}"""
-    private val idleHeld = """{"ok":true,"state":"idle","logTail":"","protocol":3,"hold":true}"""
+    private val runningHeld = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":4,"hold":true}"""
+    private val idleHeld = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":true}"""
+
+    /** The helper of the build before lines: it holds a block, and cannot run a room's engine. */
+    private val idleHeldBeforeLines = """{"ok":true,"state":"idle","logTail":"","protocol":3,"hold":true}"""
 
     private fun FakeDaemon.request(index: Int): JsonObject = Json.parseToJsonElement(requests[index].trim()).jsonObject
 
@@ -455,7 +458,10 @@ class MacOsTunControllerTest {
     @Test fun aConnectLearnsWhetherABlockStandsAndWhetherTheHelperCanHoldOne() {
         withFakeDaemon(listOf(idleHeld)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
-            assertEquals(MacOsTunController.Helper(blockStands = true, canHold = true), runBlocking { controller.helperNow() })
+            assertEquals(
+                MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
+                runBlocking { controller.helperNow() }
+            )
             assertTrue(controller.blockStands)
         }
         // A helper from before the block that is the one on disk as well: it
@@ -485,11 +491,120 @@ class MacOsTunControllerTest {
     ) { daemon ->
         val log = mutableListOf<String>()
         val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
-        assertEquals(MacOsTunController.Helper(blockStands = true, canHold = true), runBlocking { controller.helperNow() })
+        assertEquals(
+            MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
+            runBlocking { controller.helperNow() }
+        )
         assertEquals(listOf("status", "stop", "status", "status"), daemon.verbs)
-        // The stop is the plain one: this helper is from before the block and has none to keep.
-        assertNull(daemon.request(1)["hold"])
         assertTrue(log.any { "the tunnel helper was updated" in it }, log.toString())
+    }
+
+    // The helper of the build before this one holds a block and cannot run a
+    // room's engine. It makes way like any older one, and its block is not
+    // taken away to find that out: the stop asks for it to be kept.
+    @Test fun aHelperFromBeforeLinesMakesWayAndKeepsItsBlock() = withFakeDaemon(
+        listOf(
+            idleHeldBeforeLines,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
+            idleHeld,
+            idleHeld
+        )
+    ) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(
+            MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
+            runBlocking { controller.helperNow() }
+        )
+        assertEquals("\"keep\"", daemon.request(1)["hold"].toString())
+        assertTrue(controller.runsLineUnder(killSwitch = false), "a block that stands is reason enough")
+    }
+
+    // And when the one on disk is no newer, it is what there is: it holds, and
+    // a room's engine is not its to run.
+    @Test fun aHelperThatCannotRunALineIsNotAskedTo() = withFakeDaemon(
+        listOf(idleHeldBeforeLines, idleHeldBeforeLines)
+    ) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(
+            MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = false),
+            runBlocking { controller.helperNow() }
+        )
+        assertFalse(controller.runsLineUnder(killSwitch = true))
+    }
+
+    // A room's engine is the helper's to run under the switch, and where its
+    // block stands; with neither it is the app's own child, as ever.
+    @Test fun aRoomsEngineIsTheHelpersUnderTheSwitchAndBehindABlock() {
+        withFakeDaemon(listOf(idle3)) { daemon ->
+            val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+            assertFalse(controller.runsLineUnder(killSwitch = true), "not before the helper has been asked")
+            runBlocking { controller.helperNow() }
+            assertTrue(controller.runsLineUnder(killSwitch = true))
+            assertFalse(controller.runsLineUnder(killSwitch = false))
+        }
+        withFakeDaemon(listOf(idleHeld)) { daemon ->
+            val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+            runBlocking { controller.helperNow() }
+            assertTrue(controller.runsLineUnder(killSwitch = false))
+        }
+    }
+
+    // The helper runs the engine and says which process it is; the app holds
+    // it as it holds any process, and reads what it prints from its own file.
+    @Test fun aLineTheHelperRunsIsHeldAsAProcessAndReadFromTheAppsFile() {
+        val child = ProcessBuilder("sleep", "30").start()
+        val said = Files.createTempFile("line-said", ".out")
+        try {
+            withFakeDaemon(
+                listOf("""{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":true,"line":${child.pid()},"program":"/x/olcrtc"}""")
+            ) { daemon ->
+                val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+                val line = runBlocking { controller.startLine(Path.of("/Users/a/bin/olcrtc-darwin-arm64"), listOf("/tmp/c.yaml"), said) }
+                val asked = daemon.request(0)
+                assertEquals("\"line\"", asked["verb"].toString())
+                assertEquals("\"/Users/a/bin/olcrtc-darwin-arm64\"", asked["program"].toString())
+                assertEquals("[\"/tmp/c.yaml\"]", asked["arguments"].toString())
+                assertEquals("\"$said\"", asked["output"].toString())
+                assertEquals(child.pid(), line.pid())
+                assertTrue(line.isAlive)
+                Files.writeString(said, "SOCKS5 server listening on 127.0.0.1:10808\n")
+                assertEquals("SOCKS5 server listening on 127.0.0.1:10808", line.inputStream.bufferedReader().readLine())
+                line.destroy()
+                assertEquals(HelperLine.EXIT_NOT_KNOWN, line.waitFor())
+                assertFalse(line.isAlive)
+            }
+        } finally {
+            child.destroyForcibly()
+            Files.deleteIfExists(said)
+        }
+    }
+
+    @Test fun aLineTheHelperWillNotRunIsAFailureThatSaysWhy() = withFakeDaemon(
+        listOf("""{"ok":false,"error":"olcrtc-darwin-arm64 is not signed by this team","logTail":"","protocol":4}""")
+    ) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        val failure = assertFailsWith<IllegalStateException> {
+            runBlocking { controller.startLine(Path.of("/Users/a/bin/olcrtc-darwin-arm64"), emptyList(), Path.of("/tmp/none")) }
+        }
+        assertTrue("not signed by this team" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test fun theHelpersCopyOfALinesProgramIsNamedByItsFile() {
+        val controller = MacOsTunController({}, TunnelDaemonClient(Path.of("/var/run/none")), { emptyList() }, { "en0" })
+        assertEquals(
+            "/Library/Application Support/org.olcbox.app.lines/olcrtc-darwin-arm64",
+            controller.lineProgram(Path.of("/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"))
+        )
+    }
+
+    // A line's program left running by a run of the app that is gone is ended: nobody reads it.
+    @Test fun aLineLeftByAnAppThatIsGoneIsEnded() = withFakeDaemon(
+        listOf("""{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":false,"line":4711}""", idle3)
+    ) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        runBlocking { controller.findLeftover() }
+        assertEquals(2, daemon.requests.size)
+        assertEquals("\"line-stop\"", daemon.request(1)["verb"].toString())
     }
 
     // A helper that is carrying a tunnel is not told to stop to find out how old it is.

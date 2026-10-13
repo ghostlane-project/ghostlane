@@ -7,6 +7,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -28,7 +29,11 @@ internal sealed interface DaemonReply {
         /** What the daemon speaks; the first daemons said nothing and are 1. */
         val protocol: Int = TunnelDaemonProtocol.PROTOCOL_FIRST,
         /** Whether the kill switch's block stands (`MacKillSwitch`); a daemon from before it has none. */
-        val holds: Boolean = false
+        val holds: Boolean = false,
+        /** The process of the line's program the daemon runs for the app; 0 for none. */
+        val line: Long = 0,
+        /** Where the daemon's copy of that program lies, in the reply to the request that started it. */
+        val program: String? = null
     ) : DaemonReply
 
     data class Failure(
@@ -103,11 +108,36 @@ internal object TunnelDaemonProtocol {
     /**
      * Mirror of the daemon's `protocolVersion` history: 1 said nothing, 2 takes
      * rule files, 3 points the system's resolver at the tun and holds the kill
-     * switch's block.
+     * switch's block, 4 runs a line's own program for the app.
      */
     const val PROTOCOL_FIRST = 1
     const val PROTOCOL_FILES = 2
     const val PROTOCOL_HOLD = 3
+
+    /**
+     * `line` and `line-stop`: the daemon runs a line's own program for the
+     * app, as the app's user and in the group the kill switch's block lets
+     * out. A room's engine binds its sockets to the address of the interface
+     * that carries the internet, and what is bound that way leaves beside any
+     * tunnel, in the engine's own name, where the block refuses it.
+     */
+    const val PROTOCOL_LINE = 4
+
+    /** Where the daemon keeps its copy of a line's program: the path a tun names it by. */
+    const val LINES_DIR = "/Library/Application Support/org.olcbox.app.lines"
+
+    /** [program] run with [arguments], what it prints appended to [output], a file of the app's that is there. */
+    fun lineRequest(program: String, arguments: List<String>, output: String): String =
+        line(
+            buildJsonObject {
+                put("verb", "line")
+                put("program", program)
+                putJsonArray("arguments") { arguments.forEach { add(it) } }
+                put("output", output)
+            }
+        )
+
+    fun lineStopRequest(): String = line(buildJsonObject { put("verb", "line-stop") })
 
     /** Mirror of the plist's `Label`; what `launchctl` calls the daemon. */
     const val LABEL = "org.olcbox.app.desktopApp.tunneld"
@@ -157,7 +187,9 @@ internal object TunnelDaemonProtocol {
             (obj["pid"] as? JsonPrimitive)?.intOrNull,
             tail,
             protocol = (obj["protocol"] as? JsonPrimitive)?.intOrNull ?: PROTOCOL_FIRST,
-            holds = holds
+            holds = holds,
+            line = (obj["line"] as? JsonPrimitive)?.longOrNull ?: 0,
+            program = obj.str("program")
         )
     }
 

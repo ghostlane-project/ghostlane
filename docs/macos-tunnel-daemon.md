@@ -185,13 +185,29 @@ block return out quick all
 - **The tunnel's interface is named by the app** (`utun225`, or the next one no
   interface has), in the tunnel's config and in the rule, so the rule can stand
   before the interface exists and after it is gone.
-- **The tunnel's own sing-box is let out by its group.** It is every line's way
+- **The tunnel's own sing-box is let out by its group.** It is a core's way
   out: a line's binary leaves the tun by the rule on its program, through
   sing-box's own socket. pf can tell a process only by the user or the group
   that owns its sockets, and the tunnel has to be root's, so it runs in a group
   nothing else is in. `Process` cannot set a group between fork and exec, so
   the helper starts a copy of itself that does (`--as-group`, `GroupExec.swift`)
   and becomes sing-box. Root's other programs are held like everybody's.
+- **A room's engine runs in that group too, and the helper is what runs it**
+  (`line`, `LineChild.swift`, protocol 4). Not everything of a line enters the
+  tun. A WebRTC engine binds each socket it gathers its ways through to the
+  address of the interface that carries the internet, and macOS routes what is
+  bound that way by the address, past the tun's routes: it leaves on the
+  physical interface in the engine's own name (measured: such a socket is
+  answered with a tun up and the tun's log never sees it). There the block
+  refused it like anything else. Seen on a Mac with a room behind the block:
+  every STUN and TURN request timed out, SaluteJazz was joined by its way over
+  TCP, and VK Calls, which has UDP alone, not at all. Only root can put a
+  program in a group, so the helper runs the engine for the app: a copy it
+  writes into `/Library/Application Support/org.olcbox.app.lines/` as root's
+  own (only of a file that is the asking user's, checked for this team's
+  signature where it then lies), started as the app's user with the group, its
+  output appended to a file of the app's. The app holds it as it holds any
+  process, and ends it as any process of its user is ended.
 - **The first server's addresses are let out**, the ones the tun keeps out of
   itself: its core dials them from the user's own process.
 - **Port 53 is refused beside the tunnel wherever it goes**, before the local
@@ -225,11 +241,16 @@ service whose addresses nobody knows in advance. So there the tunnel is started
 first and the line behind it, asking the tunnel for names, as a line that comes
 later in a session does.
 
-**So does a room's, whenever the switch is on.** Joined first, an engine would
-have every connection it had just made refused the moment the block was loaded,
-a moment before the tunnel that is to carry them exists. A core has made none
-by then: its first dial is the session's check, made once the tunnel is up. So
-a core under the switch starts in the usual order, kept out of the tun by
+**A room's engine is not behind it.** Run by the helper in the group the block
+lets out, it is started as it is without the switch: first, by the interface
+that carries the internet, whether a block stands or not, and the tunnel after
+it. Until 1.0.462 a room under the switch was started behind its tunnel
+instead, the engine the app's own child; that is the build the timeouts above
+were seen on, and what a helper that cannot run a line (protocol 3) still gets.
+
+**A core under the switch starts in the usual order** where no block stands:
+it has made no connection by the time the block is loaded, its first dial is
+the session's check, made once the tunnel is up. It is kept out of the tun by
 address and let out of the block by address, and is told to ask the tunnel for
 its server's name, since what it asked the router later in the session would
 be asked on the port the block refuses.
@@ -249,10 +270,20 @@ the app's own program, and the app asks it until it is answered before it
 starts the line: 0 to 750 ms on the Mac it was measured on, twelve seconds at
 most before the line is started anyway. A connect in the usual order does not
 wait for it: the first server's core is kept out of the tun by address and
-never needed the rule. A room's engine, joined before its tunnel, does need it,
-and has since this mode shipped: by the code, what it sends in those seconds is
-handed back to it, and it has to make those flows again. That has not been
-watched on a Mac.
+never needed the rule. A room's engine, joined before its tunnel, does need it
+for what it dials over TCP afterwards, and has since this mode shipped: by the
+code, what it sends in those seconds is handed back to it, and it has to make
+those flows again. That has not been watched on a Mac.
+
+And the rule misses a flow now and then after that second too. In the
+helper's check a line's binary asks the tun for a name twice in a row; on one
+run of two the second answer was an address of the tunnel's, which is what a
+program the tun did not name gets (2026-10-13, macOS 15 runner; the check now
+asks up to three times). An engine started behind its tunnel had every flow
+judged that way, its first call to the meeting service included: on the Mac
+the timeouts were seen on, two of nine such starts ended at once with `EOF`
+from that first call. An engine the helper runs dials before there is a tunnel,
+and its sockets for media never enter one.
 
 **What it holds, and what it does not.** Every program's traffic that would
 have reached the internet beside the tunnel, root's included, and another VPN's
@@ -365,6 +396,8 @@ called unverified is a bad way to earn that authorisation.
 | launchd plist | `/Applications/ProofKit.app/Contents/Library/LaunchDaemons/org.olcbox.app.desktopApp.tunneld.plist` |
 | the core it runs | `/Applications/ProofKit.app/Contents/Resources/sing-box`, copied to `/Library/Application Support/org.olcbox.app/bin/sing-box` |
 | the step into a group | the daemon's own binary, copied to `/Library/Application Support/org.olcbox.app/bin/as-group` |
+| a room's engine, under the switch | the app's `olcrtc-darwin-*`, copied to `/Library/Application Support/org.olcbox.app.lines/` (root's, everybody's to read) and run from there as the app's user, in the tunnel's group |
+| what that engine prints | a file beside its config in the app's own `runtime` directory, named as the config with `.out` after it |
 | generated config | `/Library/Application Support/org.olcbox.app/tun.json` (root, 0600) |
 | control socket | `/var/run/org.olcbox.app.tunneld.sock` |
 | the system's resolver, while a tunnel runs | `State:/Network/Service/org.olcbox.app.tunnel/DNS` in the dynamic store |
@@ -488,11 +521,35 @@ showed, 13 October 2026, and holds the helper to since:
 - **What is refused**: an interface that is not a utun, an address that is not
   one, a resolver that is not an address. Nothing changed by any of them.
 - **The helper told to end** (SIGTERM) with a tunnel up behind the block: the
-  helper gone, the tunnel gone, the anchor empty, the key gone, requests direct.
+  helper gone, the tunnel gone, its line gone, the anchor empty, the key gone,
+  requests direct.
+- **A line's program** (a stand-in that binds a socket to the address of the
+  way out and asks a STUN server who it sees, once a second). Started by its
+  user behind the block: no answer. Run by the helper: the user's uid, group
+  7302243, root's own copy in the lines directory, its words in the app's
+  file, and answered. It outlives its tunnel and is answered still; its user
+  ends it; one is started under a block with no tunnel; the helper stops one
+  when asked. Refused: a link, a relative name, a file that is not the
+  asker's, an output its user cannot write.
+
+Asked on macOS 15 and 26 runners the same day, apart from the check
+(`lab/macos-bound.sh` on the `lab/macos-tunnel` branch):
+
+- **A socket bound to the way out's address leaves beside a tun.** With a tun
+  up and no block, an unbound probe was seen in the tun's log and a bound one
+  was answered without the tun ever seeing it.
+- **Behind the block it is refused**, whoever's it is: no answer for a line's
+  binary nor for any other, and bound TCP refused.
+- **pf can send it into the tun instead** (`pass out quick route-to (utunN
+  172.19.0.2) inet proto { tcp, udp }` before the last rule): bound UDP and TCP
+  were then answered and seen by the tun, and with the tun killed under those
+  rules nothing was answered, bound or not. That is not what was built. It
+  would leave a room's engine behind its tunnel, every flow of it judged by
+  the rule on its program, which misses now and then (above).
 
 Not exercised anywhere: the app's own side of this on a Mac (the switch, the
-status, the connect that starts its tunnel first), a real line behind the
-block, and the helper under launchd with its signature checked.
+status, the order of a connect), and the helper under launchd with its
+signature checked. A real room behind the block: see the pull request.
 
 ## Who is allowed to command it
 

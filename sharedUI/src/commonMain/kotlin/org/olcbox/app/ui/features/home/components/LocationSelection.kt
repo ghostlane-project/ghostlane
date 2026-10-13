@@ -72,6 +72,7 @@ import org.olcbox.app.data.model.PinnedLocation
 import org.olcbox.app.ui.features.home.TransportMismatch
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.OlcrtcSlots
+import org.olcbox.app.net.TransportGroup
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.kit.PkDashedAction
@@ -101,6 +102,8 @@ import org.olcbox.app.ui.features.locations.components.LatencyButton
 import org.olcbox.app.ui.features.locations.components.SubscriptionRefreshButton
 import org.olcbox.app.ui.icons.PkIcons
 import org.olcbox.app.ui.theme.LocalPkPalette
+import org.olcbox.app.util.drawsFlags
+import org.olcbox.app.util.flagOf
 import org.olcbox.app.util.formatDate
 import org.olcbox.app.util.nowMillis
 import org.olcbox.app.util.parseEmojiAndName
@@ -287,15 +290,27 @@ internal fun headMarksSelection(
     return lowestSelected || shown.none { it.storageId == selectedLocationId }
 }
 
-/** The name and flag a row and the action bar both print for one location. */
-fun locationDisplayParts(item: LocationItem): Pair<String, String> {
+/**
+ * The name and flag a row and the action bar both print for one location.
+ *
+ * The picture is the one the name opens with, or the line's own icon, or its
+ * list's. A line that brings none of them and is named by its country's code
+ * (`DE Direct`, `GB · olcRTC · VK`) gets the country's flag, where this
+ * system draws flags ([drawFlags]): a list whose server puts no flag into its
+ * names stood beside one whose server does, as letters beside pictures.
+ */
+fun locationDisplayParts(item: LocationItem, drawFlags: Boolean = drawsFlags): Pair<String, String> {
     val metadata = item.metadata
     val raw = metadata?.name?.takeIf { it.isNotBlank() } ?: item.fullName
     val fallbackIcon = metadata?.icon?.takeIf { it.isNotBlank() }
         ?: metadata?.subscription?.icon?.takeIf { it.isNotBlank() }
         ?: ""
     val (emoji, parsed) = parseEmojiAndName(raw, fallbackIcon)
-    return emoji to parsed.ifBlank { item.config?.displayName().orEmpty() }
+    val name = parsed.ifBlank { item.config?.displayName().orEmpty() }
+    val picture = emoji.ifBlank {
+        if (drawFlags) TransportGroup.countryOf(name)?.let(::flagOf).orEmpty() else ""
+    }
+    return picture to name
 }
 
 // ── the pinned chips ───────────────────────────────────────────────────────

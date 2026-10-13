@@ -1,5 +1,7 @@
 package org.olcbox.app.vpn.desktop
 
+import java.nio.file.Path
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -66,6 +68,37 @@ internal class MacOsTunController(
      */
     @Volatile var blockStands = false
         private set
+
+    /** What the helper last said it can do ([helperNow]): run a line's own program, and hold a block. */
+    @Volatile private var runsLines = false
+    @Volatile private var canHold = false
+
+    /**
+     * Whether a room's engine is the helper's to run: it can run one, and the
+     * kill switch is on or its block stands. The block lets out what runs in
+     * the tunnel's group, and only the helper can put a program there
+     * ([TunnelDaemonProtocol.PROTOCOL_LINE]).
+     */
+    fun runsLineUnder(killSwitch: Boolean): Boolean = runsLines && (blockStands || (killSwitch && canHold))
+
+    /** Where the helper's copy of a line's program lies, which is the name a tun knows it by. */
+    fun lineProgram(binary: Path): String = "${TunnelDaemonProtocol.LINES_DIR}/${binary.fileName}"
+
+    /**
+     * Has the helper run [binary] with [arguments], as this app's user and in
+     * the tunnel's group. [said] is a file of this app's, there and empty: what
+     * the program prints is appended to it, and read from it here as a
+     * process's output is read.
+     */
+    suspend fun startLine(binary: Path, arguments: List<String>, said: Path): Process =
+        when (val reply = client.line(binary.toString(), arguments, said.toString())) {
+            is DaemonReply.Ok -> {
+                if (reply.line <= 0) error("the tunnel helper started no program for the line")
+                val handle = ProcessHandle.of(reply.line).orElse(null)
+                HelperLine(reply.line, FollowedFile(said, alive = { handle?.isAlive == true }), handle)
+            }
+            is DaemonReply.Failure -> error("the tunnel helper could not run the line's program: ${reply.message}")
+        }
 
     /** The block is held with no tunnel in front of it: a Mac whose traffic goes nowhere. */
     val holdsTraffic: Boolean
@@ -317,6 +350,8 @@ internal class MacOsTunController(
         val status = client.status() as? DaemonReply.Ok ?: return Leftover(tunnelRuns = false, blockStands = false)
         blockStands = status.holds
         if (status.holds) held = true
+        // A line's program the helper ran for a run of the app that is gone: nobody reads it now.
+        if (status.line != 0L) client.lineStop()
         return Leftover(tunnelRuns = status.state == DaemonReply.STATE_RUNNING, blockStands = status.holds)
     }
 
@@ -325,7 +360,9 @@ internal class MacOsTunController(
         /** The kill switch's block stands now. */
         val blockStands: Boolean,
         /** It can be asked for a block, and to have the system ask the tun for names. */
-        val canHold: Boolean
+        val canHold: Boolean,
+        /** It can be asked to run a line's own program, in the group its block lets out. */
+        val runsLines: Boolean = false
     )
 
     /**
@@ -343,8 +380,10 @@ internal class MacOsTunController(
      */
     suspend fun helperNow(): Helper {
         var status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = blockStands, canHold = false)
-        if (status.protocol < TunnelDaemonProtocol.PROTOCOL_HOLD && status.state != DaemonReply.STATE_RUNNING) {
-            val stopped = client.stop()
+        if (status.protocol < TunnelDaemonProtocol.PROTOCOL_LINE && status.state != DaemonReply.STATE_RUNNING) {
+            // Its block, where it holds one, is left where it is: the daemon
+            // that comes next finds it standing.
+            val stopped = client.stop(keepHold = true)
             if (stopped is DaemonReply.Failure && stopped.restarting) {
                 addLog("the tunnel helper was updated; waiting for the new one to come up")
                 awaitDaemon()
@@ -352,7 +391,9 @@ internal class MacOsTunController(
             }
         }
         blockStands = status.holds
-        return Helper(blockStands = status.holds, canHold = status.protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD)
+        canHold = status.protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD
+        runsLines = status.protocol >= TunnelDaemonProtocol.PROTOCOL_LINE
+        return Helper(blockStands = status.holds, canHold = canHold, runsLines = runsLines)
     }
 
     /**

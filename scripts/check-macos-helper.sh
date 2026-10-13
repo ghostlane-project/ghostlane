@@ -62,6 +62,18 @@ name_by_system() { within 4 dscacheutil -q host -a name "$1" 2>&1 | awk '/ip_add
 rules_standing() { pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c .; }
 key_standing() { printf 'show %s\n' "$KEY" | scutil 2>/dev/null | grep -c ServerAddresses; }
 first_resolver() { scutil --dns | awk '/nameserver\[0\]/{print $3; exit}'; }
+# What a line's binary is told when it asks the tun for a name: a real address,
+# or one of the tunnel's own, which is what a program the tun did not name
+# gets. The tun misses a flow now and then (docs/macos-tunnel-daemon.md), so
+# up to three asks.
+real_name() {
+  local a="" n
+  for n in 1 2 3; do
+    a=$(as_user host -W 3 -t A "$1" 172.19.0.2 2>&1 | awk '/has address/{print $4; exit}')
+    case "$a" in ""|198.1[89].*) sleep 0.5 ;; *) printf 'real %s' "$a"; return ;; esac
+  done
+  if [ -n "$a" ]; then printf 'an address of the tunnel, %s' "$a"; else printf 'no answer'; fi
+}
 # The last line of a file that matches, waited for up to six seconds.
 wait_for() {
   local found=""
@@ -189,8 +201,7 @@ expect "and gives nobody else that answer" "$(as_user dig +time=2 +tries=1 "$PRO
 expect "a request elsewhere is carried by the tunnel" "$(code_of "http://$ELSEWHERE/" 3)" '^[1-5][0-9][0-9]$'
 expect "a request to the server leaves beside it" "$(code_of "http://$SERVER/" 3)" '^[1-5][0-9][0-9]$'
 expect "a name asked by the system gets an address of the tunnel's" "$(name_by_system www.debian.org)" '^198\.1[89]\.'
-expect "a name asked of the tun by a line's binary gets a real one" "$(as_user host -W 3 -t A www.python.org 172.19.0.2 2>&1 | awk '/has address/{print $4; exit}')" '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
-expect "and not one of the tunnel's" "$(as_user host -W 3 -t A www.python.org 172.19.0.2 2>&1 | awk '/has address/{print $4; exit}' | grep -c '^198\.1[89]\.')" '^0$'
+expect "a name asked of the tun by a line's binary gets a real one, in three asks at most" "$(real_name www.python.org)" '^real [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 expect "the router is not asked beside the tunnel" "$(as_user dig +time=1 +tries=1 +short example.org "@$RESOLVER" 2>&1 | grep -cE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')" '^0$'
 expect "through the inbound the app checks a tunnel by" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 6 --socks5 127.0.0.1:10811 "http://$ELSEWHERE/" 2>/dev/null)" '^[1-5][0-9][0-9]$'
 
@@ -256,6 +267,7 @@ expect "an address that is more than an address" "$(ask "$(request start utun227
 expect "a resolver that is not an address" "$(ask "$(request start utun227 | sed 's/^{/{"names": "the router", /')")" '^ok=False .*asked of an address'
 ln -s "$STAND_IN" "$work/line/a-link"
 expect "a line's program that is a link" "$(ask "$(request line "$work/line/a-link" "$SAID")")" '^ok=False .*no line.s program at '
+expect "one that is not its asker's own" "$(ask "$(request line /bin/ls "$SAID")")" '^ok=False .*not a file of the user who asks'
 expect "one named from where the helper stands" "$(ask "$(request line stand-in-line "$SAID")")" '^ok=False .*full paths'
 expect "one that writes where its user cannot" "$(ask "$(request line "$STAND_IN" /var/root/said "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=False .*did not start: open /var/root/said'
 expect "no rule stands" "$(rules_standing)" '^0$'

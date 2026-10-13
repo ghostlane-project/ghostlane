@@ -18,6 +18,7 @@ On a Mac the tunnel's interface and every route through it belong to the tunnel'
 - With the switch on, the tunnel is started behind a block in the system's packet filter, held by the tunnel helper. If the tunnel's process stops, traffic is refused instead of going out directly, and the app says "The tunnel is down and the kill switch is blocking traffic". Connect again, or turn the switch off, to unblock it. Neither asks for a password.
 - The local network stays reachable, as it always was in this mode: a printer, a share, AirDrop. No name is asked of the router while the block stands.
 - A session that is restarted in full, for another routing mode, keeps the block across the restart: the new tunnel comes up behind it. Without the switch the Mac's traffic goes out directly in between, as before. Changed to proxy mode, the block goes with the tunnel.
+- An olcRTC room works under it on every carrier. The room's engine sends its media from the Mac's own network address, which macOS routes beside any tunnel, so the block has to let that one program out and nothing else: the tunnel helper runs the engine for the app. The room is joined first and the tunnel started after it, as without the switch.
 - Turning the switch on takes effect at the next connection; turning it off, at once.
 - It holds every program's traffic that would have reached the internet beside the tunnel, another VPN's included. It does not outlast a restart of the Mac, and it is taken away when the helper is switched off in Login Items or the app is deleted.
 
@@ -26,3 +27,11 @@ Windows still has no kill switch: nothing there owns a filter that outlives the 
 ### What the app does when it opens, it does once
 
 "Connect on launch", "refresh on open" and "measure on launch" ran at every return to the app on an iPhone, where the screen is built again each time. With "connect on launch" on, somebody who disconnected, looked at another app and came back was connected again by an app that had been running all along. They run once for each time the app is started, on every platform.
+
+### Country flags in the server list
+
+A line named by its country's code (`DE Direct`, `GB · olcRTC · VK`) is shown with the country's flag in front, on an iPhone, an Android phone and a Mac. Until now only a list whose server writes a flag into its names had them, so two lists side by side read as pictures beside letters.
+
+- Nothing about a line changes but how it is drawn: its name, its place in the list, pins and the selected line are as they were.
+- A line that brings its own picture, or whose list has an icon, keeps it. A line named after something other than a country gets none.
+- Not on Windows, whose emoji font has no flags and would print the two letters again, nor on a Linux desktop, where it depends on the fonts installed.
