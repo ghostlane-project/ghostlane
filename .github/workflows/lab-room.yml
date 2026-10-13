@@ -94,10 +94,18 @@ jobs:
       SINGBOX_VERSION: "1.13.14"
     steps:
       - uses: actions/checkout@v7
+      # Not scripts/gate-mask.sh: it is written for the bash of a Linux runner,
+      # and this Mac's (3.2) stops at its first empty list.
       - name: Mask what names the room
         env:
           GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
-        run: scripts/gate-mask.sh
+        run: |
+          printf '%s' "$GATE_VKCALLS_ROOMS" | tr ',\r' '\n\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | while IFS= read -r entry; do
+            base="${entry%%[?#]*}"; base="${base%/}"; segment="${base##*/}"
+            for value in "$entry" "$base" "$segment"; do
+              if [ "${#value}" -ge 6 ]; then printf '::add-mask::%s\n' "${value//%/%25}"; fi
+            done
+          done
       - name: The pins
         id: pins
         run: |
