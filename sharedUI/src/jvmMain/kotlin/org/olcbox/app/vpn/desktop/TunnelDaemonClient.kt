@@ -21,10 +21,16 @@ import kotlin.io.path.exists
 internal class TunnelDaemonClient(
     private val socketPath: Path = DEFAULT_SOCKET_PATH
 ) {
-    suspend fun start(config: String, files: Map<String, String> = emptyMap()): DaemonReply =
-        send(TunnelDaemonProtocol.startRequest(config, files))
+    suspend fun start(
+        config: String,
+        files: Map<String, String> = emptyMap(),
+        names: String? = null,
+        hold: DaemonHold? = null
+    ): DaemonReply = send(TunnelDaemonProtocol.startRequest(config, files, names, hold))
 
-    suspend fun stop(): DaemonReply = send(TunnelDaemonProtocol.stopRequest())
+    suspend fun stop(keepHold: Boolean = false): DaemonReply = send(TunnelDaemonProtocol.stopRequest(keepHold))
+
+    suspend fun release(): DaemonReply = send(TunnelDaemonProtocol.releaseRequest())
 
     suspend fun status(): DaemonReply = send(TunnelDaemonProtocol.statusRequest())
 

@@ -2,6 +2,9 @@ package org.olcbox.app.ui
 
 import kotlinx.coroutines.runBlocking
 import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.kill_switch_note
+import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
+import multiplatform_app.sharedui.generated.resources.kill_switch_note_mac
 import multiplatform_app.sharedui.generated.resources.locations_count
 import multiplatform_app.sharedui.generated.resources.routing_bypass_russia_note
 import multiplatform_app.sharedui.generated.resources.settings_title
@@ -158,6 +161,25 @@ class LocalizationTest {
     @Test fun eachClassifiedFailureIsItsOwnEnglishResource() {
         val english = inLocale("en") { NOTICES.mapValues { getString(it.value) } }
         assertEquals(NOTICES.keys.associateWith { it }, english)
+    }
+
+    // The note under the kill switch says what the switch costs, and the cost
+    // is each platform's own. A Mac's block needs no password to take away and
+    // leaves the local network reachable; the Linux note says the opposite of
+    // both, and a Mac that showed it would be telling its user two things that
+    // are not so.
+    @Test fun aMacsKillSwitchSaysWhatAMacsDoes() {
+        val note = org.olcbox.app.ui.components.killSwitchNote("macos")
+        assertEquals(Res.string.kill_switch_note_mac, note)
+        assertEquals(Res.string.kill_switch_note_ios, org.olcbox.app.ui.components.killSwitchNote("ios"))
+        assertEquals(Res.string.kill_switch_note, org.olcbox.app.ui.components.killSwitchNote("linux"))
+        val english = inLocale("en") { getString(note) }
+        assertFalse("password" in english, english)
+        assertTrue("the local network stays reachable" in english, english)
+        assertTrue("at once" in english, english)
+        val russian = inLocale("ru") { getString(note) }
+        assertFalse("парол" in russian, russian)
+        assertTrue("локальная сеть остаётся доступной" in russian, russian)
     }
 
     // The desktop's mode texts are English in the preference and translated on screen:

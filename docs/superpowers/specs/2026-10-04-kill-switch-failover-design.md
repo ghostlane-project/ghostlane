@@ -190,7 +190,9 @@ list usually has another in the same country.
   a socket bound to another device, and needs no interface named in any rule (see Risks for the check). hev's own script must leave that route in place when hev stops without being asked to;
   after a crash the block stays until Disconnect, which is `pkexec` once more. macOS: nothing to add; an app killed or a core dead already
   leaves the tun in place with nowhere to go, and D1 and D2 remove the two cases where the app itself took it
-  down. Windows: `strict_route` goes on, which closes the DNS leak while the tun runs; it is not a kill switch,
+  down. (Wrong for the third case, the tunnel's own process dying: measured on macOS 26 on 13 October, its
+  interface and routes go with it and traffic leaves directly at once. The Mac has a switch since then, a pf
+  block the tunnel helper holds: `docs/macos-tunnel-daemon.md`, The kill switch.) Windows: `strict_route` goes on, which closes the DNS leak while the tun runs; it is not a kill switch,
   because sing-tun opens its WFP session as dynamic (`tun_windows.go`:202) and the filters go with the process.
   A block that survives the tun's death on Windows needs a service that owns the filters; the app has none, and
   the README says in those words what Windows does and does not hold.
@@ -545,7 +547,9 @@ still ends in a plain "disconnected" over a machine with no network, as before.
   interface fails), which reaches nothing, unless a rule names the interface and sends it to the main table
   first.
 - **macOS, a killed tun.** The daemon's own comment says a sing-box killed outright leaves the default route on
-  a utun that no longer exists (`TunnelChild.swift`:135-138). D1 does not change that; D2 has to.
+  a utun that no longer exists (`TunnelChild.swift`:135-138). D1 does not change that; D2 has to. (The comment
+  was wrong, in the direction that matters: measured on 13 October, nothing is left and everything leaves
+  directly. See the note under D3.)
 - **The move costs a little traffic and battery.** Each probe starts a core and pulls 64 KB; the 5-minute
   repeat bounds it.
 - **iOS, all of it**: what `includeAllNetworks` does to the extension's interface-pinned sockets and to the
@@ -556,6 +560,7 @@ still ends in a plain "disconnected" over a machine with no network, as before.
 
 ## Out of scope
 
-A block that survives the tun's death on Windows and a pf anchor on macOS. A reload in place on iOS, and with
+A block that survives the tun's death on Windows and a pf anchor on macOS (the second was built after all, on
+13 October: `docs/macos-tunnel-daemon.md`). A reload in place on iOS, and with
 it the move to another server there. Another country, another list. Proxy mode on any platform: nothing is
 routed there, so there is nothing to hold. sing-box JSON and Clash server lists (ghostlane#82).

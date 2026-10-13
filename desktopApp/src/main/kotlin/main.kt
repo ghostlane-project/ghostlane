@@ -224,6 +224,9 @@ private fun runDesktopApplication(args: Array<String>) = application {
     var desktopNotice by remember { mutableStateOf<String?>(null) }
     // Null on every platform but macOS, and the settings row is then absent.
     var tunnelDaemonSummary by remember { mutableStateOf(MacOsTunnelDaemon.settingsSummary()) }
+    // Asked again whenever the helper's state is: on a Mac the switch is the
+    // helper's to hold, and is offered once the helper is installed.
+    val killSwitchOffered = remember(tunnelDaemonSummary) { desktopKillSwitchOffered() }
     // Recomputed alongside it: approving the daemon changes which mode the next
     // connection uses, and a Connection Mode card still reading "Local SOCKS5
     // proxy" next to a tunnel row reading "Installed" is the app contradicting
@@ -608,10 +611,11 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             // which of them it was.
                             desktopNotice = MacOsTunnelDaemon.message().ifBlank { null }
                         },
-                        // Linux only. It reads on while its block is what holds
-                        // the traffic, whatever is stored: switching it off is
+                        // Linux, and a Mac whose tunnel helper is installed.
+                        // It reads on while its block is what holds the
+                        // traffic, whatever is stored: switching it off is
                         // then how the block is taken away.
-                        killSwitch = if (desktopKillSwitchOffered()) {
+                        killSwitch = if (killSwitchOffered) {
                             socksProxySettings.killSwitch || desktopKillSwitchHolds(vpnStatus)
                         } else {
                             null
