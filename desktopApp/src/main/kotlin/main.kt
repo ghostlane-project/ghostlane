@@ -590,7 +590,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                             lanHealth = lanProxyHealth,
                             lanSecurityNotice = dependencies.vpnManager.lanSecurityNotice
                         ),
-                        tunnelDaemonSummary = tunnelDaemonSummary,
+                        tunnelDaemonSummary = tunnelDaemonSummary?.let { localizedDesktopText(it) },
                         onTunnelDaemonClick = {
                             // Approval is a trip to System Settings that only the
                             // user can make; anything else is ours to attempt.

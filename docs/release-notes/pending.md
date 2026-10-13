@@ -29,3 +29,6 @@ A desktop session had no traffic chart and no totals: the app there owns neither
 
 The count is what went through the tunnel interface, as on a phone: under "only blocked sites" that includes what the rules then send straight out.
 
+### macOS: the tunnel helper's state in the user's language
+
+The line under "System-wide tunnel" in a Mac's connection settings said what state the tunnel's helper is in, in English in every language: "Installed" on a page otherwise in Russian. Its four states are translated like the rest of the page.

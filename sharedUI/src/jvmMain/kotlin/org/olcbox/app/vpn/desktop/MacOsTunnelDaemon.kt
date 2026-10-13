@@ -102,13 +102,20 @@ object MacOsTunnelDaemon {
      */
     fun settingsSummary(): String? {
         if (DesktopPaths.os != DesktopOs.MacOS) return null
-        return when (status()) {
-            Registration.Unsupported -> null
-            Registration.NotRegistered -> "Not installed — tap to install"
-            Registration.RequiresApproval -> "Approve in System Settings › General › Login Items"
-            Registration.Enabled -> "Installed"
-            Registration.NotFound -> "Missing from this build — reinstall Ghostlane"
-        }
+        return summaryOf(status())
+    }
+
+    /**
+     * The line for [status], in English. It is shown in the user's language:
+     * these words are also what its translation is found by
+     * ([org.olcbox.app.desktop.localizedDesktopText]), as a connection mode's are.
+     */
+    internal fun summaryOf(status: Registration): String? = when (status) {
+        Registration.Unsupported -> null
+        Registration.NotRegistered -> "Not installed — tap to install"
+        Registration.RequiresApproval -> "Approve in System Settings › General › Login Items"
+        Registration.Enabled -> "Installed"
+        Registration.NotFound -> "Missing from this build — reinstall Ghostlane"
     }
 
     /** The last thing the native side had to say — an Apple error, verbatim. */
