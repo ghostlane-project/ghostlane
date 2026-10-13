@@ -110,7 +110,14 @@ ready_within() { # <log> <seconds> <pid>
 
 # Whom the system asks for names, in its own order: the first resolvers of `scutil --dns`.
 resolvers() {
-  scutil --dns | awk '/^DNS configuration \(for scoped/{exit} /^resolver #/{r=$2} /nameserver\[[0-9]+\]/{ns=ns" "$3} /flags/{f=$0} /order/{sub(/^ +flags +: +/,"",f); print "        " r ns " | " f " | order " $3; ns=""; f=""}' | head -"${1:-4}"
+  scutil --dns | awk '
+    function out() { if (r != "") print "        " r ns " | " f (o != "" ? " | order " o : ""); ns=""; f=""; o="" }
+    /^DNS configuration \(for scoped/ { exit }
+    /^resolver #/ { out(); r=$2 }
+    /nameserver\[[0-9]+\]/ { ns=ns" "$3 }
+    /^ +flags/ { f=$0; sub(/^ +flags +: +/,"",f) }
+    /^ +order/ { o=$3 }
+    END { out() }' | head -"${1:-4}"
 }
 
 say "the machine"
