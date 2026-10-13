@@ -10,6 +10,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -593,8 +594,10 @@ class SingBoxConfigTest {
         val dnsRules = dns["rules"]!!.jsonArray.map { it.jsonObject }
         assertEquals(listOf("edge.example.org"), strings(dnsRules[0], "domain"))
         assertEquals("dns-direct", str(dnsRules[0], "server"))
-        assertEquals(listOf("A", "AAAA"), strings(dnsRules[1], "query_type"))
-        assertEquals("dns-fakeip", str(dnsRules[1], "server"))
+        // Then the one question the tun keeps to itself (below), and then the tunnel's names.
+        assertEquals(listOf("resolver.arpa"), strings(dnsRules[1], "domain_suffix"))
+        assertEquals(listOf("A", "AAAA"), strings(dnsRules[2], "query_type"))
+        assertEquals("dns-fakeip", str(dnsRules[2], "server"))
 
         // The lines' binaries leave before anything is hijacked: what one of
         // them asks a resolver of its own, it asks for itself, and the tun
@@ -715,7 +718,7 @@ class SingBoxConfigTest {
         // Nobody at the far end of a tunnel knows the printer. Before the
         // tunnel's names, after the user's own rules.
         val rules = dnsRules(macTun())
-        val local = rules.single { it["domain_suffix"] != null }
+        val local = rules.single { it["domain_regex"] != null }
         assertEquals("dns-direct", str(local, "server"))
         val suffixes = strings(local, "domain_suffix")
         for (suffix in listOf("lan", "home.arpa", "local", "internal", "168.192.in-addr.arpa", "10.in-addr.arpa", "31.172.in-addr.arpa")) {
@@ -837,6 +840,60 @@ class SingBoxConfigTest {
     }
 
     @Test
+    fun theQuestionAboutAResolverOfItsOwnIsAnsweredHereAndNotPassedOn() {
+        // A system asks its resolver whether it names an encrypted one of its
+        // own (`_dns.resolver.arpa`, RFC 9462). A tun that answers names is
+        // that resolver, and a forwarder: passed on, the question came back
+        // with the far resolver's answer about itself, and the system went to
+        // it through the tunnel, in a room every few seconds for as long as
+        // the session ran. Every desktop tun that answers names says it names
+        // none, with no data and at once, before any name is the tunnel's.
+        val onlyTheBlocked = Routing.Rules(
+            "/Library/Application Support/org.olcbox.app/rules", DirectDns.System, Routing.Policy.BlockedOnly
+        )
+        val shapes = mapOf(
+            // A Mac's, whose system asks the tun on every line.
+            "a Mac's on a core's line" to macTun(),
+            "a Mac's in a room" to macTun(lossy = true),
+            "a Mac's under a bypass" to macTun(routing = desktopBypass()),
+            "a Mac's with only the blocked through the tunnel" to macTun(routing = onlyTheBlocked),
+            "a Mac's that is asked whether it names programs" to macTun(probe = "/Applications/Ghostlane.app/Contents/MacOS/Ghostlane"),
+            "a room's" to SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true,
+                directDnsDomains = listOf("de1.example.org"), cacheFilePath = "/x/cache.db"
+            ),
+            "one under a bypass" to SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, routing = desktopBypass(),
+                bindInterface = "en0", cacheFilePath = "/x/cache.db"
+            ),
+            "one with only the blocked through the tunnel" to SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, routing = onlyTheBlocked,
+                bindInterface = "en0", cacheFilePath = "/x/cache.db"
+            ),
+            "Windows'" to SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, bindInterface = "Ethernet",
+                bypassProcessPaths = listOf("C:\\Ghostlane\\sing-box.exe"), strictRoute = true
+            ),
+        )
+        for ((name, json) in shapes) {
+            val rules = obj(json)["dns"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }
+            val own = rules.singleOrNull { it["domain_suffix"]?.jsonArray?.map { s -> s.jsonPrimitive.content } == listOf("resolver.arpa") }
+            assertNotNull(own, "$name passes the question on: $rules")
+            assertEquals("predefined", str(own, "action"), name)
+            assertEquals("NOERROR", str(own, "rcode"), name)
+            assertNull(own["answer"], "$name: no data is the answer")
+            assertNull(own["server"], "$name: nobody else is asked")
+            // Ahead of every rule that sends a name somewhere by a list or by its kind:
+            // behind it are only a line's own questions, its server's name, and the
+            // one name a Mac's tun is asked to learn that it names programs.
+            val sent = rules.indexOfFirst { it.containsKey("rule_set") || it.containsKey("query_type") || it.containsKey("domain_regex") }
+            assertTrue(sent < 0 || rules.indexOf(own) < sent, "$name sends names somewhere before it answers this: $rules")
+        }
+        // A tun that answers no names is asked none.
+        assertTrue("resolver.arpa" !in SingBoxConfig.buildDesktopTun(corePort = 10810, verifyPort = 10811))
+    }
+
+    @Test
     fun desktopTunAnswersNamesItselfWhenItHijacks() {
         // olcRTC (lossy) and any bypass: the same scheme as iOS — fake addresses
         // for the tunnel's names, HTTPS records refused, the mapping in a cache
@@ -894,7 +951,7 @@ class SingBoxConfigTest {
         val direct = obj(json)["outbounds"]!!.jsonArray.map { it.jsonObject }.first { str(it, "tag") == "direct" }
         assertEquals("en0", str(direct, "bind_interface"))
         val dnsRules = obj(json)["dns"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(RuleSets.domains.map { it.tag }, strings(dnsRules[0], "rule_set"))
+        assertEquals(RuleSets.domains.map { it.tag }, strings(dnsRules.first { it.containsKey("rule_set") }, "rule_set"))
     }
 
     @Test

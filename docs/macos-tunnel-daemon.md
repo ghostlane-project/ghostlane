@@ -180,6 +180,17 @@ app writes for such a helper differs from the one it wrote before
   `.home`, `.local`, `.internal` and their like, a name with no dot in it, and
   the reverse of the private ranges, which the system asks about by itself all
   day. After the user's own routing rules, which may say otherwise.
+- **The question about an encrypted resolver is kept.** A system asks its
+  resolver whether it names an encrypted one of its own (`_dns.resolver.arpa`,
+  RFC 9462), and here the tun is that resolver. Passed on with every other
+  name, the question came back with the far resolver's answer about itself
+  (1.1.1.1 names `one.one.one.one` over TLS and over HTTPS) and the system
+  went to what was named: on a hosted Mac a connection to
+  `one.one.one.one:853` and one to `:443` through the tunnel within two
+  seconds of its start, and on a Mac in the field, in a room, one to port 853 every
+  few seconds for as long as the session ran. The tun answers it itself, ahead
+  of anybody's rules: no error and no record, which is what the RFC has a
+  resolver that names none say, and a forwarder is to keep the question.
 
 What this does not move: a lookup that an application scopes to an interface
 itself, and encrypted DNS an application or a profile does on its own. And a
@@ -575,6 +586,9 @@ showed, 13 October 2026, and holds the helper to since:
   server's address and one elsewhere both answered. The name the app asks to
   learn that the tun names programs, asked by a JVM the way the app asks it,
   was answered in 276 ms; asked by any other program it did not exist.
+  The question about a resolver of its own (`_dns.resolver.arpa`), asked of
+  the tun: no error and no record. Before the rule it brought no answer back
+  in three seconds, in a check whose line is a stand-in.
 - **The tunnel killed** (`kill -9`): the helper says idle with the block
   standing, the key is gone and the system asks the router again, the request
   elsewhere is refused in a millisecond, a name by the system gets no answer,
