@@ -43,8 +43,13 @@ import org.olcbox.app.util.nowMillis
  * head with five buttons on it.
  */
 internal object BoardFixture {
-    private const val OURS = "https://proofkit.org/sub/0123456789abcdef0123456789abcdef/olcrtc?crypt=1"
-    private const val THEIRS = "https://lists.example.org/sub/partner"
+    /** Our own encrypted list: thirty rooms, `CC · olcRTC · carrier`. */
+    const val OUR_LIST = "https://proofkit.org/sub/0123456789abcdef0123456789abcdef/olcrtc?crypt=1"
+
+    /** A provider's list, with flags in its names. */
+    const val THEIR_LIST = "https://lists.example.org/sub/partner"
+    private const val OURS = OUR_LIST
+    private const val THEIRS = THEIR_LIST
     private const val MINUTE = 60_000L
     private const val DAY = 24 * 60 * MINUTE
 
@@ -194,11 +199,13 @@ internal object BoardFixture {
         /** Something went wrong, said in the band under the status strip. */
         val notice: String? = null,
         /** How far down the list the screen opens, in points: for a picture of what is under the fold. */
-        val scrolledBy: Int = 0
+        val scrolledBy: Int = 0,
+        /** The lists the settings call folded away, by address. */
+        val folded: Set<String> = emptySet()
     )
 
     @Composable
-    fun Home(scene: Scene) {
+    fun Home(scene: Scene, onFold: (String) -> Unit = {}) {
         val now = remember { nowMillis() }
         val locations = remember { if (scene.empty) emptyList() else locations(now) }
         val pings: Map<String, Int?> = remember {
@@ -312,6 +319,7 @@ internal object BoardFixture {
                 isRefreshingSubscriptions = false,
                 refreshingSubscriptionUrl = null,
                 lowestSubscriptionUrls = lowestUrls,
+                foldedSubscriptionUrls = scene.folded,
                 collapsible = true,
                 showSettings = scene.admin,
                 showCustomLocation = scene.admin,
@@ -331,6 +339,7 @@ internal object BoardFixture {
                 onPullToRefresh = {},
                 onLocationSelected = {},
                 onLowestSelected = { _, _ -> },
+                onFoldToggle = onFold,
                 onLocationSettingsClick = {},
                 onMeasure = {},
                 onRefreshSubscriptionClick = {},

@@ -522,7 +522,11 @@ class LocationsRepositoryImpl(
                     bundle.copy(
                         activeLocationId = bundle.activeLocationId
                             ?.takeIf { id -> remaining.any { it.storageId == id } },
-                        locations = remaining
+                        locations = remaining,
+                        // With the list goes what the settings kept about it.
+                        // They know it by its address, which for an encrypted
+                        // list is the thing its link was hiding.
+                        settings = bundle.settings.withoutSubscription(normalizedUrl)
                     )
                 )
             }
@@ -599,6 +603,16 @@ class LocationsRepositoryImpl(
             val bundle = getBundleUnlocked()
             saveBundleUnlocked(bundle.copy(settings = settings.normalized()))
         }
+    }
+
+    override suspend fun changeSubscriptionSettings(
+        change: (SubscriptionSettings) -> SubscriptionSettings
+    ): SubscriptionSettings = mutationMutex.withLock {
+        val bundle = getBundleUnlocked()
+        val settings = change(bundle.settings.normalized()).normalized()
+        // Stored, and not announced on `changes`: see the interface.
+        dataSource.saveLocationBundle(bundle.copy(settings = settings).normalized())
+        settings
     }
 
     override suspend fun getRoutingSettings(): RoutingSettings = getBundle().routing

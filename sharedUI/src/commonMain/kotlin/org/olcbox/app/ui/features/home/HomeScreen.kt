@@ -561,6 +561,7 @@ fun HomeScreen(
             isRefreshingSubscriptions = isRefreshingSubscriptions,
             refreshingSubscriptionUrl = refreshingSubscriptionUrl,
             lowestSubscriptionUrls = lowestSubscriptionUrls,
+            foldedSubscriptionUrls = subscriptionSettings.foldedSubscriptionUrls,
             collapsible = subscriptionSettings.collapsible,
             showSettings = admin,
             showCustomLocation = canCreateCustomLocation,
@@ -645,6 +646,14 @@ fun HomeScreen(
                         startLowestConnection(subscriptionUrl)
                     }
                 }
+            },
+            onFoldToggle = { url ->
+                // Said as what the list becomes, not as "the other way". The
+                // same change is made to the stored settings after it is made
+                // here, and a turn made to a store that had missed one would
+                // leave the two apart from then on.
+                val fold = !viewModel.subscriptionSettings.value.isFolded(url)
+                viewModel.changeSubscriptionSettings { it.withFolded(url, folded = fold) }
             },
             onLocationSettingsClick = { id -> onOpenLocationSettings(id) },
             onMeasure = { ids -> refreshHttpPings(ids) },

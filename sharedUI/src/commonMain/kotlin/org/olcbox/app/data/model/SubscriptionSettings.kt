@@ -89,11 +89,23 @@ data class SubscriptionSettings(
 
     /** The transport that last got through, per exit (SmartConnect.groupKey → storageId). */
     @SerialName("last_known_good_transport")
-    val lastKnownGoodTransport: Map<String, String> = emptyMap()
+    val lastKnownGoodTransport: Map<String, String> = emptyMap(),
+
+    /**
+     * The server lists whose rows are folded away, by address.
+     *
+     * Here and not in the screen's memory. There it lasted as long as the
+     * process: fold a list of a hundred rooms, leave the app, and it was
+     * unfolded on the way back in. A list with no rows on the screen is a
+     * choice about the list, like its order, and is kept where that is.
+     */
+    @SerialName("folded_subscription_urls")
+    val foldedSubscriptionUrls: Set<String> = emptySet()
 ) {
     fun normalized(): SubscriptionSettings = copy(
         updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
-        lowestSubscriptionUrls = lowestSubscriptionUrls.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.toSet()
+        lowestSubscriptionUrls = lowestSubscriptionUrls.addresses(),
+        foldedSubscriptionUrls = foldedSubscriptionUrls.addresses()
     )
 
     /** The old global flag remains a read-only migration fallback. */
@@ -124,6 +136,39 @@ data class SubscriptionSettings(
     }
 
     fun hasAnyLowest(): Boolean = autoSelectLowest || lowestSubscriptionUrls.isNotEmpty()
+
+    /** Whether the list at [subscriptionUrl] is folded away. A row with no list is never. */
+    fun isFolded(subscriptionUrl: String?): Boolean {
+        val url = subscriptionUrl?.trim().orEmpty()
+        return url.isNotEmpty() && url in foldedSubscriptionUrls
+    }
+
+    fun withFolded(subscriptionUrl: String?, folded: Boolean): SubscriptionSettings {
+        val url = subscriptionUrl?.trim().orEmpty()
+        if (url.isEmpty()) return this
+        return copy(
+            foldedSubscriptionUrls = if (folded) foldedSubscriptionUrls + url else foldedSubscriptionUrls - url
+        ).normalized()
+    }
+
+    /**
+     * These settings with nothing left in them about the list at [subscriptionUrl],
+     * for when that list is removed.
+     *
+     * The settings know a list by its address, and for an encrypted list the
+     * address is what its link was hiding: removed from the board, it would
+     * otherwise stay written here for as long as the app is installed.
+     */
+    fun withoutSubscription(subscriptionUrl: String): SubscriptionSettings {
+        val url = subscriptionUrl.trim()
+        if (url.isEmpty()) return this
+        return copy(
+            lowestSubscriptionUrls = lowestSubscriptionUrls - url,
+            foldedSubscriptionUrls = foldedSubscriptionUrls - url
+        ).normalized()
+    }
+
+    private fun Set<String>.addresses(): Set<String> = mapNotNull { it.trim().takeIf(String::isNotEmpty) }.toSet()
 
     companion object {
         const val DEFAULT_INTERVAL_HOURS = 1

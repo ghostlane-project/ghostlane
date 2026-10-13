@@ -67,6 +67,24 @@ interface LocationsRepository {
     suspend fun getSubscriptionSettings(): SubscriptionSettings
     suspend fun saveSubscriptionSettings(settings: SubscriptionSettings)
 
+    /**
+     * Makes [change] to the settings as they are stored now, as one write, and
+     * answers what was stored. For a choice made by a press on the board: a list
+     * folded away.
+     *
+     * Not [saveSubscriptionSettings] with a copy changed by the caller, for two
+     * reasons. That replaces every setting with what the caller read a while
+     * ago, and the store learns things meanwhile that no screen was told — the
+     * line a session moved to by itself. And it is announced on [changes], which
+     * is how the app hears that its locations moved: everything that listens
+     * reads the whole list again, hands it to a running tunnel, and asks every
+     * room how full it is. None of that is owed to a list folded.
+     *
+     * [change] is applied to whatever is stored, so it says what to change and
+     * carries no copy of the rest; it may be run more than once.
+     */
+    suspend fun changeSubscriptionSettings(change: (SubscriptionSettings) -> SubscriptionSettings): SubscriptionSettings
+
     /** What leaves through the tunnel. Persisted with the bundle, so one copy per device. */
     suspend fun getRoutingSettings(): RoutingSettings
     suspend fun saveRoutingSettings(settings: RoutingSettings)

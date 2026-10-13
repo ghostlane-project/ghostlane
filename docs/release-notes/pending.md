@@ -22,3 +22,7 @@ The line under the status said that something was moving and nothing more: recei
 ### Flags in server names
 
 A server name that opens with a flag was cut between the flag's two letters: the card showed a boxed letter where the flag belongs, and the connect button and the status strip showed the name beginning with the other one. The flag is now taken whole, as is any emoji made of several code points.
+
+### A folded list stays folded
+
+Fold a server list away, leave the app, and it was unfolded on the way back in: which lists were folded was kept in the screen's own memory, and a phone throws that away with the process. It is kept with the rest of what the app knows about its lists now, on every platform, and forgotten when the list is removed — along with the list's address, which the settings used to keep after the list was gone if it had been set to choose its fastest server.
