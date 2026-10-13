@@ -19,6 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: The helper, built as the app's build builds it, and built to be asked over a pipe
+        run: |
+          src=desktopApp/tunneldaemon
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/ProofKitTunnelDaemon" \
+            "$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" "$src/TrafficHold.swift" \
+            "$src/SystemNames.swift" "$src/Daemon.swift" "$src/main.swift"
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/lab-daemon" \
+            "$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" "$src/TrafficHold.swift" \
+            "$src/SystemNames.swift" "$src/Daemon.swift" lab/daemon/main.swift
+          ls -l "$RUNNER_TEMP/ProofKitTunnelDaemon" "$RUNNER_TEMP/lab-daemon"
+
       - name: The pinned sing-box, for this Mac
         run: |
           arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
@@ -27,5 +42,5 @@ jobs:
           cp "sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
           "$RUNNER_TEMP/sing-box" version | head -3
 
-      - name: The programs behind connections, as the tunnel finds them
-        run: sudo bash lab/macos-process.sh "$RUNNER_TEMP/sing-box" "$USER"
+      - name: The helper, asked
+        run: sudo bash lab/macos-daemon.sh "$RUNNER_TEMP/lab-daemon" "$RUNNER_TEMP/sing-box" "$USER"
