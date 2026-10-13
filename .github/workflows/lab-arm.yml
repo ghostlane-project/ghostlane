@@ -1,0 +1,39 @@
+name: Lab (the Mac's block put in place over a connection that was open)
+
+# Not a check and never merged. One connection opened first, and then the kill
+# switch's block as the helper writes it and as it could be written; and a
+# tunnel brought up over such a connection with no block at all.
+on:
+  workflow_dispatch:
+  push:
+    branches: [lab/macos-tunnel]
+    paths: ['lab/macos-arm.sh', 'lab/held-open.py', '.github/workflows/lab-arm.yml']
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  mac:
+    name: A connection older than the block, on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    env:
+      SINGBOX_VERSION: "1.13.14"
+    steps:
+      - uses: actions/checkout@v7
+      - name: The pinned sing-box, for this Mac
+        run: |
+          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
+          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
+      - name: The block, over a connection that was open
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LABEL: ${{ matrix.os }}
+        run: sudo --preserve-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA,LABEL bash lab/macos-arm.sh "$RUNNER_TEMP/sing-box" "$USER"
