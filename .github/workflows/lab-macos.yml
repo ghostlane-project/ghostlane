@@ -3,8 +3,6 @@ name: Lab (macOS tunnel)
 # Not a check and never merged: a branch of its own that asks a real Mac what
 # the desktop's tunnel code can only assume from here. Runs on a push to it.
 on:
-  push:
-    branches: [lab/macos-tunnel]
   workflow_dispatch:
 
 permissions:

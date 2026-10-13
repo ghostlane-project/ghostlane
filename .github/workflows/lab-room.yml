@@ -1,0 +1,139 @@
+name: Lab (a room behind the Mac's kill switch)
+
+# Not a check and never merged. The engine the app ships, in a call of the
+# gate's pool, behind the Mac helper's block; the exit is the other job.
+on:
+  workflow_dispatch:
+  push:
+    branches: [lab/macos-tunnel]
+    paths: ['lab/macos-room.sh', '.github/workflows/lab-room.yml']
+
+permissions:
+  contents: read
+  statuses: write
+
+# The gate's own group for this pool: a release's suite and this never share the call.
+concurrency:
+  group: ghostlane-gate-vkcalls
+  cancel-in-progress: false
+
+env:
+  PROVIDER: vkcalls
+  TRANSPORT: vp8channel
+
+jobs:
+  exit:
+    name: The exit, a Linux machine in the room
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v7
+      - name: Mask what names the room
+        env:
+          GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
+        run: scripts/gate-mask.sh
+      - name: The pins
+        id: pins
+        run: |
+          . scripts/cores-pins.sh
+          echo "go=${GO_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rev=${OLCRTC_VERSION##*-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.pins.outputs.go }}
+          cache: false
+      - name: The engine at the app's pin
+        run: |
+          git clone --quiet --branch proofkit --depth 120 https://github.com/ghostlane-project/olcrtc "$RUNNER_TEMP/olcrtc"
+          git -C "$RUNNER_TEMP/olcrtc" checkout --quiet "${{ steps.pins.outputs.rev }}"
+          (cd "$RUNNER_TEMP/olcrtc" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$RUNNER_TEMP/olcrtc-bin" ./cmd/olcrtc)
+          ls -l "$RUNNER_TEMP/olcrtc-bin" | awk '{print $5, "bytes"}'
+      - name: In the room for nine minutes
+        env:
+          GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
+        run: |
+          set -u
+          room=$(printf '%s' "$GATE_VKCALLS_ROOMS" | tr ',\r' '\n\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | head -1)
+          [ -n "$room" ] || { echo "no room in the pool"; exit 1; }
+          seed="$GATE_VKCALLS_ROOMS|$GITHUB_RUN_ID|$GITHUB_RUN_ATTEMPT"
+          key=$(printf '%s' "$seed" | sha256sum | cut -c1-64)
+          channel="lab-$(printf 'channel|%s' "$seed" | sha256sum | cut -c1-12)"
+          echo "::add-mask::$key"
+          umask 077
+          dir=$(mktemp -d)
+          printf '%s\n' "mode: srv" "auth: { provider: $PROVIDER }" "room: { id: \"$room\", channel: \"$channel\" }" \
+            "crypto: { key: \"$key\" }" "net: { transport: $TRANSPORT, dns: \"8.8.8.8:53\" }" "udp: { enabled: true }" \
+            "vp8: { fps: 60, batch_size: 64 }" "debug: true" > "$dir/srv.yaml"
+          "$RUNNER_TEMP/olcrtc-bin" "$dir/srv.yaml" > "$dir/srv.log" 2>&1 &
+          srv=$!
+          joined=no
+          for i in $(seq 1 90); do
+            grep -q "Link connected" "$dir/srv.log" && { joined="after ${i}s"; break; }
+            kill -0 "$srv" 2>/dev/null || break
+            sleep 1
+          done
+          echo "the exit joined its room: $joined"
+          if [ "$joined" = no ]; then
+            grep -E "error|failed|refused" "$dir/srv.log" | sed -E 's#https?://[^ ]+#<url>#g; s/[0-9A-Za-z+\/=_-]{16,}/<id>/g' | cut -c1-160 | tail -5
+            exit 1
+          fi
+          for minute in 1 2 3 4 5 6 7 8 9; do
+            sleep 60
+            kill -0 "$srv" 2>/dev/null || { echo "the exit is gone in minute $minute"; break; }
+            echo "minute $minute: sessions opened so far $(grep -c 'session .* opened' "$dir/srv.log"), lines $(wc -l < "$dir/srv.log")"
+          done
+          kill -TERM "$srv" 2>/dev/null; sleep 3; kill -9 "$srv" 2>/dev/null
+          echo "the exit carried: sessions opened $(grep -c 'session .* opened' "$dir/srv.log")"
+          rm -rf "$dir"
+
+  mac:
+    name: A Mac behind the block
+    runs-on: macos-15
+    timeout-minutes: 16
+    env:
+      SINGBOX_VERSION: "1.13.14"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Mask what names the room
+        env:
+          GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
+        run: scripts/gate-mask.sh
+      - name: The pins
+        id: pins
+        run: |
+          . scripts/cores-pins.sh
+          echo "go=${GO_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rev=${OLCRTC_VERSION##*-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.pins.outputs.go }}
+          cache: false
+      - name: The engine as the app's build makes it, the helper, and the pinned sing-box
+        run: |
+          git clone --quiet --branch proofkit --depth 120 https://github.com/ghostlane-project/olcrtc "$RUNNER_TEMP/olcrtc"
+          git -C "$RUNNER_TEMP/olcrtc" checkout --quiet "${{ steps.pins.outputs.rev }}"
+          (cd "$RUNNER_TEMP/olcrtc" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$RUNNER_TEMP/olcrtc-bin" ./cmd/olcrtc)
+          src=desktopApp/tunneldaemon
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/helper-check" \
+            "$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" "$src/TrafficHold.swift" \
+            "$src/SystemNames.swift" "$src/LineChild.swift" "$src/Daemon.swift" scripts/macos-helper-check/main.swift
+          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
+          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
+      - name: The room, asked three ways
+        env:
+          GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          ROOM=$(printf '%s' "$GATE_VKCALLS_ROOMS" | tr ',\r' '\n\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | head -1)
+          seed="$GATE_VKCALLS_ROOMS|$GITHUB_RUN_ID|$GITHUB_RUN_ATTEMPT"
+          ROOM_KEY=$(printf '%s' "$seed" | shasum -a 256 | cut -c1-64)
+          ROOM_CHANNEL="lab-$(printf 'channel|%s' "$seed" | shasum -a 256 | cut -c1-12)"
+          echo "::add-mask::$ROOM_KEY"
+          export ROOM ROOM_KEY ROOM_CHANNEL
+          sudo --preserve-env=ROOM,ROOM_KEY,ROOM_CHANNEL,PROVIDER,TRANSPORT,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA \
+            bash lab/macos-room.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/olcrtc-bin"
