@@ -19,6 +19,10 @@ import multiplatform_app.sharedui.generated.resources.desktop_routing_linux_room
 import multiplatform_app.sharedui.generated.resources.desktop_routing_unavailable
 import multiplatform_app.sharedui.generated.resources.dialog_import_config
 import multiplatform_app.sharedui.generated.resources.dialog_save_logs
+import multiplatform_app.sharedui.generated.resources.helper_installed
+import multiplatform_app.sharedui.generated.resources.helper_missing
+import multiplatform_app.sharedui.generated.resources.helper_needs_approval
+import multiplatform_app.sharedui.generated.resources.helper_not_installed
 import multiplatform_app.sharedui.generated.resources.lan_credentials_regenerated
 import multiplatform_app.sharedui.generated.resources.lan_disabled
 import multiplatform_app.sharedui.generated.resources.lan_enabled
@@ -103,9 +107,11 @@ fun DesktopText.text(vararg args: Any): String = stringResource(resource, *args)
 suspend fun DesktopText.load(vararg args: Any): String = getString(resource, *args)
 
 /**
- * A connection-mode option's text, or a routing note, in the user's language.
- * They are English in [org.olcbox.app.vpn.DesktopConnectionModePreference], where
- * they are also the identity; anything else is shown as it is.
+ * A connection-mode option's text, a routing note, or the state of the Mac's
+ * tunnel helper, in the user's language. They are English where they are made
+ * ([org.olcbox.app.vpn.DesktopConnectionModePreference],
+ * [org.olcbox.app.vpn.desktop.MacOsTunnelDaemon.summaryOf]), where they are also
+ * the identity; anything else is shown as it is.
  */
 @Composable
 fun localizedDesktopText(text: String): String = DESKTOP_MODE_TEXTS[text]?.let { stringResource(it) } ?: text
@@ -119,5 +125,9 @@ internal val DESKTOP_MODE_TEXTS: Map<String, StringResource> = mapOf(
     "Every app on this PC — Ghostlane restarts as administrator" to Res.string.desktop_mode_tunnel_windows,
     "Every app on this machine, through a TUN device" to Res.string.desktop_mode_tunnel_linux,
     WINDOWS_TUNNEL_CARRIES_ALL to Res.string.desktop_routing_unavailable,
-    LINUX_TUNNEL_ROOMS_ONLY to Res.string.desktop_routing_linux_rooms
+    LINUX_TUNNEL_ROOMS_ONLY to Res.string.desktop_routing_linux_rooms,
+    "Not installed — tap to install" to Res.string.helper_not_installed,
+    "Approve in System Settings › General › Login Items" to Res.string.helper_needs_approval,
+    "Installed" to Res.string.helper_installed,
+    "Missing from this build — reinstall Ghostlane" to Res.string.helper_missing
 )
