@@ -303,8 +303,12 @@ first_connect() {
   note "the engine's room, from the start on" "$room"
   local again; again=$(traced 10809 https://1.1.1.1/cdn-cgi/trace 8)
   note "the app's check, made again" "$(who "$again")"
+  # RFC 9462: a system that is told of an encrypted resolver goes to it. The tun
+  # answers that question itself now; passed on, it sent the system to one.one.one.one.
+  local told_of; told_of=$(awk 'seen{print} /SOCKS5 server listening/{seen=1}' "$SAID" | grep -c 'tunnel to one\.one\.one\.one:')
+  note "the system's way to a resolver it was told of" "$told_of connection(s) to one.one.one.one through the room"
   echo "      the engine said, after its port was open:"; engine_said_after_ready "$SAID" 8
-  mark F-first "room $room; check at once: $(who "$first") ${took1}ms; again: $(who "$again")"
+  mark F-first "room $room; check at once: $(who "$first") ${took1}ms; again: $(who "$again"); to one.one.one.one: $told_of"
   ask "$(request stop)" >/dev/null
   end_line
   sleep 2
