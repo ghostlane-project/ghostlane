@@ -162,6 +162,19 @@ class LocalizationTest {
 
     // The desktop's mode texts are English in the preference and translated on screen:
     // each one's English resource is the text itself.
+    // The line under "System-wide tunnel" on a Mac says what state the tunnel's
+    // helper is in. It was English in every language: "Installed", in a
+    // settings page otherwise in Russian.
+    @Test fun everyStateOfTheMacsTunnelHelperIsSaidInTheUsersLanguage() {
+        val states = org.olcbox.app.vpn.desktop.MacOsTunnelDaemon.Registration.entries
+        val lines = states.mapNotNull { org.olcbox.app.vpn.desktop.MacOsTunnelDaemon.summaryOf(it) }
+        assertEquals(4, lines.size, "a state of the helper with nothing to say: $lines")
+        assertEquals(emptyList(), lines.filter { it !in DESKTOP_MODE_TEXTS }, "said in English only")
+        val russian = inLocale("ru") { lines.map { getString(DESKTOP_MODE_TEXTS.getValue(it)) } }
+        assertEquals(emptyList(), russian.filter { it in lines }, "not translated into Russian")
+        assertTrue("Установлен" in russian, russian.toString())
+    }
+
     @Test fun eachDesktopModeTextIsItsOwnEnglishResource() {
         val english = inLocale("en") { DESKTOP_MODE_TEXTS.mapValues { getString(it.value) } }
         assertEquals(DESKTOP_MODE_TEXTS.keys.associateWith { it }, english)

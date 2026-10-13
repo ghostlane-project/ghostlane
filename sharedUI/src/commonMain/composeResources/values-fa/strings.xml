@@ -119,6 +119,10 @@
     <string name="field_room_too_long">%1$s خیلی طولانی است</string>
     <string name="field_username">نام کاربری</string>
     <string name="filter_all">همه</string>
+    <string name="helper_installed">نصب شده</string>
+    <string name="helper_missing">در این نسخه نیست — Ghostlane را دوباره نصب کنید</string>
+    <string name="helper_needs_approval">در System Settings › General › Login Items تأیید کنید</string>
+    <string name="helper_not_installed">نصب نشده — برای نصب ضربه بزنید</string>
     <string name="hide_password">پنهان کردن گذرواژه</string>
     <string name="hours_short">%1$s ساعت</string>
     <string name="https_sources_none">منبع HTTPS وجود ندارد</string>

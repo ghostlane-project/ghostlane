@@ -119,6 +119,10 @@
     <string name="field_room_too_long">Слишком длинный %1$s</string>
     <string name="field_username">Имя пользователя</string>
     <string name="filter_all">Все</string>
+    <string name="helper_installed">Установлен</string>
+    <string name="helper_missing">Нет в этой сборке — переустановите Ghostlane</string>
+    <string name="helper_needs_approval">Разрешите в Системных настройках › Основные › Объекты входа</string>
+    <string name="helper_not_installed">Не установлен — нажмите, чтобы установить</string>
     <string name="hide_password">Скрыть пароль</string>
     <string name="hours_short">%1$s ч</string>
     <string name="https_sources_none">Нет источников HTTPS</string>
