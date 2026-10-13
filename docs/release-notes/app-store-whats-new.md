@@ -16,15 +16,15 @@ How it is written, because two rejections were about this text:
 ---
 
 Design
-• The list of rooms now fits every iPhone at every text size. On a small screen, or with Larger Text on, a room's name could be squeezed down to nothing. The name now comes first, and what does not fit beside it moves to the next line.
+• The list of rooms now fits small iPhones and large text. On a narrow screen, or with Larger Text on, a room's name could be squeezed down to nothing. The name now comes first, and what does not fit beside it moves to the next line.
 • On a short screen the status and the list's heading scroll with the list, so the list has the screen.
 • Sheets and settings pages scroll and wrap. A button that large text had pushed below the edge of the screen can always be reached.
-
-Traffic
-• The line under the connection status is now a chart: download and upload as separate bars on one scale, with the current speed of each in figures.
 
 Servers
 • Pin a room to the top of its list with the pin on its card. Fold the list away and the pinned rooms stay on the screen.
 • A list you folded is still folded when you open the app again.
 • A flag at the start of a server's name is shown as a flag.
 • olcRTC rooms on one more meeting service now connect.
+
+Traffic
+• The line under the connection status is now a chart: download and upload as separate bars on one scale, with the current speed of each in figures.
