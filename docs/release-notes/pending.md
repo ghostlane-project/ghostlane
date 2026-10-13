@@ -27,3 +27,11 @@ Windows still has no kill switch: nothing there owns a filter that outlives the 
 ### What the app does when it opens, it does once
 
 "Connect on launch", "refresh on open" and "measure on launch" ran at every return to the app on an iPhone, where the screen is built again each time. With "connect on launch" on, somebody who disconnected, looked at another app and came back was connected again by an app that had been running all along. They run once for each time the app is started, on every platform.
+
+### Country flags in the server list
+
+A line named by its country's code (`DE Direct`, `GB · olcRTC · VK`) is shown with the country's flag in front, on an iPhone, an Android phone and a Mac. Until now only a list whose server writes a flag into its names had them, so two lists side by side read as pictures beside letters.
+
+- Nothing about a line changes but how it is drawn: its name, its place in the list, pins and the selected line are as they were.
+- A line that brings its own picture, or whose list has an icon, keeps it. A line named after something other than a country gets none.
+- Not on Windows, whose emoji font has no flags and would print the two letters again, nor on a Linux desktop, where it depends on the fonts installed.
