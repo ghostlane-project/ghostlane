@@ -26,7 +26,6 @@ import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.ImportLink
-import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
@@ -247,7 +246,6 @@ private class IdleVpnManager : VpnManager {
     var starts = 0
     var stops = 0
     override suspend fun measureCurrentChannel(): Long? = measure()
-    override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
     override fun startVpn() { starts++ }
     override fun stopVpn() { stops++ }

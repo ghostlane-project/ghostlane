@@ -83,8 +83,8 @@ class IosVpnManager(
     private val _connectedSince = MutableStateFlow<Long?>(null)
     override val connectedSince: StateFlow<Long?> = _connectedSince.asStateFlow()
 
-    private val _traffic = MutableStateFlow<TrafficCounters?>(null)
-    override val traffic: StateFlow<TrafficCounters?> = _traffic.asStateFlow()
+    /** Every session here is a tunnel interface, and the system counts what crosses it. */
+    override val countsTraffic: Boolean get() = true
 
     private val _socksProxySettings = MutableStateFlow(loadSocksProxySettings())
     val socksProxySettings: StateFlow<ApplicationSocksProxySettings> = _socksProxySettings.asStateFlow()
@@ -829,25 +829,30 @@ class IosVpnManager(
         systemSyncJob = scope.launch {
             while (isActive) {
                 adoptRunningTunnelIfAny()
-                sampleTraffic()
                 delay(SYSTEM_SYNC_INTERVAL_MS)
             }
         }
     }
 
     /**
-     * Reads the tunnel interface's counters. Cheap — a `getifaddrs` walk — and
-     * on the same tick as the state sync so there is one timer, not two.
+     * Reads the tunnel interface's counters, there and then. Cheap: a
+     * `getifaddrs` walk.
+     *
+     * It used to be read on the tick of the state sync above, every three
+     * seconds, into a value the screen then looked at every second: one bar in
+     * three held three seconds of traffic and the two beside it nothing.
+     *
+     * The bridge answers zero for both when it did not find the interface, as
+     * it does for a tunnel that has carried nothing. Neither is a reading worth
+     * having, and the first must not be taken for one: a count that drops to
+     * zero and comes back reads as a counter that started again.
      */
-    private fun sampleTraffic() {
-        if (!packetTunnelBridge.isRunning()) {
-            _traffic.value = null
-            return
-        }
-        _traffic.value = TrafficCounters(
-            bytesIn = packetTunnelBridge.tunnelBytesIn(),
-            bytesOut = packetTunnelBridge.tunnelBytesOut()
-        )
+    override suspend fun readTraffic(): TrafficCounters? {
+        if (!packetTunnelBridge.isRunning()) return null
+        val bytesIn = packetTunnelBridge.tunnelBytesIn()
+        val bytesOut = packetTunnelBridge.tunnelBytesOut()
+        if (bytesIn == 0L && bytesOut == 0L) return null
+        return TrafficCounters(bytesIn = bytesIn, bytesOut = bytesOut)
     }
 
     private suspend fun adoptRunningTunnelIfAny() {

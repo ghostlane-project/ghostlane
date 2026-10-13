@@ -69,7 +69,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override val notices: SharedFlow<String> = OlcboxVpnState.notices
     override val isConnected: StateFlow<Boolean> = OlcboxVpnState.isConnected
     override val connectedSince: StateFlow<Long?> = OlcboxVpnState.connectedSince
-    override val traffic: StateFlow<TrafficCounters?> = OlcboxVpnState.traffic
+    /** The tunnel is what is counted (tun2socks keeps the figures); proxy mode has none. */
+    override val countsTraffic: Boolean get() = _connectionMode.value == AndroidConnectionMode.Tun
+    override suspend fun readTraffic(): TrafficCounters? = OlcboxVpnState.readTraffic()
     val connectionMode: StateFlow<AndroidConnectionMode> = _connectionMode.asStateFlow()
     val proxySettings: StateFlow<AndroidSocksProxySettings> = _proxySettings.asStateFlow()
     val splitTunnelSettings: StateFlow<AndroidSplitTunnelSettings> = _splitTunnelSettings.asStateFlow()

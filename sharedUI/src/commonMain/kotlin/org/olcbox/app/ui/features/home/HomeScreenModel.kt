@@ -100,8 +100,45 @@ class HomeScreenViewModel(
      */
     val connectedSince get() = vpnManager.connectedSince
 
-    /** Same reasoning as [connectedSince]: the platform's own counter. */
-    val traffic get() = vpnManager.traffic
+    /**
+     * The session's traffic: its totals and the chart of its last seconds.
+     *
+     * Here and not in the screen. The screen had it, and on an iPhone the
+     * screen is built again on every return to the app: leave with a session
+     * up, come back five seconds later, and the chart was an empty rule.
+     */
+    val sessionTraffic = SessionTraffic()
+
+    /** When the session [sessionTraffic] is about came up; null for none. */
+    private var trafficSession: Long? = null
+
+    /** Whether a session here will have its traffic counted: see [VpnManager.countsTraffic]. */
+    val countsTraffic: Boolean get() = vpnManager.countsTraffic
+
+    /**
+     * Says which session the screen is showing, by the moment it came up, or
+     * that it is showing none.
+     *
+     * Another session's seconds are not this one's, so they are forgotten when
+     * the answer changes — and only then. A screen says this every time it is
+     * built, and the same session built a screen again keeps its chart; so does
+     * a session that reconnects, which keeps the moment it came up.
+     */
+    fun trafficSessionIs(connectedSince: Long?) {
+        if (connectedSince == trafficSession) return
+        trafficSession = connectedSince
+        sessionTraffic.reset()
+    }
+
+    /**
+     * Reads the session's counters as they stand and puts them on record as of
+     * [atMillis]. Called by the screen's own second, so the second the chart
+     * draws is the one that was measured.
+     */
+    suspend fun sampleTraffic(atMillis: Long) {
+        val reading = vpnManager.readTraffic() ?: return
+        sessionTraffic.take(reading, atMillis)
+    }
 
     /**
      * How far down the board is scrolled, in pixels, as its screen last said.

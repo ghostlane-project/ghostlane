@@ -36,7 +36,7 @@ class StatusStripSteadyTest {
     private enum class Tunnel { Down, ComingUp, Up }
 
     @Composable
-    private fun Strip(tunnel: Tunnel, traffic: ThroughputWindow, height: MutableState<Int>) {
+    private fun Strip(tunnel: Tunnel, traffic: ThroughputWindow?, height: MutableState<Int>) {
         Column(Modifier.padding(16.dp)) {
             Box(Modifier.onSizeChanged { height.value = it.height }) {
                 PkStatusStrip(
@@ -53,7 +53,7 @@ class StatusStripSteadyTest {
         }
     }
 
-    private fun heightOf(tunnel: Tunnel, traffic: ThroughputWindow): Int {
+    private fun heightOf(tunnel: Tunnel, traffic: ThroughputWindow?): Int {
         val height = mutableStateOf(0)
         return measuredOn(phone, { Strip(tunnel, traffic, height) }) { height.value }
     }
@@ -78,6 +78,15 @@ class StatusStripSteadyTest {
         val idle = heightOf(Tunnel.Down, ThroughputWindow())
         val up = heightOf(Tunnel.Up, BoardFixture.session())
         assertTrue(idle < up, "an idle strip is $idle px, a session's $up")
+    }
+
+    @Test fun whereNothingIsCountedASessionsStripIsAsShortAsAnIdleOne() {
+        // A desktop in proxy mode, a phone in one: nothing there counts what a
+        // session carries, so there is nothing to keep room for. 1.0.459 kept
+        // it: an empty rule and two rates still to come, for the whole session.
+        val idle = heightOf(Tunnel.Down, ThroughputWindow())
+        assertEquals(idle, heightOf(Tunnel.ComingUp, traffic = null), "room was kept for a chart while the tunnel came up")
+        assertEquals(idle, heightOf(Tunnel.Up, traffic = null), "room was kept for a chart nothing will draw")
     }
 
     @Test fun untilASecondIsOnRecordTheRatesSayTheyAreComing() {

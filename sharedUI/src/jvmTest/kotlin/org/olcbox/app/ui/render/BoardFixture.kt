@@ -168,7 +168,8 @@ internal object BoardFixture {
     fun session(): ThroughputWindow = ThroughputWindow().apply {
         var received = 0L
         var sent = 0L
-        record(received, sent)
+        // A reading a second, as a session that is watched is read.
+        record(received, sent, atMillis = 0L)
         repeat(seconds + 6) { second ->
             val (down, up) = when {
                 second < 8 -> 400L to 300L
@@ -180,7 +181,7 @@ internal object BoardFixture {
             }
             received += down
             sent += up
-            record(received, sent)
+            record(received, sent, atMillis = (second + 1) * 1_000L)
         }
     }
 

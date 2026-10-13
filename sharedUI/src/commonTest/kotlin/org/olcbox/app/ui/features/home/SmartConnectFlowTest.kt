@@ -22,7 +22,6 @@ import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.SmartConnect
-import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
@@ -168,7 +167,6 @@ private class ProbingVpn(
     override val status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(false)
     override val connectedSince = MutableStateFlow<Long?>(null)
-    override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override val canProbeTransports: Boolean get() = true
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? {
         val id = when (locationConfig.name) {
