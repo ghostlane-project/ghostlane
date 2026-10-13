@@ -108,8 +108,14 @@ ready_within() { # <log> <seconds> <pid>
   echo "not ready in $2 s"; return 1
 }
 
+# Whom the system asks for names, in its own order: the first resolvers of `scutil --dns`.
+resolvers() {
+  scutil --dns | awk '/^DNS configuration \(for scoped/{exit} /^resolver #/{r=$2} /nameserver\[[0-9]+\]/{ns=ns" "$3} /flags/{f=$0} /order/{sub(/^ +flags +: +/,"",f); print "        " r ns " | " f " | order " $3; ns=""; f=""}' | head -"${1:-4}"
+}
+
 say "the machine"
 sw_vers | tr '\n' ' '; echo
+echo "whom the system asks, before anything:"; resolvers
 IF=$(route -n get default | awk '/interface:/{print $2}')
 RESOLVER=$(scutil --dns | awk '/nameserver\[0\]/{print $3; exit}')
 ENGINE="$work/line/olcrtc-darwin-lab"
@@ -260,6 +266,12 @@ reconnect() {
   local through; through=$(seen_as "" 8)
   note "any program's request, through the tun" "$(who "$through")"
   note "the line itself, asked of its port" "$(who "$(by_its_port "$port" "$login")")"
+  if [ "$name" = d ]; then
+    # A resolver the system finds for itself through the tunnel (RFC 9462): does it list one, and keep it?
+    sleep 12
+    echo "      whom the system asks, the tunnel up for a quarter of a minute:"; resolvers 5
+    note "what it does with it" "$(scutil --dns | grep -c 'one.one.one.one\|1\.1\.1\.1') lines of its list name 1.1.1.1"
+  fi
   echo "      the tunnel said:"; tunnel_said 14
   echo "      the engine said, after its port was open:"; engine_said_after_ready "$SAID" 6
   mark "4-$name" "$verdict; address: $(who "$first") ${took1}ms${took2:+; name: $(who "$second") ${took2}ms}${at:+; later ${at}ms}; tun: $(who "$through")"
@@ -276,6 +288,8 @@ ask "$(request line-stop)" >/dev/null
 no_engine
 ask "$(request stop)" >/dev/null
 note "released" "$(ask "$(request release)")"
+sleep 3
+echo "whom the system asks, the tunnel gone and the block released:"; resolvers 5
 
 exec 3>&-
 kill -TERM "$DAEMON" 2>/dev/null
