@@ -19,6 +19,7 @@ On a Mac the tunnel's interface and every route through it belong to the tunnel'
 - The local network stays reachable, as it always was in this mode: a printer, a share, AirDrop. No name is asked of the router while the block stands.
 - A session that is restarted in full, for another routing mode, keeps the block across the restart: the new tunnel comes up behind it. Without the switch the Mac's traffic goes out directly in between, as before. Changed to proxy mode, the block goes with the tunnel.
 - An olcRTC room works under it on every carrier. The room's engine sends its media from the Mac's own network address, which macOS routes beside any tunnel, so the block has to let that one program out and nothing else: the tunnel helper runs the engine for the app. The room is joined first and the tunnel started after it, as without the switch.
+- A connect that fails behind the block says what it failed of, beside the block's sentence. The sentence is the same before an attempt and after one that failed, and alone it left a failed attempt looking like none.
 - Turning the switch on takes effect at the next connection; turning it off, at once.
 - It holds every program's traffic that would have reached the internet beside the tunnel, another VPN's included. It does not outlast a restart of the Mac, and it is taken away when the helper is switched off in Login Items or the app is deleted.
 

@@ -84,6 +84,46 @@ API also lists where every program is connected to and closes connections on
 request, which is what the secret is for. A session in proxy mode has no tun and
 so no count, and its status strip has no chart.
 
+### Running is not serving
+
+The daemon answers a start a second after it started sing-box, and what it
+answers is that the process runs. The app's next step asks the tunnel
+something: the session's check goes through the tunnel's own listener
+(`verify-in`), and behind a block that stands a line is started behind it. So
+the app first waits until that listener accepts a connection, for up to twenty
+seconds, and writes how long it took when that was more than a second
+(`macOS TUN: the tunnel began to serve … ms after the helper called it
+running`). A tunnel that never does ends the connect with what its sing-box
+said of a trouble.
+
+The check itself tells two answers apart. A probe that fails at once was
+refused on this machine: the tunnel, or the line behind it, is not serving
+yet. A probe that waits out its eight seconds was not answered by the far end.
+Each one that brings nothing back is written to the log with its reason and
+its time (`the check of … brought nothing back after … ms: …`); a check whose
+every probe was refused is made again, a second later, for up to twenty
+seconds; one with a probe that waited is taken as the answer it is. When the
+check fails for good, two more lines say which half does not carry: the
+errors and warnings of the tunnel's sing-box (`macOS TUN, the tunnel's
+sing-box: …`), and what the line answers when it is asked on its own port
+with no tunnel in front of it (`The line itself, asked on its own port, …`).
+
+Why. Build 1.0.463 on a Mac in the field, 13 October 2026: with the kill
+switch on, the tunnel's process was killed, and a connect to a room followed.
+The room was joined, by the engine the helper runs; the tunnel came up; the
+check, made at once, failed within seconds, with not one request handed to
+the engine; and the connect ended there, four times of four, for two
+carriers. A core's line connected each time: behind a block its tunnel comes
+first and is asked seconds later (in one of those starts it had still not
+answered the app's own name twelve seconds after it was called running). The
+same steps on a runner, with a real room and the app's own check, pass in a
+second, and the first run of the build's signed programs takes a third of a
+second there with the block or without (`lab/macos-room.sh`,
+`lab/macos-exec.sh` on `lab/macos-tunnel`): what makes that Mac's tunnel slow
+to serve is not known. The log said nothing either way: the check's null was
+all there was, and the daemon's tail of that tunnel was gone by the time the
+log was copied.
+
 ## Names
 
 A tun takes the Mac's routes and leaves its resolver where it was. On most home
@@ -409,7 +449,9 @@ called unverified is a bad way to earn that authorisation.
 sudo launchctl print system/org.olcbox.app.desktopApp.tunneld | head -20
 log show --last 10m --info --predicate 'process == "ProofKitTunnelDaemon"'
 
-scutil --dns | head -8              # resolver #1 is 172.19.0.2 while a tunnel runs
+scutil --dns | grep -c 172.19.0.2   # not 0 while a tunnel runs: the system asks the tun
+                                    # (not `head`: a Mac with a resolver of its own, from a
+                                    # profile or another app, lists that one first, tunnel or not)
 sudo pfctl -a 'com.apple/100.org.olcbox.app.hold' -s rules   # the block; empty with the switch off
 ps -axo gid,command | grep '[s]ing-box run'                  # 7302243 under the switch, 0 without
 

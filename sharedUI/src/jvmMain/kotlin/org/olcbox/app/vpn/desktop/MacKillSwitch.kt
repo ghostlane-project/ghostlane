@@ -40,13 +40,14 @@ import org.olcbox.app.vpn.shownUnderKillSwitch
  * new tunnel comes up behind it. Restarted as a proxy's, it goes with the
  * tunnel ([keptForWhatComesNext]).
  *
- * Behind a block that stands, a line cannot be started before its tunnel: a
- * room's engine has to reach a meeting service whose addresses nobody knows in
- * advance, and nothing of it gets out except through the tunnel's process. So
- * such a connect starts the tunnel first and the line behind it, and so does
- * every connect to a room with the switch on: an engine that joined first
- * would have what it had just connected refused when the block was loaded
- * (`DesktopVpnManager.startDesktopMode`).
+ * Behind a block that stands, nothing of a line gets out except through the
+ * tunnel's own process, or in the tunnel's group. A core is started behind its
+ * tunnel there, and leaves by the tunnel's rule on its binary. A room's engine
+ * cannot: it binds its sockets to the address of the interface that carries
+ * the internet, which this system routes beside any tunnel, so behind one its
+ * media left in its own name and was refused. The helper runs it instead, in
+ * the group the block lets out, and it is started first, as it is without the
+ * switch ([order], `DesktopVpnManager.startDesktopMode`).
  */
 internal object MacKillSwitch {
     /**

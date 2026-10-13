@@ -397,6 +397,7 @@
     <string name="show_password">显示密码</string>
     <string name="show_system_apps">显示系统应用</string>
     <string name="session_moved_to">此服务器不再响应，已切换到 %1$s</string>
+    <string name="connect_failed_because">连接失败：%1$s</string>
     <string name="smart_blocked_checking">%1$s 在这里被封锁，正在检查 %2$s…</string>
     <string name="smart_checking">正在检查 %1$s…</string>
     <string name="smart_last_resort_through">其他方式都不通：正在通过 %1$s 连接</string>

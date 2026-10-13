@@ -397,6 +397,7 @@
     <string name="show_password">Показать пароль</string>
     <string name="show_system_apps">Показывать системные</string>
     <string name="session_moved_to">Сервер перестал отвечать. Переключились на %1$s</string>
+    <string name="connect_failed_because">Не удалось подключиться: %1$s</string>
     <string name="smart_blocked_checking">%1$s здесь заблокирован, проверяю %2$s…</string>
     <string name="smart_checking">Проверяю %1$s…</string>
     <string name="smart_last_resort_through">Больше ничего не прошло: подключаюсь через %1$s</string>

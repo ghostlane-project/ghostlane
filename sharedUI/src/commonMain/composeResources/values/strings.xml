@@ -397,6 +397,7 @@
     <string name="show_password">Show password</string>
     <string name="show_system_apps">Show system apps</string>
     <string name="session_moved_to">This server stopped answering. Moved to %1$s</string>
+    <string name="connect_failed_because">Could not connect: %1$s</string>
     <string name="smart_blocked_checking">%1$s is blocked here, checking %2$s…</string>
     <string name="smart_checking">Checking %1$s…</string>
     <string name="smart_last_resort_through">Nothing else got through: connecting through %1$s</string>
