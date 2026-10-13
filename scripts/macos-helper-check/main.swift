@@ -13,7 +13,12 @@ GroupExec.runIfAsked()
 signal(SIGPIPE, SIG_IGN)
 
 let core = URL(fileURLWithPath: CommandLine.arguments[1])
-let daemon = Daemon(child: TunnelChild(coreSource: core, isTrusted: { _ in true }))
+// Who a line's program is run as: the socket names its peer, a pipe names nobody.
+let asker: uid_t? = CommandLine.arguments.count > 2 ? uid_t(CommandLine.arguments[2]) : nil
+let daemon = Daemon(
+    child: TunnelChild(coreSource: core, isTrusted: { _ in true }),
+    line: LineChild(isTrusted: { _ in true })
+)
 
 signal(SIGTERM, SIG_IGN)
 let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: DispatchQueue.global())
@@ -21,5 +26,5 @@ termination.setEventHandler { daemon.shutDown() }
 termination.resume()
 
 while let line = readLine(strippingNewline: true) {
-    FileHandle.standardOutput.write(daemon.handle(line))
+    FileHandle.standardOutput.write(daemon.handle(line, from: asker))
 }

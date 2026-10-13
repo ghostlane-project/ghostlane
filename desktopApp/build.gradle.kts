@@ -765,7 +765,7 @@ if (currentBuildOs.isMacOsX) {
                 -framework Foundation -framework Security -framework SystemConfiguration \
                 -o "${'$'}stage/ProofKitTunnelDaemon" \
                 "${'$'}src/PeerAuthority.swift" "${'$'}src/GroupExec.swift" "${'$'}src/TunnelChild.swift" \
-                "${'$'}src/TrafficHold.swift" "${'$'}src/SystemNames.swift" "${'$'}src/Daemon.swift" \
+                "${'$'}src/TrafficHold.swift" "${'$'}src/SystemNames.swift" "${'$'}src/LineChild.swift" "${'$'}src/Daemon.swift" \
                 "${'$'}src/main.swift"
 
             # The core the daemon execs has to be a loose file in the bundle. It is

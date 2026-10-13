@@ -100,7 +100,14 @@ while true {
     }
 
     if let line = readRequest(client) {
-        send(daemon.handle(line.trimmingCharacters(in: .whitespacesAndNewlines)), to: client)
+        // The user behind the socket, by the kernel's word: who a line's program is run as.
+        var user: uid_t = 0
+        var group: gid_t = 0
+        let named = getpeereid(client, &user, &group) == 0
+        send(
+            daemon.handle(line.trimmingCharacters(in: .whitespacesAndNewlines), from: named ? user : nil),
+            to: client
+        )
     }
     close(client)
     // KeepAlive: launchd starts the binary now on disk in this one's place.

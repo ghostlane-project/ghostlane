@@ -403,13 +403,14 @@ jobs:
         run: |
           src=desktopApp/tunneldaemon
           shared=("$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" \
-                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/Daemon.swift")
+                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/LineChild.swift" "$src/Daemon.swift")
           swiftc -O -target "$(uname -m)-apple-macos13.0" \
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/ProofKitTunnelDaemon" "${shared[@]}" "$src/main.swift"
           swiftc -O -target "$(uname -m)-apple-macos13.0" \
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
+          cc -O2 -o "$RUNNER_TEMP/stand-in-line" scripts/macos-helper-check/stand-in-line.c
       - name: The pinned sing-box, for this Mac
         run: |
           arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
@@ -418,4 +419,4 @@ jobs:
           cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
           "$RUNNER_TEMP/sing-box" version | head -1
       - name: Ask the helper what it does
-        run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER"
+        run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"

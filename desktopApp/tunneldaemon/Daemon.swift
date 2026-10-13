@@ -31,11 +31,13 @@ struct BinaryIdentity: Equatable {
 final class Daemon {
     // Bumped when a request gains a field the app depends on: 2 = rule files on
     // `start`; 3 = `names` and `hold` on `start`, `hold` on `stop`, `release`,
-    // and `hold` in every reply. The app reads it back to tell this daemon from
-    // an older one that would silently drop the field.
-    static let protocolVersion = 3
+    // and `hold` in every reply; 4 = `line` and `line-stop`, and `line` in
+    // every reply. The app reads it back to tell this daemon from an older one
+    // that would silently drop the field.
+    static let protocolVersion = 4
 
     private let child: TunnelChild
+    private let line: LineChild
     private let hold: TrafficHold
     private let launchedAs = BinaryIdentity.onDisk()
 
@@ -45,8 +47,9 @@ final class Daemon {
     /// Set by a request that found a newer daemon on disk: the caller sends the reply and exits.
     private(set) var quitAfterReply = false
 
-    init(child: TunnelChild = TunnelChild(), hold: TrafficHold = TrafficHold()) {
+    init(child: TunnelChild = TunnelChild(), line: LineChild = LineChild(), hold: TrafficHold = TrafficHold()) {
         self.child = child
+        self.line = line
         self.hold = hold
         // A daemon that was killed left its key where it was, pointing the
         // system's lookups at a tunnel that died with it.
@@ -54,23 +57,26 @@ final class Daemon {
         child.onDeath = { [weak self] in self?.tunnelDied() }
     }
 
-    func handle(_ line: String) -> Data {
+    /// [user] is who asks, as the socket names its peer: the user a line's
+    /// program is run as. Nil where nobody can be named, and then none is run.
+    func handle(_ request: String, from user: uid_t? = nil) -> Data {
         lock.lock()
         defer { lock.unlock() }
 
-        guard let payload = line.data(using: .utf8),
+        guard let payload = request.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               let verb = object["verb"] as? String else {
             return failure("unparseable request")
         }
 
-        if (verb == "start" || verb == "stop") && replacedOnDisk() {
-            // Only on the verbs that change the child's state: a status query from
+        if (verb == "start" || verb == "stop" || verb == "line") && replacedOnDisk() {
+            // Only on the verbs that change a child's state: a status query from
             // the new app must not cost a tunnel the old daemon is still carrying.
             // The block is the kernel's and outlives this process: a stop that
             // asks for it to go still takes it, and a start leaves it for the
             // daemon that comes next to load its own over.
             stopTunnel()
+            line.stop()
             if verb == "stop" && !keepsHold(object) { hold.release() }
             quitAfterReply = true
             return reply([
@@ -88,6 +94,11 @@ final class Daemon {
             stopTunnel()
             if !keepsHold(object) { hold.release() }
             return reply(["ok": true, "state": "idle", "logTail": child.logTail])
+        case "line":
+            return startLine(object, as: user)
+        case "line-stop":
+            line.stop()
+            return status()
         case "release":
             // The block alone: a tunnel that runs goes on running, beside
             // traffic that is no longer held when it stops.
@@ -105,8 +116,35 @@ final class Daemon {
     func shutDown() -> Never {
         lock.lock()
         stopTunnel()
+        line.stop()
         hold.release()
         exit(0)
+    }
+
+    /// A line's program, run for the user who asks (LineChild). It is told
+    /// apart from the tunnel in every way: a stop of the tunnel leaves it, the
+    /// tunnel's death leaves it, and the app ends it as it ends any process of
+    /// its own.
+    private func startLine(_ object: [String: Any], as user: uid_t?) -> Data {
+        guard let user else { return failure("a line is run as the user who asks, and nobody is named") }
+        guard let program = object["program"] as? String, let output = object["output"] as? String else {
+            return failure("a line names its program and where it writes")
+        }
+        let arguments = object["arguments"] as? [String] ?? []
+        do {
+            let lies = try line.start(
+                program: program, arguments: arguments, output: output, user: user, step: try child.step()
+            )
+            // What the step says when it cannot become the program, it says at once.
+            Thread.sleep(forTimeInterval: 0.3)
+            guard line.pid != nil else {
+                return failure("the line's program did not start: \(line.lastWords)")
+            }
+            return reply(["ok": true, "state": child.isRunning ? "running" : "idle", "program": lies, "logTail": ""])
+        } catch {
+            let text = (error as? DaemonError)?.text ?? error.localizedDescription
+            return failure(text)
+        }
     }
 
     private func start(_ object: [String: Any]) -> Data {
@@ -207,6 +245,7 @@ final class Daemon {
         // machine's traffic held?), and the rules can have gone without this
         // process having been told, by a hand or by another program.
         object["hold"] = child.isRunning ? hold.stands : hold.look()
+        object["line"] = Int(line.pid ?? 0)
         let data = (try? JSONSerialization.data(withJSONObject: object))
             ?? Data("{\"ok\":false,\"error\":\"the daemon could not encode its own reply\"}".utf8)
         return data + Data("\n".utf8)
