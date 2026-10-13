@@ -5,6 +5,8 @@ import org.jetbrains.compose.resources.stringResource
 import multiplatform_app.sharedui.generated.resources.action_back
 import multiplatform_app.sharedui.generated.resources.change_sorting
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -107,13 +109,13 @@ fun pkMono(size: Int, tracking: Double = 1.4): TextStyle =
  */
 @Composable
 fun PkPulseDot(color: Color, pulse: Boolean, size: Int = 8) {
-    Box(contentAlignment = Alignment.Center) {
+    // The halo's size whether or not there is a halo. As wide as whatever it
+    // held, the dot's place grew by nine points when a session came up, and
+    // every word beside it moved along by nine in that frame.
+    val halo = (size * 2.1f).dp
+    Box(Modifier.size(halo), contentAlignment = Alignment.Center) {
         if (pulse) {
-            Box(
-                Modifier
-                    .size((size * 2.1f).dp)
-                    .background(color.copy(alpha = 0.18f), CircleShape)
-            )
+            Box(Modifier.size(halo).background(color.copy(alpha = 0.18f), CircleShape))
         }
         Box(Modifier.size(size.dp).background(color, CircleShape))
     }
@@ -428,7 +430,10 @@ fun PkStatusStrip(
      */
     meta: () -> String = { "" },
     value: () -> String = { "" },
-    /** The session's traffic, second by second; drawn while a session is up. */
+    /**
+     * The session's traffic, second by second. Its chart stands from the press
+     * that asks for a session to the end of one: see [STRIP_RESHAPE_MS].
+     */
     traffic: ThroughputWindow? = null
 ) {
     val palette = LocalPkPalette.current
@@ -449,6 +454,9 @@ fun PkStatusStrip(
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, borderColor, RoundedCornerShape(16.dp))
             .padding(horizontal = 15.dp, vertical = 13.dp)
+            // Inside the border and the padding, so that what moves is the
+            // strip's edge with its border on it, and the list under that.
+            .animateContentSize(tween(STRIP_RESHAPE_MS, easing = FastOutSlowInEasing))
     ) {
         PkStatusLines(
             dot = { PkPulseDot(color = stateColor, pulse = isActive) },
@@ -499,11 +507,28 @@ fun PkStatusStrip(
         // "how full is the room" and barely changes; this answers "is anything
         // actually going through", which is the question a user stares at the
         // screen to have answered.
-        if (isActive && traffic != null) {
+        //
+        // There while the tunnel is coming up as well as while it is up. The
+        // strip's height then changes at the press that asks for a session and
+        // at the one that ends it, which is where a person expects the screen
+        // to change — not a second or ten later when the tunnel answers, nor
+        // two seconds after that when there is a second of traffic to draw.
+        if ((isActive || isBusy) && traffic != null) {
             PkThroughput(traffic = traffic, modifier = Modifier.padding(top = 10.dp))
         }
     }
 }
+
+/**
+ * How long the strip takes to change height.
+ *
+ * It heads the board, so every point it grows by is a point the whole list
+ * moves: in one frame that is a jump under the reader's eyes, and the list they
+ * were about to press is somewhere else. Over a quarter of a second it is the
+ * strip opening, with the list following it. The same goes for a label that
+ * takes a second line in one state and not in another, at a large text size.
+ */
+internal const val STRIP_RESHAPE_MS = 240
 
 /**
  * The strip's three texts, arranged by how much line there is.
