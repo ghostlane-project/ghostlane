@@ -19,7 +19,9 @@ set -euo pipefail
 bin="${SINGBOX_BIN:-sing-box}"
 "$bin" version | head -1
 
-work="$(mktemp -d)"
+# With its links resolved, which is how sing-box names a program: on a Mac a
+# temporary directory is under /var, and /var is a link to /private/var.
+work="$(cd "$(mktemp -d)" && pwd -P)"
 pids=()
 cleanup() {
   for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done
