@@ -395,7 +395,12 @@ fun RoomBoard(
     CompositionLocalProvider(LocalPkBoardColumns provides rememberBoardColumns()) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (pingsStale) {
-            Text(stringResource(Res.string.pings_stale), style = MaterialTheme.typography.labelSmall)
+            Text(
+                stringResource(Res.string.pings_stale),
+                style = MaterialTheme.typography.labelSmall,
+                // Named, or it is the default: black, on a ground a shade off black.
+                color = LocalPkPalette.current.textDim
+            )
         }
         model.subscriptionGroups.forEach { group ->
             val ids = group.locations.map { it.storageId }

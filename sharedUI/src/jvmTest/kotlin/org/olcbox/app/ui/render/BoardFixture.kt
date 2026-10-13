@@ -206,7 +206,9 @@ internal object BoardFixture {
         /** The lists the settings call folded away, by address. */
         val folded: Set<String> = emptySet(),
         /** The rooms pinned to the top of their lists, by storage id, in the order they were pinned. */
-        val pinned: List<String> = emptyList()
+        val pinned: List<String> = emptyList(),
+        /** The delays on the cards were measured on another network: the line over the lists that says so. */
+        val stalePings: Boolean = false
     )
 
     @Composable
@@ -330,6 +332,7 @@ internal object BoardFixture {
                 selectedLocationId = scene.selectedId,
                 isConnected = scene.connected,
                 pingsState = pingsState,
+                pingsStale = scene.stalePings,
                 olcrtcSlots = slots,
                 occupancyHistory = history,
                 revokedKeys = setOf(REVOKED),

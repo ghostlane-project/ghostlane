@@ -138,12 +138,27 @@ data class SubscriptionSettings(
      * a later pin goes under it.
      */
     @SerialName("pinned_locations")
-    val pinnedLocations: List<PinnedLocation> = emptyList()
+    val pinnedLocations: List<PinnedLocation> = emptyList(),
+
+    /**
+     * The transport the board is narrowed to, by the key of its chip; null for
+     * every transport.
+     *
+     * Here for the reason the folded lists are. A phone's screen is built again
+     * every time the app is returned to, so a choice the screen only remembered
+     * was gone on the way back in; and somebody on a network that lets one
+     * transport through chooses it once, not at every launch. A key no list
+     * serves any more reads as every transport and is left as it is: the board
+     * resolves it, see `buildBoardModel`.
+     */
+    @SerialName("transport_filter")
+    val transportFilter: String? = null
 ) {
     fun normalized(): SubscriptionSettings = copy(
         updateIntervalHours = updateIntervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
         lowestSubscriptionUrls = lowestSubscriptionUrls.addresses(),
         foldedSubscriptionUrls = foldedSubscriptionUrls.addresses(),
+        transportFilter = transportFilter?.trim()?.takeIf(String::isNotEmpty),
         pinnedLocations = pinnedLocations
             .map { it.normalized() }
             .filter { it.name.isNotEmpty() }
