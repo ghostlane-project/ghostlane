@@ -117,8 +117,8 @@ say "A: the tunnel up, nothing held: where a name goes"
 tun_up utun123
 probe user "through the tunnel"
 for r in $RESOLVERS; do echo "   route to the resolver $r: $(route -n get "$r" 2>/dev/null | awk '/interface:/{print $2}')"; done
-within 5 tcpdump -i utun123 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
-within 5 tcpdump -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
+within 5 tcpdump -l -i utun123 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
+within 5 tcpdump -l -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
 sleep 1
 within 4 dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" >/dev/null 2>&1
 sleep 4.5
@@ -148,11 +148,12 @@ for _ in $(seq 1 40); do ifconfig utun127 2>/dev/null | grep -q 'inet 172.19.0.1
 echo "   tun pid $TUN, $(ifconfig utun127 2>/dev/null | grep -c 'inet 172.19.0.1 ') interface, $(netstat -rn -f inet | grep -c ' utun127 ') routes"
 echo "   the system asks, with it up: $(scutil --dns | awk '/nameserver\[/{print $3}' | sort -u | tr '\n' ' ')"
 for r in $RESOLVERS; do echo "   route to the resolver $r: $(route -n get "$r" 2>/dev/null | awk '/interface:/{print $2}')"; done
-within 5 tcpdump -i utun127 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
-within 5 tcpdump -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
+within 5 tcpdump -l -i utun127 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
+within 5 tcpdump -l -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
 sleep 1
-echo "   a name nobody has asked for, by the system: $(within 4 dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" 2>&1 | awk '/ip_address/{print $2}' | head -1)"
-echo "   the same asked of 8.8.8.8, which is not on this network: $(as_user dig +time=2 +tries=1 +short "fresh-$RANDOM.cloudflare.com" @8.8.8.8 2>&1 | head -1)"
+echo "   www.wikipedia.org, by the system: $(within 4 dscacheutil -q host -a name www.wikipedia.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   ya.ru, by the system: $(within 4 dscacheutil -q host -a name ya.ru 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   www.wikipedia.org asked of 8.8.8.8, which is not on this network: $(as_user dig +time=2 +tries=1 +short www.wikipedia.org @8.8.8.8 2>&1 | tail -1)"
 sleep 4.5
 echo "   (an address in 198.18.0.0/15 is the tunnel's own answer)"
 
