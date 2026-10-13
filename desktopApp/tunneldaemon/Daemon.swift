@@ -105,6 +105,7 @@ final class Daemon {
     func shutDown() -> Never {
         lock.lock()
         stopTunnel()
+        hold.release()
         exit(0)
     }
 
@@ -182,7 +183,7 @@ final class Daemon {
         lock.lock()
         defer { lock.unlock() }
         // Not when another tunnel has been started since: the key is that one's.
-        if !child.isRunning { _ = SystemNames.isSet }
+        if !child.isRunning { SystemNames.restore() }
     }
 
     private func keepsHold(_ object: [String: Any]) -> Bool {

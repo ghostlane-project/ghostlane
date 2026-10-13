@@ -48,8 +48,9 @@ struct HoldRequest {
         guard let object = value as? [String: Any], let interface = object["interface"] as? String else {
             throw DaemonError.message("a hold names the tunnel's interface")
         }
-        guard interface.count <= 8,
-              !interface.isEmpty else {
+        guard interface.hasPrefix("utun"), interface.count <= 8,
+              let number = Int(interface.dropFirst(4)), number >= 0,
+              interface == "utun\(number)" else {
             throw DaemonError.message("the tunnel's interface is not a utun")
         }
         let passes = object["pass"] as? [String] ?? []
@@ -103,6 +104,7 @@ final class TrafficHold {
         if !v6.isEmpty { lines.append("pass out quick inet6 from any to { \(v6.joined(separator: ", ")) }") }
         lines += [
             // Before the local network is let out: the router is on it.
+            "block return out quick proto { tcp, udp } from any to any port 53",
             "pass out quick inet from any to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255 }",
             "pass out quick inet6 from any to { fe80::/10, fc00::/7, ff02::/16 }",
             // `return`, not `drop`: a program that is refused says so at once
