@@ -38,7 +38,12 @@ Two things beside the tun are the daemon's, because only root can hold them: who
 the system asks for a name while the tunnel runs ([Names](#names)), and the kill
 switch's block ([The kill switch](#the-kill-switch)). Both are the helper's from
 its third protocol on. A helper from before them goes on doing what it did, and
-the app asks which it is talking to before it hands it a tunnel.
+the app asks which it is talking to before it hands it a tunnel. After an
+update of the app the previous build's helper is still the one running: a
+connect tells it to stop before anything else is started, which is what makes
+it step aside for the one on disk, and the log says "the tunnel helper was
+updated". A tunnel that comes up under the switch with no block behind it,
+whatever the reason, is stopped and the connect fails saying so.
 
 ## What the app reads back from it
 
@@ -64,7 +69,14 @@ error, once per flow.
 sing-box names a flow's program as its path and, in brackets, whoever runs it
 (`/…/olcrtc-darwin-arm64 (roman)`). That, and the names of the totals, are in no
 schema; `scripts/check-singbox-traffic-api.sh` asks the pinned release for them
-in CI.
+in CI, on Linux, and has been run by hand on a Mac. The Windows tun reads the
+same API, and a Windows build was asked once, by hand, on 13 October 2026:
+the same totals, and a flow's program as its bare path, with nobody in
+brackets. The rule on a program's path matches there only when the path is
+spelled as Windows spells it, drive letter and case included (`d:\…` for
+`D:\…` did not match, nor capitals, nor forward slashes), and so does what the
+app takes off the totals. The app hands both the paths the system itself
+reports for the running processes.
 
 What it means on the machine: one more listener on `127.0.0.1` for as long as a
 tunnel is up, beside the verification inbound that was always there. The same
@@ -200,10 +212,11 @@ that fails, a quit from a held state: the block stays, the status says "The
 tunnel is down and the kill switch is blocking traffic", and Connect or the
 switch are the two ways out.
 
-**A session restarted in full keeps it.** Another routing mode or another
-connection mode is a new tunnel, and between the old one and the new the Mac's
-traffic went out directly. With the switch on the old tunnel is stopped with
-its block kept, and the new one comes up behind it.
+**A session restarted in full keeps it.** Another routing mode is a new
+tunnel, and between the old one and the new the Mac's traffic went out
+directly. With the switch on the old tunnel is stopped with its block kept,
+and the new one comes up behind it. Changed to proxy mode, the block goes with
+the tunnel: a proxy has no tunnel for it to stand behind.
 
 **Behind a block that stands, the tunnel comes first.** A connect has always
 started its line and then the tunnel. Under a block nothing of a line gets out

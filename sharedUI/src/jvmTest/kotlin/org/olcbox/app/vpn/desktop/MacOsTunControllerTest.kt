@@ -334,6 +334,22 @@ class MacOsTunControllerTest {
         assertEquals(listOf("status"), daemon.verbs)
     }
 
+    // Whatever the reason, a tunnel that came up with no block behind it under
+    // the switch is not the one that was asked for, and a status that said
+    // Connected over it would be promising a hold that is not there.
+    @Test fun aTunnelStartedUnderTheSwitchWithNoBlockBehindItIsStoppedAndRefused() = withFakeDaemon(
+        listOf(idle3, running3, idle3)
+    ) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        val failure = assertFailsWith<IllegalStateException> { controller.connectUnderTheSwitch(serverHost = null) }
+        assertTrue("kill switch" in failure.message.orEmpty(), failure.message)
+        assertEquals(listOf("status", "start", "stop"), daemon.verbs)
+        assertFalse(controller.holdsTraffic)
+        assertFalse(controller.blockStands)
+        assertTrue(log.none { "kill switch in place" in it }, log.toString())
+    }
+
     @Test fun aHelperThatSteppedAsideIsAskedAgainWhatItSpeaks() = withFakeDaemon(
         listOf(
             idle,
@@ -442,15 +458,45 @@ class MacOsTunControllerTest {
             assertEquals(MacOsTunController.Helper(blockStands = true, canHold = true), runBlocking { controller.helperNow() })
             assertTrue(controller.blockStands)
         }
-        withFakeDaemon(listOf(idle)) { daemon ->
+        // A helper from before the block that is the one on disk as well: it
+        // is told to stop, says it has, and can hold nothing.
+        withFakeDaemon(listOf(idle, idle)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
             assertEquals(MacOsTunController.Helper(blockStands = false, canHold = false), runBlocking { controller.helperNow() })
+            assertEquals(listOf("status", "stop"), daemon.verbs)
         }
         // No helper at all: nothing stands, and nothing can be asked for.
         val absent = MacOsTunController(
             {}, TunnelDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")), { emptyList() }, { "en0" }
         )
         assertEquals(MacOsTunController.Helper(blockStands = false, canHold = false), runBlocking { absent.helperNow() })
+    }
+
+    // The first connect after an update of the app: the previous build's
+    // helper is still the one running. It makes way when it is told to stop,
+    // and the connect then chooses its order by what the new one can do.
+    @Test fun aHelperLeftFromBeforeAnUpdateMakesWayBeforeTheConnectChoosesItsOrder() = withFakeDaemon(
+        listOf(
+            idle,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":""}""",
+            idle3,
+            idleHeld
+        )
+    ) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(MacOsTunController.Helper(blockStands = true, canHold = true), runBlocking { controller.helperNow() })
+        assertEquals(listOf("status", "stop", "status", "status"), daemon.verbs)
+        // The stop is the plain one: this helper is from before the block and has none to keep.
+        assertNull(daemon.request(1)["hold"])
+        assertTrue(log.any { "the tunnel helper was updated" in it }, log.toString())
+    }
+
+    // A helper that is carrying a tunnel is not told to stop to find out how old it is.
+    @Test fun aHelperFromBeforeThatIsCarryingATunnelIsLeftCarryingIt() = withFakeDaemon(listOf(running)) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(MacOsTunController.Helper(blockStands = false, canHold = false), runBlocking { controller.helperNow() })
+        assertEquals(listOf("status"), daemon.verbs)
     }
 
     @Test fun aLineBehindATunWaitsUntilTheTunNamesPrograms() {

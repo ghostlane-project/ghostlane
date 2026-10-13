@@ -524,8 +524,9 @@ object SingBoxConfig {
      * list it read before the tun existed. So from the moment a tun comes up
      * until its first quiet second, the rule that lets the lines' binaries out
      * matches nothing, and what a line dials is handed back to the line
-     * (measured on macOS 26: five seconds, 891 connections deep). A line that
-     * is started behind a tun is started after this name answers.
+     * (measured on macOS 26 with a stand-in line that dials for itself: five
+     * seconds, 891 connections deep). A line that is started behind a tun is
+     * started after this name answers.
      */
     const val NAMES_PROGRAMS_PROBE = "names-its-programs.ghostlane.invalid"
     const val NAMES_PROGRAMS_ANSWER = "127.0.0.53"

@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.desktop
 
+import org.olcbox.app.vpn.DesktopMode
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC_MAC
 import org.olcbox.app.vpn.VpnStatus
@@ -40,6 +41,20 @@ class MacKillSwitchTest {
         for (status in listOf(VpnStatus.Connecting, VpnStatus.Connected, VpnStatus.Reconnecting, VpnStatus.Stopping)) {
             assertSame(status, MacKillSwitch.shown(status, holdsTraffic = true), "$status")
         }
+    }
+
+    // A session that ends without a Disconnect keeps its block when the next
+    // thing is a tunnel again: its own died, or it is being restarted in full.
+    // Changed to proxy mode it does not: a proxy has no tunnel for a block to
+    // stand behind, and one left standing would refuse the proxy's own line
+    // and leave a Mac with no network for having changed a setting.
+    @Test
+    fun theBlockIsKeptForTheNextTunnelAndForNothingElse() {
+        assertTrue(MacKillSwitch.keptForWhatComesNext(switchOn = true, nextMode = DesktopMode.MacTun))
+        assertFalse(MacKillSwitch.keptForWhatComesNext(switchOn = true, nextMode = DesktopMode.SystemProxy))
+        // Switched off since the tunnel started: taken away then, and not put back.
+        assertFalse(MacKillSwitch.keptForWhatComesNext(switchOn = false, nextMode = DesktopMode.MacTun))
+        assertFalse(MacKillSwitch.keptForWhatComesNext(switchOn = false, nextMode = DesktopMode.SystemProxy))
     }
 
     // On Linux either way out is a password dialog, and its sentence says so.

@@ -44,7 +44,7 @@ internal class LowestConnection(
             .distinctBy { connectionKey(it) }
         if (candidates.isEmpty()) return
 
-        // The Linux desktop's kill switch is holding traffic. Nothing can be
+        // A desktop's kill switch is holding traffic. Nothing can be
         // measured from behind it, and the stop below is not for this to ask:
         // only the user takes the block away. The first candidate is connected
         // unmeasured, behind the block: the selected server, which the list
@@ -128,7 +128,7 @@ internal class LowestConnection(
 
     private suspend fun stopAndWait(): Boolean {
         if (vpn.status.value is VpnStatus.Disconnected) return true
-        // A tunnel that died into the Linux desktop's kill switch: a stop would
+        // A tunnel that died into a desktop's kill switch: a stop would
         // not end in Disconnected, the block being what is left, and another
         // server could only be tried from outside it. The selection ends here
         // and the screen keeps the sentence that says what to do.
