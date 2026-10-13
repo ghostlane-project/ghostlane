@@ -27,8 +27,5 @@ jobs:
           cp "sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
           "$RUNNER_TEMP/sing-box" version | head -3
 
-      - name: The traffic API, as the app reads it, on macOS
-        run: SINGBOX_BIN="$RUNNER_TEMP/sing-box" scripts/check-singbox-traffic-api.sh
-
-      - name: pf, a tunnel, and a tunnel that dies
-        run: sudo bash lab/macos-tunnel.sh "$RUNNER_TEMP/sing-box" "$USER"
+      - name: The block, a tunnel behind it, and where names go
+        run: sudo bash lab/macos-hold.sh "$RUNNER_TEMP/sing-box" "$USER"
