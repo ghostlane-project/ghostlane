@@ -90,8 +90,26 @@ internal class MacOsTunController(
      * the program prints is appended to it, and read from it here as a
      * process's output is read.
      */
-    suspend fun startLine(binary: Path, arguments: List<String>, said: Path): Process =
-        when (val reply = client.line(binary.toString(), arguments, said.toString())) {
+    suspend fun startLine(binary: Path, arguments: List<String>, said: Path): Process {
+        suspend fun ask() = client.line(binary.toString(), arguments, said.toString())
+        var reply = ask()
+        if (reply is DaemonReply.Failure && reply.restarting) {
+            // The first connect after an update of the app, when the build
+            // before it ran lines as well: [helperNow] tells only a helper
+            // that cannot run one to make way, so this one is still the old
+            // build's, and it steps aside when it is asked for the line. On
+            // 1.0.464 that ended the connect, and was the first thing an
+            // updated app said. The one on disk is asked instead.
+            addLog("the tunnel helper was updated; waiting for the new one to come up")
+            val helper = awaitDaemon()
+            if (helper != null) {
+                if (helper < TunnelDaemonProtocol.PROTOCOL_LINE) {
+                    error("the tunnel helper that came up cannot run a line's program")
+                }
+                reply = ask()
+            }
+        }
+        return when (reply) {
             is DaemonReply.Ok -> {
                 if (reply.line <= 0) error("the tunnel helper started no program for the line")
                 val handle = ProcessHandle.of(reply.line).orElse(null)
@@ -99,6 +117,7 @@ internal class MacOsTunController(
             }
             is DaemonReply.Failure -> error("the tunnel helper could not run the line's program: ${reply.message}")
         }
+    }
 
     /** The block is held with no tunnel in front of it: a Mac whose traffic goes nowhere. */
     val holdsTraffic: Boolean

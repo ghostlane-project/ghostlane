@@ -258,6 +258,8 @@ class MacOsTunControllerTest {
 
     /** The helper of the build before lines: it holds a block, and cannot run a room's engine. */
     private val idleHeldBeforeLines = """{"ok":true,"state":"idle","logTail":"","protocol":3,"hold":true}"""
+    private val steppingAside =
+        """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","protocol":4,"hold":false,"line":0}"""
 
     private fun FakeDaemon.request(index: Int): JsonObject = Json.parseToJsonElement(requests[index].trim()).jsonObject
 
@@ -587,6 +589,53 @@ class MacOsTunControllerTest {
             runBlocking { controller.startLine(Path.of("/Users/a/bin/olcrtc-darwin-arm64"), emptyList(), Path.of("/tmp/none")) }
         }
         assertTrue("not signed by this team" in failure.message.orEmpty(), failure.message)
+    }
+
+    // The first connect to a room after an update of the app, when the build
+    // before it could run a line as well: nothing has told the old helper to
+    // make way by the time it is asked for the line (helperNow tells only one
+    // that cannot run a line), so it makes way then. On 1.0.464 that was the
+    // end of the connect, and the first thing an updated app said. The line is
+    // asked of the helper that comes up.
+    @Test fun aLineAskedOfAHelperThatStepsAsideIsAskedOfTheOneThatComesUp() {
+        val child = ProcessBuilder("sleep", "30").start()
+        val said = Files.createTempFile("line-said", ".out")
+        try {
+            withFakeDaemon(
+                listOf(
+                    steppingAside,
+                    idle3,
+                    """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":false,"line":${child.pid()},"program":"/x/olcrtc"}"""
+                )
+            ) { daemon ->
+                val log = mutableListOf<String>()
+                val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+                val line = runBlocking {
+                    controller.startLine(Path.of("/Users/a/bin/olcrtc-darwin-arm64"), listOf("/tmp/c.yaml"), said)
+                }
+                assertEquals(listOf("line", "status", "line"), daemon.verbs)
+                assertEquals(daemon.requests[0], daemon.requests[2], "the same line is asked for again")
+                assertEquals(child.pid(), line.pid())
+                assertTrue(log.any { "the tunnel helper was updated" in it }, log.toString())
+            }
+        } finally {
+            child.destroyForcibly()
+            Files.deleteIfExists(said)
+        }
+    }
+
+    // A helper that came up unable to run a line is not asked for one: what
+    // it would do with a verb it does not know is its own to say, and it
+    // would say it about a room that was never going to be joined.
+    @Test fun aLineIsNotAskedOfAHelperThatCameUpUnableToRunOne() = withFakeDaemon(
+        listOf(steppingAside, idleHeldBeforeLines)
+    ) { daemon ->
+        val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        val failure = assertFailsWith<IllegalStateException> {
+            runBlocking { controller.startLine(Path.of("/Users/a/bin/olcrtc-darwin-arm64"), emptyList(), Path.of("/tmp/none")) }
+        }
+        assertEquals(listOf("line", "status"), daemon.verbs)
+        assertTrue("cannot run a line" in failure.message.orEmpty(), failure.message)
     }
 
     @Test fun theHelpersCopyOfALinesProgramIsNamedByItsFile() {
