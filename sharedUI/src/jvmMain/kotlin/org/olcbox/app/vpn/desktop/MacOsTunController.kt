@@ -320,9 +320,29 @@ internal class MacOsTunController(
         val canHold: Boolean
     )
 
-    /** Asks the daemon. One that does not answer has no block and can hold none. */
+    /**
+     * Asks the daemon, with no tunnel of this app's up. One that does not
+     * answer has no block and can hold none.
+     *
+     * A daemon from before the block is first given the chance to make way.
+     * After an update of the app the previous build's daemon is still the one
+     * running, and it steps aside for the one on disk when it is told to start
+     * or to stop. Left to the start, that would be after the connect had
+     * chosen its order by what the old one can do: a room under the switch
+     * joined first and then cut off by a block the new one loaded. A stop
+     * costs a daemon with no tunnel nothing, and a daemon this old has no
+     * block for it to take away.
+     */
     suspend fun helperNow(): Helper {
-        val status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = blockStands, canHold = false)
+        var status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = blockStands, canHold = false)
+        if (status.protocol < TunnelDaemonProtocol.PROTOCOL_HOLD && status.state != DaemonReply.STATE_RUNNING) {
+            val stopped = client.stop()
+            if (stopped is DaemonReply.Failure && stopped.restarting) {
+                addLog("the tunnel helper was updated; waiting for the new one to come up")
+                awaitDaemon()
+                status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = false, canHold = false)
+            }
+        }
         blockStands = status.holds
         return Helper(blockStands = status.holds, canHold = status.protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD)
     }
