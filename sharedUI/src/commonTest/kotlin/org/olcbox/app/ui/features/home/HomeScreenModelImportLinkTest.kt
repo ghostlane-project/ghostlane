@@ -1,5 +1,8 @@
 package org.olcbox.app.ui.features.home
 
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.mismatch_explanation
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -80,6 +83,16 @@ class HomeScreenModelImportLinkTest {
         val vm = viewModel(vpn)
         try {
             withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            // The sentence a connect reads on its way to the ranking, read here
+            // first. The first string a process asks for is read from its file
+            // on a real thread, and the model went on from there: the ranking
+            // then ran beside this test instead of inside it, and the test's
+            // clock, which is not a real one, ran the ranking's six seconds
+            // out before a single probe had been entered. So this test passed
+            // after any test that had read a string, and hung for its whole
+            // minute when it was the first in its process, as it is when run
+            // by itself.
+            getString(Res.string.mismatch_explanation)
             vm.ToggleVpn()
             entered.await()
             assertTrue(vm.state.value.isVpnLoading)
