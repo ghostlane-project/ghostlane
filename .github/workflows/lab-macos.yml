@@ -2,9 +2,10 @@ name: Lab (macOS tunnel)
 
 # Not a check and never merged: a branch of its own that asks a real Mac what
 # the desktop's tunnel code can only assume from here. Runs on a push to it.
+# Parked: what it asked is scripts/check-macos-helper.sh now, which the
+# pull-request checks run. Left here for the next question a Mac has to answer.
 on:
-  push:
-    branches: [lab/macos-tunnel]
+  workflow_dispatch:
 
 permissions:
   contents: read

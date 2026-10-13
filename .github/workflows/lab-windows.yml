@@ -1,0 +1,29 @@
+name: Lab (Windows traffic API)
+
+# Not a check and never merged: asks a real Windows what the desktop's traffic
+# chart can only assume from here. Runs on a push to this branch.
+on:
+  push:
+    branches: [lab/macos-tunnel]
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: A Windows, asked
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      SINGBOX_VERSION: "1.13.14"
+    steps:
+      - uses: actions/checkout@v7
+      - name: The pinned sing-box, for Windows
+        shell: bash
+        run: |
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-windows-amd64.zip" -o "$RUNNER_TEMP/sb.zip"
+          unzip -q "$RUNNER_TEMP/sb.zip" -d "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-windows-amd64/sing-box.exe" "$RUNNER_TEMP/sing-box.exe"
+      - name: What the tun's sing-box says of its flows
+        shell: bash
+        run: bash lab/windows-traffic-api.sh "$RUNNER_TEMP/sing-box.exe"
