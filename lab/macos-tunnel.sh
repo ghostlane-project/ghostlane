@@ -138,14 +138,27 @@ probe user "example.com (a number: it went out directly)" https://example.com
 say "E6: the same death with a block standing, the tunnel's sing-box in a group of its own"
 tun_up utun124 4242
 ps -o pid,uid,gid,comm -p "$TUN" | sed 's/^/   /'
-printf '%s\n' \
-  'pass out quick on lo0 all' \
-  "pass out quick on $UTUN all" \
-  'pass out quick inet proto udp from any port 68 to any port 67' \
-  'pass out quick proto { tcp, udp } from any to any group 4242' \
-  'block drop out quick all' | pfctl -a "$ANCHOR" -f - 2>&1 | quiet
+block_for() {
+  printf '%s\n' \
+    'pass out quick on lo0 all flags any no state' \
+    "pass out quick on $1 all" \
+    'pass out quick inet proto udp from any port 68 to any port 67' \
+    'pass out quick proto { tcp, udp } from any to any group 4242' \
+    'block drop out quick all' | pfctl -a "$ANCHOR" -f - 2>&1 | quiet
+}
+block_for "$UTUN"
 pfctl -a "$ANCHOR" -s rules 2>&1 | quiet
 probe user "example.com, tunnel up, block standing" https://example.com
+echo "--- where a name goes while the tunnel is up"
+echo "   the system's resolvers: $(scutil --dns | awk '/nameserver\[/{print $3}' | sort -u | tr '\n' ' ')"
+echo "   route to the first of them: $(route -n get "$(scutil --dns | awk '/nameserver\[/{print $3; exit}')" 2>/dev/null | awk '/interface:/{print $2}')"
+( tcpdump -i "$UTUN" -n -c 4 udp port 53 2>/dev/null | sed 's/^/   on the tunnel: /' ) & DUMP1=$!
+( tcpdump -i "$IF" -n -c 4 udp port 53 2>/dev/null | sed "s/^/   on $IF: /" ) & DUMP2=$!
+sleep 1
+sudo -u "$WHO" dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" >/dev/null 2>&1
+sudo -u "$WHO" dscacheutil -q host -a name "fresh-$RANDOM.example.org" >/dev/null 2>&1
+sleep 2
+kill "$DUMP1" "$DUMP2" 2>/dev/null; pkill -x tcpdump 2>/dev/null; sleep 0.3
 echo "--- what the tunnel's API lists while a download runs"
 sudo -u "$WHO" curl -4 -s --max-time 20 --limit-rate 300k -o /dev/null 'https://speed.cloudflare.com/__down?bytes=8000000' &
 SLOW=$!
@@ -164,13 +177,27 @@ echo "--- names, while it is held"
 name="held-$RANDOM.example.com"
 printf '   %-6s %-46s %s\n' user "dig $name @8.8.8.8" "$(sudo -u "$WHO" dig +time=2 +tries=1 +short "$name" @8.8.8.8 2>&1 | tail -1 | cut -c1-60)"
 printf '   %-6s %-46s %s\n' user "the system's resolver, a name not cached" "$(sudo -u "$WHO" dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" 2>&1 | head -2 | tr '\n' ' ' | cut -c1-60)"
+
+say "E7: a new tunnel brought up behind the block, which is told its name first"
+block_for utun125
+probe user "example.com, block renamed, no tunnel yet (held)" https://example.com
+tun_up utun125 4242
+probe user "example.com, new tunnel up behind the block" https://example.com
+kill -9 "$TUN"; sleep 1.5
+probe user "example.com, that tunnel dead (held)" https://example.com
+
+say "E8: the tunnel's interface named without its number"
+printf '%s\n' \
+  'pass out quick on lo0 all flags any no state' \
+  'pass out quick on utun all' \
+  'pass out quick inet proto udp from any port 68 to any port 67' \
+  'pass out quick proto { tcp, udp } from any to any group 4242' \
+  'block drop out quick all' | pfctl -a "$ANCHOR" -f - 2>&1 | quiet
+tun_up utun126 4242
+probe user "example.com, through utun126, rule says utun" https://example.com
+kill -9 "$TUN"; sleep 1.5
 pfctl -a "$ANCHOR" -F all 2>&1 | quiet
 probe user "example.com once the block is taken away" https://example.com
-
-say "E8: an interface named without its number, for a rule that need not know it"
-printf 'pass out quick on utun all\n' | pfctl -a "$ANCHOR" -f - 2>&1 | quiet
-pfctl -a "$ANCHOR" -s rules 2>&1 | quiet
-pfctl -a "$ANCHOR" -F all 2>&1 | quiet
 
 say "the end"
 [ -n "$TOKEN" ] && pfctl -X "$TOKEN" 2>&1 | quiet
