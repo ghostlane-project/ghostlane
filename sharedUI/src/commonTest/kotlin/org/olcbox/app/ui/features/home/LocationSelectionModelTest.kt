@@ -12,6 +12,7 @@ import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.ui.features.home.components.buildBoardModel
 import org.olcbox.app.ui.features.home.components.headMarksSelection
+import org.olcbox.app.ui.features.home.components.locationDisplayParts
 import org.olcbox.app.ui.features.home.components.pin
 import org.olcbox.app.ui.features.locations.LocationItem
 
@@ -205,6 +206,42 @@ class LocationSelectionModelTest {
         // The exit in use is in another list.
         assertFalse(headMarksSelection(rooms, shown = emptyList(), selectedLocationId = "elsewhere", lowestSelected = false))
         assertFalse(headMarksSelection(rooms, shown = emptyList(), selectedLocationId = null, lowestSelected = false))
+    }
+
+    // A list whose server puts no flag into its names stood beside one whose
+    // server does, as letters beside pictures. Where the system draws flags, a
+    // line named by its country's code gets the country's.
+    @Test
+    fun aLineNamedByItsCountrysCodeIsShownWithTheCountrysFlag() {
+        assertEquals("\uD83C\uDDE9\uD83C\uDDEA" to "DE Direct", locationDisplayParts(room("a", "DE Direct"), drawFlags = true))
+        assertEquals("\uD83C\uDDEC\uD83C\uDDE7" to "GB · olcRTC · VK", locationDisplayParts(room("b", "GB · olcRTC · VK"), drawFlags = true))
+        assertEquals("\uD83C\uDDE9\uD83C\uDDEA" to "DE via RU · Hysteria2", locationDisplayParts(room("c", "DE via RU · Hysteria2"), drawFlags = true))
+    }
+
+    @Test
+    fun aLineThatBringsItsOwnPictureKeepsIt() {
+        // A partner's server writes the flag into the name: it is the name's, and the name is what is left.
+        assertEquals("\uD83C\uDDE8\uD83C\uDDE6" to "CA · VP8", locationDisplayParts(room("a", "\uD83C\uDDE8\uD83C\uDDE6 CA · VP8"), drawFlags = true))
+        // Another picture in front of a country's code is not replaced by the country's flag.
+        assertEquals("\uD83D\uDE80" to "DE Direct", locationDisplayParts(room("b", "\uD83D\uDE80 DE Direct"), drawFlags = true))
+        // Nor is the line's own icon, or its list's.
+        val withIcon = room("c", "DE Direct").let { it.copy(metadata = it.metadata?.copy(icon = "\u26A1")) }
+        assertEquals("\u26A1" to "DE Direct", locationDisplayParts(withIcon, drawFlags = true))
+    }
+
+    @Test
+    fun aNameThatDoesNotOpenWithACountrysCodeGetsNoFlag() {
+        for (name in listOf("fra-1 Direct", "Frankfurt", "de Direct", "DEU Direct", "Мой VPN DE Direct")) {
+            assertEquals("" to name, locationDisplayParts(room("a", name), drawFlags = true), name)
+        }
+    }
+
+    @Test
+    fun whereFlagsAreNotDrawnNoneIsAdded() {
+        // Windows prints a flag as its two letters, beside a name that opens with them already.
+        assertEquals("" to "DE Direct", locationDisplayParts(room("a", "DE Direct"), drawFlags = false))
+        // What a name brings is still shown as it came.
+        assertEquals("\uD83C\uDDE8\uD83C\uDDE6" to "CA · VP8", locationDisplayParts(room("b", "\uD83C\uDDE8\uD83C\uDDE6 CA · VP8"), drawFlags = false))
     }
 
     private fun item(id: String, subscriptionUrl: String) = LocationItem(
