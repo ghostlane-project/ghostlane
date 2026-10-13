@@ -1,11 +1,16 @@
 package org.olcbox.app.ui.render
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.test.DesktopComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -64,13 +69,19 @@ internal class AppFixture {
         Dispatchers.resetMain()
     }
 
-    fun models(source: LocationsDataSource, tunnel: VpnManager = Tunnel()): Models {
+    /** [clock] is what the models read the time off; a test that counts seconds holds it still or moves it. */
+    fun models(
+        source: LocationsDataSource,
+        tunnel: VpnManager = Tunnel(),
+        clock: () -> Long = ::nowMillis
+    ): Models {
         val repository = LocationsRepositoryImpl(source)
         val home = HomeScreenViewModel(
             vpnManager = tunnel,
             locationsRepository = repository,
             configImporter = ImportsNothing,
-            logExporter = ExportsNothing
+            logExporter = ExportsNothing,
+            clock = clock
         )
         // No room is asked how full it is: nothing here goes to a network.
         val nobodyAnswers = OlcrtcStatusClient(HttpClient(MockEngine { respondError(HttpStatusCode.ServiceUnavailable) }))
@@ -102,9 +113,18 @@ internal class AppFixture {
      * again as an iPhone builds it on every return to the app: everything that
      * was composed is dropped, and composed anew over the same models.
      */
-    fun <T> onTheScreen(phone: Phone, models: Models, read: DesktopComposeUiTest.(buildAgain: () -> Unit) -> T): T {
+    fun <T> onTheScreen(
+        phone: Phone,
+        models: Models,
+        /** Whether anybody can see the screen, where a test says so; the test scene's own answer where it does not. */
+        seenBy: LifecycleOwner? = null,
+        read: DesktopComposeUiTest.(buildAgain: () -> Unit) -> T
+    ): T {
         val built = mutableIntStateOf(0)
-        return measuredOn(phone, { key(built.intValue) { App(models) } }) {
+        val screen: @Composable () -> Unit = {
+            if (seenBy == null) App(models) else CompositionLocalProvider(LocalLifecycleOwner provides seenBy) { App(models) }
+        }
+        return measuredOn(phone, { key(built.intValue) { screen() } }) {
             read {
                 built.intValue++
                 waitForIdle()
@@ -133,6 +153,25 @@ internal class AppFixture {
                 vpnDisclosureAcceptedAt = 1L
             )
         }
+    }
+}
+
+/**
+ * A screen that is in front of somebody or is not, as a test says: an app in the
+ * background, a window put away in the tray.
+ */
+internal class Seen(inFront: Boolean = true) : LifecycleOwner {
+    private val registry = LifecycleRegistry.createUnsafe(this)
+    override val lifecycle: Lifecycle get() = registry
+
+    var inFront: Boolean = inFront
+        set(value) {
+            field = value
+            registry.currentState = if (value) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
+        }
+
+    init {
+        this.inFront = inFront
     }
 }
 

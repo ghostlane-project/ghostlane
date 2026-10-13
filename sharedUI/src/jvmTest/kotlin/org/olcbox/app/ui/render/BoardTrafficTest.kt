@@ -29,8 +29,16 @@ class BoardTrafficTest {
     @BeforeTest fun begin() = app.begin()
     @AfterTest fun end() = app.end()
 
+    /**
+     * The two rates beside the chart: an arrow and a figure, or an arrow and
+     * what stands for a figure still to come. Not the line of totals over them,
+     * which opens with an arrow too and has both.
+     */
     private fun DesktopComposeUiTest.rates(): List<String> =
-        laidTexts().map { it.text }.filter { it.startsWith("↓") || it.startsWith("↑") }
+        laidTexts().map { it.text }.filter { text ->
+            (text.startsWith("↓ ") || text.startsWith("↑ ")) &&
+                (text.endsWith("/s") || text.endsWith(THROUGHPUT_PENDING))
+        }
 
     @Test fun whereNothingCountsASessionsTrafficTheStripHasNoChartToWaitFor() {
         val uncounted = Tunnel(upSince = SESSION, counts = false)
@@ -58,6 +66,39 @@ class BoardTrafficTest {
             waitForIdle()
             val asked = counted.readings - before
             assertTrue(asked in 4..6, "five seconds of a session read the counters $asked times")
+        }
+    }
+
+    @Test fun aSessionIsReadTheMomentItsScreenIsThere() {
+        // Not a second later. A screen that comes back to a session — a phone's
+        // app returned to — has the seconds it was away to set down at once,
+        // and a timer that is a second behind for a second is a timer that jumps.
+        val counted = Tunnel(upSince = SESSION, counters = TrafficCounters(0L, 0L))
+        app.onTheScreen(phone, app.models(Memory(AppFixture.stored()), counted)) {
+            assertEquals(1, counted.readings, "the counters as the screen opens")
+        }
+    }
+
+    @Test fun whileNobodyCanSeeTheScreenNothingIsRead() {
+        // An Android app in the background lives on for as long as its tunnel
+        // does, and a desktop's window sits in the tray. A reading a second for
+        // a chart nobody is looking at is a wakeup a second for nothing.
+        val counted = Tunnel(upSince = SESSION, counters = TrafficCounters(0L, 0L))
+        val screen = Seen(inFront = true)
+        app.onTheScreen(phone, app.models(Memory(AppFixture.stored()), counted), seenBy = screen) {
+            mainClock.advanceTimeBy(2_000L)
+            waitForIdle()
+            screen.inFront = false
+            waitForIdle()
+            val whenItWent = counted.readings
+
+            mainClock.advanceTimeBy(10_000L)
+            waitForIdle()
+            assertEquals(whenItWent, counted.readings, "the counters were read behind a screen nobody could see")
+
+            screen.inFront = true
+            waitForIdle()
+            assertEquals(whenItWent + 1, counted.readings, "the screen came back and was not read at once")
         }
     }
 

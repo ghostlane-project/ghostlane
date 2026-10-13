@@ -171,13 +171,14 @@ fun HomeScreen(
 
     // Elapsed time is not derived from anything Compose can observe, so it is
     // resampled on a timer rather than recomputed on recomposition. Only while a
-    // session is up: a loop ticking over an idle screen is a wakeup a second for
-    // a number nobody is reading.
+    // session is up, and only while the screen is in front of somebody: a loop
+    // ticking over an idle screen, or behind one — an Android app in the
+    // background lives as long as its tunnel does, a desktop's window sits in
+    // the tray — is a wakeup a second for a number nobody is reading.
     //
-    // The same tick reads the session's counters, there and then, and hands them
-    // to the model with the moment they were read. The model keeps the chart
-    // and the totals, because this screen does not last: see
-    // HomeScreenViewModel.sessionTraffic.
+    // The same tick has the model read the session's counters, there and then.
+    // The model keeps the chart and the totals, because this screen does not
+    // last: see HomeScreenViewModel.sessionTraffic.
     //
     // Held in state objects that nothing in this function reads. The strip reads
     // them, through the lambdas below, so a second passing recomposes a strip
@@ -189,17 +190,22 @@ fun HomeScreen(
     // Asked at each edge of a session, which is when it can change: the mode a
     // desktop connects in is chosen in the settings between two sessions.
     val countsTraffic = remember(state.isVpnConnected, state.isVpnLoading) { viewModel.countsTraffic }
-    LaunchedEffect(state.isVpnConnected, connectedSince) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state.isVpnConnected, connectedSince, lifecycle) {
         // Whichever way this runs, the model is told which session this is. One
         // that ended, or another that began, has none of the last one's seconds;
         // the same one has them all, when it is only this screen that is new.
         viewModel.trafficSessionIs(connectedSince)
         if (!state.isVpnConnected) return@LaunchedEffect
-        while (true) {
-            delay(1_000)
-            val now = nowMillis()
-            nowTick.value = now
-            viewModel.sampleTraffic(atMillis = now)
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // Read first, then wait. A screen that comes back to a session has
+            // the time it was away to set down at once, and a timer that showed
+            // the second it left at for a second more is a timer that jumps.
+            while (true) {
+                nowTick.value = nowMillis()
+                viewModel.sampleTraffic()
+                delay(1_000)
+            }
         }
     }
 
@@ -343,7 +349,6 @@ fun HomeScreen(
     LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince) {
         locationViewModel.markPingsStale()
     }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince, lifecycle) {
         if (state.isVpnConnected && !state.isVpnLoading) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {

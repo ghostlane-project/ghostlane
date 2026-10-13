@@ -42,6 +42,9 @@ import kotlin.test.assertTrue
 class HomeScreenModelTrafficTest {
     private val models = mutableListOf<HomeScreenViewModel>()
 
+    /** The clock the model times its readings by, as the test sets it. */
+    private var now = BEGAN
+
     @BeforeTest fun main() = Dispatchers.setMain(UnconfinedTestDispatcher())
     @AfterTest fun restore() {
         runBlocking { models.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() } }
@@ -52,7 +55,8 @@ class HomeScreenModelTrafficTest {
         vpnManager = vpn,
         locationsRepository = LocationsRepositoryImpl(NothingStored),
         configImporter = NoImports,
-        logExporter = NoExports
+        logExporter = NoExports,
+        clock = { now }
     ).also { models += it }
 
     @Test fun aSecondOfASessionIsWhatThePlatformsCountersMovedByBetweenTwoReadings() = runTest {
@@ -60,9 +64,10 @@ class HomeScreenModelTrafficTest {
         val model = model(tunnel)
         model.trafficSessionIs(SESSION)
 
-        model.sampleTraffic(atMillis = BEGAN)
+        model.sampleTraffic()
         tunnel.counters = TrafficCounters(bytesIn = 4_000L, bytesOut = 150L)
-        model.sampleTraffic(atMillis = BEGAN + 1_000L)
+        now += 1_000L
+        model.sampleTraffic()
 
         assertEquals(2, tunnel.readings, "the platform is asked once for each second")
         assertEquals(TrafficCounters(4_000L, 150L), model.sessionTraffic.totals)
@@ -70,13 +75,29 @@ class HomeScreenModelTrafficTest {
         assertEquals(50L, model.sessionTraffic.window.sentAgo(0))
     }
 
+    @Test fun aReadingIsTimedByTheClockWhenItCameBack() = runTest {
+        // Three seconds between two readings is three seconds of traffic,
+        // whatever was meant to be a second.
+        val tunnel = CountedTunnel(TrafficCounters(bytesIn = 0L, bytesOut = 0L))
+        val model = model(tunnel)
+        model.trafficSessionIs(SESSION)
+        model.sampleTraffic()
+
+        tunnel.counters = TrafficCounters(bytesIn = 3_000L, bytesOut = 300L)
+        now += 3_000L
+        model.sampleTraffic()
+
+        assertEquals(listOf(1_000L, 1_000L, 1_000L), (0..2).map(model.sessionTraffic.window::receivedAgo))
+    }
+
     @Test fun whereThePlatformHasNothingToReadNothingIsPutOnRecord() = runTest {
         // Not a session carrying nothing: nobody is counting. No zeroes.
         val model = model(CountedTunnel(counters = null))
         model.trafficSessionIs(SESSION)
 
-        model.sampleTraffic(atMillis = BEGAN)
-        model.sampleTraffic(atMillis = BEGAN + 1_000L)
+        model.sampleTraffic()
+        now += 1_000L
+        model.sampleTraffic()
 
         assertNull(model.sessionTraffic.totals)
         assertFalse(model.sessionTraffic.window.hasData)
@@ -86,9 +107,10 @@ class HomeScreenModelTrafficTest {
         val tunnel = CountedTunnel(TrafficCounters(0L, 0L))
         val model = model(tunnel)
         model.trafficSessionIs(SESSION)
-        model.sampleTraffic(atMillis = BEGAN)
+        model.sampleTraffic()
         tunnel.counters = TrafficCounters(9_000L, 900L)
-        model.sampleTraffic(atMillis = BEGAN + 1_000L)
+        now += 1_000L
+        model.sampleTraffic()
 
         // What a screen says first, every time it is built: which session it is showing.
         model.trafficSessionIs(SESSION)
@@ -101,9 +123,10 @@ class HomeScreenModelTrafficTest {
         val tunnel = CountedTunnel(TrafficCounters(0L, 0L))
         val model = model(tunnel)
         suspend fun aSecondOfTraffic() {
-            model.sampleTraffic(atMillis = BEGAN)
+            model.sampleTraffic()
             tunnel.counters = TrafficCounters(tunnel.counters!!.bytesIn + 9_000L, 900L)
-            model.sampleTraffic(atMillis = BEGAN + 1_000L)
+            now += 1_000L
+            model.sampleTraffic()
         }
 
         model.trafficSessionIs(SESSION)

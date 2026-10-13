@@ -75,7 +75,13 @@ class HomeScreenViewModel(
     private val vpnManager: VpnManager,
     private val locationsRepository: LocationsRepository,
     private val configImporter: ConfigImporter,
-    private val logExporter: LogExporter
+    private val logExporter: LogExporter,
+    /**
+     * The clock a reading of the session's counters is timed by. One that goes
+     * on while the app does not: what a phone's chart shows of the time its app
+     * spent in the background is measured by it.
+     */
+    private val clock: () -> Long = ::nowMillis
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
@@ -132,12 +138,13 @@ class HomeScreenViewModel(
 
     /**
      * Reads the session's counters as they stand and puts them on record as of
-     * [atMillis]. Called by the screen's own second, so the second the chart
-     * draws is the one that was measured.
+     * now. Called by the screen's own second, so the second the chart draws is
+     * the one that was measured; and timed when the answer is in, because on a
+     * desktop it is asked of another process and can take a while to come.
      */
-    suspend fun sampleTraffic(atMillis: Long) {
+    suspend fun sampleTraffic() {
         val reading = vpnManager.readTraffic() ?: return
-        sessionTraffic.take(reading, atMillis)
+        sessionTraffic.take(reading, clock())
     }
 
     /**

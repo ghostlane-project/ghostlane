@@ -103,13 +103,17 @@ class BoardKeptTest {
         // The chart was the screen's own. Leave the app with a session up, come
         // back five seconds later, and its strip was an empty rule again.
         val tunnel = Tunnel(upSince = SESSION, counters = TrafficCounters(bytesIn = 2_000_000L, bytesOut = 100_000L))
-        val models = app.models(Memory(AppFixture.stored()), tunnel)
-        // A second of the session, as the screen would have read it.
+        var now = SESSION + 5_000L
+        val models = app.models(Memory(AppFixture.stored()), tunnel, clock = { now })
+        // A second of the session, as the screen would have read it. The clock
+        // then stands: a screen built in the same second reads again, and what
+        // it reads is no second yet.
         models.home.trafficSessionIs(SESSION)
         runBlocking {
-            models.home.sampleTraffic(atMillis = SESSION + 5_000L)
+            models.home.sampleTraffic()
             tunnel.counters = TrafficCounters(bytesIn = 2_000_000L + 300L * 1024L, bytesOut = 100_000L + 2L * 1024L)
-            models.home.sampleTraffic(atMillis = SESSION + 6_000L)
+            now += 1_000L
+            models.home.sampleTraffic()
         }
 
         app.onTheScreen(phone, models) { buildAgain ->
