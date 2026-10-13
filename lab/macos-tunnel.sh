@@ -157,10 +157,25 @@ echo "   www.wikipedia.org asked of 8.8.8.8, which is not on this network: $(as_
 sleep 4.5
 echo "   (an address in 198.18.0.0/15 is the tunnel's own answer)"
 
+say "A3: the same tunnel, and a route that sends the resolver's own address into it"
+for r in $RESOLVERS; do route -n add -host "$r" -interface utun127 2>&1 | sed 's/^/   /'; done
+for r in $RESOLVERS; do echo "   route to the resolver $r now: $(route -n get "$r" 2>/dev/null | awk '/interface:/{print $2}')"; done
+within 6 tcpdump -l -i utun127 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
+within 6 tcpdump -l -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
+sleep 1
+echo "   www.mozilla.org, by the system: $(within 4 dscacheutil -q host -a name www.mozilla.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   habr.com, by the system: $(within 4 dscacheutil -q host -a name habr.com 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+probe user "through the tunnel, the route standing"
+echo "   by name through the tunnel: $(as_user curl -4 -s -o /dev/null -w '%{http_code} in %{time_total}s' --max-time 8 https://www.mozilla.org/ 2>/dev/null || echo 'no answer')"
+echo "   the way out is still: $(route -n get default | awk '/gateway:|interface:/{printf "%s ", $2}')"
+sleep 5
+
 say "B: the tunnel dies with nothing held"
 kill -9 "$TUN"; sleep 1.5
 echo "   the interface: $(ifconfig utun127 2>&1 | head -1); routes naming it: $(netstat -rn -f inet | grep -c ' utun127 ')"
 probe user "after its death (a number: straight out)"
+for r in $RESOLVERS; do echo "   route to the resolver $r after it: $(route -n get "$r" 2>/dev/null | awk '/interface:/{print $2}')"; done
+echo "   a name by the system after it: $(within 4 dscacheutil -q host -a name www.kernel.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
 
 say "C: the block, then a tunnel brought up behind it"
 block_for utun124
