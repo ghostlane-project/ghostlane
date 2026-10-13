@@ -148,4 +148,36 @@ class PkTrafficTest {
         assertEquals("1.2 MB/s", throughputRate(1_258_292L))
         assertEquals("0 B/s", throughputRate(-1L))
     }
+
+    @Test
+    fun aWindowWithNoSecondOnRecordSaysItsRateIsStillToCome() {
+        // The chart stands from the moment a session is asked for, a second or
+        // more before there is a second to chart. "0 B/s" there would be a
+        // measurement nobody made.
+        val window = ThroughputWindow()
+        assertEquals(THROUGHPUT_PENDING, window.newestRate(sent = false))
+        // The first reading is where the counting starts, not a second of it.
+        window.record(5_000L, 5_000L)
+        assertEquals(THROUGHPUT_PENDING, window.newestRate(sent = false))
+        assertEquals(THROUGHPUT_PENDING, window.newestRate(sent = true))
+    }
+
+    @Test
+    fun aSecondThatMovedNothingIsARateOfZeroAndNotOneToCome() {
+        val window = ThroughputWindow()
+        window.record(5_000L, 700L)
+        window.record(5_000L, 2_236L)
+        assertEquals("0 B/s", window.newestRate(sent = false))
+        assertEquals("1.5 KB/s", window.newestRate(sent = true))
+    }
+
+    @Test
+    fun aSessionThatEndedHasNoRateLeftOverForTheNextOne() {
+        val window = ThroughputWindow()
+        window.record(0L, 0L)
+        window.record(84L * 1024, 0L)
+        assertEquals("84 KB/s", window.newestRate(sent = false))
+        window.reset()
+        assertEquals(THROUGHPUT_PENDING, window.newestRate(sent = false))
+    }
 }

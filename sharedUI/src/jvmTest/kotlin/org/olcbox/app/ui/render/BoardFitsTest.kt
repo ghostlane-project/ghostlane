@@ -35,6 +35,9 @@ class BoardFitsTest {
     private val scenes = mapOf(
         "in a room" to BoardFixture.Scene(connected = true),
         "idle" to BoardFixture.Scene(connected = false, selectedId = BoardFixture.FLAGGED, seats = false),
+        // The seconds between the press and the tunnel: the strip already has
+        // the chart's room, with a rule on it and two rates still to come.
+        "joining" to BoardFixture.Scene(connected = false, connecting = true),
         "admin" to BoardFixture.Scene(connected = true, admin = true, lowest = true),
         "new" to BoardFixture.Scene(connected = false, empty = true),
         "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE)

@@ -27,6 +27,7 @@ class BoardRenderTest {
         val scenes = mapOf(
             "in-room" to BoardFixture.Scene(connected = true),
             "idle" to BoardFixture.Scene(connected = false, selectedId = BoardFixture.FLAGGED, seats = false),
+            "joining" to BoardFixture.Scene(connected = false, connecting = true),
             "admin" to BoardFixture.Scene(connected = true, admin = true, lowest = true),
             "new" to BoardFixture.Scene(connected = false, empty = true),
             "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE),

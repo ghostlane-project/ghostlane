@@ -19,6 +19,8 @@ On a narrow phone, or with the system's text size raised, the list of rooms lost
 
 The line under the status said that something was moving and nothing more: received and sent were added together, scaled to the busiest second in view, with no figure to read the line against. It is now two rows of bars on one scale — received above the rule, sent below it — and the current rate of each stands in figures beside the newest bar. A bar's height follows the square root of its traffic, so a page that loads is visible beside a video that plays. It costs no more than the line did: the last 44 seconds are two fixed arrays, a second that passes redraws the bars and resets two short texts, and nothing animates in between.
 
+The chart has its place from the press that asks for a connection, with a rule on it and two rates still to come, and the status strip takes a quarter of a second to open and to close. In 1.0.458 the chart arrived two seconds into a session, when the first second of traffic had been counted, and the list under the strip dropped by its height in one frame; the words of the strip also moved nine points sideways as the tunnel came up.
+
 ### Flags in server names
 
 A server name that opens with a flag was cut between the flag's two letters: the card showed a boxed letter where the flag belongs, and the connect button and the status strip showed the name beginning with the other one. The flag is now taken whole, as is any emoji made of several code points.
