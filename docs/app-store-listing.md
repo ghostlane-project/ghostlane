@@ -464,3 +464,65 @@ the reading that cost two rejections under 3.1.1. See
 
 No device frames and no marketing text over the top. Apple allows both; both
 date badly, and neither survives the next redesign.
+
+---
+
+## Creative assets: the header and the search result
+
+App Store Connect has had two more pictures to give since 2026-10-05, under
+*Product Page Information*:
+
+- **Header** — the picture at the top of the product page.
+- **Search results** — the picture a search result shows instead of the row of
+  screenshots.
+
+Both are optional: with none, the store shows the screenshots as it always
+has. They are drawn only on iOS 27 and iPadOS 27 and later. Each is reviewed,
+and can be sent for review by itself, without a new version of the app (*Asset
+Library* shows the state of each).
+
+| Where | Shape | Size | File |
+|---|---|---|---|
+| Header | 21:9 | 3840 × 1646 | `docs/store-art/ghostlane-header-3840x1646.png` |
+| Search results | 3:2 | 3840 × 2560 (1920 × 1280 at the least) | `docs/store-art/ghostlane-search-3840x2560.png` |
+| Either, or both with *Use header asset in search results* | 16:9 | 5244 × 2950, PNG only | `docs/store-art/ghostlane-universal-5244x2950.png` |
+
+No alpha channel in any of them, opaque or not: the store refuses the file.
+
+### What is on them
+
+The app's name, the listing's own subtitle, and the board: a session in a
+room, and the rooms beside it with their seats. Drawn by the app's own
+components, so they are made again from the code when the board changes:
+
+```bash
+OLCBOX_RENDER_DIR=/tmp/store ./gradlew :sharedUI:jvmTest --rerun --no-configuration-cache --tests '*StoreArtRenderTest*'
+```
+
+(`--no-configuration-cache`, or a second run writes to the directory the first
+one named: the test task's environment is kept with the configuration.)
+
+Apple's rules for these pictures, as of October 2026: no prices or discounts,
+no web addresses, no copyright signs, no claim that cannot be checked, no logo
+of or reference to another platform or store, no Apple award; fit for a 4+
+rating whatever the app's own is; a short phrase rather than a description.
+Ours, on top of those, are the ones the screenshots are held to: no allowance
+bar, no list of somebody else's, and nothing the app does not draw.
+
+**No meeting service is named on them.** The card of the room a session is in
+says what the session looks like from outside — "a Jitsi media session" — and
+that is a third party's name in a picture a reviewer reads with nothing beside
+it. The rooms shown are the others in the list. The test also draws the set
+with that card (`ghostlane-seat-*.png`): it is the better picture, and it is
+not the one to upload without deciding that first.
+
+### Before sending them
+
+Apple gives the sizes and not the part of each picture that survives every
+device; that is in its Figma and Photoshop templates. So everything on ours is
+kept to the middle, and **Preview** in App Store Connect is where to look
+before sending: each device, both orientations, Dark Mode. If the store's own
+title or button lies over the words, the picture is redrawn with the words
+moved, not uploaded as it is.
+
+A picture is per localisation. The listing is English only, so there is one.
