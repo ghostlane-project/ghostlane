@@ -103,6 +103,15 @@ class HomeScreenViewModel(
     /** Same reasoning as [connectedSince]: the platform's own counter. */
     val traffic get() = vpnManager.traffic
 
+    /**
+     * How far down the board is scrolled, in pixels, as its screen last said.
+     *
+     * Kept for the screen that comes after it over this model. The iPhone's host
+     * drops the whole scene in the background and builds another on the way back
+     * in, and a scene's own memory of where its list stood goes with it.
+     */
+    var boardScroll: Int = 0
+
     private var selectionJob: Job? = null
     private var pendingLowestCandidates: List<String>? = null
 

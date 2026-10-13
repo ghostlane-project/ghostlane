@@ -186,4 +186,34 @@ class SubscriptionSettingsTest {
         assertEquals("room-3", settings.pinnedLocations.first().name)
         assertEquals("room-${SubscriptionSettings.MAX_PINNED + 2}", settings.pinnedLocations.last().name)
     }
+
+    // ── the transport the board is narrowed to ─────────────────────────────
+
+    @Test fun theTransportChosenIsKeptAsItsChipNamesIt() {
+        assertEquals("Reality", SubscriptionSettings(transportFilter = "  Reality ").normalized().transportFilter)
+    }
+
+    @Test fun noTransportChosenIsNoneAndNotABlankOne() {
+        assertEquals(null, SubscriptionSettings(transportFilter = "   ").normalized().transportFilter)
+    }
+
+    @Test fun theTransportChosenIsWrittenAndReadBack() {
+        val json = Json { ignoreUnknownKeys = true }
+        val settings = SubscriptionSettings(transportFilter = "Hysteria2")
+        val read = json.decodeFromString(SubscriptionSettings.serializer(), json.encodeToString(SubscriptionSettings.serializer(), settings))
+        assertEquals("Hysteria2", read.transportFilter)
+    }
+
+    @Test fun settingsStoredBeforeTheTransportWasKeptHaveNone() {
+        val settings = Json { ignoreUnknownKeys = true }.decodeFromString(SubscriptionSettings.serializer(), """{"sort":"name"}""")
+        assertEquals(null, settings.transportFilter)
+        assertEquals(SubscriptionSort.Alphabetical, settings.sort)
+    }
+
+    @Test fun removingAListLeavesTheTransportChosen() {
+        // The choice is of a transport, across every list. A list that goes
+        // takes its own notes with it and not this one.
+        val settings = SubscriptionSettings(transportFilter = "Reality").withoutSubscription("https://one.example/sub")
+        assertEquals("Reality", settings.transportFilter)
+    }
 }

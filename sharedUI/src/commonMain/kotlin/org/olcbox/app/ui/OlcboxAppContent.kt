@@ -10,6 +10,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import org.olcbox.app.admin.AdminState
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.ui.features.home.HomeScreen
@@ -49,7 +51,14 @@ fun OlcboxAppContent(
     onSplitTunnelingClick: () -> Unit = {},
     onOpenExternalUrl: (String) -> Unit = {}
 ) {
-    val homeScrollState = rememberScrollState()
+    // Where the board was scrolled to is the model's to keep, like the transport
+    // chosen and the lists folded away: on a phone this screen is built again on
+    // every return to the app, and a list that had been scrolled to its end came
+    // back at its top.
+    val homeScrollState = rememberScrollState(initial = homeViewModel.boardScroll)
+    LaunchedEffect(homeScrollState) {
+        snapshotFlow { homeScrollState.value }.collect { homeViewModel.boardScroll = it }
+    }
 
     AnimatedContent(
         targetState = currentScreen,

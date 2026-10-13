@@ -125,9 +125,6 @@ fun HomeScreen(
     // cannot be shown twice, so arriving at it with no explanation attached is a
     // permission spent.
     var showCameraRationale by remember { mutableStateOf(false) }
-    // 24 exits x 3 transports is 72 rows out of one server list; without a filter
-    // the list is unusable. Chips only appear for transports actually present.
-    var transportFilter by rememberSaveable { mutableStateOf<String?>(null) }
 
     val state by viewModel.state.collectAsState()
     val connectedSince by viewModel.connectedSince.collectAsState()
@@ -135,6 +132,12 @@ fun HomeScreen(
     val subscriptionSettings by viewModel.subscriptionSettings.collectAsState()
     val routingSettings by viewModel.routingSettings.collectAsState()
     val subscriptionSettingsLoaded by viewModel.subscriptionSettingsLoaded.collectAsState()
+    // 24 exits x 3 transports is 72 rows out of one server list; without a filter
+    // the list is unusable. Chips only appear for transports actually present.
+    //
+    // The settings' to keep, not this screen's: on a phone the screen is built
+    // again on every return to the app, and what it remembered went with it.
+    val transportFilter = subscriptionSettings.transportFilter
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val pingsState = locationViewModel.pingsState
@@ -584,7 +587,7 @@ fun HomeScreen(
                     subscriptionSettings.copy(sort = nextSort(subscriptionSettings.sort))
                 )
             },
-            onFilterSelected = { transportFilter = it },
+            onFilterSelected = { key -> viewModel.changeSubscriptionSettings { it.copy(transportFilter = key) } },
             onActionClick = {
                 when {
                     requiresSetup -> isAddSheetOpen = true

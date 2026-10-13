@@ -4,6 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.SemanticsActions
@@ -20,6 +23,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import org.olcbox.app.ui.theme.AppTheme
 import java.util.Locale
 import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -136,3 +142,59 @@ internal fun DesktopComposeUiTest.outOfReach(phone: Phone): List<String> {
             "\"$name\" at ${place.top / RENDER_DENSITY}..${place.bottom / RENDER_DENSITY} of ${phone.heightDp}"
         }
 }
+
+/**
+ * The least a text may stand out from what it is written on: the lightest point
+ * of its box against the darkest, counted the way contrast is counted for
+ * accessibility.
+ *
+ * Not a standard anybody reads comfortably at. The faintest colour the theme
+ * writes in — a count on a chip, the version under the list — stands at three to
+ * one, and on the card of a full room, which is dimmed to half on purpose, at a
+ * little over one and a half. This is the line under those: where a text is not
+ * faint but absent. What it is here to find is a text nobody gave a colour, which
+ * on this theme is black on the ground, at one and a twentieth.
+ */
+internal const val LEAST_CONTRAST = 1.5f
+
+/**
+ * The texts on the screen that cannot be told from their ground, each with the
+ * contrast it has.
+ *
+ * Read off the picture, not off the colours the code names: a text is drawn in
+ * the colour it was given, or the one its surroundings hand down, or the default
+ * when neither did, and only the picture says which of those reached the screen.
+ * Only what shows whole is judged. A row half under the fold is half a box of
+ * something else.
+ *
+ * A flag or a sign with no letter in it is not judged either. The machines these
+ * tests run on have no font with emoji in it, so what is drawn there is nothing,
+ * which says nothing about a phone.
+ */
+@OptIn(ExperimentalTestApi::class)
+internal fun DesktopComposeUiTest.faintTexts(least: Float = LEAST_CONTRAST): List<String> {
+    // The whole scene, sheets and dialogs with it: they are roots of their own.
+    val picture = captureToImage().toPixelMap()
+    return laidTexts().filter { text -> text.text.any { it.isLetterOrDigit() } }.mapNotNull { text ->
+        val whole = text.node.place()
+        val shown = text.node.boundsInRoot
+        if (shown.width < whole.width - 1f || shown.height < whole.height - 1f) return@mapNotNull null
+        val left = max(0, floor(shown.left).toInt())
+        val top = max(0, floor(shown.top).toInt())
+        val right = min(picture.width, ceil(shown.right).toInt())
+        val bottom = min(picture.height, ceil(shown.bottom).toInt())
+        if (right <= left || bottom <= top) return@mapNotNull null
+        var lightest = 0f
+        var darkest = 1f
+        for (y in top until bottom) for (x in left until right) {
+            val light = picture[x, y].onOpaque().luminance()
+            lightest = max(lightest, light)
+            darkest = min(darkest, light)
+        }
+        val contrast = (lightest + 0.05f) / (darkest + 0.05f)
+        if (contrast < least) "\"${text.text}\" at ${(contrast * 100).roundToInt() / 100f} to 1" else null
+    }
+}
+
+/** A pixel of a finished picture: whatever was under it has already been mixed in. */
+private fun Color.onOpaque(): Color = copy(alpha = 1f)
