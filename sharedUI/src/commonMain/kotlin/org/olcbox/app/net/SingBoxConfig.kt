@@ -355,6 +355,8 @@ object SingBoxConfig {
                                 put("server", "dns-direct")
                             }
                         }
+                        // Ahead of anybody's rules: one zone that is nobody's to send anywhere.
+                        if (answersDns) addNoResolverOfItsOwn()
                         if (bypass != null) addPolicyDnsRules(bypass, fakeTunnelNames = true)
                         // After the user's own rules, which may say otherwise,
                         // and before every other name becomes the tunnel's.
@@ -805,6 +807,29 @@ object SingBoxConfig {
         addJsonObject {
             putJsonArray("query_type") { add("HTTPS") }
             put("action", "reject")
+        }
+    }
+
+    /**
+     * The system's question whether its resolver names an encrypted one of its
+     * own (`_dns.resolver.arpa`, RFC 9462) is answered here, and the answer is
+     * that it names none.
+     *
+     * A tun that answers names is the resolver the system asks, and a
+     * forwarder. Passed on with every other name, the question came back with
+     * the far resolver's answer about itself (1.1.1.1 names `one.one.one.one`
+     * over TLS and over HTTPS), and the system went to it: connections to
+     * port 853 and 443 through the tunnel, in a room one every few seconds for
+     * as long as the session ran (1.0.463 and 1.0.464 on a Mac in the field,
+     * and a hosted Mac asked the same way). The RFC has a forwarder keep the
+     * question to itself (6.1) and a resolver that names none answer with no
+     * data (4): no error, and no record.
+     */
+    private fun JsonArrayBuilder.addNoResolverOfItsOwn() {
+        addJsonObject {
+            putJsonArray("domain_suffix") { add("resolver.arpa") }
+            put("action", "predefined")
+            put("rcode", "NOERROR")
         }
     }
 
