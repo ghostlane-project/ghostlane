@@ -82,7 +82,8 @@ jobs:
             kill -0 "$srv" 2>/dev/null || { echo "the exit is gone in minute $minute"; break; }
             echo "minute $minute: sessions opened so far $(grep -c 'session .* opened' "$dir/srv.log"), lines $(wc -l < "$dir/srv.log")"
           done
-          kill -TERM "$srv" 2>/dev/null; sleep 3; kill -9 "$srv" 2>/dev/null
+          # The step's shell stops at the first command that fails, and a kill of a process that has gone fails.
+          kill -TERM "$srv" 2>/dev/null || true; sleep 3; kill -9 "$srv" 2>/dev/null || true
           echo "the exit carried: sessions opened $(grep -c 'session .* opened' "$dir/srv.log")"
           rm -rf "$dir"
 
