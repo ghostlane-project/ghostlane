@@ -35,7 +35,7 @@ try:
 except Exception as e:  # noqa: BLE001 - whatever it is, it is the answer
     say("never opened %s: %s" % (type(e).__name__, e))
     sys.exit(1)
-say("opened to %s" % raw.getpeername()[0])
+say("opened to %s" % conn.getpeername()[0])
 
 
 def ask(count):
