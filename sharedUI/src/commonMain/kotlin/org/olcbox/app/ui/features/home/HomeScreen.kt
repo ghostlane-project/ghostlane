@@ -49,7 +49,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -382,8 +381,9 @@ fun HomeScreen(
 
     // What the app does on its own when it opens. Each is off unless asked for:
     // connecting without being told to is not a default anyone should inherit.
-    var launchActionsDone by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(subscriptionSettingsLoaded, locations.isEmpty(), launchActionsDone) {
+    // Once for the app, which is not once for this screen: the model keeps the
+    // mark (HomeScreenViewModel.launchActionsDone).
+    LaunchedEffect(subscriptionSettingsLoaded, locations.isEmpty()) {
         // Only once the stored settings have actually arrived: the first value is
         // a default object, and acting on it would ignore what the user chose.
         //
@@ -391,11 +391,11 @@ fun HomeScreen(
         // the location list, so "ping on launch" fired against an empty list,
         // found nothing measurable and announced that instead — which is exactly
         // what "the checkbox does nothing" looks like from outside.
-        if (launchActionsDone || !subscriptionSettingsLoaded || locations.isEmpty()) {
+        if (viewModel.launchActionsDone || !subscriptionSettingsLoaded || locations.isEmpty()) {
             return@LaunchedEffect
         }
         val settings = subscriptionSettings
-        launchActionsDone = true
+        viewModel.launchActionsDone = true
         if (settings.refreshOnOpen && hasSubscriptions) refreshSubscriptions()
         if (settings.pingOnLaunch) refreshHttpPings()
         if (settings.connectOnLaunch && state.canStartVpn && !state.isVpnConnected) {

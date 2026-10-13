@@ -58,6 +58,10 @@ import org.olcbox.app.vpn.VpnStatus
 internal class AppFixture {
     private val made = mutableListOf<ViewModel>()
 
+    /** How many times the screen asked for the tunnel to be switched: a press of its button, or the app's own. */
+    var toggled = 0
+        private set
+
     /** The models an app holds for as long as its process lives. */
     class Models(val home: HomeScreenViewModel, val locations: LocationViewModel)
 
@@ -99,7 +103,7 @@ internal class AppFixture {
             locationViewModel = models.locations,
             currentScreen = AppScreen.Home,
             onNavigate = {},
-            onToggleClick = {},
+            onToggleClick = { toggled++ },
             onImportFileRequested = {},
             onImportFromClipboardRequested = { _, _ -> },
             onSaveLogsRequested = { _, _ -> },

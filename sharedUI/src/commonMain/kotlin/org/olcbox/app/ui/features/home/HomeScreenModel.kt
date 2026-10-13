@@ -156,6 +156,17 @@ class HomeScreenViewModel(
      */
     var boardScroll: Int = 0
 
+    /**
+     * Whether what the app does by itself when it opens has been done: refresh
+     * the lists, measure, connect, each only where it was asked for.
+     *
+     * Here and not in the screen for the same reason as [boardScroll]. The
+     * screen used to remember it, so on an iPhone every return to the app was
+     * the app opening: with "connect on launch" on, somebody who disconnected,
+     * looked at another app and came back was connected again.
+     */
+    var launchActionsDone: Boolean = false
+
     private var selectionJob: Job? = null
     private var pendingLowestCandidates: List<String>? = null
 
