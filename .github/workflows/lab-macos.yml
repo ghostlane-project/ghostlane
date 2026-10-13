@@ -1,0 +1,34 @@
+name: Lab (macOS tunnel)
+
+# Not a check and never merged: a branch of its own that asks a real Mac what
+# the desktop's tunnel code can only assume from here. Runs on a push to it.
+on:
+  push:
+    branches: [lab/macos-tunnel]
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: A Mac, asked
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      SINGBOX_VERSION: "1.13.14"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The pinned sing-box, for this Mac
+        run: |
+          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o sb.tgz
+          tar xzf sb.tgz
+          cp "sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
+          "$RUNNER_TEMP/sing-box" version | head -3
+
+      - name: The traffic API, as the app reads it, on macOS
+        run: SINGBOX_BIN="$RUNNER_TEMP/sing-box" scripts/check-singbox-traffic-api.sh
+
+      - name: pf, a tunnel, and a tunnel that dies
+        run: sudo bash lab/macos-tunnel.sh "$RUNNER_TEMP/sing-box" "$USER"
