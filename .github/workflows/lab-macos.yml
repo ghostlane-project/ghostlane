@@ -2,9 +2,9 @@ name: Lab (macOS tunnel)
 
 # Not a check and never merged: a branch of its own that asks a real Mac what
 # the desktop's tunnel code can only assume from here. Runs on a push to it.
-# Parked: what it asked is scripts/check-macos-helper.sh now, which the
-# pull-request checks run. Left here for the next question a Mac has to answer.
 on:
+  push:
+    branches: [lab/macos-tunnel]
   workflow_dispatch:
 
 permissions:
@@ -12,36 +12,36 @@ permissions:
 
 jobs:
   lab:
-    name: A Mac, asked
-    runs-on: macos-latest
-    timeout-minutes: 15
+    name: A Mac, asked (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26]
     env:
       SINGBOX_VERSION: "1.13.14"
     steps:
       - uses: actions/checkout@v7
 
-      - name: The helper, built as the app's build builds it, and built to be asked over a pipe
+      - name: The helper, built to be asked over a pipe, and the probe
         run: |
           src=desktopApp/tunneldaemon
+          shared=("$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" \
+                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/Daemon.swift")
           swiftc -O -target "$(uname -m)-apple-macos13.0" \
             -framework Foundation -framework Security -framework SystemConfiguration \
-            -o "$RUNNER_TEMP/ProofKitTunnelDaemon" \
-            "$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" "$src/TrafficHold.swift" \
-            "$src/SystemNames.swift" "$src/Daemon.swift" "$src/main.swift"
-          swiftc -O -target "$(uname -m)-apple-macos13.0" \
-            -framework Foundation -framework Security -framework SystemConfiguration \
-            -o "$RUNNER_TEMP/lab-daemon" \
-            "$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" "$src/TrafficHold.swift" \
-            "$src/SystemNames.swift" "$src/Daemon.swift" lab/daemon/main.swift
-          ls -l "$RUNNER_TEMP/ProofKitTunnelDaemon" "$RUNNER_TEMP/lab-daemon"
+            -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
+          cc -O2 -o "$RUNNER_TEMP/udpprobe" lab/udpprobe.c
+          ls -l "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/udpprobe"
 
       - name: The pinned sing-box, for this Mac
         run: |
           arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o sb.tgz
-          tar xzf sb.tgz
-          cp "sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
-          "$RUNNER_TEMP/sing-box" version | head -3
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
+          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
+          "$RUNNER_TEMP/sing-box" version | head -1
 
-      - name: The helper, handed the config the app's builder writes
-        run: sudo bash lab/macos-app-config.sh "$RUNNER_TEMP/lab-daemon" "$RUNNER_TEMP/sing-box" "$USER"
+      - name: What a bound socket does beside a tun, and behind the block
+        run: sudo bash lab/macos-bound.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/udpprobe"
