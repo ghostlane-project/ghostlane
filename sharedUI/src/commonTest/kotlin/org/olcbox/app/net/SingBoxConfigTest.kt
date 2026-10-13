@@ -718,7 +718,7 @@ class SingBoxConfigTest {
         // Nobody at the far end of a tunnel knows the printer. Before the
         // tunnel's names, after the user's own rules.
         val rules = dnsRules(macTun())
-        val local = rules.single { it["domain_suffix"] != null }
+        val local = rules.single { it["domain_regex"] != null }
         assertEquals("dns-direct", str(local, "server"))
         val suffixes = strings(local, "domain_suffix")
         for (suffix in listOf("lan", "home.arpa", "local", "internal", "168.192.in-addr.arpa", "10.in-addr.arpa", "31.172.in-addr.arpa")) {
@@ -852,6 +852,12 @@ class SingBoxConfigTest {
             "/Library/Application Support/org.olcbox.app/rules", DirectDns.System, Routing.Policy.BlockedOnly
         )
         val shapes = mapOf(
+            // A Mac's, whose system asks the tun on every line.
+            "a Mac's on a core's line" to macTun(),
+            "a Mac's in a room" to macTun(lossy = true),
+            "a Mac's under a bypass" to macTun(routing = desktopBypass()),
+            "a Mac's with only the blocked through the tunnel" to macTun(routing = onlyTheBlocked),
+            "a Mac's that is asked whether it names programs" to macTun(probe = "/Applications/Ghostlane.app/Contents/MacOS/Ghostlane"),
             "a room's" to SingBoxConfig.buildDesktopTun(
                 corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true,
                 directDnsDomains = listOf("de1.example.org"), cacheFilePath = "/x/cache.db"
@@ -878,7 +884,8 @@ class SingBoxConfigTest {
             assertNull(own["answer"], "$name: no data is the answer")
             assertNull(own["server"], "$name: nobody else is asked")
             // Ahead of every rule that sends a name somewhere by a list or by its kind:
-            // behind it is only the server's own name.
+            // behind it are only a line's own questions, its server's name, and the
+            // one name a Mac's tun is asked to learn that it names programs.
             val sent = rules.indexOfFirst { it.containsKey("rule_set") || it.containsKey("query_type") || it.containsKey("domain_regex") }
             assertTrue(sent < 0 || rules.indexOf(own) < sent, "$name sends names somewhere before it answers this: $rules")
         }

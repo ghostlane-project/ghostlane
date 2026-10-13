@@ -42,4 +42,4 @@ A line named by its country's code (`DE Direct`, `GB · olcRTC · VK`) is shown 
 A system asks its resolver whether it names an encrypted one of its own (`_dns.resolver.arpa`). A tunnel that answers names passed that question on with every other name, the resolver at the far end answered it about itself, and the system went to what it named: connections to port 853 and 443 through the tunnel, in an olcRTC room one every few seconds for as long as the session ran.
 
 - The tunnel answers the question itself: it names none. The system goes on asking the tunnel for names, which it answers at once.
-- In "System-wide tunnel" on a Mac, on Windows and on Linux, wherever the tunnel answers names: in a room and under routing rules. The phone apps are as they were.
+- In "System-wide tunnel" on a Mac, on Windows and on Linux, wherever the tunnel answers names: in a room, under routing rules, and on a Mac on every line (above). The phone apps are as they were.
