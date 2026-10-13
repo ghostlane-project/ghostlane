@@ -269,6 +269,11 @@ object SingBoxConfig {
          * process, however it ends.
          */
         strictRoute: Boolean = false,
+        /**
+         * Where this sing-box says what it has carried, or null for nowhere:
+         * its local API, for the app's traffic chart. See [LocalApi].
+         */
+        trafficApi: LocalApi? = null,
     ): String {
         val bypass = routing as? Routing.RuleBased
         require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
@@ -409,18 +414,43 @@ object SingBoxConfig {
                 }
                 if (bypass != null) put("final", finalOutbound(bypass))
             }
-            if (answersDns) {
+            if (answersDns || trafficApi != null) {
                 putJsonObject("experimental") {
-                    putJsonObject("cache_file") {
-                        put("enabled", true)
-                        put("store_fakeip", true)
-                        if (!cacheFilePath.isNullOrBlank()) put("path", cacheFilePath)
+                    if (answersDns) {
+                        putJsonObject("cache_file") {
+                            put("enabled", true)
+                            put("store_fakeip", true)
+                            if (!cacheFilePath.isNullOrBlank()) put("path", cacheFilePath)
+                        }
+                    }
+                    if (trafficApi != null) {
+                        putJsonObject("clash_api") {
+                            put("external_controller", "127.0.0.1:${trafficApi.port}")
+                            put("secret", trafficApi.secret)
+                        }
                     }
                 }
             }
         }
         return obj.toString()
     }
+
+    /**
+     * sing-box's local API (`experimental.clash_api`), on the loopback, open to
+     * whoever sends [secret].
+     *
+     * The desktop asks it one thing: what the tun has carried. The tun there is
+     * a process of its own — the macOS daemon's, an elevated child on Windows —
+     * and the app that draws the chart has no other way to know what went
+     * through it; `GET /connections` answers with the totals and with every
+     * flow that is open.
+     *
+     * The secret is what keeps that answer the app's. It names where every
+     * program on the machine is connected to, and the same API closes
+     * connections for whoever asks. Drawn fresh for every tun, and never
+     * written anywhere but the config the tun is started with.
+     */
+    data class LocalApi(val port: Int, val secret: String)
 
     /** The tunnel-side resolver, reached through `out`; over TCP when the upstream's UDP is lossy. */
     private const val REMOTE_DNS_SERVER = "1.1.1.1"

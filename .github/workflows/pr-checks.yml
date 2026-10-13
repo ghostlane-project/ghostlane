@@ -226,6 +226,14 @@ jobs:
         working-directory: olcbox
         run: scripts/check-singbox-configs.sh
 
+      # The desktop draws its traffic chart from what the tun's sing-box says it
+      # has carried, less the flows of the session's own lines. The names of the
+      # totals and how a flow names its program are in no schema; they are asked
+      # of the pinned release here.
+      - name: sing-box answers the traffic API as the app reads it
+        working-directory: olcbox
+        run: scripts/check-singbox-traffic-api.sh
+
       - name: Validate generated Xray configurations
         working-directory: olcbox
         run: |

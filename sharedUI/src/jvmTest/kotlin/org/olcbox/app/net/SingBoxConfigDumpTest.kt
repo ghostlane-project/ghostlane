@@ -280,6 +280,33 @@ class SingBoxConfigDumpTest {
         assertTrue(File(outDir, "desktop-tun-macos-lines-as-socks.json").exists())
     }
 
+    /**
+     * The tun that keeps count of what it carries, for the app's chart:
+     * sing-box's local API beside everything else a room's session has. The
+     * check starts the twin, and a twin that comes up is an API that came up
+     * with it. No reference file: the shape is new.
+     */
+    @Test fun dumpDesktopTunThatKeepsCount() {
+        dumpWithSocksTwin(
+            "desktop-tun-counted",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10808,
+                verifyPort = 10809,
+                username = "upstream-user",
+                password = "upstream-password",
+                upstreamUdpIsLossy = true,
+                bindInterface = "en0",
+                bypassProcessPaths = listOf(
+                    "/Users/a/Library/Application Support/Ghostlane/bin/sing-box",
+                    "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
+                ),
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db",
+                trafficApi = SingBoxConfig.LocalApi(port = 18812, secret = "0f1e2d3c4b5a69788796a5b4c3d2e1f0")
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-counted-as-socks.json").exists())
+    }
+
     /** The exact Windows shape: named Wintun, carrier bypass, bound direct, and authenticated probe. */
     @Test fun dumpDesktopTunWindows() {
         dumpWithSocksTwin(
