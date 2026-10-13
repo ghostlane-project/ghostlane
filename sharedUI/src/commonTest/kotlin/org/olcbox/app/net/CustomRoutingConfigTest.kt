@@ -136,8 +136,11 @@ class CustomRoutingConfigTest {
         )
         val dnsRules = dnsRules(json)
         assertEquals(listOf("vpn.example"), strings(dnsRules[0], "domain"))
+        // The question about a resolver of its own, which the tun keeps whatever the rules say.
+        assertEquals(listOf("resolver.arpa"), strings(dnsRules[1], "domain_suffix"))
+        assertEquals("predefined", str(dnsRules[1], "action"))
         // The user's tunnel name, then the blocked list: fake A/AAAA, refused HTTPS, the rest remote.
-        for ((offset, names) in listOf(1 to "domain_suffix", 4 to "rule_set")) {
+        for ((offset, names) in listOf(2 to "domain_suffix", 5 to "rule_set")) {
             assertEquals(listOf("A", "AAAA"), strings(dnsRules[offset], "query_type"))
             assertEquals("dns-fakeip", str(dnsRules[offset], "server"))
             assertEquals(listOf("HTTPS"), strings(dnsRules[offset + 1], "query_type"))
@@ -146,7 +149,7 @@ class CustomRoutingConfigTest {
             assertEquals(true, dnsRules[offset][names] != null)
         }
         // No catch-all fake address: every other name goes straight out and needs its real one.
-        assertEquals(7, dnsRules.size)
+        assertEquals(8, dnsRules.size)
         assertEquals("dns-direct", str(dnsOf(json), "final"))
         assertEquals("direct", str(routeOf(json), "final"))
         assertEquals("6", str(routeRules(json).last(), "ip_version"))

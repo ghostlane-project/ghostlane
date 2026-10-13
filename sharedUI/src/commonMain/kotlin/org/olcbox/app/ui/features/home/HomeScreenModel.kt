@@ -65,7 +65,7 @@ import org.olcbox.app.util.nowMillis
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.ui.features.locations.LocationItem
-import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
+import org.olcbox.app.vpn.isKillSwitchHoldSentence
 import org.olcbox.app.vpn.OlcrtcFailure
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
@@ -1009,14 +1009,14 @@ data class HomeScreenState(
 
     /**
      * Whether the notice can be waved away. A failure can: it is about an
-     * attempt that is over. The one exception says the Linux desktop's kill
-     * switch is holding traffic. The machine has no network for as long as
+     * attempt that is over. The one exception says a desktop's kill switch
+     * is holding traffic. The machine has no network for as long as
      * that block stands, the status behind the sentence does not change, so
      * nothing would say it a second time, and without it the screen reads
      * "not connected" over a machine where nothing loads.
      */
     val noticeDismissible: Boolean
-        get() = failure != null && failure != KILL_SWITCH_HOLDS_TRAFFIC
+        get() = failure != null && !failure.isKillSwitchHoldSentence()
 
     /** The state after the platform reports [status]. Pure, so it can be tested. */
     fun applying(status: VpnStatus): HomeScreenState = when (status) {

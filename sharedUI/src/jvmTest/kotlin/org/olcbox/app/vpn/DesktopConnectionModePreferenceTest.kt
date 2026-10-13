@@ -46,11 +46,18 @@ class DesktopConnectionModePreferenceTest {
         }
     }
 
-    /** The one kill switch the app owns is the Linux tunnel's; a switch shown elsewhere would do nothing. */
-    @Test fun onlyLinuxHasAKillSwitchToOffer() {
+    /** A kill switch is offered where the app owns one: a switch shown elsewhere would do nothing. */
+    @Test fun aKillSwitchIsOfferedWhereTheAppOwnsOne() {
         assertTrue(killSwitchOfferedOn(DesktopOs.Linux))
-        for (os in listOf(DesktopOs.MacOS, DesktopOs.Windows, DesktopOs.Other)) {
+        for (os in listOf(DesktopOs.Windows, DesktopOs.Other)) {
             assertFalse(killSwitchOfferedOn(os), "$os")
+            assertFalse(killSwitchOfferedOn(os, macTunnelInstalled = true), "$os")
         }
+    }
+
+    /** The Mac's block is its tunnel helper's to hold, and stands behind a tunnel only the helper can start. */
+    @Test fun aMacOffersItOnceItsTunnelHelperIsInstalled() {
+        assertFalse(killSwitchOfferedOn(DesktopOs.MacOS))
+        assertTrue(killSwitchOfferedOn(DesktopOs.MacOS, macTunnelInstalled = true))
     }
 }

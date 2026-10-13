@@ -1,9 +1,17 @@
 package org.olcbox.app.vpn.desktop
 
+import java.nio.file.Path
+
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SingBoxConfig
 import java.net.InetAddress
+import java.net.NetworkInterface
+import java.util.Hashtable
+import javax.naming.Context
+import javax.naming.directory.InitialDirContext
 
 /**
  * macOS TUN: builds the daemon's config and asks the daemon to run it.
@@ -13,13 +21,108 @@ import java.net.InetAddress
  * here resembling the up/down scripts the Linux controller needs and the route
  * bookkeeping the Windows one carries — on macOS the core does that job, and does
  * it on the way out too.
+ *
+ * Two things only root can hold are the daemon's, asked for here: who the system
+ * asks for names while the tunnel runs, and the kill switch's block
+ * ([MacKillSwitch]). What this class keeps of the block is whether it is being
+ * held, which is the app's to decide: the daemon only loads the rules and takes
+ * them away.
  */
 internal class MacOsTunController(
     private val addLog: (String) -> Unit,
     private val client: TunnelDaemonClient = TunnelDaemonClient(),
     private val resolve: (String) -> List<String> = ::resolveAllAddresses,
     private val defaultInterface: () -> String? = { defaultInterfaceName() },
+    /** A name for the tun that no interface has: the block is written for it before it exists. */
+    private val tunName: () -> String = ::freeTunName,
+    /** The addresses the tun's own resolver gives for a name; empty for none. */
+    private val askTun: (String) -> List<String> = ::askTheTun,
 ) {
+    /**
+     * Whether the tun that was last started answers the system's names, which
+     * a helper from before [TunnelDaemonProtocol.PROTOCOL_HOLD] cannot be asked
+     * for. A line that is started behind such a tun asks the tun as well
+     * ([SingBoxConfig.DESKTOP_TUN_RESOLVER]).
+     */
+    @Volatile var answersNames = false
+        private set
+
+    /** A tunnel this controller started is up, as far as it has been told. */
+    @Volatile private var tunUp = false
+
+    /** That tunnel was started behind the block, so the block is there to keep when it dies. */
+    @Volatile private var armed = false
+
+    /**
+     * The block is being kept, as on Linux ([LinuxTunController.holdsTraffic]):
+     * from the end of a verified session that nobody ended, or from a block
+     * found at start, until [endHold]. While it is set no [stop] takes the
+     * block away.
+     */
+    @Volatile private var held = false
+
+    /**
+     * Whether the daemon said, the last time it said anything, that the block
+     * stands. A line cannot be started before its tunnel then: nothing of it
+     * would get out.
+     */
+    @Volatile var blockStands = false
+        private set
+
+    /** What the helper last said it can do ([helperNow]): run a line's own program, and hold a block. */
+    @Volatile private var runsLines = false
+    @Volatile private var canHold = false
+
+    /**
+     * Whether a room's engine is the helper's to run: it can run one, and the
+     * kill switch is on or its block stands. The block lets out what runs in
+     * the tunnel's group, and only the helper can put a program there
+     * ([TunnelDaemonProtocol.PROTOCOL_LINE]).
+     */
+    fun runsLineUnder(killSwitch: Boolean): Boolean = runsLines && (blockStands || (killSwitch && canHold))
+
+    /** Where the helper's copy of a line's program lies, which is the name a tun knows it by. */
+    fun lineProgram(binary: Path): String = "${TunnelDaemonProtocol.LINES_DIR}/${binary.fileName}"
+
+    /**
+     * Has the helper run [binary] with [arguments], as this app's user and in
+     * the tunnel's group. [said] is a file of this app's, there and empty: what
+     * the program prints is appended to it, and read from it here as a
+     * process's output is read.
+     */
+    suspend fun startLine(binary: Path, arguments: List<String>, said: Path): Process {
+        suspend fun ask() = client.line(binary.toString(), arguments, said.toString())
+        var reply = ask()
+        if (reply is DaemonReply.Failure && reply.restarting) {
+            // The first connect after an update of the app, when the build
+            // before it ran lines as well: [helperNow] tells only a helper
+            // that cannot run one to make way, so this one is still the old
+            // build's, and it steps aside when it is asked for the line. On
+            // 1.0.464 that ended the connect, and was the first thing an
+            // updated app said. The one on disk is asked instead.
+            addLog("the tunnel helper was updated; waiting for the new one to come up")
+            val helper = awaitDaemon()
+            if (helper != null) {
+                if (helper < TunnelDaemonProtocol.PROTOCOL_LINE) {
+                    error("the tunnel helper that came up cannot run a line's program")
+                }
+                reply = ask()
+            }
+        }
+        return when (reply) {
+            is DaemonReply.Ok -> {
+                if (reply.line <= 0) error("the tunnel helper started no program for the line")
+                val handle = ProcessHandle.of(reply.line).orElse(null)
+                HelperLine(reply.line, FollowedFile(said, alive = { handle?.isAlive == true }), handle)
+            }
+            is DaemonReply.Failure -> error("the tunnel helper could not run the line's program: ${reply.message}")
+        }
+    }
+
+    /** The block is held with no tunnel in front of it: a Mac whose traffic goes nowhere. */
+    val holdsTraffic: Boolean
+        get() = held && !tunUp
+
     /**
      * True when the tun that was started lets [bypassProcessPaths] out of
      * itself, which is what a line for another server needs in order to be
@@ -46,6 +149,10 @@ internal class MacOsTunController(
         bypassProcessPaths: List<String> = emptyList(),
         /** Where the tun's sing-box is to say what it has carried; null for nowhere. */
         trafficApi: SingBoxConfig.LocalApi? = null,
+        /** The tunnel is started behind the kill switch's block ([MacKillSwitch]). */
+        killSwitch: Boolean = false,
+        /** This app's own program, which the tun is to answer [SingBoxConfig.NAMES_PROGRAMS_PROBE] for. */
+        namesProgramsFor: String? = null,
     ): Boolean {
         // Under a bypass, and for the lines' own binaries, the daemon's
         // sing-box dials direct from inside the process that owns the tun, so
@@ -68,19 +175,11 @@ internal class MacOsTunController(
                     "another location will be a full restart"
             )
         }
-        if (ruleFiles.isNotEmpty()) {
-            // A daemon from before rule files drops the field and starts a
-            // sing-box that names files nobody wrote. It cannot be replaced from
-            // here: launchd keeps it alive, and only root can restart it.
-            val status = client.status()
-            if (status is DaemonReply.Ok && status.protocol < TunnelDaemonProtocol.PROTOCOL_FILES) {
-                addLog("the tunnel helper is from an older build and does not take rule files")
-                error(
-                    "restart the tunnel helper (sudo launchctl kickstart -k system/${TunnelDaemonProtocol.LABEL}) " +
-                        "or the Mac, then connect again"
-                )
-            }
-        }
+        // What the daemon speaks decides what it is handed. One that does not
+        // answer is told so by the start below, in its own words.
+        var helper = (client.status() as? DaemonReply.Ok)?.protocol
+        requireHelperFor(helper, wantsFiles = ruleFiles.isNotEmpty(), wantsHold = killSwitch)
+
         val addresses = serverHost?.let { resolve(it) }.orEmpty()
         if (serverHost != null && addresses.isEmpty()) {
             // Starting anyway would put the core's own packets into the tunnel the
@@ -90,32 +189,69 @@ internal class MacOsTunController(
             error("cannot resolve $serverHost")
         }
 
-        val config = SingBoxConfig.buildDesktopTun(
-            corePort = corePort,
-            verifyPort = verifyPort,
-            username = username,
-            password = password,
-            excludeAddresses = excludeCidrs(addresses),
-            directDnsDomains = listOfNotNull(serverHost?.takeIf { !it.isIpLiteral() }),
-            upstreamUdpIsLossy = upstreamUdpIsLossy,
-            routing = routing,
-            verboseLogs = verboseLogs,
-            bindInterface = bindInterface,
-            cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
-            bypassProcessPaths = lineBinaries,
-            trafficApi = trafficApi,
-        )
+        suspend fun ask(protocol: Int): DaemonReply {
+            val names = protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD
+            val hold = if (killSwitch) DaemonHold(interfaceName = tunName(), passes = addresses) else null
+            val config = SingBoxConfig.buildDesktopTun(
+                corePort = corePort,
+                verifyPort = verifyPort,
+                username = username,
+                password = password,
+                excludeAddresses = excludeCidrs(addresses),
+                directDnsDomains = listOfNotNull(serverHost?.takeIf { !it.isIpLiteral() }),
+                upstreamUdpIsLossy = upstreamUdpIsLossy,
+                routing = routing,
+                verboseLogs = verboseLogs,
+                bindInterface = bindInterface,
+                cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
+                bypassProcessPaths = lineBinaries,
+                interfaceName = hold?.interfaceName,
+                trafficApi = trafficApi,
+                answersEveryName = names,
+                namesProgramsFor = namesProgramsFor.takeIf { names },
+            )
+            answersNames = names
+            return client.start(
+                config,
+                ruleFiles,
+                names = SingBoxConfig.DESKTOP_TUN_RESOLVER.takeIf { names },
+                hold = hold
+            )
+        }
 
-        var reply = client.start(config, ruleFiles)
+        var reply = ask(helper ?: TunnelDaemonProtocol.PROTOCOL_FIRST)
         if (reply is DaemonReply.Failure && reply.restarting) {
             // An updated app found the previous build's daemon still alive. It
-            // steps aside for the one on disk, which launchd starts in its place.
+            // steps aside for the one on disk, which launchd starts in its place,
+            // and which may speak more than the one that was asked.
             addLog("the tunnel helper was updated; waiting for the new one to come up")
-            if (awaitDaemon()) reply = client.start(config, ruleFiles)
+            helper = awaitDaemon()
+            if (helper != null) {
+                requireHelperFor(helper, wantsFiles = ruleFiles.isNotEmpty(), wantsHold = killSwitch)
+                reply = ask(helper)
+            }
+        }
+        if (reply is DaemonReply.Ok && killSwitch && !reply.holds) {
+            // Asked for behind the block and up without one. Not the tunnel
+            // that was asked for, so not one to call a session over: the
+            // status would promise a hold that is not there.
+            addLog("macOS TUN: the tunnel came up with no kill switch behind it; stopping it")
+            blockStands = (client.stop() as? DaemonReply.Ok)?.holds ?: false
+            error("the kill switch could not be put in place, so the tunnel was not started")
         }
         when (reply) {
-            is DaemonReply.Ok -> addLog("macOS TUN running (sing-box pid ${reply.pid})")
+            is DaemonReply.Ok -> {
+                tunUp = true
+                armed = reply.holds
+                blockStands = reply.holds
+                addLog("macOS TUN running (sing-box pid ${reply.pid})")
+                if (answersNames) addLog("macOS TUN: the system asks the tunnel for names while it runs")
+                if (armed) {
+                    addLog("macOS TUN: kill switch in place; if the tunnel's process stops, traffic is blocked")
+                }
+            }
             is DaemonReply.Failure -> {
+                blockStands = reply.holds
                 addLog("macOS TUN failed: ${reply.message}")
                 if (reply.logTail.isNotBlank()) addLog(reply.logTail)
                 error(reply.message)
@@ -124,18 +260,177 @@ internal class MacOsTunController(
         return lineBinaries.isNotEmpty()
     }
 
-    private suspend fun awaitDaemon(): Boolean {
-        repeat(RESTART_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(RESTART_POLL_MS)
-            if (client.status() is DaemonReply.Ok) return true
+    /**
+     * A daemon from before what is asked of it drops the field and starts a
+     * tunnel that is not the one asked for: one that names files nobody wrote,
+     * or one with no block behind it. It cannot be replaced from here: launchd
+     * keeps it alive, and only root can restart it.
+     */
+    private fun requireHelperFor(helper: Int?, wantsFiles: Boolean, wantsHold: Boolean) {
+        if (helper == null) return
+        val lacks = when {
+            wantsFiles && helper < TunnelDaemonProtocol.PROTOCOL_FILES -> "does not take rule files"
+            wantsHold && helper < TunnelDaemonProtocol.PROTOCOL_HOLD -> "has no kill switch"
+            else -> return
         }
-        return false
+        addLog("the tunnel helper is from an older build and $lacks")
+        error(
+            "restart the tunnel helper (sudo launchctl kickstart -k system/${TunnelDaemonProtocol.LABEL}) " +
+                "or the Mac, then connect again"
+        )
     }
 
+    /** What the daemon that came up speaks, or null when none did. */
+    private suspend fun awaitDaemon(): Int? {
+        repeat(RESTART_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(RESTART_POLL_MS)
+            (client.status() as? DaemonReply.Ok)?.let { return it.protocol }
+        }
+        return null
+    }
+
+    /**
+     * Stops the tunnel and, unless the block is being held, takes the block
+     * away with it: a stop is a Disconnect unless [holdAfterSessionEnd] or
+     * [findLeftover] said otherwise first.
+     */
     suspend fun stop() {
-        when (val reply = client.stop()) {
-            is DaemonReply.Ok -> addLog("macOS TUN stopped")
-            is DaemonReply.Failure -> addLog("macOS TUN stop failed: ${reply.message}")
+        val reply = client.stop(keepHold = held)
+        tunUp = false
+        armed = false
+        when (reply) {
+            is DaemonReply.Ok -> {
+                blockStands = reply.holds
+                addLog("macOS TUN stopped")
+            }
+            is DaemonReply.Failure -> {
+                blockStands = reply.holds
+                addLog("macOS TUN stop failed: ${reply.message}")
+            }
+        }
+        // Held, and the daemon says no block is there: somebody took it away,
+        // or the Mac restarted. Nothing is held then, whatever was meant.
+        if (held && !blockStands) held = false
+        if (held) {
+            addLog(
+                "macOS TUN: the kill switch's block is in place and holds this Mac's traffic; " +
+                    "connect again, or turn the kill switch off in the connection settings, to remove it"
+            )
+        }
+    }
+
+    /**
+     * A verified session is being taken down without a Disconnect: its tunnel
+     * died, or the app is on its way to another one. True when the block was
+     * under it and is now kept: the [stop] that follows leaves it alone, and so
+     * does every later one until [endHold], so the way to the next tunnel has
+     * no moment with the Mac's traffic going out directly.
+     *
+     * [wanted] is the setting as it is now. Switched off since the tunnel
+     * started, the block was taken away then ([release]).
+     */
+    fun holdAfterSessionEnd(wanted: Boolean): Boolean {
+        held = wanted && armed
+        return held
+    }
+
+    /** The hold is over: the user turned the switch off, or a new session is verified over the block. */
+    fun endHold() {
+        held = false
+    }
+
+    /**
+     * Takes the block away and leaves a tunnel that runs running: the switch
+     * turned off. The daemon needs no password for it, so unlike on Linux it
+     * is done at once, under a session too.
+     */
+    suspend fun release() {
+        held = false
+        armed = false
+        when (val reply = client.release()) {
+            is DaemonReply.Ok -> {
+                blockStands = reply.holds
+                addLog("macOS TUN: the kill switch's block is removed")
+            }
+            // A daemon from before the block knows no such verb, and has no block.
+            is DaemonReply.Failure -> blockStands = reply.holds
+        }
+    }
+
+    /** What a previous run of the app left behind. */
+    data class Leftover(val tunnelRuns: Boolean, val blockStands: Boolean)
+
+    /**
+     * Asked once, when the app starts. A block that stands is held from here,
+     * like any other: the app was killed, or quit, while it stood, and what
+     * held the Mac's traffic then holds it still.
+     */
+    suspend fun findLeftover(): Leftover {
+        val status = client.status() as? DaemonReply.Ok ?: return Leftover(tunnelRuns = false, blockStands = false)
+        blockStands = status.holds
+        if (status.holds) held = true
+        // A line's program the helper ran for a run of the app that is gone: nobody reads it now.
+        if (status.line != 0L) client.lineStop()
+        return Leftover(tunnelRuns = status.state == DaemonReply.STATE_RUNNING, blockStands = status.holds)
+    }
+
+    /** What the daemon says of itself, for a connect about to choose its order. */
+    data class Helper(
+        /** The kill switch's block stands now. */
+        val blockStands: Boolean,
+        /** It can be asked for a block, and to have the system ask the tun for names. */
+        val canHold: Boolean,
+        /** It can be asked to run a line's own program, in the group its block lets out. */
+        val runsLines: Boolean = false
+    )
+
+    /**
+     * Asks the daemon, with no tunnel of this app's up. One that does not
+     * answer has no block and can hold none.
+     *
+     * A daemon from before the block is first given the chance to make way.
+     * After an update of the app the previous build's daemon is still the one
+     * running, and it steps aside for the one on disk when it is told to start
+     * or to stop. Left to the start, that would be after the connect had
+     * chosen its order by what the old one can do: a room under the switch
+     * joined first and then cut off by a block the new one loaded. A stop
+     * costs a daemon with no tunnel nothing, and a daemon this old has no
+     * block for it to take away.
+     */
+    suspend fun helperNow(): Helper {
+        var status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = blockStands, canHold = false)
+        if (status.protocol < TunnelDaemonProtocol.PROTOCOL_LINE && status.state != DaemonReply.STATE_RUNNING) {
+            // Its block, where it holds one, is left where it is: the daemon
+            // that comes next finds it standing.
+            val stopped = client.stop(keepHold = true)
+            if (stopped is DaemonReply.Failure && stopped.restarting) {
+                addLog("the tunnel helper was updated; waiting for the new one to come up")
+                awaitDaemon()
+                status = client.status() as? DaemonReply.Ok ?: return Helper(blockStands = false, canHold = false)
+            }
+        }
+        blockStands = status.holds
+        canHold = status.protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD
+        runsLines = status.protocol >= TunnelDaemonProtocol.PROTOCOL_LINE
+        return Helper(blockStands = status.holds, canHold = canHold, runsLines = runsLines)
+    }
+
+    /**
+     * Waits until the tun names the program behind a connection, which it does
+     * not do in its first moments ([SingBoxConfig.NAMES_PROGRAMS_PROBE]). True
+     * when it said so within [timeoutMs]. A line is started either way: a tun
+     * that never answers is one whose lines will say what is wrong with it.
+     */
+    suspend fun awaitNamesPrograms(timeoutMs: Long = NAMES_PROGRAMS_TIMEOUT_MS): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            val answered = withContext(Dispatchers.IO) { askTun(SingBoxConfig.NAMES_PROGRAMS_PROBE) }
+            if (SingBoxConfig.NAMES_PROGRAMS_ANSWER in answered) return true
+            if (System.currentTimeMillis() >= deadline) {
+                addLog("macOS TUN: the tunnel has not begun to tell programs apart; starting the line anyway")
+                return false
+            }
+            delay(NAMES_PROGRAMS_POLL_MS)
         }
     }
 
@@ -151,6 +446,8 @@ internal class MacOsTunController(
     internal companion object {
         private const val RESTART_ATTEMPTS = 10
         private const val RESTART_POLL_MS = 1_000L
+        private const val NAMES_PROGRAMS_TIMEOUT_MS = 12_000L
+        private const val NAMES_PROGRAMS_POLL_MS = 300L
 
         /**
          * Every address the server resolves to, not the first one.
@@ -183,6 +480,46 @@ internal class MacOsTunController(
             process.waitFor()
             text
         }.getOrDefault("")
+
+        /**
+         * The first of the utun names from [FIRST_TUN_NUMBER] up that [taken]
+         * does not hold. Far above the numbers the system hands out by itself,
+         * which start at 0 and are taken by its own services and by other VPNs.
+         */
+        fun freeTunName(taken: Set<String> = interfaceNames()): String =
+            (FIRST_TUN_NUMBER until FIRST_TUN_NUMBER + TUN_NUMBERS)
+                .map { "utun$it" }
+                .firstOrNull { it !in taken }
+                ?: "utun$FIRST_TUN_NUMBER"
+
+        private const val FIRST_TUN_NUMBER = 225
+        private const val TUN_NUMBERS = 30
+
+        private fun interfaceNames(): Set<String> = runCatching {
+            NetworkInterface.getNetworkInterfaces().asSequence().map { it.name }.toSet()
+        }.getOrDefault(emptySet())
+
+        /**
+         * Asks the tun's own resolver for [name]'s addresses, from this process
+         * and by datagram, so that the question is this program's own when the
+         * tun looks for who asked. Not the system's resolver: that one asks on
+         * every program's behalf, and the tun would see it and not us.
+         */
+        private fun askTheTun(name: String): List<String> = runCatching {
+            val environment = Hashtable<String, String>().apply {
+                put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.dns.DnsContextFactory")
+                put(Context.PROVIDER_URL, "dns://${SingBoxConfig.DESKTOP_TUN_RESOLVER}")
+                put("com.sun.jndi.dns.timeout.initial", "400")
+                put("com.sun.jndi.dns.timeout.retries", "1")
+            }
+            val context = InitialDirContext(environment)
+            try {
+                val answers = context.getAttributes(name, arrayOf("A")).get("A") ?: return@runCatching emptyList()
+                (0 until answers.size()).map { answers.get(it).toString() }
+            } finally {
+                context.close()
+            }
+        }.getOrDefault(emptyList())
     }
 }
 

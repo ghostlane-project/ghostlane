@@ -274,10 +274,40 @@ object SingBoxConfig {
          * its local API, for the app's traffic chart. See [LocalApi].
          */
         trafficApi: LocalApi? = null,
+        /**
+         * The tun answers whatever name is asked of an address inside it, on
+         * every line: for macOS, whose helper points the system's resolver at
+         * [DESKTOP_TUN_RESOLVER] while the tunnel runs.
+         *
+         * A tun takes the machine's routes and leaves its resolver where it
+         * was. Where that is the router, its address is on the local link,
+         * which no route of the tun outranks: every name the system looked up
+         * went to the router beside the tunnel, and the address it answered
+         * with was the one used (measured on macOS 26 with this config,
+         * `docs/macos-tunnel-daemon.md`). With the system asking inside the
+         * tun, a core's line is answered as a room's always was: a fake
+         * address at once, and the name carried to the exit.
+         *
+         * It also changes who is let out first. Elsewhere the lines' binaries
+         * leave before anything is hijacked; here every question is answered
+         * first, because a line may be asking that same address, and let out
+         * as it is the question would leave by the physical interface for an
+         * address that is nowhere. What a line's binary asks is answered with
+         * real addresses, from the network underneath.
+         */
+        answersEveryName: Boolean = false,
+        /**
+         * The one program [NAMES_PROGRAMS_PROBE] is answered for, or null for
+         * no such name. See there.
+         */
+        namesProgramsFor: String? = null,
     ): String {
         val bypass = routing as? Routing.RuleBased
         require(verifyUsername.isBlank() == verifyPassword.isBlank()) {
             "verification proxy credentials must be supplied as a pair"
+        }
+        require(namesProgramsFor == null || answersEveryName) {
+            "only a tun that answers every name is asked whether it names programs"
         }
         require(bypass == null || !bindInterface.isNullOrBlank()) {
             "a direct outbound inside the tun's own process needs an interface to bind to"
@@ -287,7 +317,8 @@ object SingBoxConfig {
         // the Russian names resolved here. Then it fakes the tunnel's names
         // too, exactly as iOS does and for the same twenty seconds a lookup.
         // And under [strictRoute], which leaves the system nobody else to ask.
-        val answersDns = upstreamUdpIsLossy || bypass != null || strictRoute
+        // And under [answersEveryName], which is the system asking it.
+        val answersDns = upstreamUdpIsLossy || bypass != null || strictRoute || answersEveryName
         val obj = buildJsonObject {
             putJsonObject("log") { put("level", coreLogLevel(verboseLogs)) }
             putJsonObject("dns") {
@@ -305,6 +336,16 @@ object SingBoxConfig {
                 }
                 if (directDnsDomains.isNotEmpty() || answersDns) {
                     putJsonArray("rules") {
+                        if (namesProgramsFor != null) addNamesProgramsProbe(namesProgramsFor)
+                        // What a line's own binary asks: its server's name, a
+                        // meeting service's. Real addresses, asked underneath,
+                        // whatever the name is.
+                        if (answersEveryName && bypassProcessPaths.isNotEmpty()) {
+                            addJsonObject {
+                                putJsonArray("process_path") { bypassProcessPaths.forEach { add(it) } }
+                                put("server", "dns-direct")
+                            }
+                        }
                         // The server's own name first: the core redials it while
                         // the tun is up, and answering that through the tunnel
                         // needs the tunnel being redialled.
@@ -314,7 +355,12 @@ object SingBoxConfig {
                                 put("server", "dns-direct")
                             }
                         }
+                        // Ahead of anybody's rules: one zone that is nobody's to send anywhere.
+                        if (answersDns) addNoResolverOfItsOwn()
                         if (bypass != null) addPolicyDnsRules(bypass, fakeTunnelNames = true)
+                        // After the user's own rules, which may say otherwise,
+                        // and before every other name becomes the tunnel's.
+                        if (answersEveryName) addLocalNetworkNames()
                         // Every other name is the tunnel's, except under BlockedOnly,
                         // where every other name goes straight out and needs its
                         // real address.
@@ -382,11 +428,14 @@ object SingBoxConfig {
                 // both correct and inert here.
                 put("default_domain_resolver", "dns-direct")
                 putJsonArray("rules") {
-                    if (bypassProcessPaths.isNotEmpty()) addJsonObject {
-                        putJsonArray("inbound") { add("tun-in") }
-                        putJsonArray("process_path") { bypassProcessPaths.forEach { add(it) } }
-                        put("outbound", "direct")
+                    val letTheLinesOut: JsonArrayBuilder.() -> Unit = {
+                        if (bypassProcessPaths.isNotEmpty()) addJsonObject {
+                            putJsonArray("inbound") { add("tun-in") }
+                            putJsonArray("process_path") { bypassProcessPaths.forEach { add(it) } }
+                            put("outbound", "direct")
+                        }
                     }
+                    if (!answersEveryName) letTheLinesOut()
                     if (answersDns) {
                         addJsonObject { put("action", "sniff") }
                         // Without this the `dns` block above is dead weight for the
@@ -396,6 +445,7 @@ object SingBoxConfig {
                         // resolver is still caught and answered rather than refused.
                         addJsonObject { put("action", "hijack-dns"); put("port", 53) }
                     }
+                    if (answersEveryName) letTheLinesOut()
                     if (bypass != null) addPolicyRouteRules(bypass)
                     // IPv6 is claimed and refused, not carried.
                     //
@@ -454,6 +504,34 @@ object SingBoxConfig {
 
     /** The tunnel-side resolver, reached through `out`; over TCP when the upstream's UDP is lossy. */
     private const val REMOTE_DNS_SERVER = "1.1.1.1"
+
+    /**
+     * The address the macOS helper has the system ask for names while a tun
+     * that answers every name runs: the other end of [DESKTOP_TUN_ADDRESS].
+     * Nobody is there. It only has to be an address whose route is the tun's,
+     * so that the question enters the tun, where it is answered.
+     */
+    const val DESKTOP_TUN_RESOLVER = "172.19.0.2"
+
+    /**
+     * A name that is answered, with [NAMES_PROGRAMS_ANSWER], only to the one
+     * program the config names for it, and does not exist for anybody else.
+     *
+     * It is how the app learns that a tun has begun to name the programs
+     * behind its connections. sing-box looks a program up only for a
+     * connection whose source is one of the machine's own addresses, as its
+     * list of interfaces has them, and it reads that list again a second after
+     * the routing table last changed (sing-box 1.13.14, `isLocalSource`;
+     * sing-tun 0.8.11, `delayCheckUpdate`). A tun's own address is not in the
+     * list it read before the tun existed. So from the moment a tun comes up
+     * until its first quiet second, the rule that lets the lines' binaries out
+     * matches nothing, and what a line dials is handed back to the line
+     * (measured on macOS 26 with a stand-in line that dials for itself: five
+     * seconds, 891 connections deep). A line that is started behind a tun is
+     * started after this name answers.
+     */
+    const val NAMES_PROGRAMS_PROBE = "names-its-programs.ghostlane.invalid"
+    const val NAMES_PROGRAMS_ANSWER = "127.0.0.53"
 
     /**
      * What the iOS builder writes where the direct resolver goes; the extension
@@ -668,6 +746,45 @@ object SingBoxConfig {
         }
     }
 
+    /** [NAMES_PROGRAMS_PROBE]: an address to [program], no such name to everybody else. */
+    private fun JsonArrayBuilder.addNamesProgramsProbe(program: String) {
+        addJsonObject {
+            putJsonArray("domain") { add(NAMES_PROGRAMS_PROBE) }
+            putJsonArray("process_path") { add(program) }
+            put("action", "predefined")
+            putJsonArray("answer") { add("$NAMES_PROGRAMS_PROBE. IN A $NAMES_PROGRAMS_ANSWER") }
+        }
+        addJsonObject {
+            putJsonArray("domain") { add(NAMES_PROGRAMS_PROBE) }
+            put("action", "predefined")
+            put("rcode", "NXDOMAIN")
+        }
+    }
+
+    /**
+     * Names nobody outside the local network can answer: the suffixes home and
+     * office networks give their own machines, a name with no dot in it, and
+     * the reverse of the private address ranges, which the system asks about
+     * by itself all day (`lb._dns-sd._udp.0.1.168.192.in-addr.arpa`). Asked of
+     * the network underneath, where a router that knows the printer is.
+     */
+    private fun JsonArrayBuilder.addLocalNetworkNames() {
+        addJsonObject {
+            putJsonArray("domain_suffix") {
+                LOCAL_NAME_SUFFIXES.forEach { add(it) }
+                add("10.in-addr.arpa")
+                (16..31).forEach { add("$it.172.in-addr.arpa") }
+                add("168.192.in-addr.arpa")
+                add("254.169.in-addr.arpa")
+            }
+            putJsonArray("domain_regex") { add("^[^.]+$") }
+            put("server", "dns-direct")
+        }
+    }
+
+    private val LOCAL_NAME_SUFFIXES =
+        listOf("lan", "home", "home.arpa", "local", "localdomain", "internal", "intranet", "corp", "private")
+
     /** Fake addresses for the tunnel's names; IPv4 only, see [FAKE_IP_RANGE]. */
     private fun JsonArrayBuilder.addFakeIpServer() {
         addJsonObject {
@@ -690,6 +807,29 @@ object SingBoxConfig {
         addJsonObject {
             putJsonArray("query_type") { add("HTTPS") }
             put("action", "reject")
+        }
+    }
+
+    /**
+     * The system's question whether its resolver names an encrypted one of its
+     * own (`_dns.resolver.arpa`, RFC 9462) is answered here, and the answer is
+     * that it names none.
+     *
+     * A tun that answers names is the resolver the system asks, and a
+     * forwarder. Passed on with every other name, the question came back with
+     * the far resolver's answer about itself (1.1.1.1 names `one.one.one.one`
+     * over TLS and over HTTPS), and the system went to it: connections to
+     * port 853 and 443 through the tunnel, in a room one every few seconds for
+     * as long as the session ran (1.0.463 and 1.0.464 on a Mac in the field,
+     * and a hosted Mac asked the same way). The RFC has a forwarder keep the
+     * question to itself (6.1) and a resolver that names none answer with no
+     * data (4): no error, and no record.
+     */
+    private fun JsonArrayBuilder.addNoResolverOfItsOwn() {
+        addJsonObject {
+            putJsonArray("domain_suffix") { add("resolver.arpa") }
+            put("action", "predefined")
+            put("rcode", "NOERROR")
         }
     }
 

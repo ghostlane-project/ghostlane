@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.FlowRow
 import multiplatform_app.sharedui.generated.resources.router_export
 import multiplatform_app.sharedui.generated.resources.encrypted_link
 import multiplatform_app.sharedui.generated.resources.Res
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import multiplatform_app.sharedui.generated.resources.action_cancel
 import multiplatform_app.sharedui.generated.resources.action_check_now
@@ -34,6 +35,7 @@ import multiplatform_app.sharedui.generated.resources.https_sources_none
 import multiplatform_app.sharedui.generated.resources.kill_switch
 import multiplatform_app.sharedui.generated.resources.kill_switch_note
 import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
+import multiplatform_app.sharedui.generated.resources.kill_switch_note_mac
 import multiplatform_app.sharedui.generated.resources.lan_choose_interface
 import multiplatform_app.sharedui.generated.resources.lan_connect_first
 import multiplatform_app.sharedui.generated.resources.lan_endpoint
@@ -269,8 +271,8 @@ fun ApplicationSettingsSheet(
     tunnelDaemonSummary: String? = null,
     onTunnelDaemonClick: () -> Unit = {},
     /**
-     * The platform's own kill switch, where the caller has one to offer: today
-     * the Linux desktop's tunnel. Null everywhere else. iOS has a kill switch
+     * The platform's own kill switch, where the caller has one to offer: the
+     * Linux desktop's tunnel and the Mac's. Null everywhere else. iOS has a kill switch
      * too and hands in nothing here: its switch is the VPN profile's and is
      * carried by [routingSettings] ([RoutingSettings.killSwitch]). With
      * neither, the row is absent, as the tunnel component's is.
@@ -691,17 +693,11 @@ private fun SharedConnectionSettingsContent(
             // not behind the admin gate: it is the user's own choice, and its
             // note is where they learn what the choice costs. The cost is the
             // platform's: what iOS does with a tunnel that cannot come back is
-            // not what the Linux tunnel's block does.
+            // not what the Linux tunnel's block does, nor the Mac's.
             if (killSwitch != null) {
                 ConnectionSwitchRow(
                     title = stringResource(Res.string.kill_switch),
-                    note = stringResource(
-                        if (currentUpdatePlatform().os == "ios") {
-                            Res.string.kill_switch_note_ios
-                        } else {
-                            Res.string.kill_switch_note
-                        }
-                    ),
+                    note = stringResource(killSwitchNote(currentUpdatePlatform().os)),
                     checked = killSwitch,
                     onCheckedChange = onKillSwitchChanged
                 )
@@ -1707,4 +1703,15 @@ private fun Long.formatEpochMs(): String {
     }.getOrElse {
         toString()
     }
+}
+
+/**
+ * The note under the kill switch, by the platform's name as
+ * [currentUpdatePlatform] has it. What the switch does, what it leaves
+ * reachable and what turning it off takes differ on each.
+ */
+internal fun killSwitchNote(os: String): StringResource = when (os) {
+    "ios" -> Res.string.kill_switch_note_ios
+    "macos" -> Res.string.kill_switch_note_mac
+    else -> Res.string.kill_switch_note
 }

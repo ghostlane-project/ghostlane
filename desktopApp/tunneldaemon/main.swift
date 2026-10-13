@@ -1,123 +1,32 @@
 // ProofKitTunnelDaemon — the only part of ProofKit that runs as root.
 //
-// It has one job: run the bundled sing-box with a tun inbound, on behalf of a
-// caller whose code signature it has verified. It parses no share links, speaks
-// none of our protocols and keeps no state beyond the child process. Everything
-// else stays in the app, where it runs as the user — the smaller this file is,
-// the smaller the thing running as root.
+// It runs the bundled sing-box with a tun inbound, on behalf of a caller whose
+// code signature it has verified, and holds what only root can hold for that
+// tunnel: the system's resolver while it runs (SystemNames) and the kill
+// switch's block (TrafficHold). It parses no share links and speaks none of our
+// protocols; what the tunnel is to do is in a config the app writes and this
+// daemon passes on byte for byte. Everything else stays in the app, where it
+// runs as the user — the smaller this is, the smaller the thing running as root.
 import Foundation
 
+// Before anything else: started by itself to take a group, this is not the
+// daemon and must not open its socket.
+GroupExec.runIfAsked()
+
 let socketPath = "/var/run/org.olcbox.app.tunneld.sock"
-let child = TunnelChild()
-// Bumped when a request gains a field the app depends on: 2 = rule files on
-// `start`. The app reads it back to tell this daemon from an older one that
-// would silently drop the field.
-let protocolVersion = 2
+let daemon = Daemon()
 
-/// The daemon's own binary as it was when launchd started it.
-///
-/// An app update replaces the bundle underneath a daemon launchd keeps alive,
-/// and a request the old code serves with the new app's expectations fails the
-/// way a broken tunnel does. When the file on disk is no longer the one that is
-/// running, the daemon steps aside on the next start or stop and launchd brings
-/// up the new one.
-struct BinaryIdentity: Equatable {
-    let size: UInt64
-    let modified: Date
-    let fileNumber: UInt64?
+// A client that hangs up before its reply is written must cost that reply, not
+// the daemon.
+signal(SIGPIPE, SIG_IGN)
 
-    static func onDisk() -> BinaryIdentity? {
-        guard let path = Bundle.main.executableURL?.path,
-              let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
-        return BinaryIdentity(
-            size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
-            modified: attributes[.modificationDate] as? Date ?? Date.distantPast,
-            fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-        )
-    }
-}
-
-let launchedAs = BinaryIdentity.onDisk()
-var quitAfterReply = false
-
-func replacedOnDisk() -> Bool {
-    guard let launchedAs, let now = BinaryIdentity.onDisk() else { return false }
-    return now != launchedAs
-}
-
-func reply(_ object: [String: Any]) -> Data {
-    var object = object
-    object["protocol"] = protocolVersion
-    let data = (try? JSONSerialization.data(withJSONObject: object))
-        ?? Data("{\"ok\":false,\"error\":\"the daemon could not encode its own reply\"}".utf8)
-    return data + Data("\n".utf8)
-}
-
-func handle(_ line: String) -> Data {
-    guard let payload = line.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-          let verb = object["verb"] as? String else {
-        return reply(["ok": false, "error": "unparseable request", "logTail": ""])
-    }
-
-    if (verb == "start" || verb == "stop") && replacedOnDisk() {
-        // Only on the verbs that change the child's state: a status query from
-        // the new app must not cost a tunnel the old daemon is still carrying.
-        child.stop()
-        quitAfterReply = true
-        return reply([
-            "ok": false,
-            "error": "the tunnel helper was updated and is restarting",
-            "restarting": true,
-            "logTail": ""
-        ])
-    }
-
-    switch verb {
-    case "start":
-        guard let config = object["config"] as? String else {
-            return reply(["ok": false, "error": "start without a config", "logTail": ""])
-        }
-        // Rule-set binaries the config refers to, file name → base64; absent
-        // for a config that names none.
-        let files = object["files"] as? [String: String] ?? [:]
-        do {
-            try child.start(config: config, files: files)
-            // Report what the child is doing a moment later, not what it was asked
-            // to do. sing-box rejects a bad config in well under a second, and an
-            // "ok" issued before that is a lie the app draws as a green light.
-            Thread.sleep(forTimeInterval: 1.0)
-            guard child.isRunning else {
-                return reply([
-                    "ok": false,
-                    "error": "sing-box exited at once",
-                    "logTail": child.logTail
-                ])
-            }
-            return reply([
-                "ok": true,
-                "state": "running",
-                "pid": Int(child.pid ?? 0),
-                "logTail": child.logTail
-            ])
-        } catch {
-            let text = (error as? DaemonError)?.text ?? error.localizedDescription
-            return reply(["ok": false, "error": text, "logTail": child.logTail])
-        }
-    case "stop":
-        child.stop()
-        return reply(["ok": true, "state": "idle", "logTail": child.logTail])
-    case "status":
-        return reply([
-            "ok": true,
-            "state": child.isRunning ? "running" : "idle",
-            "pid": Int(child.pid ?? 0),
-            "logTail": child.logTail
-        ])
-    default:
-        return reply(["ok": false, "error": "unknown verb \(verb)", "logTail": ""])
-    }
-}
+// launchd stops a daemon with SIGTERM: at a shutdown, when the user switches it
+// off in Login Items, when the app that owns it is deleted. The main thread
+// sits in accept(), so the signal is taken as an event on a queue of its own.
+signal(SIGTERM, SIG_IGN)
+let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: DispatchQueue.global())
+termination.setEventHandler { daemon.shutDown() }
+termination.resume()
 
 /// Read until the newline that ends a request.
 ///
@@ -185,15 +94,22 @@ while true {
     if client < 0 { continue }
 
     guard PeerAuthority.isTrusted(fd: client) else {
-        send(reply(["ok": false, "error": "unauthorized", "logTail": ""]), to: client)
+        send(Data("{\"ok\":false,\"error\":\"unauthorized\",\"logTail\":\"\"}\n".utf8), to: client)
         close(client)
         continue
     }
 
     if let line = readRequest(client) {
-        send(handle(line.trimmingCharacters(in: .whitespacesAndNewlines)), to: client)
+        // The user behind the socket, by the kernel's word: who a line's program is run as.
+        var user: uid_t = 0
+        var group: gid_t = 0
+        let named = getpeereid(client, &user, &group) == 0
+        send(
+            daemon.handle(line.trimmingCharacters(in: .whitespacesAndNewlines), from: named ? user : nil),
+            to: client
+        )
     }
     close(client)
     // KeepAlive: launchd starts the binary now on disk in this one's place.
-    if quitAfterReply { exit(0) }
+    if daemon.quitAfterReply { exit(0) }
 }

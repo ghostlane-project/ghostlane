@@ -2,6 +2,7 @@ package org.olcbox.app.ui.features.home
 
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
+import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC_MAC
 import org.olcbox.app.vpn.OlcrtcFailure
 import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.vpn.failureKeptAcrossAttempts
@@ -105,6 +106,10 @@ class HomeScreenStateTest {
         assertFalse(idle.noticeDismissible)
         // A reconnect that begins clears it, as it clears any failure.
         assertNull(held.applying(VpnStatus.Connecting).failure)
+        // A Mac says it in words of its own, and it stays there as well.
+        val heldOnAMac = idle.applying(VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC_MAC))
+        assertEquals(KILL_SWITCH_HOLDS_TRAFFIC_MAC, heldOnAMac.notice())
+        assertFalse(heldOnAMac.noticeDismissible)
     }
 
     // An attempt can end before it reaches the platform (no valid location, a

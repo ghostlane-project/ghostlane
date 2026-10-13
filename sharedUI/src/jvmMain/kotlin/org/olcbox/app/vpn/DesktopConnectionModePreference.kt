@@ -151,13 +151,24 @@ internal fun routingModesFor(os: DesktopOs): List<RoutingMode> =
     if (os == DesktopOs.Linux) RoutingMode.entries - RoutingMode.BlockedOnly else RoutingMode.entries
 
 /**
- * Whether this desktop has a kill switch to offer. Only the Linux tunnel has
- * one the app owns ([org.olcbox.app.vpn.desktop.LinuxKillSwitch]); everywhere
- * else the row is absent.
+ * Whether this desktop has a kill switch to offer: one the app owns, for a
+ * tunnel it can start. The Linux tunnel's
+ * ([org.olcbox.app.vpn.desktop.LinuxKillSwitch]), and the Mac's
+ * ([org.olcbox.app.vpn.desktop.MacKillSwitch]) once the tunnel helper is
+ * installed: its block is the helper's to hold, and without the helper there
+ * is no tunnel for it to stand behind. Everywhere else the row is absent.
  */
-fun desktopKillSwitchOffered(): Boolean = killSwitchOfferedOn(DesktopPaths.os)
+fun desktopKillSwitchOffered(): Boolean = killSwitchOfferedOn(
+    DesktopPaths.os,
+    macTunnelInstalled = DesktopPaths.os == DesktopOs.MacOS &&
+        MacOsTunnelDaemon.status() == MacOsTunnelDaemon.Registration.Enabled
+)
 
-internal fun killSwitchOfferedOn(os: DesktopOs): Boolean = os == DesktopOs.Linux
+internal fun killSwitchOfferedOn(os: DesktopOs, macTunnelInstalled: Boolean = false): Boolean = when (os) {
+    DesktopOs.Linux -> true
+    DesktopOs.MacOS -> macTunnelInstalled
+    DesktopOs.Windows, DesktopOs.Other -> false
+}
 
 /**
  * Whether [status] is the kill switch holding traffic with no tunnel up. Its

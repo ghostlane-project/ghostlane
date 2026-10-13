@@ -281,6 +281,69 @@ class SingBoxConfigDumpTest {
     }
 
     /**
+     * The macOS tun for a helper that points the system's resolver at it: every
+     * name answered by the tun on a core's line too, before the lines' binaries
+     * are let out; what those binaries ask, and the local network's own names,
+     * answered with real addresses; and the one name the app asks to learn that
+     * the tun has begun to name programs. Once as a core's session under the
+     * kill switch, whose tun is given the name its block is written for, and
+     * once as a room's under a bypass. `sing-box check`, and the twin it
+     * starts, are the test of everything in them that this build of sing-box
+     * has to know: `predefined`, a rule on a program among the DNS rules, the
+     * order of the route's.
+     *
+     * The first has a reference file, and not to pin it against change: it is
+     * what `scripts/check-macos-helper.sh` hands the tunnel helper's own code
+     * on a Mac, where it is run as root behind the block. A config that
+     * changes here has to be the one that is tried there, so the file is
+     * written again with it.
+     */
+    @Test fun dumpDesktopTunMacThatAnswersEveryName() = runTest {
+        val binaries = listOf(
+            "/Users/a/Library/Application Support/Ghostlane/bin/sing-box",
+            "/Users/a/Library/Application Support/Ghostlane/bin/xray",
+            "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
+        )
+        val app = "/Applications/Ghostlane.app/Contents/MacOS/Ghostlane"
+        dumpWithSocksTwin(
+            "desktop-tun-macos-names",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810,
+                verifyPort = 10811,
+                excludeAddresses = listOf("203.0.113.7/32"),
+                directDnsDomains = listOf("de1.example.org"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db",
+                interfaceName = "utun225",
+                trafficApi = SingBoxConfig.LocalApi(port = 18813, secret = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"),
+                answersEveryName = true,
+                namesProgramsFor = app
+            )
+        )
+        val rules = File(outDir, "rules").apply { mkdirs() }
+        for (file in RuleSets.all) File(rules, file.name).writeBytes(RuleSets.bytes(file))
+        dumpWithSocksTwin(
+            "desktop-tun-macos-names-bypass",
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10808,
+                verifyPort = 10809,
+                username = "upstream-user",
+                password = "upstream-password",
+                upstreamUdpIsLossy = true,
+                routing = Routing.Rules(rules.absolutePath, DirectDns.System, "ru"),
+                bindInterface = "en0",
+                bypassProcessPaths = binaries,
+                cacheFilePath = "/Library/Application Support/org.olcbox.app/cache.db",
+                answersEveryName = true,
+                namesProgramsFor = app
+            )
+        )
+        assertTrue(File(outDir, "desktop-tun-macos-names-as-socks.json").exists())
+        assertTrue(File(outDir, "desktop-tun-macos-names-bypass-as-socks.json").exists())
+    }
+
+    /**
      * The tun that keeps count of what it carries, for the app's chart:
      * sing-box's local API beside everything else a room's session has. The
      * check starts the twin, and a twin that comes up is an API that came up

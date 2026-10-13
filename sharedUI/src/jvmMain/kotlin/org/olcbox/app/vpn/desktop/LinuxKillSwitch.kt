@@ -2,6 +2,7 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.shownUnderKillSwitch
 
 /**
  * The Linux tunnel's kill switch: what holds the machine's traffic when the
@@ -43,21 +44,11 @@ import org.olcbox.app.vpn.VpnStatus
 internal object LinuxKillSwitch {
     /**
      * What the user is shown for [status] while the block stands with no tunnel
-     * in front of it ([holdsTraffic]).
-     *
-     * "Disconnected", or the error that ended the session, would both be true
-     * and both leave out the one thing that matters: this machine's traffic
-     * is held, and here is how to change that. So both become one sentence,
-     * the same wherever the block was met: the tunnel's death, a reconnect
-     * that failed, a cleanup that was refused, a block left by a previous run.
-     * What went wrong is in the log. A status that says something is being
-     * done (connecting, stopping) is left as it is.
+     * in front of it ([holdsTraffic]): [shownUnderKillSwitch], in this system's
+     * words.
      */
-    fun shown(status: VpnStatus, holdsTraffic: Boolean): VpnStatus = when {
-        !holdsTraffic -> status
-        status is VpnStatus.Disconnected || status is VpnStatus.Error -> VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC)
-        else -> status
-    }
+    fun shown(status: VpnStatus, holdsTraffic: Boolean): VpnStatus =
+        shownUnderKillSwitch(status, holdsTraffic, KILL_SWITCH_HOLDS_TRAFFIC)
 
     /**
      * Whether [routes], as `ip route show table 51820` prints them, has the
