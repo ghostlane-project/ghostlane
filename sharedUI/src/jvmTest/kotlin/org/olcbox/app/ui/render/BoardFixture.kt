@@ -26,6 +26,7 @@ import org.olcbox.app.ui.features.home.HomeChrome
 import org.olcbox.app.ui.features.home.HomeScreenContent
 import org.olcbox.app.ui.features.home.components.buildBoardModel
 import org.olcbox.app.ui.features.home.components.locationDisplayParts
+import org.olcbox.app.ui.features.home.components.pin
 import org.olcbox.app.ui.features.home.statusLabel
 import org.olcbox.app.ui.features.home.statusMeta
 import org.olcbox.app.ui.features.home.statusValue
@@ -203,11 +204,18 @@ internal object BoardFixture {
         /** How far down the list the screen opens, in points: for a picture of what is under the fold. */
         val scrolledBy: Int = 0,
         /** The lists the settings call folded away, by address. */
-        val folded: Set<String> = emptySet()
+        val folded: Set<String> = emptySet(),
+        /** The rooms pinned to the top of their lists, by storage id, in the order they were pinned. */
+        val pinned: List<String> = emptyList()
     )
 
     @Composable
-    fun Home(scene: Scene, onFold: (String) -> Unit = {}) {
+    fun Home(
+        scene: Scene,
+        onFold: (String) -> Unit = {},
+        onPin: (String) -> Unit = {},
+        onSelect: (String) -> Unit = {}
+    ) {
         val now = remember { nowMillis() }
         val locations = remember { if (scene.empty) emptyList() else locations(now) }
         val pings: Map<String, Int?> = remember {
@@ -226,7 +234,14 @@ internal object BoardFixture {
         val pingsState: PingsState = if (scene.measured) PingsState.Success(pings) else PingsState.Idle
         val lowestUrls = if (scene.lowest) setOf(OURS) else emptySet()
         val model = remember {
-            buildBoardModel(locations, activeFilterKey = null, sort = SubscriptionSort.None, lowestSubscriptionUrls = lowestUrls) { pings[it] }
+            val pinned = scene.pinned.mapNotNull { id -> locations.firstOrNull { it.storageId == id }?.pin() }
+            buildBoardModel(
+                locations,
+                activeFilterKey = null,
+                sort = SubscriptionSort.None,
+                lowestSubscriptionUrls = lowestUrls,
+                pinned = pinned
+            ) { pings[it] }
         }
         val slots: Map<String, OlcrtcSlots> = remember {
             if (!scene.seats) {
@@ -340,9 +355,10 @@ internal object BoardFixture {
                 onActionClick = {},
                 onDismissNotice = {},
                 onPullToRefresh = {},
-                onLocationSelected = {},
+                onLocationSelected = onSelect,
                 onLowestSelected = { _, _ -> },
                 onFoldToggle = onFold,
+                onPinToggle = onPin,
                 onLocationSettingsClick = {},
                 onMeasure = {},
                 onRefreshSubscriptionClick = {},

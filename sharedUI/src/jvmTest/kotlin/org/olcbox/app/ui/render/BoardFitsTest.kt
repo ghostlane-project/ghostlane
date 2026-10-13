@@ -40,7 +40,14 @@ class BoardFitsTest {
         "joining" to BoardFixture.Scene(connected = false, connecting = true),
         "admin" to BoardFixture.Scene(connected = true, admin = true, lowest = true),
         "new" to BoardFixture.Scene(connected = false, empty = true),
-        "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE)
+        "failed" to BoardFixture.Scene(connected = false, seats = false, notice = BoardFixture.NOTICE),
+        // Two rooms pinned, one of them in a list that is folded away: the
+        // board of somebody who uses two rooms out of thirty-five.
+        "pinned" to BoardFixture.Scene(
+            connected = true,
+            pinned = listOf(BoardFixture.ROOM_IN_USE, "theirs-nl"),
+            folded = setOf(BoardFixture.THEIR_LIST)
+        )
     )
 
     private fun cutTexts(shapes: List<Phone>, scenes: Map<String, BoardFixture.Scene>): List<String> =

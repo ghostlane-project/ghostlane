@@ -68,6 +68,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.PinnedLocation
 import org.olcbox.app.ui.features.home.TransportMismatch
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.OlcrtcSlots
@@ -142,7 +143,13 @@ data class BoardModel(
     val customLocations: List<LocationItem>,
     /** Whether anything on the board has seats, which decides what it is called. */
     val hasRooms: Boolean,
-    val isEmpty: Boolean
+    val isEmpty: Boolean,
+    /**
+     * The storage ids of the rows that are pinned. They stand first in their
+     * list, in the order they were pinned, and stay on the board when the list
+     * is folded away.
+     */
+    val pinnedIds: Set<String> = emptySet()
 ) {
     /** Chips earn their row only from two options up; one chip is noise. */
     val showChips: Boolean get() = filterOptions.size > 1
@@ -161,12 +168,13 @@ fun rememberBoardModel(
     activeFilterKey: String?,
     sort: SubscriptionSort,
     lowestSubscriptionUrls: Set<String> = emptySet(),
+    pinned: List<PinnedLocation> = emptyList(),
     pingsState: PingsState
-): BoardModel = remember(locations, activeFilterKey, sort, lowestSubscriptionUrls, pingsState) {
+): BoardModel = remember(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned, pingsState) {
     // Keyed on the ping state itself, not on a `(String) -> Int?` built at the call
     // site: that lambda is a fresh object every composition, so remembering on it
     // would never hit and this would be memoisation in name only.
-    buildBoardModel(locations, activeFilterKey, sort, lowestSubscriptionUrls) { id -> pingsState.pingFor(id) }
+    buildBoardModel(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned) { id -> pingsState.pingFor(id) }
 }
 
 /**
@@ -181,6 +189,7 @@ fun buildBoardModel(
     activeFilterKey: String?,
     sort: SubscriptionSort,
     lowestSubscriptionUrls: Set<String> = emptySet(),
+    pinned: List<PinnedLocation> = emptyList(),
     pingFor: (String) -> Int?
 ): BoardModel {
     // olcRTC's own carriers (VP8 / SEI / DataChannel) sit one level below the
@@ -218,6 +227,22 @@ fun buildBoardModel(
         SubscriptionSort.Ping -> sortedBy { item -> pingFor(item.storageId) ?: Int.MAX_VALUE }
     }
 
+    // Which of the rows on the board are pinned, and where each stands among
+    // the pins. A pin names a room the way a person would — see PinnedLocation
+    // — so it is matched to rows here, each time the list is drawn from what
+    // was fetched, rather than kept as an id a fetch can change.
+    val pinPlace: Map<String, Int> = if (pinned.isEmpty()) {
+        emptyMap()
+    } else {
+        val places = pinned.withIndex().associate { (place, pin) -> pin.normalized() to place }
+        visible.mapNotNull { item -> places[item.pin()]?.let { item.storageId to it } }.toMap()
+    }
+
+    // After the sort, and stable: the pinned rows in the order they were
+    // pinned, and under them the rest exactly as the sort left them.
+    fun List<LocationItem>.pinnedFirst(): List<LocationItem> =
+        if (pinPlace.isEmpty()) this else sortedBy { pinPlace[it.storageId] ?: Int.MAX_VALUE }
+
     val fromSubscriptions = visible.filter { !it.subscriptionUrl.isNullOrBlank() }
     val groups = fromSubscriptions
         .groupBy { it.subscriptionGroupKey() }
@@ -228,7 +253,7 @@ fun buildBoardModel(
             } else {
                 sort
             }
-            BoardGroup(key, items.sorted(groupSort))
+            BoardGroup(key, items.sorted(groupSort).pinnedFirst())
         }
 
     return BoardModel(
@@ -236,10 +261,30 @@ fun buildBoardModel(
         filterCounts = counts,
         totalCount = locations.size,
         subscriptionGroups = groups,
-        customLocations = visible.filter { it.subscriptionUrl.isNullOrBlank() }.sorted(),
+        customLocations = visible.filter { it.subscriptionUrl.isNullOrBlank() }.sorted().pinnedFirst(),
         hasRooms = locations.any { it.config?.transportKind() == TransportKind.Olcrtc },
-        isEmpty = locations.isEmpty()
+        isEmpty = locations.isEmpty(),
+        pinnedIds = pinPlace.keys
     )
+}
+
+/**
+ * Whether a folded list's head has to say that the exit in use is inside it.
+ *
+ * It does when nothing left on the board says so: "otherwise the screen shows
+ * no selection at all". A folded list keeps its pinned rooms, though, and when
+ * the exit in use is one of [shown] its own card is there, drawn as chosen — a
+ * mark on the head beside it is the same thing said twice. Where the list picks
+ * its fastest no card is drawn as chosen, and the row that is, is folded away.
+ */
+internal fun headMarksSelection(
+    rows: List<LocationItem>,
+    shown: List<LocationItem>,
+    selectedLocationId: String?,
+    lowestSelected: Boolean
+): Boolean {
+    if (selectedLocationId == null || rows.none { it.storageId == selectedLocationId }) return false
+    return lowestSelected || shown.none { it.storageId == selectedLocationId }
 }
 
 /** The name and flag a row and the action bar both print for one location. */
@@ -321,6 +366,8 @@ fun RoomBoard(
     onLocationSelected: (String) -> Unit,
     onLowestSelected: (subscriptionUrl: String, fallbackLocationId: String) -> Unit,
     onFoldToggle: (subscriptionUrl: String) -> Unit,
+    /** Asks for the room with this storage id to be pinned to the top of its list, or unpinned. */
+    onPinToggle: (locationId: String) -> Unit,
     onLocationSettingsClick: (String) -> Unit,
     onMeasure: (List<String>) -> Unit,
     onRefreshSubscriptionClick: (String) -> Unit,
@@ -368,6 +415,11 @@ fun RoomBoard(
             val isPinging = pingsState is PingsState.Loading &&
                 pingsState.pendingLocationIds.any { it in ids }
 
+            // Folded, a list keeps the rooms that are pinned in it. That is
+            // what a pin is for — the room somebody uses stays in reach — and
+            // it makes a board of a hundred rooms a board of three.
+            val rows = if (isCollapsed) group.locations.filter { it.storageId in model.pinnedIds } else group.locations
+
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(9.dp)
@@ -392,7 +444,7 @@ fun RoomBoard(
                     ),
                     collapsed = isCollapsed,
                     collapsible = collapsible,
-                    holdsSelection = group.locations.any { it.storageId == selectedLocationId },
+                    holdsSelection = headMarksSelection(group.locations, rows, selectedLocationId, lowestSelected),
                     onToggle = { if (!groupUrl.isNullOrBlank()) onFoldToggle(groupUrl) }
                 ) {
                     // Every control the group has, on the title's line: an i in a
@@ -460,9 +512,9 @@ fun RoomBoard(
                     PkProviderNote(announce)
                 }
 
-                if (!isCollapsed) {
+                if (rows.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                        if (!groupUrl.isNullOrBlank()) {
+                        if (!isCollapsed && !groupUrl.isNullOrBlank()) {
                             val measurable = group.locations.filter { it.config?.let(canPing) == true }
                             val measuredPings = group.locations.mapNotNull { pingsState.pingFor(it.storageId) }
                             val selectedServer = group.locations
@@ -495,7 +547,7 @@ fun RoomBoard(
                                 onMeasure = if (measurable.isNotEmpty()) ({ onMeasure(ids) }) else null
                             )
                         }
-                        group.locations.forEach { location ->
+                        rows.forEach { location ->
                             BoardRoomCard(
                                 location = location,
                                 selected = !lowestSelected && location.storageId == selectedLocationId,
@@ -505,6 +557,8 @@ fun RoomBoard(
                                 history = occupancyHistory[location.storageId].orEmpty(),
                                 keyGone = location.storageId in revokedKeys,
                                 canPing = canPing,
+                                pinned = location.storageId in model.pinnedIds,
+                                onPinToggle = { onPinToggle(location.storageId) },
                                 onClick = { onLocationSelected(location.storageId) },
                                 onLongClick = if (showSettings) {
                                     { onLocationSettingsClick(location.storageId) }
@@ -550,6 +604,8 @@ fun RoomBoard(
                         history = occupancyHistory[location.storageId].orEmpty(),
                         keyGone = location.storageId in revokedKeys,
                         canPing = canPing,
+                        pinned = location.storageId in model.pinnedIds,
+                        onPinToggle = { onPinToggle(location.storageId) },
                         onClick = { onLocationSelected(location.storageId) },
                         // Always, unlike the rows above. A server list owns its
                         // locations and editing one by hand is plumbing, so that
@@ -615,6 +671,8 @@ private fun BoardRoomCard(
     history: List<Float>,
     keyGone: Boolean,
     canPing: (LocationConfig) -> Boolean,
+    pinned: Boolean,
+    onPinToggle: () -> Unit,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
     onMeasure: () -> Unit,
@@ -643,6 +701,8 @@ private fun BoardRoomCard(
         keyGone = keyGone,
         notice = TransportMismatch.caption(config, location.metadata, stringResource(Res.string.mismatch_caption_caps)),
         wire = wireShape(config, boardWords()),
+        pinned = pinned,
+        onPinToggle = onPinToggle,
         onClick = onClick,
         onLongClick = onLongClick,
         // No MEASURE where the platform says nothing can be measured — a button
@@ -783,6 +843,27 @@ private fun LocationItem.transportFilterOption(
         )
     }
     return TransportFilterOption(key = kind.name, label = kind.label(), order = kind.ordinal)
+}
+
+/**
+ * What a pin knows this row by: its list, how it is reached, and its name.
+ *
+ * The wire is the protocol and, for a room, the meeting service and the
+ * transport inside the call: a list names one exit's rooms alike, one to a
+ * service, and they are pinned one at a time.
+ */
+internal fun LocationItem.pin(): PinnedLocation {
+    val config = config
+    val wire = when {
+        config == null -> ""
+        config.transportKind() == TransportKind.Olcrtc -> "olcrtc:${config.bypassProvider}:${config.transport}"
+        else -> config.transportKind().name.lowercase()
+    }
+    return PinnedLocation(
+        subscriptionUrl = subscriptionUrl.orEmpty(),
+        wire = wire,
+        name = metadata?.name?.takeIf { it.isNotBlank() } ?: fullName
+    ).normalized()
 }
 
 private fun LocationItem.subscriptionGroupKey(): String = listOfNotNull(

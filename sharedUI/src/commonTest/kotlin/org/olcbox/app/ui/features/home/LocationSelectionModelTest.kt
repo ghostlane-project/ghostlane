@@ -2,10 +2,17 @@ package org.olcbox.app.ui.features.home
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.PinnedLocation
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.LocationKind
+import org.olcbox.app.net.TransportKind
 import org.olcbox.app.ui.features.home.components.buildBoardModel
+import org.olcbox.app.ui.features.home.components.headMarksSelection
+import org.olcbox.app.ui.features.home.components.pin
 import org.olcbox.app.ui.features.locations.LocationItem
 
 class LocationSelectionModelTest {
@@ -36,6 +43,168 @@ class LocationSelectionModelTest {
 
         assertEquals(listOf("one-fast", "one-slow"), board.subscriptionGroups[0].locations.map { it.storageId })
         assertEquals(listOf("two-first", "two-second"), board.subscriptionGroups[1].locations.map { it.storageId })
+    }
+
+    // ── rooms pinned to the top of their lists ─────────────────────────────
+
+    private val ours = "https://one.example/sub"
+    private val theirs = "https://two.example/sub"
+
+    private fun room(
+        id: String,
+        name: String,
+        list: String? = ours,
+        provider: String = LocationConfig.PROVIDER_TELEMOST,
+        roomId: String = "meeting-$id"
+    ) = LocationItem(
+        storageId = id,
+        fullName = name,
+        config = LocationConfig(
+            name = name,
+            id = roomId,
+            key = "k".repeat(64),
+            bypassProvider = provider,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ).normalized(),
+        subscriptionUrl = list,
+        metadata = LocationMetadata(name = name)
+    )
+
+    private fun board(
+        locations: List<LocationItem>,
+        pinned: List<PinnedLocation>,
+        sort: SubscriptionSort = SubscriptionSort.None,
+        filter: String? = null,
+        pings: Map<String, Int> = emptyMap()
+    ) = buildBoardModel(
+        locations = locations,
+        activeFilterKey = filter,
+        sort = sort,
+        pinned = pinned,
+        pingFor = pings::get
+    )
+
+    @Test
+    fun pinnedRoomsStandFirstInTheirListInTheOrderTheyWerePinned() {
+        val rooms = listOf(room("a", "CA"), room("b", "DE"), room("c", "ES"), room("d", "FR"))
+
+        val model = board(rooms, pinned = listOf(rooms[3].pin(), rooms[1].pin()))
+
+        assertEquals(listOf("d", "b", "a", "c"), model.subscriptionGroups.single().locations.map { it.storageId })
+        assertEquals(setOf("d", "b"), model.pinnedIds)
+    }
+
+    @Test
+    fun theRestOfTheListIsSortedAsItWasAskedToBe() {
+        val rooms = listOf(room("a", "Delta"), room("b", "Alpha"), room("c", "Charlie"), room("d", "Bravo"))
+
+        val byName = board(rooms, pinned = listOf(rooms[0].pin()), sort = SubscriptionSort.Alphabetical)
+        assertEquals(listOf("a", "b", "d", "c"), byName.subscriptionGroups.single().locations.map { it.storageId })
+
+        val byPing = board(
+            rooms,
+            pinned = listOf(rooms[0].pin()),
+            sort = SubscriptionSort.Ping,
+            pings = mapOf("a" to 900, "b" to 300, "c" to 20, "d" to 100)
+        )
+        assertEquals(listOf("a", "c", "d", "b"), byPing.subscriptionGroups.single().locations.map { it.storageId })
+    }
+
+    @Test
+    fun aPinStaysOnItsRoomWhenAFetchOfTheListGivesTheRoomANewMeeting() {
+        // The service ended the meeting and the server made another: the line
+        // changed, so the entry has a new storage id. It is the same room to
+        // the person who pinned it — same list, same service, same name.
+        val before = room("imported_es", "ES · olcRTC", roomId = "meeting-one")
+        val after = room("imported_es_2", "ES · olcRTC", roomId = "meeting-two")
+
+        val model = board(listOf(room("a", "CA · olcRTC"), after), pinned = listOf(before.pin()))
+
+        assertEquals(listOf("imported_es_2", "a"), model.subscriptionGroups.single().locations.map { it.storageId })
+        assertEquals(setOf("imported_es_2"), model.pinnedIds)
+    }
+
+    @Test
+    fun roomsOfOneNameOnDifferentServicesArePinnedOneAtATime() {
+        val telemost = room("tm", "ES · VP8", provider = LocationConfig.PROVIDER_TELEMOST)
+        val vk = room("vk", "ES · VP8", provider = LocationConfig.PROVIDER_VKCALLS)
+
+        val model = board(listOf(telemost, vk), pinned = listOf(vk.pin()))
+
+        assertEquals(listOf("vk", "tm"), model.subscriptionGroups.single().locations.map { it.storageId })
+        assertEquals(setOf("vk"), model.pinnedIds)
+    }
+
+    @Test
+    fun aPinInOneListDoesNotPinTheRoomOfThatNameInAnother() {
+        val mine = room("mine", "ES", list = ours)
+        val other = room("other", "ES", list = theirs)
+        val model = board(listOf(room("a", "CA", list = ours), mine, room("b", "CA", list = theirs), other), pinned = listOf(mine.pin()))
+
+        assertEquals(listOf("mine", "a"), model.subscriptionGroups[0].locations.map { it.storageId })
+        assertEquals(listOf("b", "other"), model.subscriptionGroups[1].locations.map { it.storageId })
+    }
+
+    @Test
+    fun aPinnedRoomIsFilteredLikeAnyOther() {
+        // The chips say what is on the board. A pinned room of another
+        // transport shown under "Reality" would make the chip a liar.
+        val pinnedRoom = room("room", "ES · olcRTC")
+        val server = item("server", ours)
+        val model = board(listOf(server, pinnedRoom), pinned = listOf(pinnedRoom.pin()), filter = TransportKind.Tls.name)
+
+        assertEquals(listOf("server"), model.subscriptionGroups.single().locations.map { it.storageId })
+        assertEquals(emptySet(), model.pinnedIds)
+    }
+
+    @Test
+    fun aLocationAddedByHandIsPinnedAmongItsOwn() {
+        val first = room("first", "Home", list = null)
+        val second = room("second", "Office", list = null)
+        val model = board(listOf(first, second, room("a", "CA")), pinned = listOf(second.pin()))
+
+        assertEquals(listOf("second", "first"), model.customLocations.map { it.storageId })
+        assertEquals(setOf("second"), model.pinnedIds)
+    }
+
+    @Test
+    fun aPinWhoseRoomHasLeftTheListChangesNothing() {
+        val rooms = listOf(room("a", "CA"), room("b", "DE"))
+        val model = board(rooms, pinned = listOf(room("gone", "ES").pin()))
+
+        assertEquals(listOf("a", "b"), model.subscriptionGroups.single().locations.map { it.storageId })
+        assertEquals(emptySet(), model.pinnedIds)
+    }
+
+    @Test
+    fun aListThatPicksItsFastestStillPutsItsPinnedRoomsFirst() {
+        val rooms = listOf(room("slow", "CA"), room("fast", "DE"), room("mine", "ES"))
+        val model = buildBoardModel(
+            locations = rooms,
+            activeFilterKey = null,
+            sort = SubscriptionSort.None,
+            lowestSubscriptionUrls = setOf(ours),
+            pinned = listOf(rooms[2].pin()),
+            pingFor = mapOf("slow" to 300, "fast" to 40, "mine" to 500)::get
+        )
+        assertEquals(listOf("mine", "fast", "slow"), model.subscriptionGroups.single().locations.map { it.storageId })
+    }
+
+    @Test
+    fun aFoldedListsHeadMarksTheExitInUseOnlyWhenNoRowOnTheBoardDoes() {
+        val rooms = listOf(room("a", "CA"), room("b", "DE"))
+        // Folded with nothing pinned: no row is left to say it, so the head does.
+        assertTrue(headMarksSelection(rooms, shown = emptyList(), selectedLocationId = "b", lowestSelected = false))
+        // The exit in use is pinned: its own card is on the board, drawn as chosen.
+        assertFalse(headMarksSelection(rooms, shown = listOf(rooms[1]), selectedLocationId = "b", lowestSelected = false))
+        // Another room is pinned and on the board; the one in use is folded away.
+        assertTrue(headMarksSelection(rooms, shown = listOf(rooms[0]), selectedLocationId = "b", lowestSelected = false))
+        // The list picks its fastest. No card is drawn as chosen then, and the
+        // row that is — the one that picks — is folded away with the rest.
+        assertTrue(headMarksSelection(rooms, shown = listOf(rooms[1]), selectedLocationId = "b", lowestSelected = true))
+        // The exit in use is in another list.
+        assertFalse(headMarksSelection(rooms, shown = emptyList(), selectedLocationId = "elsewhere", lowestSelected = false))
+        assertFalse(headMarksSelection(rooms, shown = emptyList(), selectedLocationId = null, lowestSelected = false))
     }
 
     private fun item(id: String, subscriptionUrl: String) = LocationItem(
