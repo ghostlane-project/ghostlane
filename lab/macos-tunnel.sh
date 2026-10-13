@@ -63,8 +63,9 @@ cat > "$work/line/line.json" <<JSON
  "inbounds":[{"type":"socks","tag":"in","listen":"127.0.0.1","listen_port":18821}],
  "outbounds":[{"type":"direct","tag":"direct"}]}
 JSON
-# tun_up <the name it is to take> — the app's shape: a tun, the line behind it
-# over loopback, the line's own binary let straight out, in a group of its own.
+# tun_up <the name it is to take> [<group>] — the app's shape: a tun, the line
+# behind it over loopback, the line's own binary let straight out; in root's own
+# group unless told another.
 tun_up() {
   cat > "$work/tun/tun.json" <<JSON
 {"log":{"level":"warn"},
@@ -76,15 +77,41 @@ tun_up() {
                    {"action":"reject","ip_version":6}]},
  "experimental":{"clash_api":{"external_controller":"127.0.0.1:18822","secret":"labsecret"}}}
 JSON
-  python3 -c 'import os,sys; os.setgid(4242); os.execv(sys.argv[1], [sys.argv[1], "run", "-c", sys.argv[2]])' \
-    "$work/tun/sing-box" "$work/tun/tun.json" >"$work/tun/log.$1" 2>&1 &
+  python3 -c 'import os,sys; os.setgid(int(sys.argv[3])); os.execv(sys.argv[1], [sys.argv[1], "run", "-c", sys.argv[2]])' \
+    "$work/tun/sing-box" "$work/tun/tun.json" "${2:-0}" >"$work/tun/log.$1" 2>&1 &
   TUN=$!
   for _ in $(seq 1 40); do ifconfig "$1" 2>/dev/null | grep -q 'inet 172.19.0.1 ' && break; sleep 0.25; done
-  echo "   tun pid $TUN, $(ifconfig "$1" 2>/dev/null | grep -c 'inet 172.19.0.1 ') interface named $1, $(netstat -rn -f inet | grep -c " $1 ") routes"
+  echo "   tun pid $TUN (group $(ps -o gid= -p "$TUN" | tr -d ' ')), $(ifconfig "$1" 2>/dev/null | grep -c 'inet 172.19.0.1 ') interface named $1, $(netstat -rn -f inet | grep -c " $1 ") routes"
+}
+# What the tunnel's API lists while something is being fetched through it.
+flows() {
+  as_user curl -4 -s --max-time 8 --limit-rate 200k -o /dev/null --resolve "example.com:443:$SITE" https://example.com/ &
+  as_user curl -4 -s --max-time 8 --limit-rate 200k -o /dev/null 'http://speed.cloudflare.com/__down?bytes=4000000' &
+  sleep 2
+  curl -s --max-time 3 -H 'Authorization: Bearer labsecret' http://127.0.0.1:18822/connections | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception as e: print("   the API did not answer:", e); sys.exit(0)
+print("   totals down", d["downloadTotal"], "up", d["uploadTotal"])
+for c in d["connections"][:8]:
+    print("   flow", c["chains"], "to", c["metadata"]["destinationIP"]+":"+c["metadata"]["destinationPort"], "program", repr(c["metadata"]["processPath"]), "down", c["download"])'
 }
 as_user "$work/line/sing-box" run -c "$work/line/line.json" >"$work/line/log" 2>&1 &
 LINE=$!
 sleep 1
+echo "the line by itself: $(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 --socks5 127.0.0.1:18821 --resolve "example.com:443:$SITE" https://example.com || echo 'no answer')"
+
+say "A0: the tunnel up in root's own group, nothing held"
+tun_up utun122
+probe user "through the tunnel"
+flows
+kill -9 "$TUN"; sleep 1.5
+
+say "A1: the tunnel up in a group of its own, nothing held"
+tun_up utun121 4242
+probe user "through the tunnel"
+flows
+kill -9 "$TUN"; sleep 1.5
 
 say "A: the tunnel up, nothing held: where a name goes"
 tun_up utun123
@@ -107,7 +134,7 @@ block_for utun124
 pfctl -a "$ANCHOR" -s rules 2>&1 | quiet | sed 's/^/   /'
 probe user "block standing, no tunnel (held)"
 probe root "the same, as root (held)"
-tun_up utun124
+tun_up utun124 4242
 probe user "tunnel up behind the block"
 echo "   a name, by the system's resolver: $(within 5 dscacheutil -q host -a name "fresh-$RANDOM.example.org" 2>&1 | grep -c ip_address) address(es)"
 echo "   a name, asked of 8.8.8.8: $(as_user dig +time=2 +tries=1 +short example.org @8.8.8.8 2>&1 | head -1)"
@@ -125,7 +152,7 @@ printf '%s\n' \
   'pass out quick proto { tcp, udp } from any to any group 4242' \
   'block drop out quick all' | pfctl -a "$ANCHOR" -f - 2>&1 | quiet
 ( sleep 40; pfctl -a "$ANCHOR" -F all >/dev/null 2>&1 ) &
-tun_up utun125
+tun_up utun125 4242
 probe user "through utun125, the rule saying utun"
 kill -9 "$TUN"; sleep 1
 empty
