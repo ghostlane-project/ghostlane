@@ -124,9 +124,41 @@ within 4 dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" >/dev/null 2
 sleep 4.5
 echo "   (nothing above this line and under the two routes: no question was seen)"
 
+kill -9 "$TUN"; sleep 1.5
+
+say "A2: the config the app itself writes for a room's session (SingBoxConfigDumpTest, desktop-tun-counted)"
+python3 - "$work" "$IF" <<'PY'
+import json, sys
+work, way_out = sys.argv[1], sys.argv[2]
+config = json.load(open("lab/app-room-tun.json"))
+tun = config["inbounds"][0]
+tun["interface_name"] = "utun127"
+out, direct = config["outbounds"]
+out["server_port"] = 18821
+out.pop("username", None); out.pop("password", None)
+direct["bind_interface"] = way_out
+config["route"]["rules"][0]["process_path"] = [work + "/line/sing-box"]
+config["experimental"]["cache_file"]["path"] = work + "/tun/cache.db"
+config["experimental"]["clash_api"] = {"external_controller": "127.0.0.1:18822", "secret": "labsecret"}
+json.dump(config, open(work + "/tun/app.json", "w"))
+PY
+"$work/tun/sing-box" run -c "$work/tun/app.json" >"$work/tun/log.utun127" 2>&1 &
+TUN=$!
+for _ in $(seq 1 40); do ifconfig utun127 2>/dev/null | grep -q 'inet 172.19.0.1 ' && break; sleep 0.25; done
+echo "   tun pid $TUN, $(ifconfig utun127 2>/dev/null | grep -c 'inet 172.19.0.1 ') interface, $(netstat -rn -f inet | grep -c ' utun127 ') routes"
+echo "   the system asks, with it up: $(scutil --dns | awk '/nameserver\[/{print $3}' | sort -u | tr '\n' ' ')"
+for r in $RESOLVERS; do echo "   route to the resolver $r: $(route -n get "$r" 2>/dev/null | awk '/interface:/{print $2}')"; done
+within 5 tcpdump -i utun127 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
+within 5 tcpdump -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
+sleep 1
+echo "   a name nobody has asked for, by the system: $(within 4 dscacheutil -q host -a name "fresh-$RANDOM.cloudflare.com" 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   the same asked of 8.8.8.8, which is not on this network: $(as_user dig +time=2 +tries=1 +short "fresh-$RANDOM.cloudflare.com" @8.8.8.8 2>&1 | head -1)"
+sleep 4.5
+echo "   (an address in 198.18.0.0/15 is the tunnel's own answer)"
+
 say "B: the tunnel dies with nothing held"
 kill -9 "$TUN"; sleep 1.5
-echo "   the interface: $(ifconfig utun123 2>&1 | head -1); routes naming it: $(netstat -rn -f inet | grep -c ' utun123 ')"
+echo "   the interface: $(ifconfig utun127 2>&1 | head -1); routes naming it: $(netstat -rn -f inet | grep -c ' utun127 ')"
 probe user "after its death (a number: straight out)"
 
 say "C: the block, then a tunnel brought up behind it"
