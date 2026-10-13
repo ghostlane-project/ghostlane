@@ -27,5 +27,5 @@ jobs:
           cp "sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
           "$RUNNER_TEMP/sing-box" version | head -3
 
-      - name: The block, a tunnel behind it, and where names go
-        run: sudo bash lab/macos-hold.sh "$RUNNER_TEMP/sing-box" "$USER"
+      - name: The programs behind connections, as the tunnel finds them
+        run: sudo bash lab/macos-process.sh "$RUNNER_TEMP/sing-box" "$USER"
