@@ -3,8 +3,7 @@ name: Lab (Windows traffic API)
 # Not a check and never merged: asks a real Windows what the desktop's traffic
 # chart can only assume from here. Runs on a push to this branch.
 on:
-  push:
-    branches: [lab/macos-tunnel]
+  workflow_dispatch:
 
 permissions:
   contents: read

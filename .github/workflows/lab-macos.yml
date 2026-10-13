@@ -9,16 +9,18 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   lab:
-    name: A Mac, asked (${{ matrix.os }})
+    name: A Mac, asked (${{ matrix.os }}, ${{ matrix.part }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15, macos-26]
+        os: [macos-15, macos-26]
+        part: [bound, first]
     env:
       SINGBOX_VERSION: "1.13.14"
     steps:
@@ -44,4 +46,7 @@ jobs:
           "$RUNNER_TEMP/sing-box" version | head -1
 
       - name: What a bound socket does beside a tun, and behind the block
-        run: sudo bash lab/macos-bound.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/udpprobe"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAB_OS: ${{ matrix.os }}
+        run: sudo --preserve-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA,LAB_OS bash lab/macos-bound.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/udpprobe" "${{ matrix.part }}"

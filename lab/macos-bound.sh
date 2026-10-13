@@ -10,6 +10,8 @@ HELPER="$1"
 SB="$2"
 WHO="$3"
 PROBE_BIN="$4"
+PART="${5:-bound}"
+LAB_OS="${LAB_OS:-mac}"
 WHO_UID="$(id -u "$WHO")"
 WHO_GID="$(id -g "$WHO")"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,9 +23,18 @@ GROUP=7302243
 work="$(cd /tmp && pwd -P)/ghostlane-lab.$$"
 mkdir -p "$work/line" "$work/other"
 chmod 755 "$work"
-( sleep 540; pfctl -a "$ANCHOR" -F all; printf 'remove %s\n' "$KEY" | scutil ) >/dev/null 2>&1 &
+( sleep 400; pfctl -a "$ANCHOR" -F all; printf 'remove %s\n' "$KEY" | scutil ) >/dev/null 2>&1 &
 
 say() { printf '\n== %s\n' "$*"; }
+# What was found so far, written where it outlives this machine: a commit status.
+mark() {
+  local text; text=$(printf '%s' "$2" | tr '\n"\\' '  /' | cut -c1-138)
+  [ -n "${GITHUB_TOKEN:-}" ] || return 0
+  curl -4 -s -o /dev/null --max-time 6 -X POST \
+    -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+    -d "{\"state\":\"success\",\"context\":\"lab/$LAB_OS/$1\",\"description\":\"$text\"}" || true
+}
 note() { printf '   %-58s %s\n' "$1" "$2"; }
 within() { local s="$1"; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
 now() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
@@ -146,85 +157,81 @@ load_rules() {
   echo "pfctl said $status ${out:+: $(tr '\n' ' ' <<<"$out" | cut -c1-200)}"
 }
 
+if [ "$PART" = bound ]; then
+
 say "0. nothing up"
-note "unbound, asked directly" "$(udp "$LINE_PROBE" -)"
-note "bound to $MINE, asked directly" "$(udp "$LINE_PROBE" "$MINE")"
-note "a request elsewhere" "$(code_of "http://$ELSEWHERE/")"
+a=$(udp "$LINE_PROBE" -); b=$(udp "$LINE_PROBE" "$MINE"); c=$(code_of "http://$ELSEWHERE/")
+note "unbound, asked directly" "$a"; note "bound to $MINE, asked directly" "$b"; note "a request elsewhere" "$c"
+mark 0-nothing-up "unbound: $a | bound: $b | http $c"
 
 say "1. a tun, no block"
 echo "   $(ask "$(request start utun225 names)")"
-r=$(udp "$OTHER_PROBE" -);       note "unbound, a program the tun has no rule for" "$r | $(flow "$r")"
-r=$(udp "$OTHER_PROBE" "$MINE"); note "bound, a program the tun has no rule for" "$r | $(flow "$r")"
-r=$(udp "$LINE_PROBE" "$MINE");  note "bound, a line's program" "$r | $(flow "$r")"
+r1=$(udp "$OTHER_PROBE" -);       f1=$(flow "$r1"); note "unbound, a program the tun has no rule for" "$r1 | $f1"
+r2=$(udp "$OTHER_PROBE" "$MINE"); f2=$(flow "$r2"); note "bound, a program the tun has no rule for" "$r2 | $f2"
+r3=$(udp "$LINE_PROBE" "$MINE");  f3=$(flow "$r3"); note "bound, a line's program" "$r3 | $f3"
 before=$(grep -c "$ELSEWHERE:80" "$work/utun225.log" 2>/dev/null)
 c=$(bound_code "http://$ELSEWHERE/")
 after=$(grep -c "$ELSEWHERE:80" "$work/utun225.log" 2>/dev/null)
 note "TCP bound to $MINE" "$c; lines in the tun's log about it: $before -> $after"
+mark 1-tun-no-block "unbound: ${r1#port * } [${f1:0:22}] | bound: ${r2#port * } [${f2:0:22}] | tcp bound $c log $before->$after"
 echo "   $(ask "$(request stop)")"
 
 say "2. a tun behind the block as the helper loads it"
 echo "   $(ask "$(request start utun226 names hold "$SERVER")")"
 PID=$(tunnel_pid)
-r=$(udp "$LINE_PROBE" -);        note "unbound, a line's program" "$r | $(flow "$r")"
-r=$(udp "$LINE_PROBE" "$MINE");  note "bound, a line's program" "$r | $(flow "$r")"
-r=$(udp "$OTHER_PROBE" "$MINE"); note "bound, a program the tun has no rule for" "$r | $(flow "$r")"
-note "TCP bound to $MINE" "$(bound_code "http://$ELSEWHERE/")"
-note "a request elsewhere" "$(code_of "http://$ELSEWHERE/")"
+r1=$(udp "$LINE_PROBE" -);        note "unbound, a line's program" "$r1 | $(flow "$r1")"
+r2=$(udp "$LINE_PROBE" "$MINE");  note "bound, a line's program" "$r2 | $(flow "$r2")"
+r3=$(udp "$OTHER_PROBE" "$MINE"); note "bound, a program the tun has no rule for" "$r3 | $(flow "$r3")"
+t=$(bound_code "http://$ELSEWHERE/"); e=$(code_of "http://$ELSEWHERE/")
+note "TCP bound to $MINE" "$t"; note "a request elsewhere" "$e"
+mark 2-block-as-loaded "unbound line: ${r1#port * } | bound line: ${r2#port * } | bound other: ${r3#port * } | tcp bound $t | elsewhere $e"
 
 say "3. the same tunnel, the block with a way into the tun for what is left on a physical interface"
-note "loaded (flags any)" "$(load_rules utun226 flags "$SERVER")"
-if ! pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -q route-to; then
-  note "loaded (no flags)" "$(load_rules utun226 plain "$SERVER")"; WAY=plain
-else
-  WAY=flags
-fi
+# Whatever the rule does to this machine, the anchor is emptied in forty seconds.
+( sleep 40; pfctl -a "$ANCHOR" -F all ) >/dev/null 2>&1 &
+mark 3a-before-the-rule "about to load route-to"
+l=$(load_rules utun226 flags "$SERVER"); WAY=flags
+if ! pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -q route-to; then l="$l; $(load_rules utun226 plain "$SERVER")"; WAY=plain; fi
+note "loaded" "$l ($WAY)"
 pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -n "route-to\|^block" | sed 's/^/   pf: /'
-r=$(udp "$LINE_PROBE" "$MINE");  note "bound, a line's program" "$r | $(flow "$r")"
-r=$(udp "$OTHER_PROBE" "$MINE"); note "bound, a program the tun has no rule for" "$r | $(flow "$r")"
-r=$(udp "$LINE_PROBE" -);        note "unbound, a line's program" "$r | $(flow "$r")"
-note "TCP bound to $MINE" "$(bound_code "http://$ELSEWHERE/")"
-note "a request elsewhere" "$(code_of "http://$ELSEWHERE/")"
-note "the server the block lets out" "$(code_of "http://$SERVER/")"
-kill "$LINE" 2>/dev/null; sleep 0.5
-r=$(udp "$LINE_PROBE" "$MINE");  note "the line stopped: bound, a line's program" "$r | $(flow "$r")"
-r=$(udp "$OTHER_PROBE" "$MINE"); note "the line stopped: bound, another program" "$r | $(flow "$r")"
-start_line
+mark 3b-rule-loaded "$WAY: $l | $(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep route-to | cut -c1-70)"
+e=$(code_of "http://$ELSEWHERE/"); note "a request elsewhere" "$e"
+mark 3c-elsewhere "an ordinary request with the rule in place: $e"
+r1=$(udp "$LINE_PROBE" "$MINE");  f1=$(flow "$r1"); note "bound, a line's program" "$r1 | $f1"
+mark 3d-bound-line "bound udp, a line's program: ${r1#port * } [${f1:0:70}]"
+r2=$(udp "$OTHER_PROBE" "$MINE"); f2=$(flow "$r2"); note "bound, a program the tun has no rule for" "$r2 | $f2"
+mark 3e-bound-other "bound udp, another program: ${r2#port * } [${f2:0:70}]"
+t=$(bound_code "http://$ELSEWHERE/"); note "TCP bound to $MINE" "$t"
+mark 3f-bound-tcp "bound tcp: $t | the server the block lets out: $(code_of "http://$SERVER/")"
 
 say "4. the tunnel's process killed, the rules as they are"
 kill -9 "$PID"; sleep 1.2
-note "the helper" "$(ask "$(request status)")"
+r1=$(udp "$LINE_PROBE" -); r2=$(udp "$LINE_PROBE" "$MINE"); e=$(code_of "http://$ELSEWHERE/" 4); t=$(bound_code "http://$ELSEWHERE/")
 note "the tun's interface" "$(ifconfig utun226 >/dev/null 2>&1 && echo there || echo gone)"
 note "rules that send into it" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c route-to)"
-note "unbound" "$(udp "$LINE_PROBE" -)"
-note "bound" "$(udp "$LINE_PROBE" "$MINE")"
-note "a request elsewhere" "$(code_of "http://$ELSEWHERE/")"
-note "TCP bound to $MINE" "$(bound_code "http://$ELSEWHERE/")"
-note "the server the block lets out" "$(code_of "http://$SERVER/")"
-
-say "5. a way into a tun that never was"
-note "loaded" "$(load_rules utun250 "$WAY" "$SERVER")"
-note "rules that send into it" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c route-to)"
-note "unbound" "$(udp "$LINE_PROBE" -)"
-note "bound" "$(udp "$LINE_PROBE" "$MINE")"
-note "a request elsewhere" "$(code_of "http://$ELSEWHERE/")"
+note "unbound" "$r1"; note "bound" "$r2"; note "a request elsewhere" "$e"; note "TCP bound" "$t"
+FOUR="tun $(ifconfig utun226 >/dev/null 2>&1 && echo there || echo gone), route-to rules $(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c route-to) | unbound: ${r1#port * } | bound: ${r2#port * } | elsewhere $e | tcp bound $t"
 
 say "6. released"
 echo "   $(ask "$(request release)")"
-note "rules standing" "$(rules_standing)"
-note "unbound" "$(udp "$LINE_PROBE" -)"
-note "bound" "$(udp "$LINE_PROBE" "$MINE")"
+sleep 1
+a=$(udp "$LINE_PROBE" -)
+note "rules standing" "$(rules_standing)"; note "unbound" "$a"
+mark 4-tunnel-killed "$FOUR"
+mark 6-released "rules $(rules_standing) | unbound: ${a#port * }"
 
-say "7. a line's first words after a tunnel starts, behind the block"
+else
+
+say "7. a line's first words after a tunnel starts, behind the block as the helper loads it"
 echo "   by turns: at once, and after the tun has named the program that asks (as the app waits)"
-bad=0
+bad=0; rows=""
 for i in $(seq 1 16); do
   name="utun$((226 + i))"
   reply=$(ask "$(request start "$name" names hold "$SERVER")")
-  load_rules "$name" "$WAY" "$SERVER" >/dev/null
   t0=$(now); waited="-"
   if [ $((i % 2)) -eq 0 ]; then
     waited="never"
-    for _ in $(seq 1 60); do
+    for _ in $(seq 1 40); do
       a=$(as_user dig +time=1 +tries=1 +short "$PROBE" @172.19.0.2 2>/dev/null | head -1)
       if [ "$a" = "127.0.0.53" ]; then waited="$(( $(now) - t0 ))ms"; break; fi
       sleep 0.05
@@ -232,21 +239,26 @@ for i in $(seq 1 16); do
   fi
   name_got=$(as_user host -W 2 -t A www.python.org 172.19.0.2 2>&1 | awk '/has address/{print $4; exit}')
   tcp=$(through_line "http://$ELSEWHERE/" 4)
-  u=$(udp "$LINE_PROBE" "$MINE")
   took="$(( $(now) - t0 ))ms"
   verdict=ok
   case "$name_got" in 198.1[89].*|"") verdict=BAD ;; esac
   [ "$tcp" = 000 ] && verdict=BAD
-  grep -q answered <<<"$u" || verdict=BAD
   [ "$verdict" = BAD ] && bad=$((bad + 1))
-  printf '   %2d %-7s wait %-7s name %-16s tcp %s udp %-34s all in %-7s %s\n' "$i" "$name" "$waited" "${name_got:-none}" "$tcp" "$u" "$took" "$verdict"
+  printf '   %2d %-7s %-44s wait %-7s name %-16s tcp %s all in %-7s %s\n' "$i" "$name" "${reply:0:44}" "$waited" "${name_got:-none}" "$tcp" "$took" "$verdict"
+  rows="$rows$i:${waited}/${name_got:-none}/$tcp "
   if [ "$verdict" = BAD ]; then
-    sed -e 's/\x1b\[[0-9;]*m//g' "$work/$name.log" | grep -E "$ELSEWHERE:80|www.python.org|udpprobe|process|ERROR|WARN" | sed -E 's/^[^ ]+ [^ ]+ [^ ]+ //' | cut -c1-170 | head -12 | sed 's/^/        /'
+    sed -e 's/\x1b\[[0-9;]*m//g' "$work/$name.log" 2>/dev/null | grep -E "$ELSEWHERE:80|www.python.org|process|ERROR|WARN|default interface" | sed -E 's/^[^ ]+ [^ ]+ [^ ]+ //' | cut -c1-170 | head -14 | sed 's/^/        /'
   fi
   ask "$(request stop keep)" >/dev/null
 done
 echo "   starts that went wrong: $bad of 16"
 echo "   $(ask "$(request release)")"
+sleep 1
+mark 7-first-words "wrong: $bad of 16"
+mark 7-rows-a "$(cut -c1-138 <<<"$rows")"
+mark 7-rows-b "$(cut -c139-276 <<<"$rows")"
+
+fi
 
 exec 3>&-
 kill "$LINE" 2>/dev/null
