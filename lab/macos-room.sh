@@ -71,6 +71,19 @@ vp8:
   batch_size: 64
 Y
 }
+# The engine as its user starts it, in the background: E is the engine's own process.
+engine() { # <log>
+  python3 -c 'import os,sys; os.setgid(int(sys.argv[2])); os.setuid(int(sys.argv[1])); os.execvp(sys.argv[3], sys.argv[3:])' \
+    "$WHO_UID" "$WHO_GID" "$ENGINE" "$work/line/room.yaml" >"$1" 2>&1 &
+  E=$!
+}
+# No engine of this script's is left: by its process, and by its name for one that got away.
+no_engine() {
+  kill "$E" 2>/dev/null; sleep 2; kill -9 "$E" 2>/dev/null
+  pkill -9 -f "$work/line/olcrtc-darwin-lab" 2>/dev/null
+  pkill -9 -f "$LINES/olcrtc-darwin-lab" 2>/dev/null
+  sleep 0.5
+}
 # Waits until the engine says its SOCKS port listens, or it is gone, or the seconds are up.
 ready_within() { # <log> <seconds> <pid>
   local t0; t0=$(now)
@@ -145,13 +158,11 @@ say "1. no switch: the engine the app's own child, no tunnel"
 EXIT=""
 for attempt in 1 2 3 4 5 6; do
   yaml "$RESOLVER:53" > "$work/line/room.yaml"; chown "$WHO" "$work/line/room.yaml"; chmod 600 "$work/line/room.yaml"
-  : > "$work/line/p1.log"
-  as_user "$ENGINE" "$work/line/room.yaml" >"$work/line/p1.log" 2>&1 &
-  E=$!
+  engine "$work/line/p1.log"
   r=$(ready_within "$work/line/p1.log" 45 "$E")
   [[ "$r" == ready* ]] && EXIT=$(seen_as "127.0.0.1:$PORT" 15)
-  note "try $attempt" "$r; $(told "$work/line/p1.log"); through the room the internet sees ${EXIT:+another machine}${EXIT:-nobody}"
-  kill "$E" 2>/dev/null; sleep 2; kill -9 "$E" 2>/dev/null
+  note "try $attempt" "$r; $(told "$work/line/p1.log"); through the room the internet sees $([ -n "$EXIT" ] && echo another machine || echo nobody)"
+  no_engine
   [ -n "$EXIT" ] && [ "$EXIT" != "$MAC" ] && break
   last_words "$work/line/p1.log" 4
   EXIT=""; sleep 15
@@ -163,14 +174,12 @@ say "2. as the build before: a tunnel under the block first, the engine the app'
 note "the tunnel" "$(ask "$(request start utun225)")"
 sleep 2
 yaml "172.19.0.2" > "$work/line/room.yaml"
-: > "$work/line/p2.log"
-as_user "$ENGINE" "$work/line/room.yaml" >"$work/line/p2.log" 2>&1 &
-E=$!
+engine "$work/line/p2.log"
 r=$(ready_within "$work/line/p2.log" 40 "$E")
 note "the engine" "$r; $(told "$work/line/p2.log")"
 last_words "$work/line/p2.log" 5
 mark 2-as-before "$r; $(told "$work/line/p2.log")"
-kill "$E" 2>/dev/null; sleep 1; kill -9 "$E" 2>/dev/null
+no_engine
 note "stopped, the block kept" "$(ask "$(request stop keep)")"
 
 say "3. as now: behind the block that stands, the helper runs the engine, and the tunnel comes after it"
@@ -204,6 +213,7 @@ if [ "${PID:-0}" -gt 1 ]; then
   mark 3d-tunnel-again "any program: $([ "$T" = "$EXIT" ] && echo leaves by the exit || echo "${T:+other}${T:-no answer}")"
 fi
 ask "$(request line-stop)" >/dev/null
+no_engine
 ask "$(request stop)" >/dev/null
 note "released" "$(ask "$(request release)")"
 
