@@ -36,3 +36,7 @@ Every card has a pin. A pinned room stands first in its own list, in the order t
 A pin follows the room and not its link. An olcRTC room's link changes whenever its meeting is replaced, which a meeting service and a server do as a matter of course, and a pin that followed the link would be gone at the next fetch of the list from a room that is still there under the same name. A room is the list it is in, the service it is on and its name: one exit's rooms on different services are pinned one at a time, and a room of the same name in another list is another room.
 
 The pin is drawn small and pressed large, forty points square, because the card around it is itself a button: a press that missed it would choose the room, and with a session up that moves the session. A card is no taller for having one.
+
+### Google Play: Android 7 and later
+
+The build Google Play distributes now asks for Android 7. Play began to refuse a bundle below it for apps with its automatic protection on, which is how 1.0.458 was built for Play and never arrived there. The APK on the releases page installs on Android 6 as before, and a phone can move between the two builds: they share an application id, a version code and a signing key.
