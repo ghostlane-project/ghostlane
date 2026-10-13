@@ -965,6 +965,42 @@ class SingBoxConfigTest {
         }
     }
 
+    // ── the desktop tun keeps count of what it carries ─────────────────────
+
+    @Test fun aDesktopTunAskedToKeepCountAnswersOnTheLoopbackToWhoeverKnowsItsSecret() {
+        // The app's chart is drawn from it: the tun is another process's, and
+        // its sing-box is the one that knows what went through.
+        val json = SingBoxConfig.buildDesktopTun(
+            corePort = 10810,
+            verifyPort = 10811,
+            trafficApi = SingBoxConfig.LocalApi(port = 10812, secret = "s3cr3t")
+        )
+        val api = obj(json)["experimental"]!!.jsonObject["clash_api"]!!.jsonObject
+        assertEquals("127.0.0.1:10812", str(api, "external_controller"))
+        assertEquals("s3cr3t", str(api, "secret"))
+    }
+
+    @Test fun thatApiStandsBesideTheCacheOfATunThatAnswersNames() {
+        val json = SingBoxConfig.buildDesktopTun(
+            corePort = 10810,
+            verifyPort = 10811,
+            upstreamUdpIsLossy = true,
+            cacheFilePath = "/tmp/cache.db",
+            trafficApi = SingBoxConfig.LocalApi(port = 10812, secret = "s3cr3t")
+        )
+        val experimental = obj(json)["experimental"]!!.jsonObject
+        assertEquals("/tmp/cache.db", str(experimental["cache_file"]!!.jsonObject, "path"))
+        assertEquals("127.0.0.1:10812", str(experimental["clash_api"]!!.jsonObject, "external_controller"))
+    }
+
+    @Test fun aDesktopTunNotAskedToKeepCountListensForNobody() {
+        // Every tun built before this was one, and is the same config still.
+        val native = SingBoxConfig.buildDesktopTun(corePort = 10810, verifyPort = 10811)
+        assertNull(obj(native)["experimental"])
+        val room = SingBoxConfig.buildDesktopTun(corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true)
+        assertNull(obj(room)["experimental"]!!.jsonObject["clash_api"])
+    }
+
     @Test fun detailedLoggingIsExplicitAndCoversEveryCoreShape() {
         val detailed = mapOf(
             "socks" to SingBoxConfig.build(vless(), verboseLogs = true),

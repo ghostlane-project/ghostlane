@@ -30,6 +30,38 @@ The daemon adds one more sing-box in front of them whose only job is to own the
 tun. Everything the tunnel carries still leaves the machine through the same core
 that carried it before.
 
+## What the app reads back from it
+
+The traffic chart in the status strip. The app owns no tun and so counts
+nothing itself; the daemon's sing-box is the one that knows what went through,
+and it is asked: its local API (`experimental.clash_api`) on a loopback port the
+system picks at connect, behind a secret made for that tun alone. Both are in
+`tun.json`, which is root's and 0600, and in the app's memory; nowhere else. The
+app asks `GET /connections` once a second while its window is in front of
+somebody, and reads two things from the answer: the totals, and the flows that
+are open with the program behind each.
+
+The second is why the totals are not simply shown. What the tun routed is not
+only the user's traffic: a line whose server the tun could not be told to leave
+out reaches the internet through the tun too — every olcRTC room, by the rule on
+the engine's binary — and is counted there with the traffic it carries, which
+for a room is every byte twice. So the flows of the session's own binaries are
+taken off. They are few and long (a room's is one media stream for as long as
+it stands), so what each had moved when it was last listed is kept off for good
+once it is gone; what a flow moved in its last second before it closed is the
+error, once per flow.
+
+sing-box names a flow's program as its path and, in brackets, whoever runs it
+(`/…/olcrtc-darwin-arm64 (roman)`). That, and the names of the totals, are in no
+schema; `scripts/check-singbox-traffic-api.sh` asks the pinned release for them
+in CI.
+
+What it means on the machine: one more listener on `127.0.0.1` for as long as a
+tunnel is up, beside the verification inbound that was always there. The same
+API also lists where every program is connected to and closes connections on
+request, which is what the secret is for. A session in proxy mode has no tun and
+so no count, and its status strip has no chart.
+
 ## The tun is the session's, not one server's
 
 The tun is built once, when a session starts, and points at one local port, with

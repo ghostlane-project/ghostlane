@@ -1,0 +1,6 @@
++0000 2026-10-13 05:17:59 INFO network: updated default interface eth0, index 2
++0000 2026-10-13 05:17:59 INFO inbound/socks[in]: tcp server started at 127.0.0.1:18811
++0000 2026-10-13 05:17:59 INFO sing-box started (0.04s)
++0000 2026-10-13 05:21:46 INFO network: updated default interface eth0, index 2
++0000 2026-10-13 05:21:46 INFO inbound/socks[in]: tcp server started at 127.0.0.1:18811
++0000 2026-10-13 05:21:46 INFO sing-box started (0.03s)

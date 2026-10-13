@@ -18,3 +18,14 @@ The chart draws a second of traffic as the difference between two readings of th
 - The chart and the totals are kept for as long as the session lasts. On an iPhone they were the screen's own and the screen is built again on every return to the app: leave with a session up, come back, and the chart was an empty rule.
 - The totals go on when the tunnel under a session is built again, and past four gigabytes on an iPhone, where the system counts a tunnel's bytes in thirty-two bits and the totals went back to nothing.
 - Where nothing counts a session's traffic — a desktop or an Android phone in proxy mode — the status strip has no chart. Since 1.0.459 it stood open for one that never came: an empty rule and two rates reading "…" for as long as the session lasted.
+
+### The traffic chart on a desktop
+
+A desktop session had no traffic chart and no totals: the app there owns neither the tunnel nor the processes behind it, and counted nothing. A session in tunnel mode is now counted by whoever owns its tunnel.
+
+- **Linux:** the kernel's own counters of the tunnel device.
+- **Windows and macOS:** the tunnel's sing-box, asked over its local API on a loopback port behind a secret made for that tunnel alone. What it has routed is not only the user's traffic — an olcRTC room's own media leaves through the tunnel too, by the rule on the engine's binary — so the flows of the session's own lines are taken off the totals. Without that a room's session was counted twice.
+- **Proxy mode**, on any system: nothing stands in the session's path that keeps count, and the status strip has no chart.
+
+The count is what went through the tunnel interface, as on a phone: under "only blocked sites" that includes what the rules then send straight out.
+

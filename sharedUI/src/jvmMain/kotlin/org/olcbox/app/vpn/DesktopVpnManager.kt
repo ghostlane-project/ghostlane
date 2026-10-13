@@ -68,12 +68,15 @@ import org.olcbox.app.vpn.desktop.LineSupervision
 import org.olcbox.app.vpn.desktop.LinuxKillSwitch
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
+import org.olcbox.app.vpn.desktop.LinuxTunTraffic
 import org.olcbox.app.vpn.desktop.MacOsTunController
 import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SessionBuild
 import org.olcbox.app.vpn.desktop.SessionEndpoint
+import org.olcbox.app.vpn.desktop.SingBoxTunTraffic
+import org.olcbox.app.vpn.desktop.TunnelTraffic
 import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.io.IOException
 import java.net.InetSocketAddress
@@ -111,6 +114,16 @@ class DesktopVpnManager private constructor(
 
     private val _connectedSince = MutableStateFlow<Long?>(null)
     override val connectedSince: StateFlow<Long?> = _connectedSince.asStateFlow()
+
+    /**
+     * A tunnel session is counted by whoever owns its tunnel, a proxy session
+     * by nobody ([DesktopMode.countsTraffic]). Asked of the session that is up,
+     * and with none up of the mode a connect would choose now.
+     */
+    override val countsTraffic: Boolean
+        get() = (sessionLine?.desktopMode ?: DesktopMode.current()).countsTraffic
+
+    override suspend fun readTraffic(): TrafficCounters? = tunnelTraffic?.read()
 
     /**
      * What a session did on its own that the user is told once: it went to
@@ -207,6 +220,15 @@ class DesktopVpnManager private constructor(
 
     /** The daemon's own socks inbound, which is what a green light is measured through. */
     private var macTunVerifyPort: Int? = null
+
+    /**
+     * What keeps count of the tunnel this session runs in, for the status
+     * strip's chart; null in proxy mode and while no tunnel is up. Set where a
+     * tunnel is started and dropped where it is stopped. A line that is
+     * restarted or changed behind the tunnel leaves the tunnel, and this, as
+     * they are.
+     */
+    @Volatile private var tunnelTraffic: TunnelTraffic? = null
     private var windowsTunExit: org.olcbox.app.net.TunnelExit? = null
 
     /**
@@ -1022,6 +1044,7 @@ class DesktopVpnManager private constructor(
         }
 
         startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
+        tunnelTraffic = LinuxTunTraffic()
     }
 
     private suspend fun startWindowsTun(
@@ -1073,6 +1096,7 @@ class DesktopVpnManager private constructor(
             val verifyPort = allocateVerifyPort(socksPort)
             val verifyUsername = UUID.randomUUID().toString()
             val verifyPassword = UUID.randomUUID().toString()
+            val trafficApi = newTrafficApi()
             val interfaceName = windowsTunInterfaceName(windowsTunSessionId, requestGeneration, attempt)
             windowsTunCore.start(
                 org.olcbox.app.net.SingBoxConfig.buildDesktopTun(
@@ -1092,7 +1116,8 @@ class DesktopVpnManager private constructor(
                     bypassProcessPaths = bypassPaths,
                     cacheFilePath = DesktopPaths.appDataDir().resolve("windows-tun-cache.db").toString(),
                     interfaceName = interfaceName,
-                    strictRoute = strictRoute
+                    strictRoute = strictRoute,
+                    trafficApi = trafficApi
                 )
             )
             windowsTunExit = awaitWindowsTunTraffic(
@@ -1106,6 +1131,7 @@ class DesktopVpnManager private constructor(
                 )
                 windowsTunInterface = interfaceName
                 windowsTunIsStrict = strictRoute
+                tunnelTraffic = trafficApi?.let { SingBoxTunTraffic(it.port, it.secret, ownBinaries = bypassPaths) }
                 break
             }
             windowsTunCore.stopNow()
@@ -1251,6 +1277,8 @@ class DesktopVpnManager private constructor(
         ruleFiles: Map<String, String>
     ): Boolean {
         val verifyPort = allocateVerifyPort(corePort)
+        val trafficApi = newTrafficApi()
+        val lineBinaries = lineBinaryPaths()
         val letsEveryLineOut = macOsTunController.start(
             corePort = corePort,
             verifyPort = verifyPort,
@@ -1266,12 +1294,29 @@ class DesktopVpnManager private constructor(
             routing = routing,
             verboseLogs = verboseLogs,
             ruleFiles = ruleFiles,
-            bypassProcessPaths = lineBinaryPaths()
+            bypassProcessPaths = lineBinaries,
+            trafficApi = trafficApi
         )
         macTunVerifyPort = verifyPort
         macTunActive = true
+        tunnelTraffic = trafficApi?.let { SingBoxTunTraffic(it.port, it.secret, ownBinaries = lineBinaries) }
         return letsEveryLineOut
     }
+
+    /**
+     * Where a tun's sing-box is to say what it has carried: a loopback port
+     * nobody holds, as the system picks one, and a secret made for this tun
+     * alone ([org.olcbox.app.net.SingBoxConfig.LocalApi]). Null when the system
+     * names no port. That tun is started without, and its session has no chart:
+     * a port guessed at instead could be somebody's, and a sing-box that cannot
+     * listen where it was told to does not start.
+     */
+    private fun newTrafficApi(): org.olcbox.app.net.SingBoxConfig.LocalApi? = runCatching {
+        java.net.ServerSocket().use { socket ->
+            socket.bind(java.net.InetSocketAddress("127.0.0.1", 0))
+            org.olcbox.app.net.SingBoxConfig.LocalApi(port = socket.localPort, secret = UUID.randomUUID().toString())
+        }
+    }.getOrNull()
 
     /**
      * A port for the TUN process's own verification inbound, never the carrier core's.
@@ -1681,6 +1726,8 @@ class DesktopVpnManager private constructor(
         // has no line to bring back, and a watcher that sees one of its processes
         // go from now on must find nothing to restart.
         sessionLine = null
+        // And nothing left to count: the tunnel that kept count goes with it.
+        tunnelTraffic = null
         // The LAN listener is externally reachable. Close it before changing the
         // tunnel it chains to, including partially started and already-disconnected paths.
         stopLanSharing()
@@ -3657,6 +3704,15 @@ internal enum class DesktopMode {
     WindowsTun,
     MacTun,
     SystemProxy;
+
+    /**
+     * Whether a session in this mode has its traffic counted. A tunnel does:
+     * what crosses it is counted by its owner, the kernel or the tun's
+     * sing-box ([org.olcbox.app.vpn.desktop.TunnelTraffic]). A proxy session
+     * has nothing in its path that keeps count — the system's proxy setting
+     * points at the line itself.
+     */
+    val countsTraffic: Boolean get() = this != SystemProxy
 
     companion object {
         /**

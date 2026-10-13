@@ -102,6 +102,7 @@ import org.olcbox.app.desktop.rememberDesktopTrayIcon
 import org.olcbox.app.ui.components.kit.LocalWindowTitleBarInset
 import org.olcbox.app.ui.components.kit.PkBrand
 import org.olcbox.app.ui.OlcboxAppContent
+import org.olcbox.app.ui.WhileShown
 import org.olcbox.app.ui.components.ApplicationConnectionModeOption
 import org.olcbox.app.ui.components.ApplicationSocksProxySettings
 import org.olcbox.app.ui.components.ApplicationSettingsSheet
@@ -429,6 +430,9 @@ private fun runDesktopApplication(args: Array<String>) = application {
             }
         }
 
+        // Closed to the tray, the window is hidden and not gone, and its
+        // content would go on as if it were being looked at.
+        WhileShown(shown = isWindowVisible) {
         DesktopAppTheme(windowState) {
             val logs by dependencies.homeViewModel.logs.collectAsState()
             val homeState by dependencies.homeViewModel.state.collectAsState()
@@ -778,6 +782,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                     )
                 }
             }
+        }
         }
     }
 }

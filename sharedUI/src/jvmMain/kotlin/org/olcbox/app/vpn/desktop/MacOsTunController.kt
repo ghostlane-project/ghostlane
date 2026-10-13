@@ -44,6 +44,8 @@ internal class MacOsTunController(
          * engine signing in again, leave the tunnel they are there to carry.
          */
         bypassProcessPaths: List<String> = emptyList(),
+        /** Where the tun's sing-box is to say what it has carried; null for nowhere. */
+        trafficApi: SingBoxConfig.LocalApi? = null,
     ): Boolean {
         // Under a bypass, and for the lines' own binaries, the daemon's
         // sing-box dials direct from inside the process that owns the tun, so
@@ -101,6 +103,7 @@ internal class MacOsTunController(
             bindInterface = bindInterface,
             cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
             bypassProcessPaths = lineBinaries,
+            trafficApi = trafficApi,
         )
 
         var reply = client.start(config, ruleFiles)
