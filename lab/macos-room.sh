@@ -12,8 +12,15 @@
 # made as the app makes it (through the tunnel's own listener, at once, eight
 # seconds a try), and what the tunnel and the engine say.
 #
+# And what it did with 1.0.464 (SCENARIO=first): a first connect, no block
+# standing. The helper ran the engine, the room was joined, the tunnel's start
+# put the block in place, and the engine closed its room within six seconds,
+# three times of three. So: that order, and what the engine says of its room
+# in the half minute after the start.
+#
 #   sudo --preserve-env=… bash lab/macos-room.sh <helper-check> <sing-box> <user> <engine>
-# Environment: ROOM, ROOM_KEY, ROOM_CHANNEL, PROVIDER, TRANSPORT; GITHUB_* for the marks.
+# Environment: ROOM, ROOM_KEY, ROOM_CHANNEL, PROVIDER, TRANSPORT; SCENARIO (first, killed or all);
+# GITHUB_* for the marks.
 set -u
 HELPER="$1"; SB="$2"; WHO="$3"; ENGINE_BUILT="$4"
 WHO_UID="$(id -u "$WHO")"; WHO_GID="$(id -g "$WHO")"
@@ -207,31 +214,6 @@ done
 mark 1-no-switch "$r; $(told "$work/line/p1.log"); exit $([ -n "$EXIT" ] && echo is another machine || echo not reached)"
 [ -n "$EXIT" ] || { echo "the room cannot be joined from here at all: nothing to compare"; kill -TERM "$DAEMON"; exit 1; }
 
-say "2. the session that was running: a tunnel under the block for a core's line, then a room behind it"
-config first utun225 10810 10811 no
-note "the tunnel" "$(ask "$(request start first utun225)")"
-PID=$(field pid)
-sleep 2
-room_yaml "172.19.0.2,1.1.1.1:53" 10810 no
-by_helper p2.log
-note "the helper runs the engine behind it" "$BY_HELPER"
-r=$(ready_within "$SAID" 45 "$LPID")
-T=$(traced 10811 https://1.1.1.1/cdn-cgi/trace 8)
-note "the engine" "$r; $(told "$SAID")"
-note "the app's check, through the tunnel's listener" "$(who "$T")"
-mark 2-session "$r; the check: $(who "$T")"
-
-say "3. the tunnel is killed, and the app answers as it does: a stop that keeps the block, and the engine ended"
-if [ "${PID:-0}" -gt 1 ]; then kill -9 "$PID"; fi
-sleep 1.5
-note "stopped, the block kept" "$(ask "$(request stop keep)")"
-end_line
-D=$(seen_as "" 5)
-note "any program's request" "${D:+ANSWERED}${D:-refused}"
-note "the block's first rules" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | sed -n 2,3p | tr '\n' ';' | cut -c1-110)"
-mark 3-killed "any program: ${D:+ANSWERED}${D:-refused}"
-sleep 4
-
 # A connect to a room behind the block that stands, as the app makes it: the
 # helper runs the engine, and once its port is open the tunnel is started, and
 # the check is made at once.  <mark> <words> <utun> <port> <login>
@@ -286,10 +268,84 @@ reconnect() {
   end_line
   sleep 2
 }
+# A first connect to a room under the switch, as the app makes it: no block
+# stands, the helper runs the engine, the room is joined, and the tunnel's
+# start puts the block in place over it.
+first_connect() {
+  say "F. a first connect under the switch: the engine first, no block standing, and the tunnel's start after it"
+  note "at rest" "$(ask "$(request status)")"
+  room_yaml "$RESOLVER:53" 10808 no
+  by_helper pF.log
+  note "the helper runs the engine" "$BY_HELPER; as $(ps -o uid=,gid= -p "$LPID" 2>/dev/null | tr -s ' ')"
+  local r; r=$(ready_within "$SAID" 45 "$LPID")
+  note "the engine" "$r; $(told "$SAID")"
+  if [[ "$r" != ready* ]]; then
+    last_words "$SAID" 5
+    mark F-first "the room was not joined ($r): nothing to compare"
+    end_line; return
+  fi
+  sleep 1.5
+  config first-connect utun225 10808 10809 no
+  local closed_before; closed_before=$(grep -c "peer connection state changed: closed" "$SAID")
+  local started; started=$(ask "$(request start first-connect utun225)")
+  local t0; t0=$(now)
+  note "the tunnel's start, and with it the block" "$started"
+  note "what pf lets the group out by" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c "group = $GROUP") rule(s), $(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep "group = $GROUP" | grep -c 'no state') without state"
+  local first took1; first=$(traced 10809 https://1.1.1.1/cdn-cgi/trace 8); took1=$(( $(now) - t0 ))
+  note "the app's check, made at once" "$(who "$first") after ${took1}ms"
+  local at="" closed
+  for _ in $(seq 1 30); do
+    closed=$(grep -c "peer connection state changed: closed" "$SAID")
+    [ "$closed" -gt "$closed_before" ] && { at=$(( $(now) - t0 )); break; }
+    sleep 1
+  done
+  note "the engine's room, half a minute from the start" "${at:+CLOSED ${at}ms after the start}${at:-held}"
+  local again; again=$(traced 10809 https://1.1.1.1/cdn-cgi/trace 8)
+  note "the app's check, made again" "$(who "$again")"
+  echo "      the engine said, after its port was open:"; engine_said_after_ready "$SAID" 8
+  mark F-first "room ${at:+CLOSED ${at}ms after the start}${at:-held 30 s}; check at once: $(who "$first") ${took1}ms; again: $(who "$again")"
+  ask "$(request stop)" >/dev/null
+  end_line
+  sleep 2
+}
+
+# The session a Mac in the field had with 1.0.463: a tunnel killed, the block kept, and a room after it.
+after_a_kill() {
+say "2. the session that was running: a tunnel under the block for a core's line, then a room behind it"
+config first utun225 10810 10811 no
+note "the tunnel" "$(ask "$(request start first utun225)")"
+PID=$(field pid)
+sleep 2
+room_yaml "172.19.0.2,1.1.1.1:53" 10810 no
+by_helper p2.log
+note "the helper runs the engine behind it" "$BY_HELPER"
+r=$(ready_within "$SAID" 45 "$LPID")
+T=$(traced 10811 https://1.1.1.1/cdn-cgi/trace 8)
+note "the engine" "$r; $(told "$SAID")"
+note "the app's check, through the tunnel's listener" "$(who "$T")"
+mark 2-session "$r; the check: $(who "$T")"
+
+say "3. the tunnel is killed, and the app answers as it does: a stop that keeps the block, and the engine ended"
+if [ "${PID:-0}" -gt 1 ]; then kill -9 "$PID"; fi
+sleep 1.5
+note "stopped, the block kept" "$(ask "$(request stop keep)")"
+end_line
+D=$(seen_as "" 5)
+note "any program's request" "${D:+ANSWERED}${D:-refused}"
+note "the block's first rules" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | sed -n 2,3p | tr '\n' ';' | cut -c1-110)"
+mark 3-killed "any program: ${D:+ANSWERED}${D:-refused}"
+sleep 4
+
 reconnect a "as the app: the line asks a login, port 10808, the tunnel's name again" utun225 10808 yes
 reconnect b "the same with another name for the tunnel" utun226 10808 yes
 reconnect c "the same with no login" utun225 10808 no
 reconnect d "no login, the port the first session had" utun227 10810 no
+
+}
+
+SCENARIO="${SCENARIO:-first}"
+if [ "$SCENARIO" = first ] || [ "$SCENARIO" = all ]; then first_connect; fi
+if [ "$SCENARIO" = killed ] || [ "$SCENARIO" = all ]; then after_a_kill; fi
 
 ask "$(request line-stop)" >/dev/null
 no_engine

@@ -4,6 +4,13 @@ name: Lab (a room behind the Mac's kill switch)
 # gate's pool, behind the Mac helper's block; the exit is the other job.
 on:
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: first (a first connect), killed (a room after a killed tunnel) or all
+        default: first
+      minutes:
+        description: How long the exit stays in the room
+        default: "7"
   push:
     branches: [lab/macos-tunnel]
     paths: ['lab/macos-room.sh', 'lab/room-*.py', '.github/workflows/lab-room.yml']
@@ -20,6 +27,8 @@ concurrency:
 env:
   PROVIDER: vkcalls
   TRANSPORT: vp8channel
+  SCENARIO: ${{ inputs.scenario || 'first' }}
+  MINUTES: ${{ inputs.minutes || '7' }}
 
 jobs:
   exit:
@@ -48,7 +57,7 @@ jobs:
           git -C "$RUNNER_TEMP/olcrtc" checkout --quiet "${{ steps.pins.outputs.rev }}"
           (cd "$RUNNER_TEMP/olcrtc" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$RUNNER_TEMP/olcrtc-bin" ./cmd/olcrtc)
           ls -l "$RUNNER_TEMP/olcrtc-bin" | awk '{print $5, "bytes"}'
-      - name: In the room for thirteen minutes
+      - name: In the room for as long as the Mac needs it
         env:
           GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
         run: |
@@ -77,7 +86,7 @@ jobs:
             grep -E "error|failed|refused" "$dir/srv.log" | sed -E 's#https?://[^ ]+#<url>#g; s/[0-9A-Za-z+\/=_-]{16,}/<id>/g' | cut -c1-160 | tail -5
             exit 1
           fi
-          for minute in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
+          for minute in $(seq 1 "$MINUTES"); do
             sleep 60
             kill -0 "$srv" 2>/dev/null || { echo "the exit is gone in minute $minute"; break; }
             echo "minute $minute: sessions opened so far $(grep -c 'session .* opened' "$dir/srv.log"), lines $(wc -l < "$dir/srv.log")"
@@ -144,5 +153,5 @@ jobs:
           ROOM_CHANNEL="lab-$(printf 'channel|%s' "$seed" | shasum -a 256 | cut -c1-12)"
           echo "::add-mask::$ROOM_KEY"
           export ROOM ROOM_KEY ROOM_CHANNEL
-          sudo --preserve-env=ROOM,ROOM_KEY,ROOM_CHANNEL,PROVIDER,TRANSPORT,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA \
+          sudo --preserve-env=ROOM,ROOM_KEY,ROOM_CHANNEL,PROVIDER,TRANSPORT,SCENARIO,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA \
             bash lab/macos-room.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/olcrtc-bin"
