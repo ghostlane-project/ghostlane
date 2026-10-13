@@ -23,7 +23,11 @@ GROUP=7302243
 work="$(cd /tmp && pwd -P)/ghostlane-lab.$$"
 mkdir -p "$work/line" "$work/other"
 chmod 755 "$work"
-( sleep 400; pfctl -a "$ANCHOR" -F all; printf 'remove %s\n' "$KEY" | scutil ) >/dev/null 2>&1 &
+empties_in() {
+  python3 -c 'import os,sys,time,subprocess
+os.setsid(); time.sleep(int(sys.argv[1])); subprocess.run(["/sbin/pfctl","-a",sys.argv[2],"-F","all"])' "$1" "$ANCHOR" >/dev/null 2>&1 &
+}
+empties_in 330
 
 say() { printf '\n== %s\n' "$*"; }
 # What was found so far, written where it outlives this machine: a commit status.
@@ -100,7 +104,7 @@ config["route"]["rules"][2]["process_path"] = lines
 for n in range(225, 256):
     name = "utun%d" % n
     tun["interface_name"] = name
-    config["log"] = {"level": "debug", "output": work + "/" + name + ".log", "timestamp": True, "disable_color": True}
+    config["log"] = {"level": "debug", "output": work + "/" + name + ".log", "timestamp": True}
     json.dump(config, open(work + "/" + name + ".json", "w"))
 PY
 request() {
@@ -164,8 +168,17 @@ a=$(udp "$LINE_PROBE" -); b=$(udp "$LINE_PROBE" "$MINE"); c=$(code_of "http://$E
 note "unbound, asked directly" "$a"; note "bound to $MINE, asked directly" "$b"; note "a request elsewhere" "$c"
 mark 0-nothing-up "unbound: $a | bound: $b | http $c"
 
+started() {
+  local reply; reply=$(ask "$1")
+  echo "   $reply" | cut -c1-260
+  if [[ "$reply" != ok=True* ]]; then
+    tail -1 "$work/said" | python3 -c 'import json,sys; print("   its log:", json.loads(sys.stdin.readline()).get("logTail","")[-600:])'
+    mark "$2-did-not-start" "$reply"
+    ask "$(request release)" >/dev/null; exit 1
+  fi
+}
 say "1. a tun, no block"
-echo "   $(ask "$(request start utun225 names)")"
+started "$(request start utun225 names)" 1
 r1=$(udp "$OTHER_PROBE" -);       f1=$(flow "$r1"); note "unbound, a program the tun has no rule for" "$r1 | $f1"
 r2=$(udp "$OTHER_PROBE" "$MINE"); f2=$(flow "$r2"); note "bound, a program the tun has no rule for" "$r2 | $f2"
 r3=$(udp "$LINE_PROBE" "$MINE");  f3=$(flow "$r3"); note "bound, a line's program" "$r3 | $f3"
@@ -177,8 +190,9 @@ mark 1-tun-no-block "unbound: ${r1#port * } [${f1:0:22}] | bound: ${r2#port * } 
 echo "   $(ask "$(request stop)")"
 
 say "2. a tun behind the block as the helper loads it"
-echo "   $(ask "$(request start utun226 names hold "$SERVER")")"
+started "$(request start utun226 names hold "$SERVER")" 2
 PID=$(tunnel_pid)
+[ "${PID:-0}" -gt 1 ] || { mark 2-no-pid "the helper named no process"; ask "$(request release)" >/dev/null; exit 1; }
 r1=$(udp "$LINE_PROBE" -);        note "unbound, a line's program" "$r1 | $(flow "$r1")"
 r2=$(udp "$LINE_PROBE" "$MINE");  note "bound, a line's program" "$r2 | $(flow "$r2")"
 r3=$(udp "$OTHER_PROBE" "$MINE"); note "bound, a program the tun has no rule for" "$r3 | $(flow "$r3")"
@@ -187,8 +201,8 @@ note "TCP bound to $MINE" "$t"; note "a request elsewhere" "$e"
 mark 2-block-as-loaded "unbound line: ${r1#port * } | bound line: ${r2#port * } | bound other: ${r3#port * } | tcp bound $t | elsewhere $e"
 
 say "3. the same tunnel, the block with a way into the tun for what is left on a physical interface"
-# Whatever the rule does to this machine, the anchor is emptied in forty seconds.
-( sleep 40; pfctl -a "$ANCHOR" -F all ) >/dev/null 2>&1 &
+# Whatever the rule does to this machine, the anchor is emptied in fifty seconds.
+empties_in 50
 mark 3a-before-the-rule "about to load route-to"
 l=$(load_rules utun226 flags "$SERVER"); WAY=flags
 if ! pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -q route-to; then l="$l; $(load_rules utun226 plain "$SERVER")"; WAY=plain; fi
@@ -228,6 +242,7 @@ bad=0; rows=""
 for i in $(seq 1 16); do
   name="utun$((226 + i))"
   reply=$(ask "$(request start "$name" names hold "$SERVER")")
+  if [[ "$reply" != ok=True* ]]; then echo "   $i $name did not start: ${reply:0:200}"; mark 7-did-not-start "$i: $reply"; break; fi
   t0=$(now); waited="-"
   if [ $((i % 2)) -eq 0 ]; then
     waited="never"

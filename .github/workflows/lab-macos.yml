@@ -30,7 +30,7 @@ jobs:
         run: |
           src=desktopApp/tunneldaemon
           shared=("$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" \
-                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/Daemon.swift")
+                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/LineChild.swift" "$src/Daemon.swift")
           swiftc -O -target "$(uname -m)-apple-macos13.0" \
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
