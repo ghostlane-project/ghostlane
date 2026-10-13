@@ -170,6 +170,32 @@ echo "   by name through the tunnel: $(as_user curl -4 -s -o /dev/null -w '%{htt
 echo "   the way out is still: $(route -n get default | awk '/gateway:|interface:/{printf "%s ", $2}')"
 sleep 5
 
+for r in $RESOLVERS; do route -n delete -host "$r" -interface utun127 >/dev/null 2>&1; done
+
+say "A4: the system told, for as long as a key stands, to ask an address inside the tunnel"
+scutil <<SC
+d.init
+d.add ServerAddresses * 172.19.0.2
+d.add SupplementalMatchDomains * ""
+set State:/Network/Service/org.olcbox.app.tunnel/DNS
+SC
+sleep 1
+echo "   the system asks now: $(scutil --dns | awk '/nameserver\[/{print $3}' | tr '\n' ' ' | cut -c1-90)"
+scutil --dns | sed -n 1,12p | sed 's/^/      /'
+within 6 tcpdump -l -i utun127 -n -c 6 udp port 53 2>/dev/null | sed 's/^/   seen on the tunnel: /' &
+within 6 tcpdump -l -i "$IF" -n -c 6 udp port 53 2>/dev/null | sed "s/^/   seen on $IF: /" &
+sleep 1
+echo "   www.debian.org, by the system: $(within 4 dscacheutil -q host -a name www.debian.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   www.python.org, by the system: $(within 4 dscacheutil -q host -a name www.python.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+echo "   by name through the tunnel: $(as_user curl -4 -s -o /dev/null -w '%{http_code} in %{time_total}s' --max-time 8 https://www.debian.org/ 2>/dev/null || echo 'no answer')"
+sleep 5
+scutil <<SC
+remove State:/Network/Service/org.olcbox.app.tunnel/DNS
+SC
+sleep 1
+echo "   the key removed, the system asks: $(scutil --dns | awk '/nameserver\[/{print $3}' | sort -u | tr '\n' ' ')"
+echo "   www.gnu.org, by the system, after: $(within 4 dscacheutil -q host -a name www.gnu.org 2>&1 | awk '/ip_address/{print $2}' | head -1)"
+
 say "B: the tunnel dies with nothing held"
 kill -9 "$TUN"; sleep 1.5
 echo "   the interface: $(ifconfig utun127 2>&1 | head -1); routes naming it: $(netstat -rn -f inet | grep -c ' utun127 ')"
