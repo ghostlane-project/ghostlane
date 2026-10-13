@@ -334,6 +334,22 @@ class MacOsTunControllerTest {
         assertEquals(listOf("status"), daemon.verbs)
     }
 
+    // Whatever the reason, a tunnel that came up with no block behind it under
+    // the switch is not the one that was asked for, and a status that said
+    // Connected over it would be promising a hold that is not there.
+    @Test fun aTunnelStartedUnderTheSwitchWithNoBlockBehindItIsStoppedAndRefused() = withFakeDaemon(
+        listOf(idle3, running3, idle3)
+    ) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        val failure = assertFailsWith<IllegalStateException> { controller.connectUnderTheSwitch(serverHost = null) }
+        assertTrue("kill switch" in failure.message.orEmpty(), failure.message)
+        assertEquals(listOf("status", "start", "stop"), daemon.verbs)
+        assertFalse(controller.holdsTraffic)
+        assertFalse(controller.blockStands)
+        assertTrue(log.none { "kill switch in place" in it }, log.toString())
+    }
+
     @Test fun aHelperThatSteppedAsideIsAskedAgainWhatItSpeaks() = withFakeDaemon(
         listOf(
             idle,

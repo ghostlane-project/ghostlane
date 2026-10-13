@@ -179,6 +179,14 @@ internal class MacOsTunController(
                 reply = ask(helper)
             }
         }
+        if (reply is DaemonReply.Ok && killSwitch && !reply.holds) {
+            // Asked for behind the block and up without one. Not the tunnel
+            // that was asked for, so not one to call a session over: the
+            // status would promise a hold that is not there.
+            addLog("macOS TUN: the tunnel came up with no kill switch behind it; stopping it")
+            blockStands = (client.stop() as? DaemonReply.Ok)?.holds ?: false
+            error("the kill switch could not be put in place, so the tunnel was not started")
+        }
         when (reply) {
             is DaemonReply.Ok -> {
                 tunUp = true

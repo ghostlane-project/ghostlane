@@ -38,7 +38,12 @@ Two things beside the tun are the daemon's, because only root can hold them: who
 the system asks for a name while the tunnel runs ([Names](#names)), and the kill
 switch's block ([The kill switch](#the-kill-switch)). Both are the helper's from
 its third protocol on. A helper from before them goes on doing what it did, and
-the app asks which it is talking to before it hands it a tunnel.
+the app asks which it is talking to before it hands it a tunnel. After an
+update of the app the previous build's helper is still the one running: a
+connect tells it to stop before anything else is started, which is what makes
+it step aside for the one on disk, and the log says "the tunnel helper was
+updated". A tunnel that comes up under the switch with no block behind it,
+whatever the reason, is stopped and the connect fails saying so.
 
 ## What the app reads back from it
 
