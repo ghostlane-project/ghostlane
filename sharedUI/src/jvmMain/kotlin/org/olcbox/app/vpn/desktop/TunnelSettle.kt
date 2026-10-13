@@ -75,15 +75,34 @@ internal object TunnelSettle {
     /**
      * What a tunnel's sing-box said of a trouble, out of all it said
      * ([MacOsTunController.diagnostics]): its errors and warnings, the last
-     * [limit] of them, without the colours a terminal would have shown them in.
+     * [limit] kinds of them, without the colours a terminal would have shown
+     * them in.
+     *
+     * A trouble that differs from another by its numbers alone (the moment,
+     * the connection, the port it came from) is the same trouble: it is said
+     * once, as it was said last, with how many times. Kept line by line, one
+     * that repeats takes every place: on a Mac in the field (1.0.464) another
+     * program kept knocking at the tunnel's own listener in a tongue it does
+     * not speak, and the eight lines kept were that line eight times, with
+     * nothing of what the tunnel had said about the check.
      */
-    fun troubles(tail: String, limit: Int = 8): List<String> =
+    fun troubles(tail: String, limit: Int = 8): List<String> {
+        val kinds = LinkedHashMap<String, Pair<String, Int>>()
         tail.lineSequence()
             .map { COLOURS.replace(it, "").trim() }
             .filter { line -> LEVELS_OF_TROUBLE.any(line::startsWith) }
-            .toList()
-            .takeLast(limit)
+            .forEach { line ->
+                val kind = NUMBERS.replace(line, "#")
+                // Taken out and put back, so that it stands where it was last said.
+                val times = (kinds.remove(kind)?.second ?: 0) + 1
+                kinds[kind] = line to times
+            }
+        return kinds.values.toList().takeLast(limit).map { (line, times) ->
+            if (times > 1) "$line ($times times, the last one shown)" else line
+        }
+    }
 
+    private val NUMBERS = Regex("[0-9]+")
     private val COLOURS = Regex("\u001B\\[[0-9;]*m")
     private val LEVELS_OF_TROUBLE = listOf("ERROR", "WARN", "FATAL", "PANIC", "panic:")
 }

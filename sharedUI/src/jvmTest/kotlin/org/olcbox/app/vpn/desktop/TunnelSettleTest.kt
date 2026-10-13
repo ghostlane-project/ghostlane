@@ -120,12 +120,54 @@ class TunnelSettleTest {
 
     @Test
     fun onlyTheLastOfMuchTroubleIsKept() {
-        val tail = (1..40).joinToString("\n") { "ERROR[00$it] connection: number $it" }
+        // Forty troubles that are not each other: told apart by more than a number.
+        fun named(it: Int) = "host-${'a' + it % 26}${'a' + it / 26}.example"
+        val tail = (1..40).joinToString("\n") { "ERROR[00$it] connection: open connection to ${named(it)}:443: refused" }
 
         val kept = TunnelSettle.troubles(tail, limit = 5)
 
         assertEquals(5, kept.size)
-        assertEquals("ERROR[0040] connection: number 40", kept.last())
+        assertEquals("ERROR[0040] connection: open connection to ${named(40)}:443: refused", kept.last())
+    }
+
+    @Test
+    fun aTroubleSaidManyTimesIsSaidOnceWithHowMany() {
+        // 1.0.464 on a Mac in the field: something else on the machine kept
+        // knocking at the tunnel's own listener in a tongue it does not speak,
+        // and the eight lines that were kept were that one line eight times.
+        // What the tunnel had said of the check itself was not among them.
+        val knocks = (0 until 8).joinToString("\n") {
+            "\u001b[31mERROR\u001b[0m[00${10 + it / 3}] [\u001b[38;5;201m${355653305 + it}\u001b[0m 0ms] " +
+                "inbound/socks[verify-in]: process connection from 127.0.0.1:${62125 + it}: invalid argument"
+        }
+        val ofTheCheck = "ERROR[0001] [883521568 1ms] connection: open connection to 1.1.1.1:443 " +
+            "using outbound/socks[out]: socks5: request rejected, code=4"
+
+        assertEquals(
+            listOf(
+                ofTheCheck,
+                "ERROR[0012] [355653312 0ms] inbound/socks[verify-in]: process connection from 127.0.0.1:62132: " +
+                    "invalid argument (8 times, the last one shown)"
+            ),
+            TunnelSettle.troubles(ofTheCheck + "\n" + knocks + "\n")
+        )
+    }
+
+    @Test
+    fun aTroubleThatComesBackIsKeptWhereItWasLastSaid() {
+        val tail = listOf(
+            "WARN[0001] dns: exchange failed for a.example. IN A: context deadline exceeded",
+            "ERROR[0002] connection: dial tcp 127.0.0.1:10808: connect: connection refused",
+            "WARN[0009] dns: exchange failed for a.example. IN A: context deadline exceeded"
+        ).joinToString("\n")
+
+        assertEquals(
+            listOf(
+                "ERROR[0002] connection: dial tcp 127.0.0.1:10808: connect: connection refused",
+                "WARN[0009] dns: exchange failed for a.example. IN A: context deadline exceeded (2 times, the last one shown)"
+            ),
+            TunnelSettle.troubles(tail)
+        )
     }
 
     @Test
