@@ -100,6 +100,22 @@ android {
         }
         create("play") {
             dimension = "store"
+            // Android 7, for the bundle Google Play takes; the build on the
+            // releases page stays at Android 6 with the rest of the app.
+            //
+            // Play's "automatic protection" is on for this app in the console
+            // (it is on by default for a new app), and since some day between
+            // 5 and 13 October 2026 Play refuses a bundle for it below API 24:
+            // "Play automatic protection requires a minimum SDK version of 24
+            // or higher". 1.0.456 went up at 23; 1.0.458 was refused at upload,
+            // in a step that may fail without failing the release, so the
+            // release was green and the internal track kept 1.0.456.
+            //
+            // The other way out is the console's: turn automatic protection
+            // off, and this line can go. It is the same key and the same
+            // version code either way, so a phone moves between the two builds
+            // as before.
+            minSdk = 24
         }
     }
 
