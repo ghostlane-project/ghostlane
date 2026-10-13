@@ -22,9 +22,9 @@ Design
 
 Servers
 • Pin a room to the top of its list with the pin on its card. Fold the list away and the pinned rooms stay on the screen.
-• A list you folded is still folded when you open the app again.
+• The screen is as you left it when you come back: a list you folded, the transport you chose and your place in the list.
 • A flag at the start of a server's name is shown as a flag.
 • olcRTC rooms on one more meeting service now connect.
 
 Traffic
-• The line under the connection status is now a chart: download and upload as separate bars on one scale, with the current speed of each in figures.
+• The line under the connection status is now a chart: download and upload as separate bars on one scale, second by second, with the current speed of each in figures.
