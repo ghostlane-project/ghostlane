@@ -137,6 +137,8 @@
     <string name="kill_switch">Kill switch</string>
     <string name="kill_switch_blocked">The tunnel is down and the kill switch is blocking traffic. Connect again, or turn the kill switch off in the connection settings to unblock it. Either one asks for the administrator password.</string>
     <string name="kill_switch_note">If the tunnel's process stops, traffic is blocked, the local network included, instead of going out directly. It stays blocked until you connect again or turn this off, and either one asks for the administrator password. Programs running as root are not held, and the block does not outlast a restart of the computer. Takes effect at the next connection.</string>
+    <string name="kill_switch_blocked_mac">The tunnel is down and the kill switch is blocking traffic. Connect again, or turn the kill switch off in the connection settings to unblock it.</string>
+    <string name="kill_switch_note_mac">If the tunnel's process stops, traffic is blocked instead of going out directly; the local network stays reachable. It stays blocked until you connect again or turn this off. The block does not outlast a restart of the Mac, and it holds another VPN's traffic too. Turning it on takes effect at the next connection; turning it off, at once.</string>
     <string name="label_transport">Transport</string>
     <string name="lan_choose_interface">Choose the private interface that client devices can reach:</string>
     <string name="lan_connect_first">Connect this computer to a private LAN before enabling sharing.</string>

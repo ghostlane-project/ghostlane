@@ -629,6 +629,151 @@ class SingBoxConfigTest {
         assertEquals(room, strictRoom.replace("\"strict_route\":true,", ""))
     }
 
+    // --- the macOS tun that answers every name ------------------------------
+    //
+    // A tun takes the routes and leaves the system's resolver where it was.
+    // Where that is the router, its address is on the local link, which no
+    // route of a tun outranks, so every name went to it beside the tunnel. The
+    // helper points the system at an address inside the tun instead, and the
+    // tun then has to answer whatever is asked there, on every line.
+
+    private fun macTun(
+        lossy: Boolean = false,
+        routing: Routing = Routing.Global,
+        probe: String? = null,
+        lines: List<String> = listOf("/Apps/Ghostlane/bin/sing-box", "/Apps/Ghostlane/bin/olcrtc-darwin-arm64")
+    ) = SingBoxConfig.buildDesktopTun(
+        corePort = 10810,
+        verifyPort = 10811,
+        upstreamUdpIsLossy = lossy,
+        directDnsDomains = listOf("de1.example.org"),
+        routing = routing,
+        bindInterface = "en0",
+        cacheFilePath = "/x/cache.db",
+        bypassProcessPaths = lines,
+        answersEveryName = true,
+        namesProgramsFor = probe
+    )
+
+    private fun dnsRules(json: String) = obj(json)["dns"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }
+
+    @Test
+    fun aTunThatAnswersEveryNameDoesSoOnACoresLineToo() {
+        // The native shape hijacked nothing: its names rode the tunnel as
+        // datagrams when they entered it at all, and a router's never did.
+        val json = macTun(lossy = false)
+        val servers = dnsServers(json)
+        assertEquals(listOf("dns-remote", "dns-direct", "dns-fakeip"), servers.map { str(it, "tag") })
+        // By datagram through a line that carries them, as a room's go by TCP.
+        assertEquals("udp", str(servers[0], "type"))
+        assertEquals("tcp", str(dnsServers(macTun(lossy = true))[0], "type"))
+        // Asked of the network underneath by sing-box itself, which reads the
+        // interface's own resolvers and not the one the system was just given.
+        assertEquals("local", str(servers[1], "type"))
+        assertEquals("dns-remote", str(obj(json)["dns"]!!.jsonObject, "final"))
+        val fake = dnsRules(json).first { it["server"]?.jsonPrimitive?.content == "dns-fakeip" }
+        assertEquals(listOf("A", "AAAA"), strings(fake, "query_type"))
+        val cache = obj(json)["experimental"]!!.jsonObject["cache_file"]!!.jsonObject
+        assertEquals("/x/cache.db", str(cache, "path"))
+        assertEquals("true", str(cache, "store_fakeip"))
+    }
+
+    @Test
+    fun itAnswersBeforeItLetsTheLinesBinariesOut() {
+        // The system asks an address inside the tun, and so does a line that
+        // is given no resolver of its own. Let out first, as on Windows, a
+        // line's question to that address would leave by the physical
+        // interface for an address that is nowhere.
+        val rules = routeRules(macTun())
+        assertEquals("sniff", str(rules[0], "action"))
+        assertEquals("hijack-dns", str(rules[1], "action"))
+        assertEquals(listOf("tun-in"), strings(rules[2], "inbound"))
+        assertTrue(rules[2].containsKey("process_path"))
+        assertEquals("direct", str(rules[2], "outbound"))
+        assertEquals("reject", str(rules[3], "action"))
+    }
+
+    @Test
+    fun whatALinesBinaryAsksIsAnsweredWithRealAddresses() {
+        // A core asks for its server and an engine for its meeting service.
+        // A fake address for either is an address inside the tunnel that the
+        // asker is there to build.
+        val lines = listOf("/Apps/Ghostlane/bin/sing-box", "/Apps/Ghostlane/bin/xray")
+        val rules = dnsRules(macTun(lines = lines))
+        assertEquals(lines, strings(rules[0], "process_path"))
+        assertEquals("dns-direct", str(rules[0], "server"))
+        // Then the first line's own server, whoever asks: Xray asks through
+        // the system, and the system is not a line's binary.
+        assertEquals(listOf("de1.example.org"), strings(rules[1], "domain"))
+        assertEquals("dns-direct", str(rules[1], "server"))
+        // A tun with no binaries to let out has nobody to answer that way.
+        assertTrue(dnsRules(macTun(lines = emptyList())).none { it.containsKey("process_path") })
+    }
+
+    @Test
+    fun theLocalNetworksOwnNamesAreAskedOfTheLocalNetwork() {
+        // Nobody at the far end of a tunnel knows the printer. Before the
+        // tunnel's names, after the user's own rules.
+        val rules = dnsRules(macTun())
+        val local = rules.single { it["domain_suffix"] != null }
+        assertEquals("dns-direct", str(local, "server"))
+        val suffixes = strings(local, "domain_suffix")
+        for (suffix in listOf("lan", "home.arpa", "local", "internal", "168.192.in-addr.arpa", "10.in-addr.arpa", "31.172.in-addr.arpa")) {
+            assertTrue(suffix in suffixes, "$suffix is not asked of the local network: $suffixes")
+        }
+        // A name with no dot in it is the local network's by definition.
+        assertEquals(listOf("^[^.]+$"), strings(local, "domain_regex"))
+        val fake = rules.indexOfFirst { it["server"]?.jsonPrimitive?.content == "dns-fakeip" }
+        assertTrue(rules.indexOf(local) in 0 until fake, "the local names come after the fake addresses")
+
+        val underRules = dnsRules(macTun(routing = desktopBypass()))
+        val userAndRegion = underRules.indexOfLast { it["rule_set"] != null }
+        assertTrue(userAndRegion in 0 until underRules.indexOfFirst { it["domain_suffix"] != null && it["domain_regex"] != null })
+    }
+
+    @Test
+    fun oneNameIsAnsweredOnlyToAProgramTheTunCanName() {
+        // For some seconds after it starts, sing-box names the program behind
+        // no connection that comes from its own tun, and the rule on the
+        // lines' binaries matches nothing. The app asks this name until the
+        // answer says that time is over, before it starts a line behind a tun.
+        val app = "/Applications/Ghostlane.app/Contents/MacOS/Ghostlane"
+        val rules = dnsRules(macTun(probe = app))
+        assertEquals(listOf(SingBoxConfig.NAMES_PROGRAMS_PROBE), strings(rules[0], "domain"))
+        assertEquals(listOf(app), strings(rules[0], "process_path"))
+        assertEquals("predefined", str(rules[0], "action"))
+        assertEquals(
+            listOf("${SingBoxConfig.NAMES_PROGRAMS_PROBE}. IN A ${SingBoxConfig.NAMES_PROGRAMS_ANSWER}"),
+            strings(rules[0], "answer")
+        )
+        // Asked by anybody else, or by the app before then: no such name.
+        assertEquals(listOf(SingBoxConfig.NAMES_PROGRAMS_PROBE), strings(rules[1], "domain"))
+        assertEquals("predefined", str(rules[1], "action"))
+        assertEquals("NXDOMAIN", str(rules[1], "rcode"))
+        assertTrue(rules[1]["process_path"] == null)
+        // And not there at all unless asked for.
+        assertTrue(SingBoxConfig.NAMES_PROGRAMS_PROBE !in macTun(probe = null))
+    }
+
+    @Test
+    fun aTunNotAskedToAnswersNamesAsItAlwaysDid() {
+        // Windows and Linux, and a Mac whose helper is from before this.
+        val native = SingBoxConfig.buildDesktopTun(
+            corePort = 10810, verifyPort = 10811, directDnsDomains = listOf("de1.example.org"),
+            bindInterface = "en0", bypassProcessPaths = listOf("/Apps/Ghostlane/bin/sing-box")
+        )
+        assertTrue("hijack-dns" !in native)
+        assertTrue("fakeip" !in native)
+        val room = routeRules(
+            SingBoxConfig.buildDesktopTun(
+                corePort = 10810, verifyPort = 10811, upstreamUdpIsLossy = true,
+                bindInterface = "en0", bypassProcessPaths = listOf("/Apps/Ghostlane/bin/sing-box")
+            )
+        )
+        assertTrue(room[0].containsKey("process_path"))
+        assertEquals("hijack-dns", str(room[2], "action"))
+    }
+
     @Test
     fun desktopTunPutsTheRemoteResolverFirstWhenQueriesAreHijacked() {
         // The first server answers anything no rule claims. Local first would send

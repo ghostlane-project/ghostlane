@@ -47,6 +47,7 @@ jobs:
     outputs:
       shared_kotlin: ${{ steps.paths.outputs.shared_kotlin }}
       cli: ${{ steps.paths.outputs.cli }}
+      mac_helper: ${{ steps.paths.outputs.mac_helper }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -93,6 +94,7 @@ jobs:
           if [ -z "$base" ]; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
             echo 'cli=true' >> "$GITHUB_OUTPUT"
+            echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -110,6 +112,17 @@ jobs:
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
+          fi
+          # The Mac's tunnel helper is the one part of the app that is root, and
+          # nothing else here compiles it: only a release build does, with a
+          # signing identity. Built and asked on a Mac when it, what asks it, or
+          # the config it is handed changed. Not on a change to this file alone:
+          # a Mac's minutes are billed tenfold.
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$'; then
+            echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
+            echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'mac_helper=false' >> "$GITHUB_OUTPUT"
           fi
 
   checks:
@@ -366,3 +379,43 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Compile existing Apple targets
         run: ./gradlew :sharedUI:compileKotlinIosArm64 :sharedUI:compileKotlinMacosArm64 --stacktrace
+
+  mac-helper:
+    # The Mac's tunnel helper, built and asked on a Mac: the one part of the
+    # app that runs as root, and until this job the one part no check compiled.
+    # It loads a block into the packet filter, points the system's resolver at
+    # a tun and kills the tun, which a hosted runner is the right place for.
+    needs: scope
+    if: always() && needs.scope.outputs.mac_helper == 'true'
+    name: macOS tunnel helper
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      # The release the app pins (SingBoxConfig.SINGBOX_VERSION).
+      SINGBOX_VERSION: "1.13.14"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build the helper as the app's build does, and once to be asked over a pipe
+        run: |
+          src=desktopApp/tunneldaemon
+          shared=("$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" \
+                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/Daemon.swift")
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/ProofKitTunnelDaemon" "${shared[@]}" "$src/main.swift"
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
+      - name: The pinned sing-box, for this Mac
+        run: |
+          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
+          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
+          "$RUNNER_TEMP/sing-box" version | head -1
+      - name: Ask the helper what it does
+        run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER"
