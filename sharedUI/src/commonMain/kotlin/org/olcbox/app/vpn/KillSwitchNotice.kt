@@ -68,3 +68,19 @@ internal fun shownUnderKillSwitch(status: VpnStatus, holdsTraffic: Boolean, sent
     status is VpnStatus.Disconnected || status is VpnStatus.Error -> VpnStatus.Error(sentence)
     else -> status
 }
+
+/**
+ * What an attempt failed of, when the screen shows a kill switch's sentence in
+ * its place ([shownUnderKillSwitch]); null when the screen shows the failure
+ * itself, or there is none.
+ *
+ * The sentence is the same before a connect and after one that failed, so on
+ * the screen alone an attempt that failed looked like one that had not been
+ * made: "what went wrong is in the log" left a person looking at the same
+ * words and wondering whether pressing Connect had done anything. The reason
+ * is said beside the sentence, once, where the app's other one-off messages
+ * appear, and the sentence stays: the block is still what matters most.
+ */
+internal fun failureHiddenByHold(requested: VpnStatus, shown: VpnStatus): String? =
+    (requested as? VpnStatus.Error)?.message
+        ?.takeIf { shown.isKillSwitchHold() && !it.isKillSwitchHoldSentence() }

@@ -7,6 +7,7 @@ import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.datasource.withProxyAuthentication
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.TimeSource
 
 /** What the far end of the tunnel looks like from the internet. */
 data class TunnelExit(
@@ -34,6 +35,12 @@ data class TunnelExit(
         const val TAIL_CHARS = 8
     }
 }
+
+/**
+ * A probe that brought no exit back: which one, what it said, and how long it
+ * took to say it. A refusal is said at once, and silence takes the whole wait.
+ */
+data class ProbeFailure(val url: String, val reason: String, val tookMs: Long)
 
 /**
  * Confirms that traffic actually reaches the internet through the tunnel, instead
@@ -68,6 +75,9 @@ object TunnelVerifier {
 
     const val DEFAULT_TIMEOUT_MS = 8_000L
 
+    /** What a probe says that was answered, by something that is not the trace. */
+    const val NO_ADDRESS_IN_ANSWER = "the answer names no address"
+
     /**
      * Parses the `key=value` lines Cloudflare returns. Kept pure and separate from
      * the request so the format is covered by tests without a network.
@@ -93,6 +103,11 @@ object TunnelVerifier {
      * The URLs are tried in order and the first answer wins, so one unreachable
      * endpoint cannot condemn a working tunnel. [probeUrls] is also how tests point
      * the probe at a local server; production callers leave it alone.
+     *
+     * [onFailure] is told of every probe that brought no exit back, as it
+     * fails. Null alone could not be read: a listener that refuses at once
+     * because it is not there yet, and a far end that says nothing for the
+     * whole wait, are different news for whoever has to act on them.
      */
     suspend fun verify(
         socksHost: String,
@@ -100,7 +115,8 @@ object TunnelVerifier {
         username: String = "",
         password: String = "",
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
-        probeUrls: List<String> = DEFAULT_PROBE_URLS
+        probeUrls: List<String> = DEFAULT_PROBE_URLS,
+        onFailure: (ProbeFailure) -> Unit = {}
     ): TunnelExit? {
         val proxy = SubscriptionFetchProxy(
             host = socksHost,
@@ -120,7 +136,7 @@ object TunnelVerifier {
             // description alone does nothing. olcRTC's local proxy is the one that
             // demands a login, so without this a working olcRTC tunnel would fail
             // its own verification and be reported as dead.
-            withProxyAuthentication(proxy) { firstAnswer(client, probeUrls) }
+            withProxyAuthentication(proxy) { firstAnswer(client, probeUrls, onFailure) }
         } catch (e: CancellationException) {
             // A superseded connect must stay cancelled, not be reported as a dead
             // tunnel — CancellationException is an Exception and would be swallowed
@@ -153,7 +169,7 @@ object TunnelVerifier {
             socketTimeoutMs = timeoutMs
         )
         return try {
-            firstAnswer(client, probeUrls)
+            firstAnswer(client, probeUrls, onFailure = {})
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -165,20 +181,38 @@ object TunnelVerifier {
 
     /**
      * The first URL that answers with a trace wins, so one unreachable
-     * endpoint cannot condemn a working tunnel.
+     * endpoint cannot condemn a working tunnel. Each one that does not is
+     * reported as it fails.
      */
-    private suspend fun firstAnswer(client: HttpClient, probeUrls: List<String>): TunnelExit? {
+    private suspend fun firstAnswer(
+        client: HttpClient,
+        probeUrls: List<String>,
+        onFailure: (ProbeFailure) -> Unit
+    ): TunnelExit? {
         for (url in probeUrls) {
-            val exit = try {
-                parseTrace(client.get(url).bodyAsText())
+            val asked = TimeSource.Monotonic.markNow()
+            val reason = try {
+                val exit = parseTrace(client.get(url).bodyAsText())
+                if (exit != null) return exit
+                NO_ADDRESS_IN_ANSWER
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                null
+            } catch (e: Exception) {
+                reasonOf(e)
             }
-            if (exit != null) return exit
+            onFailure(ProbeFailure(url, reason, asked.elapsedNow().inWholeMilliseconds))
         }
         return null
     }
+
+    /** What an exception says, and what stands behind it when that says more. */
+    private fun reasonOf(e: Throwable): String {
+        fun said(t: Throwable) = listOfNotNull(t::class.simpleName, t.message?.takeIf { it.isNotBlank() }).joinToString(": ")
+        val own = said(e)
+        val behind = e.cause?.takeIf { it !== e }?.let(::said)?.takeIf { it.isNotBlank() && it !in own }
+        return (if (behind != null) "$own (behind it: $behind)" else own).ifBlank { "no reason given" }.take(MAX_REASON_CHARS)
+    }
+
+    private const val MAX_REASON_CHARS = 220
 
 }

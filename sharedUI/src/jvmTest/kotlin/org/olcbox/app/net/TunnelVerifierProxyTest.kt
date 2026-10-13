@@ -14,6 +14,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * The verifier decides whether the app is allowed to say "connected", so the part
@@ -157,6 +158,74 @@ class TunnelVerifierProxyTest {
         }
 
         assertEquals("203.0.113.7", exit?.ip)
+    }
+
+    /**
+     * A check that found nothing used to say nothing else: refused at once by a
+     * listener that is not there yet, and unanswered by the far end after the
+     * whole wait, were the same null. They are not the same news, and whoever
+     * reads the log could not tell a tunnel that had not begun to serve from a
+     * server that was down.
+     */
+    @Test
+    fun aProbeThatWasRefusedSaysSoAndHowSoon() {
+        val free = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+        val said = mutableListOf<ProbeFailure>()
+
+        val exit = runBlocking {
+            TunnelVerifier.verify(
+                socksHost = "127.0.0.1",
+                socksPort = free,
+                timeoutMs = 6_000,
+                probeUrls = listOf("http://127.0.0.1:1/cdn-cgi/trace"),
+                onFailure = { said += it }
+            )
+        }
+
+        assertNull(exit)
+        assertEquals(listOf("http://127.0.0.1:1/cdn-cgi/trace"), said.map { it.url })
+        assertTrue(said.single().reason.isNotBlank(), "a failure names what went wrong")
+        assertTrue(said.single().tookMs < 4_000, "a refusal is said at once, not after the wait: ${said.single()}")
+    }
+
+    @Test
+    fun everyProbeThatFailedIsReportedAndTheOneThatAnsweredIsNot() {
+        val target = traceServer("ip=203.0.113.7\nloc=DE\n")
+        val proxy = socksProxy()
+        val said = mutableListOf<ProbeFailure>()
+
+        val exit = runBlocking {
+            TunnelVerifier.verify(
+                socksHost = "127.0.0.1",
+                socksPort = proxy.port,
+                timeoutMs = 3_000,
+                probeUrls = listOf("http://127.0.0.1:1/cdn-cgi/trace", probeUrl(target)),
+                onFailure = { said += it }
+            )
+        }
+
+        assertEquals("203.0.113.7", exit?.ip)
+        assertEquals(listOf("http://127.0.0.1:1/cdn-cgi/trace"), said.map { it.url })
+    }
+
+    @Test
+    fun anAnswerThatNamesNoAddressIsAFailureThatSaysSo() {
+        // A captive portal's page came back: something answered, and it was not the trace.
+        val target = traceServer("<html>Sign in to this network</html>")
+        val proxy = socksProxy()
+        val said = mutableListOf<ProbeFailure>()
+
+        val exit = runBlocking {
+            TunnelVerifier.verify(
+                socksHost = "127.0.0.1",
+                socksPort = proxy.port,
+                probeUrls = listOf(probeUrl(target)),
+                onFailure = { said += it }
+            )
+        }
+
+        assertNull(exit)
+        assertEquals(TunnelVerifier.NO_ADDRESS_IN_ANSWER, said.single().reason)
     }
 
     @Test

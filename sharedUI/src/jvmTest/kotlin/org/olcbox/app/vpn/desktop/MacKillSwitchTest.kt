@@ -4,11 +4,13 @@ import org.olcbox.app.vpn.DesktopMode
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC
 import org.olcbox.app.vpn.KILL_SWITCH_HOLDS_TRAFFIC_MAC
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.failureHiddenByHold
 import org.olcbox.app.vpn.failureKeptAcrossAttempts
 import org.olcbox.app.vpn.isKillSwitchHold
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -143,5 +145,35 @@ class MacKillSwitchTest {
         for (status in everyStatus) {
             assertFalse(status.isKillSwitchHold(), "$status")
         }
+    }
+
+    // A connect that fails behind the block ends with the hold's sentence on
+    // the screen, which is the same sentence that stood there before it: on a
+    // Mac in the field an attempt that failed looked like one that had not
+    // been made. What it failed of is said beside the sentence, once.
+    @Test
+    fun aFailureTheHoldsSentenceStandsInFrontOfIsSaidBesideIt() {
+        val failed = VpnStatus.Error("Desktop macOS TUN is up but no traffic reached the internet through it")
+        val shown = MacKillSwitch.shown(failed, holdsTraffic = true)
+
+        assertEquals(
+            "Desktop macOS TUN is up but no traffic reached the internet through it",
+            failureHiddenByHold(requested = failed, shown = shown)
+        )
+    }
+
+    @Test
+    fun aFailureTheScreenShowsItselfIsNotSaidTwice() {
+        val failed = VpnStatus.Error("core exited before desktop proxy was enabled")
+
+        assertNull(failureHiddenByHold(requested = failed, shown = MacKillSwitch.shown(failed, holdsTraffic = false)))
+    }
+
+    @Test
+    fun theHoldsOwnSentenceAndAStatusThatIsNoFailureHideNothing() {
+        val hold = VpnStatus.Error(KILL_SWITCH_HOLDS_TRAFFIC_MAC)
+
+        assertNull(failureHiddenByHold(requested = hold, shown = hold))
+        assertNull(failureHiddenByHold(requested = VpnStatus.Disconnected, shown = hold))
     }
 }

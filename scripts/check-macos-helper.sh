@@ -80,6 +80,12 @@ wait_for() {
   for _ in $(seq 1 60); do found=$(grep -E "$1" "$2" 2>/dev/null | tail -1); [ -n "$found" ] && break; sleep 0.1; done
   printf '%s' "${found:-nothing}"
 }
+# How many lines of a file match, once so many do or six seconds have passed.
+count_of() {
+  local found=0
+  for _ in $(seq 1 60); do found=$(grep -cE "$1" "$2" 2>/dev/null); [ "${found:-0}" -ge "$3" ] && break; sleep 0.1; done
+  printf '%s' "${found:-0}"
+}
 
 say "the machine"
 sw_vers | tr '\n' ' '; echo
@@ -184,6 +190,23 @@ say "at rest"
 expect "the helper speaks the fourth protocol, holds nothing and runs no line" "$(ask "$(request status)")" '^ok=True state=idle hold=False protocol=4 line=no '
 expect "no rule stands" "$(rules_standing)" '^0$'
 
+say "a line that came before the block"
+# The order of a first connect to a room: its engine is run when there is no
+# tunnel and no block, joins its room and holds that connection, and the start
+# that follows puts the block in place over it.
+HELD="$work/line/held"
+: > "$HELD"; chown "$WHO" "$HELD"; chmod 600 "$HELD"
+expect "the helper runs a line with no tunnel and no block" "$(ask "$(request line "$STAND_IN" "$HELD" "$MINE" "$STUN_IP" "$STUN_PORT" held "$ELSEWHERE" 80 one.one.one.one)")" '^ok=True state=idle hold=False protocol=4 line=yes '
+expect "it holds one connection open and is answered over it, time after time" "$(count_of '^held answered' "$HELD" 3) answers, $(grep -c '^held broken' "$HELD") broken" '^[3-9] answers, 0 broken$'
+expect "a tunnel is started after it, behind a block" "$(ask "$(request start utun225 names hold "$SERVER")")" '^ok=True state=running hold=True protocol=4 line=yes '
+: > "$HELD"
+expect "the connection that is older than the block is answered still" "$(wait_for '^held' "$HELD")" '^held answered$'
+expect "and goes on being answered" "$(count_of '^held answered' "$HELD" 4) answers, $(grep -c '^held broken' "$HELD") broken" '^[4-9] answers, 0 broken$'
+expect "what it binds to the way out is answered under the block" "$(wait_for '^bound' "$HELD")" '^bound answered$'
+expect "stopped, and the block with it" "$(ask "$(request stop)")" '^ok=True state=idle hold=False '
+expect "the line stopped by the helper" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=False protocol=4 line=no '
+expect "no rule stands" "$(rules_standing)" '^0$'
+
 say "a start behind the block, with names"
 expect "the tunnel is running and the block stands" "$(ask "$(request start utun225 names hold "$SERVER")")" '^ok=True state=running hold=True '
 PID=$(tunnel_pid)
@@ -191,9 +214,10 @@ expect "the tunnel runs in the group the block lets out" "$(ps -o gid= -p "$PID"
 expect "it took the name the block was written for" "$(ifconfig utun225 2>/dev/null | grep -c 'inet 172.19.0.1 ')" '^1$'
 RULES="$(pfctl -a "$ANCHOR" -s rules 2>/dev/null)"
 expect "the block lets the tunnel's interface out" "$(grep -c 'pass quick on utun225 all' <<<"$RULES")" '^1$'
-expect "and the tunnel's own process, by its group" "$(grep -c "group = $GROUP" <<<"$RULES")" '^2$'
-expect "and the server the tun keeps out of itself" "$(grep -c "to $SERVER" <<<"$RULES")" '^1$'
-expect "and refuses port 53 before it lets the local network out" "$(awk '/port = 53/{refused=NR} /__automatic/{local=NR} END{print (refused && local && refused < local) ? "before" : "not before"}' <<<"$RULES")" '^before$'
+expect "and the tunnel's own process, by its group" "$(grep -c "group = $GROUP" <<<"$RULES")" '^3$'
+expect "one of the three for what its group had open before the block" "$(grep "group = $GROUP" <<<"$RULES" | grep -c 'proto tcp .* no state *$')" '^1$'
+expect "and the server the tun keeps out of itself, as new and as open before" "$(grep -c "to $SERVER" <<<"$RULES") rules, $(grep "to $SERVER" <<<"$RULES" | grep -c 'no state *$') without state" '^2 rules, 1 without state$'
+expect "and refuses port 53 before it lets the local network out" "$(awk '/port = 53/{refused=NR} /__automatic/ && !local{local=NR} END{print (refused && local && refused < local) ? "before" : "not before"}' <<<"$RULES")" '^before$'
 expect "and ends in a refusal of everything else" "$(tail -1 <<<"$RULES")" '^block return out quick all$'
 expect "the system asks the tunnel for names" "$(first_resolver)" '^172\.19\.0\.2$'
 expect "the tun names the app's own program, asked as the app asks" "$(the_app_asks)" '^answered 127\.0\.0\.53 '
@@ -221,7 +245,7 @@ expect "the helper says a line runs" "$(ask "$(request status)")" '^ok=True stat
 say "the tunnel's process killed"
 kill -9 "$PID"; sleep 1.5
 expect "the helper says no tunnel and the block standing" "$(ask "$(request status)")" '^ok=True state=idle hold=True '
-expect "the rules are where they were" "$(rules_standing)" '^1[0-9]$'
+expect "the rules are where they were" "$([ "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null)" = "$RULES" ] && echo "the same $(rules_standing)" || echo changed)" '^the same [12][0-9]$'
 expect "the system asks whom it asked before" "$(first_resolver)" "^$RESOLVER\$"
 expect "the key is gone" "$(key_standing)" '^0$'
 expect "a request elsewhere is refused" "$(code_of "http://$ELSEWHERE/")" '^000$'

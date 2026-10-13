@@ -84,6 +84,46 @@ API also lists where every program is connected to and closes connections on
 request, which is what the secret is for. A session in proxy mode has no tun and
 so no count, and its status strip has no chart.
 
+### Running is not serving
+
+The daemon answers a start a second after it started sing-box, and what it
+answers is that the process runs. The app's next step asks the tunnel
+something: the session's check goes through the tunnel's own listener
+(`verify-in`), and behind a block that stands a line is started behind it. So
+the app first waits until that listener accepts a connection, for up to twenty
+seconds, and writes how long it took when that was more than a second
+(`macOS TUN: the tunnel began to serve … ms after the helper called it
+running`). A tunnel that never does ends the connect with what its sing-box
+said of a trouble.
+
+The check itself tells two answers apart. A probe that fails at once was
+refused on this machine: the tunnel, or the line behind it, is not serving
+yet. A probe that waits out its eight seconds was not answered by the far end.
+Each one that brings nothing back is written to the log with its reason and
+its time (`the check of … brought nothing back after … ms: …`); a check whose
+every probe was refused is made again, a second later, for up to twenty
+seconds; one with a probe that waited is taken as the answer it is. When the
+check fails for good, two more lines say which half does not carry: the
+errors and warnings of the tunnel's sing-box (`macOS TUN, the tunnel's
+sing-box: …`), and what the line answers when it is asked on its own port
+with no tunnel in front of it (`The line itself, asked on its own port, …`).
+
+Why. Build 1.0.463 on a Mac in the field, 13 October 2026: with the kill
+switch on, the tunnel's process was killed, and a connect to a room followed.
+The room was joined, by the engine the helper runs; the tunnel came up; the
+check, made at once, failed within seconds, with not one request handed to
+the engine; and the connect ended there, four times of four, for two
+carriers. A core's line connected each time: behind a block its tunnel comes
+first and is asked seconds later (in one of those starts it had still not
+answered the app's own name twelve seconds after it was called running). The
+same steps on a runner, with a real room and the app's own check, pass in a
+second, and the first run of the build's signed programs takes a third of a
+second there with the block or without (`lab/macos-room.sh`,
+`lab/macos-exec.sh` on `lab/macos-tunnel`): what makes that Mac's tunnel slow
+to serve is not known. The log said nothing either way: the check's null was
+all there was, and the daemon's tail of that tunnel was gone by the time the
+log was copied.
+
 ## Names
 
 A tun takes the Mac's routes and leaves its resolver where it was. On most home
@@ -172,13 +212,17 @@ nothing of the system's is rewritten:
 pass  out quick on lo0 all flags any no state
 pass      quick on utun225 all flags any no state
 pass  out quick proto { tcp, udp } from any to any group 7302243
+pass  out quick proto tcp from any to any group 7302243 flags any no state
 pass  out quick inet  proto udp from any port 68  to any port 67
 pass  out quick inet6 proto udp from any port 546 to any port 547
 pass  out quick inet  from any to { <the server's addresses> }
+pass  out quick inet  proto tcp from any to { <the same> } flags any no state
 block return out quick proto { tcp, udp } from any to any port 53
 pass  out quick inet  from any to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
                                     169.254.0.0/16, 224.0.0.0/4, 255.255.255.255 }
+pass  out quick inet  proto tcp from any to { <the same> } flags any no state
 pass  out quick inet6 from any to { fe80::/10, fc00::/7, ff02::/16 }
+pass  out quick inet6 proto tcp from any to { <the same> } flags any no state
 block return out quick all
 ```
 
@@ -218,6 +262,18 @@ block return out quick all
   printer, a share, AirDrop.
 - `return`, not `drop`: a program that is refused says so at once instead of
   waiting out its own timeout.
+- **Whatever is let out is let out twice: as a connection opened under the
+  block, and as one that was open before it.** pf reads a `pass` as a rule
+  about the packet that opens a connection (it lists the group's rule as
+  `flags S/SA keep state`), keeps a state from that packet, and passes the
+  rest of the connection by the state. A connection that was open when the
+  block was loaded has no state and sends no such packet again, so the next
+  thing it sent met no rule but the last one and was reset. Every rule that
+  lets something out is therefore followed by one for TCP with any flags and
+  no state: the older connection goes on as it came, its answers arriving the
+  way they arrived before there was a block. Only the group's has been
+  measured (below); the server's and the local network's are the same rule
+  with another address in it.
 
 **What takes it away:** a Disconnect; the switch turned off, at once and under
 a running tunnel too, since the helper needs no password; the helper being
@@ -247,6 +303,15 @@ that carries the internet, whether a block stands or not, and the tunnel after
 it. Until 1.0.462 a room under the switch was started behind its tunnel
 instead, the engine the app's own child; that is the build the timeouts above
 were seen on, and what a helper that cannot run a line (protocol 3) still gets.
+
+In 1.0.463 and 1.0.464 that order cost the room. The engine joined and held
+its room's signalling, the start that followed loaded the block over it, and
+the block as it was written then reset that connection: on a Mac in the field
+the engine closed its room within six seconds of the start, three times of
+three, and the session's check, made into that, found nothing twice and once
+passed a moment before the room went. With the block standing first (after a
+tunnel that was killed) the same connect held, which is what told the two
+apart. The second rule of each pair above is for this.
 
 **A core under the switch starts in the usual order** where no block stands:
 it has made no connection by the time the block is loaded, its first dial is
@@ -409,7 +474,9 @@ called unverified is a bad way to earn that authorisation.
 sudo launchctl print system/org.olcbox.app.desktopApp.tunneld | head -20
 log show --last 10m --info --predicate 'process == "ProofKitTunnelDaemon"'
 
-scutil --dns | head -8              # resolver #1 is 172.19.0.2 while a tunnel runs
+scutil --dns | grep -c 172.19.0.2   # not 0 while a tunnel runs: the system asks the tun
+                                    # (not `head`: a Mac with a resolver of its own, from a
+                                    # profile or another app, lists that one first, tunnel or not)
 sudo pfctl -a 'com.apple/100.org.olcbox.app.hold' -s rules   # the block; empty with the switch off
 ps -axo gid,command | grep '[s]ing-box run'                  # 7302243 under the switch, 0 without
 
@@ -532,7 +599,33 @@ showed, 13 October 2026, and holds the helper to since:
   when asked. Refused: a link, a relative name, a file that is not the
   asker's, an output its user cannot write.
 
-Asked on macOS 15 and 26 runners the same day, apart from the check
+- **A line that came before the block** (the same stand-in, also holding one
+  connection open and asking over it once a second): run by the helper with
+  no tunnel and no block, answered three times; then a start behind a block,
+  and the same connection answered still, time after time, with what it binds
+  to the way out. With the block as it was written until 1.0.464 the first
+  request after the start was reset ("Connection reset by peer"), which is how
+  this part of the check was seen to fail before the rule was added.
+
+Asked on macOS 15 and 26 runners, apart from the check (`lab/macos-arm.sh` on
+the `lab/macos-tunnel` branch), one connection opened first and asked over
+once a second:
+
+- **The block as it was written, loaded over a connection of the group**: reset
+  at its first request, and a new connection of the group served. Over a
+  connection of anybody else: reset, and a new one refused, which is the block.
+- **With the second rule**: the older connection answered on and carried three
+  megabytes; a new connection of the group served, anybody else's refused.
+- **One rule with any flags and a state kept** did as well in that run. It is
+  not what was built: pf would then track a connection whose opening it never
+  saw. `keep state (sloppy)` is not in this pf at all (a syntax error).
+- **A tunnel that comes up takes no open connection with it.** With no block,
+  the table sent the far end by the tun once the tun was up, and the
+  connection opened before it kept answering and carried three megabytes: it
+  keeps the way it has, by the address it was opened from. So what the block
+  does to an older connection is all that happens to one.
+
+Asked on macOS 15 and 26 runners the same day as the check, apart from it
 (`lab/macos-bound.sh` on the `lab/macos-tunnel` branch):
 
 - **A socket bound to the way out's address leaves beside a tun.** With a tun

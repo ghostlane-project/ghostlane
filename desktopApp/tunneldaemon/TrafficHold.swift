@@ -23,6 +23,18 @@
 //     port 53 is refused beside the tunnel wherever it goes, so no name is
 //     asked of the router while the block stands.
 //
+// Whatever is let out is let out twice over (`lets`): as a connection that is
+// opened under the block, and as one that was open before it. pf reads a rule
+// that lets something out as a rule about the packet that opens a connection,
+// keeps a state from there, and passes the rest of the connection by the
+// state. A connection older than the block has no state and never sends that
+// packet again, so the next thing it sent fell through to the refusal at the
+// end, and was reset. A room's engine is run before its tunnel, with no block
+// standing, and holds its room's signalling from then on: the start that
+// followed put the block in place and took the room away within seconds
+// (1.0.464 on a Mac in the field; `sudo scripts/check-macos-helper.sh` holds
+// a connection open across a start for this).
+//
 // The rules live in an anchor under `com.apple/`, which the system's own main
 // ruleset hands over to (`anchor "com.apple/*"`), so nothing of the system's is
 // rewritten to make them count. Its name sorts before Apple's own anchors: the
@@ -94,24 +106,40 @@ final class TrafficHold {
             // Both ways and without state: what is inside the tunnel is the
             // tunnel's to track.
             "pass quick on \(request.interface) all flags any no state",
-            "pass out quick proto { tcp, udp } from any to any group \(group)",
+        ]
+        lines += lets("any group \(group)", protocols: "{ tcp, udp }")
+        lines += [
             "pass out quick inet proto udp from any port 68 to any port 67",
             "pass out quick inet6 proto udp from any port 546 to any port 547",
         ]
         let v4 = request.passes.filter { !$0.contains(":") }
         let v6 = request.passes.filter { $0.contains(":") }
-        if !v4.isEmpty { lines.append("pass out quick inet from any to { \(v4.joined(separator: ", ")) }") }
-        if !v6.isEmpty { lines.append("pass out quick inet6 from any to { \(v6.joined(separator: ", ")) }") }
-        lines += [
-            // Before the local network is let out: the router is on it.
-            "block return out quick proto { tcp, udp } from any to any port 53",
-            "pass out quick inet from any to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255 }",
-            "pass out quick inet6 from any to { fe80::/10, fc00::/7, ff02::/16 }",
-            // `return`, not `drop`: a program that is refused says so at once
-            // instead of waiting out its own timeout.
-            "block return out quick all",
-        ]
+        if !v4.isEmpty { lines += lets("{ \(v4.joined(separator: ", ")) }", family: "inet") }
+        if !v6.isEmpty { lines += lets("{ \(v6.joined(separator: ", ")) }", family: "inet6") }
+        // Before the local network is let out: the router is on it.
+        lines.append("block return out quick proto { tcp, udp } from any to any port 53")
+        lines += lets(
+            "{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255 }",
+            family: "inet"
+        )
+        lines += lets("{ fe80::/10, fc00::/7, ff02::/16 }", family: "inet6")
+        // `return`, not `drop`: a program that is refused says so at once
+        // instead of waiting out its own timeout.
+        lines.append("block return out quick all")
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// What goes to [whom] is let out: by the first rule a connection opened
+    /// under the block, which pf tracks from its first packet on, and by the
+    /// second one that was open before the block, which has no state and
+    /// sends no first packet again. Without state, as it came: its answers
+    /// arrive the way they arrived before there was a block.
+    private static func lets(_ whom: String, family: String? = nil, protocols: String? = nil) -> [String] {
+        let of = family.map { " \($0)" } ?? ""
+        return [
+            "pass out quick\(of)\(protocols.map { " proto \($0)" } ?? "") from any to \(whom)",
+            "pass out quick\(of) proto tcp from any to \(whom) flags any no state",
+        ]
     }
 
     /// Loads the block, in place of whatever block stood before, in one step

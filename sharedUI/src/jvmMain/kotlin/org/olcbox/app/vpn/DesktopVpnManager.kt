@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.connect_failed_because
 import multiplatform_app.sharedui.generated.resources.session_moved_to
 import org.jetbrains.compose.resources.getString
 import org.olcbox.app.data.model.LocationBundleV4
@@ -67,6 +68,7 @@ import org.olcbox.app.vpn.desktop.LineConfigs
 import org.olcbox.app.vpn.desktop.LineSupervision
 import org.olcbox.app.vpn.desktop.LinuxKillSwitch
 import org.olcbox.app.vpn.desktop.MacKillSwitch
+import org.olcbox.app.vpn.desktop.TunnelSettle
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.LinuxTunTraffic
@@ -1042,12 +1044,19 @@ class DesktopVpnManager private constructor(
                     if (directToOlcrtc) socksSettings.password else ""
                 )
             }
-            val exit = if (desktopMode == DesktopMode.WindowsTun) {
-                windowsTunExit
-            } else {
-                org.olcbox.app.net.TunnelVerifier.verify(
+            val exit = when {
+                desktopMode == DesktopMode.WindowsTun -> windowsTunExit
+                tunVerifyPort != null -> verifyThroughMacTun(
+                    host = socksSettings.host,
+                    port = tunVerifyPort,
+                    requestGeneration = requestGeneration,
+                    lineAlive = {
+                        if (isOlcrtc) process?.isAlive == true else singBoxCore.isRunning() || xrayCore.isRunning()
+                    }
+                )
+                else -> org.olcbox.app.net.TunnelVerifier.verify(
                     socksHost = socksSettings.host,
-                    socksPort = tunVerifyPort ?: (frontPort ?: effectiveSocksPort),
+                    socksPort = frontPort ?: effectiveSocksPort,
                     username = if (directToOlcrtc) socksSettings.username else "",
                     password = if (directToOlcrtc) socksSettings.password else ""
                 )
@@ -1065,6 +1074,18 @@ class DesktopVpnManager private constructor(
             if (exit == null) {
                 // The tunnel is up as far as we could set it up, but nothing came
                 // back. Say so plainly rather than showing a green light.
+                if (desktopMode == DesktopMode.MacTun) {
+                    // And say which half: the tunnel's own words, and the line asked
+                    // without the tunnel. On a Mac in the field this error stood alone
+                    // in the log, and nothing in it told a tunnel that was not serving
+                    // from a room that carried nothing.
+                    explainNothingCameBack(
+                        host = socksSettings.host,
+                        linePort = frontPort ?: effectiveSocksPort,
+                        username = if (isOlcrtc && frontPort == null) socksSettings.username else "",
+                        password = if (isOlcrtc && frontPort == null) socksSettings.password else ""
+                    )
+                }
                 error("$transport is up but no traffic reached the internet through it")
             }
             _exitInfo.value = exit
@@ -1140,7 +1161,13 @@ class DesktopVpnManager private constructor(
             stopDesktopMode(finalStatus = false)
 
             if (e !is CancellationException && requestGeneration == generation) {
-                setStatus(VpnStatus.Error(e.message ?: "Desktop start failed"))
+                val failed = VpnStatus.Error(e.message ?: "Desktop start failed")
+                setStatus(failed)
+                // Behind a kill switch's block the screen shows the block's own
+                // sentence, the one that stood there before this attempt.
+                failureHiddenByHold(requested = failed, shown = _status.value)?.let { reason ->
+                    _notices.tryEmit(getString(Res.string.connect_failed_because, reason))
+                }
             }
         }
     }
@@ -1431,7 +1458,103 @@ class DesktopVpnManager private constructor(
         macTunVerifyPort = verifyPort
         macTunActive = true
         tunnelTraffic = trafficApi?.let { SingBoxTunTraffic(it.port, it.secret, ownBinaries = lineBinaries) }
+        awaitMacTunServing(verifyPort)
         return letsEveryLineOut
+    }
+
+    /**
+     * Waits until the tunnel that was just started accepts a connection on its
+     * own listener ([TunnelSettle]): the helper's "running" is about a process,
+     * a second after it was started, and everything that follows here asks the
+     * tunnel something. Whatever it took is said when it was more than a
+     * moment, so that a Mac where it takes long shows it in its log.
+     */
+    private suspend fun awaitMacTunServing(verifyPort: Int) {
+        val waited = TunnelSettle.awaitListening(verifyPort, TunnelSettle.BUDGET_MS)
+        if (waited == null) {
+            logWhatTheTunnelSaid()
+            error("the tunnel was started but did not begin to serve within ${TunnelSettle.BUDGET_MS / 1_000} s")
+        }
+        if (waited >= SLOW_TO_SERVE_MS) {
+            addLog("macOS TUN: the tunnel began to serve $waited ms after the helper called it running")
+        }
+    }
+
+    /**
+     * The session's check through a Mac tunnel's own listener. Every probe
+     * that brings nothing back is written down with what it said and how soon,
+     * and a check that was refused at once is made again for as long as the
+     * tunnel has to settle ([TunnelSettle.asksAgain]): refused is news of this
+     * machine, where the tunnel or the line behind it is not serving yet, and
+     * only silence is news of the far end. [lineAlive] ends the asking when
+     * the line's own process is gone: nothing will answer then.
+     */
+    private suspend fun verifyThroughMacTun(
+        host: String,
+        port: Int,
+        requestGeneration: Long,
+        lineAlive: () -> Boolean
+    ): org.olcbox.app.net.TunnelExit? {
+        val started = System.currentTimeMillis()
+        while (true) {
+            val failures = mutableListOf<org.olcbox.app.net.ProbeFailure>()
+            val exit = org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = host,
+                socksPort = port,
+                onFailure = { failures += it }
+            )
+            if (exit != null) return exit
+            if (requestGeneration != generation) {
+                throw CancellationException("Desktop start superseded")
+            }
+            failures.forEach {
+                addLog("macOS TUN: the check of ${it.url} brought nothing back after ${it.tookMs} ms: ${it.reason}")
+            }
+            if (!lineAlive()) {
+                addLog("macOS TUN: the line's own process is gone, so the check is not made again")
+                return null
+            }
+            if (!TunnelSettle.asksAgain(failures, System.currentTimeMillis() - started)) return null
+            addLog("macOS TUN: the check was refused at once, which is not an answer from the internet; asking again")
+            delay(TunnelSettle.PAUSE_MS)
+        }
+    }
+
+    /**
+     * What stands behind "no traffic reached the internet" on a Mac's tunnel:
+     * what the tunnel's own sing-box said of a trouble, and what the line
+     * answers when it is asked on its own port, with no tunnel in front of it.
+     * One of the two is the half that does not carry.
+     */
+    private suspend fun explainNothingCameBack(host: String, linePort: Int, username: String, password: String) {
+        logWhatTheTunnelSaid()
+        var said = "no reason given"
+        val exit = org.olcbox.app.net.TunnelVerifier.verify(
+            socksHost = host,
+            socksPort = linePort,
+            username = username,
+            password = password,
+            timeoutMs = LINE_ASKED_ALONE_MS,
+            probeUrls = listOf(org.olcbox.app.net.TunnelVerifier.PROBE_URL),
+            onFailure = { said = "${it.reason} (after ${it.tookMs} ms)" }
+        )
+        addLog(
+            if (exit != null) {
+                "The line itself, asked on its own port, reaches the internet (exit ${exit.label()}): " +
+                    "what does not carry is the tunnel in front of it"
+            } else {
+                "The line itself, asked on its own port, brought nothing back either: $said"
+            }
+        )
+    }
+
+    private suspend fun logWhatTheTunnelSaid() {
+        val troubles = TunnelSettle.troubles(runCatching { macOsTunController.diagnostics() }.getOrDefault(""))
+        if (troubles.isEmpty()) {
+            addLog("macOS TUN: the tunnel's sing-box said nothing of a trouble")
+        } else {
+            troubles.forEach { addLog("macOS TUN, the tunnel's sing-box: $it") }
+        }
     }
 
     /** Whether [location] is carried by Xray, which asks the system for names whatever it is told. */
@@ -3818,6 +3941,10 @@ class DesktopVpnManager private constructor(
         /** What a helper-run engine prints is in a file named as its config is, with this after it. */
         const val LINE_OUTPUT_SUFFIX = ".out"
         const val OLC_STARTUP_STABILITY_MS = 1_500L
+        /** A tunnel that takes longer than this to begin serving has it said in the log. */
+        const val SLOW_TO_SERVE_MS = 1_000L
+        /** How long a line is asked on its own port, once, after a check through its tunnel found nothing. */
+        const val LINE_ASKED_ALONE_MS = 5_000L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
