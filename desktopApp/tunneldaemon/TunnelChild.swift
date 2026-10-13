@@ -3,9 +3,9 @@
 // Never from a path the client sends, and never from a directory a non-root user
 // can write. /Applications is writable by any admin, so a binary verified there
 // and executed there can be swapped between the two; the bundled core is
-// therefore verified, copied into a root-owned directory, and executed from the
-// copy. Without that, this daemon is a way for any admin to run their own code
-// as root.
+// therefore copied into a root-owned directory, verified where it then lies,
+// and executed from there. Without that, this daemon is a way for any admin to
+// run their own code as root.
 import Foundation
 
 enum DaemonError: Error {
@@ -23,9 +23,26 @@ final class TunnelChild {
         isDirectory: true
     )
 
+    /// Whether a binary lying in the daemon's own directory is one this team
+    /// signed. A parameter because a Mac that is only asked what it does (a CI
+    /// runner) has no binary of ours to check; the daemon itself never passes one.
+    private let isTrusted: (URL) -> Bool
+
+    /// The core to copy when it is not the bundle's own; as above, nil in the daemon.
+    private let coreSource: URL?
+
+    /// Called, on a thread of its own, when the child ends without having been
+    /// told to: the tunnel died.
+    var onDeath: (() -> Void)?
+
     private var process: Process?
     private var tail: [String] = []
     private let lock = NSLock()
+
+    init(coreSource: URL? = nil, isTrusted: @escaping (URL) -> Bool = PeerAuthority.isTrustedBinary) {
+        self.coreSource = coreSource
+        self.isTrusted = isTrusted
+    }
 
     var isRunning: Bool { locked { process?.isRunning ?? false } }
 
@@ -51,28 +68,26 @@ final class TunnelChild {
             .appendingPathComponent("Resources/sing-box")
     }
 
-    func start(config: String, files: [String: String] = [:]) throws {
+    /// This binary, for the step it makes on the child's way to a group of its own (GroupExec).
+    private var ownExecutable: URL {
+        (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
+    }
+
+    /// [group] is the group the child runs in, for a tunnel started under the
+    /// kill switch's block (TrafficHold); nil leaves it in root's own, as ever.
+    func start(config: String, files: [String: String] = [:], group: gid_t? = nil) throws {
         stop()
 
-        let source = bundledCore
+        let source = coreSource ?? bundledCore
         guard FileManager.default.isReadableFile(atPath: source.path) else {
             throw DaemonError.message("no bundled sing-box at \(source.path)")
-        }
-        guard PeerAuthority.isTrustedBinary(at: source) else {
-            throw DaemonError.message("the bundled sing-box is not signed by this team")
         }
 
         try makeRootOnlyDirectory(Self.stateDir)
         let binDir = Self.stateDir.appendingPathComponent("bin", isDirectory: true)
         try makeRootOnlyDirectory(binDir)
 
-        let core = binDir.appendingPathComponent("sing-box")
-        try? FileManager.default.removeItem(at: core)
-        try FileManager.default.copyItem(at: source, to: core)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700, .ownerAccountID: 0],
-            ofItemAtPath: core.path
-        )
+        let core = try install(source, as: "sing-box", in: binDir)
 
         // The rule-sets a Bypass Russia config names, root-owned like the
         // config, at the paths the app wrote into it. Written or removed, never
@@ -105,8 +120,14 @@ final class TunnelChild {
         )
 
         let task = Process()
-        task.executableURL = core
-        task.arguments = ["run", "-c", configURL.path]
+        if let group {
+            let step = try install(ownExecutable, as: "as-group", in: binDir)
+            task.executableURL = step
+            task.arguments = [GroupExec.flag, String(group), core.path, "run", "-c", configURL.path]
+        } else {
+            task.executableURL = core
+            task.arguments = ["run", "-c", configURL.path]
+        }
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
@@ -119,11 +140,46 @@ final class TunnelChild {
                 if self.tail.count > 200 { self.tail.removeFirst(self.tail.count - 200) }
             }
         }
+        task.terminationHandler = { [weak self] ended in self?.ended(ended) }
         try task.run()
         locked {
             self.process = task
             self.tail = []
         }
+    }
+
+    /// A child is gone. Unless a stop took it first, nobody asked it to go.
+    private func ended(_ task: Process) {
+        let unasked: Bool = locked {
+            guard process === task else { return false }
+            process = nil
+            return true
+        }
+        if unasked { onDeath?() }
+    }
+
+    /// Copies [source] into the daemon's own directory and only then asks
+    /// whose it is: what was checked is then the file that is run, in a place
+    /// nobody but root can put another. A link is not followed into one: what
+    /// lies there afterwards has to be a file.
+    private func install(_ source: URL, as name: String, in directory: URL) throws -> URL {
+        let target = directory.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.copyItem(at: source, to: target)
+        let attributes = try FileManager.default.attributesOfItem(atPath: target.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            try? FileManager.default.removeItem(at: target)
+            throw DaemonError.message("\(source.path) is not a file")
+        }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700, .ownerAccountID: 0],
+            ofItemAtPath: target.path
+        )
+        guard isTrusted(target) else {
+            try? FileManager.default.removeItem(at: target)
+            throw DaemonError.message("\(source.lastPathComponent) is not signed by this team")
+        }
+        return target
     }
 
     func stop() {
@@ -132,10 +188,11 @@ final class TunnelChild {
             return process?.isRunning == true ? process : nil
         }
         guard let task = running else { return }
-        // SIGTERM and then wait, never SIGKILL first: sing-box tears down
-        // auto_route on the way out, and killing it outright leaves the machine's
-        // default route pointing at a utun that no longer exists — a Mac with no
-        // network until it is rebooted.
+        // SIGTERM and then wait, never SIGKILL first, so that sing-box takes
+        // its routes out itself. Killed outright it leaves nothing behind
+        // either (the utun and every route through it go with the process,
+        // measured on macOS 26), but that is the kernel tidying up after a
+        // death, and a stop should not look like one.
         task.terminate()
         let deadline = Date().addingTimeInterval(5)
         while task.isRunning && Date() < deadline { usleep(100_000) }
