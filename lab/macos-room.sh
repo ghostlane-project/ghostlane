@@ -299,11 +299,12 @@ first_connect() {
     [ "$closed" -gt "$closed_before" ] && { at=$(( $(now) - t0 )); break; }
     sleep 1
   done
-  note "the engine's room, half a minute from the start" "${at:+CLOSED ${at}ms after the start}${at:-held}"
+  local room="held for half a minute"; [ -n "$at" ] && room="CLOSED ${at}ms after the start"
+  note "the engine's room, from the start on" "$room"
   local again; again=$(traced 10809 https://1.1.1.1/cdn-cgi/trace 8)
   note "the app's check, made again" "$(who "$again")"
   echo "      the engine said, after its port was open:"; engine_said_after_ready "$SAID" 8
-  mark F-first "room ${at:+CLOSED ${at}ms after the start}${at:-held 30 s}; check at once: $(who "$first") ${took1}ms; again: $(who "$again")"
+  mark F-first "room $room; check at once: $(who "$first") ${took1}ms; again: $(who "$again")"
   ask "$(request stop)" >/dev/null
   end_line
   sleep 2
