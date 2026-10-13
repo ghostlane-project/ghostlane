@@ -104,6 +104,7 @@ import org.olcbox.app.vpn.SystemVpnMode
 import org.olcbox.app.vpn.TunSpec
 import org.olcbox.app.vpn.TunnelBridge
 import org.olcbox.app.vpn.TunnelSession
+import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
@@ -362,6 +363,7 @@ class OlcboxVpnService : VpnService() {
             .apply { setReferenceCounted(false) }
 
         installMobileCallbacks()
+        OlcboxVpnState.trafficReader = ::currentTraffic
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -417,6 +419,7 @@ class OlcboxVpnService : VpnService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        OlcboxVpnState.trafficReader = null
         cleanup(stopService = false)
     }
 
@@ -2138,13 +2141,20 @@ class OlcboxVpnService : VpnService() {
                 rxPackets = values[2],
                 rxBytes = values[3]
             )
-        }.getOrNull()?.also { stats ->
-            // The byte figures were read and thrown away — only the packet
-            // deltas fed the stall watchdog. They are the session's traffic, and
-            // the screen had nothing to show.
-            OlcboxVpnState.setTraffic(bytesIn = stats.rxBytes, bytesOut = stats.txBytes)
-        }
+        }.getOrNull()
     }
+
+    /**
+     * What tun2socks has carried, for the screen that asks once a second
+     * ([OlcboxVpnState.trafficReader]). Null in proxy mode, which has no
+     * tun2socks, and whenever the figures could not be read.
+     *
+     * The same figures the stall watchdog reads, on the screen's clock instead
+     * of the watchdog's: published from there they moved every fifteen
+     * seconds, and the chart drew fifteen seconds of traffic as one.
+     */
+    private fun currentTraffic(): TrafficCounters? =
+        readTun2SocksStats()?.let { TrafficCounters(bytesIn = it.rxBytes, bytesOut = it.txBytes) }
 
     private fun requestTransportRecovery(
         reason: String,

@@ -112,10 +112,6 @@ class DesktopVpnManager private constructor(
     private val _connectedSince = MutableStateFlow<Long?>(null)
     override val connectedSince: StateFlow<Long?> = _connectedSince.asStateFlow()
 
-    // Desktop runs sing-box and Xray as separate processes behind a tun it does
-    // not own, so there is no counter here to read. Null, not zeroes.
-    override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null).asStateFlow()
-
     /**
      * What a session did on its own that the user is told once: it went to
      * another line of the country because its own stopped answering. The

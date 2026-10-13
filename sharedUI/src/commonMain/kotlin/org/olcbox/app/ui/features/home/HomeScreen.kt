@@ -60,7 +60,6 @@ import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.AdminPasswordDialog
 import org.olcbox.app.ui.components.CameraRationaleSheet
 import org.olcbox.app.ui.components.VpnDisclosureScreen
-import org.olcbox.app.ui.components.kit.ThroughputWindow
 import org.olcbox.app.ui.components.kit.boardAction
 import org.olcbox.app.ui.components.kit.boardHeading
 import org.olcbox.app.ui.components.kit.nextSort
@@ -172,39 +171,40 @@ fun HomeScreen(
 
     // Elapsed time is not derived from anything Compose can observe, so it is
     // resampled on a timer rather than recomputed on recomposition. Only while a
-    // session is up: a loop ticking over an idle screen is a wakeup a second for
-    // a number nobody is reading.
+    // session is up, and only while the screen is in front of somebody: a loop
+    // ticking over an idle screen, or behind one — an Android app in the
+    // background lives as long as its tunnel does, a desktop's window sits in
+    // the tray — is a wakeup a second for a number nobody is reading.
     //
-    // The same tick samples throughput. The platform counters are cumulative, so
-    // what the chart wants is the difference between two of them — which the
-    // window keeps, and forgets when the session ends, so the next one does not
-    // open with a bar the size of the last one's total.
+    // The same tick has the model read the session's counters, there and then.
+    // The model keeps the chart and the totals, because this screen does not
+    // last: see HomeScreenViewModel.sessionTraffic.
     //
     // Held in state objects that nothing in this function reads. The strip reads
     // them, through the lambdas below, so a second passing recomposes a strip
     // rather than the whole board — which is what it did, once a second, for
     // every card, every seat pip with its colour animation and every canvas on
-    // the screen. The traffic counters are read off the StateFlow inside the loop
-    // for the same reason: collectAsState here would subscribe this function to
-    // something that changes every second.
+    // the screen.
     val nowTick = remember { mutableStateOf(nowMillis()) }
-    val traffic = remember { ThroughputWindow() }
-    val bytesLine = remember { mutableStateOf("") }
-    LaunchedEffect(state.isVpnConnected, connectedSince) {
-        // Whichever way this runs, it is a session's edge: one ended, or one began.
-        traffic.reset()
-        if (!state.isVpnConnected) {
-            bytesLine.value = ""
-            return@LaunchedEffect
-        }
-        while (state.isVpnConnected) {
-            delay(1_000)
-            nowTick.value = nowMillis()
-            val counters = viewModel.traffic.value
-            if (counters != null) {
-                bytesLine.value =
-                    "↓ ${formatByteSize(counters.bytesIn)}   ↑ ${formatByteSize(counters.bytesOut)}"
-                traffic.record(counters.bytesIn, counters.bytesOut)
+    val sessionTraffic = viewModel.sessionTraffic
+    // Asked at each edge of a session, which is when it can change: the mode a
+    // desktop connects in is chosen in the settings between two sessions.
+    val countsTraffic = remember(state.isVpnConnected, state.isVpnLoading) { viewModel.countsTraffic }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state.isVpnConnected, connectedSince, lifecycle) {
+        // Whichever way this runs, the model is told which session this is. One
+        // that ended, or another that began, has none of the last one's seconds;
+        // the same one has them all, when it is only this screen that is new.
+        viewModel.trafficSessionIs(connectedSince)
+        if (!state.isVpnConnected) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // Read first, then wait. A screen that comes back to a session has
+            // the time it was away to set down at once, and a timer that showed
+            // the second it left at for a second more is a timer that jumps.
+            while (true) {
+                nowTick.value = nowMillis()
+                viewModel.sampleTraffic()
+                delay(1_000)
             }
         }
     }
@@ -349,7 +349,6 @@ fun HomeScreen(
     LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince) {
         locationViewModel.markPingsStale()
     }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(state.isVpnConnected, state.isVpnLoading, connectedSince, lifecycle) {
         if (state.isVpnConnected && !state.isVpnLoading) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -517,7 +516,9 @@ fun HomeScreen(
             statusMeta = {
                 statusMeta(
                     isConnected = state.isVpnConnected,
-                    bytesLine = bytesLine.value,
+                    bytesLine = sessionTraffic.totals
+                        ?.let { "↓ ${formatByteSize(it.bytesIn)}   ↑ ${formatByteSize(it.bytesOut)}" }
+                        .orEmpty(),
                     requiresSetup = requiresSetup,
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                     protocolLine = selectedConfig?.protocolLabels()?.joinToString(" · "),
@@ -536,7 +537,10 @@ fun HomeScreen(
             },
             isActive = state.isVpnConnected,
             isBusy = state.isVpnLoading,
-            traffic = traffic,
+            // No chart where nothing will be drawn on it. A strip that stood
+            // open for one all the same was an empty rule and two rates still
+            // to come, for as long as the session lasted.
+            traffic = sessionTraffic.window.takeIf { countsTraffic },
             notice = state.notice(keyGone = selectedId != null && selectedId in locationViewModel.olcrtcRevoked)
                 ?.let { localizedNotice(it) },
             noticeDismissible = state.noticeDismissible,

@@ -81,11 +81,12 @@ fun throughputHeight(bytes: Long, peak: Long): Float {
  * The last [seconds] seconds of a session: how much arrived and how much left in
  * each.
  *
- * Fed the platform's running totals once a second, it keeps the difference
- * between one reading and the next. The first reading of a session is only a
- * starting point — it has nothing before it to be the difference from, and taken
- * as a second's traffic it would open every chart with a bar the size of the
- * session so far.
+ * Fed the platform's running totals and the moment each was read, it keeps the
+ * difference between one reading and the next, set down on the seconds that
+ * passed between the two. The first reading of a session is only a starting
+ * point — it has nothing before it to be the difference from, and taken as a
+ * second's traffic it would open every chart with a bar the size of the session
+ * so far.
  *
  * Every read registers its reader with Compose, and every [record] and [reset]
  * tells them: a draw scope that reads it is drawn again, a composable that reads
@@ -99,6 +100,7 @@ class ThroughputWindow(val seconds: Int = THROUGHPUT_SECONDS) {
     private var hasPrevious = false
     private var previousReceived = 0L
     private var previousSent = 0L
+    private var previousAt = 0L
     private var stamp by mutableIntStateOf(0)
 
     /**
@@ -108,29 +110,65 @@ class ThroughputWindow(val seconds: Int = THROUGHPUT_SECONDS) {
     var hasData by mutableStateOf(false)
         private set
 
-    /** Takes the running totals as they stand now. */
-    fun record(totalReceived: Long, totalSent: Long) {
-        if (hasPrevious) {
-            // Totals that went backwards are another session's, or a counter that
-            // was reset under this one: that second moved nothing we can name.
-            push(
-                (totalReceived - previousReceived).coerceAtLeast(0L),
-                (totalSent - previousSent).coerceAtLeast(0L)
-            )
+    /**
+     * Takes the running totals as they stood at [atMillis], by a clock that
+     * goes on while the app does not.
+     *
+     * A bar is a second, so what moved since the last reading is shared among
+     * the seconds since it. Read once a second that is one bar, as it always
+     * was. It is not always once a second: the screen that reads is not there
+     * while a phone's app is in the background, and a reading that arrives
+     * twenty seconds after the last holds twenty seconds of traffic — drawn as
+     * one bar it was a spike over a gap, where what is known is that it moved
+     * at some rate throughout.
+     */
+    fun record(totalReceived: Long, totalSent: Long, atMillis: Long) {
+        if (!hasPrevious) {
+            hasPrevious = true
+            previousReceived = totalReceived
+            previousSent = totalSent
+            previousAt = atMillis
+            return
         }
-        hasPrevious = true
+        val elapsed = atMillis - previousAt
+        // To the nearest second. A clock that was set back measures nothing, and
+        // the reading is the second that passed all the same.
+        val over = if (elapsed < 0L) 1L else (elapsed + 500L) / 1_000L
+        // Not a second yet: what moved stays with the reading that completes one.
+        if (over < 1L) return
+        // Totals that went backwards are another session's, or a counter that
+        // was reset under this one: those seconds moved nothing we can name.
+        spread(
+            (totalReceived - previousReceived).coerceAtLeast(0L),
+            (totalSent - previousSent).coerceAtLeast(0L),
+            over
+        )
         previousReceived = totalReceived
         previousSent = totalSent
+        previousAt = atMillis
     }
 
-    private fun push(receivedBytes: Long, sentBytes: Long) {
-        // Moved down by one in place. Forty-four numbers a second is nothing to
-        // copy and, unlike a list rebuilt each time, nothing to collect.
-        received.copyInto(received, destinationOffset = 0, startIndex = 1, endIndex = seconds)
-        sent.copyInto(sent, destinationOffset = 0, startIndex = 1, endIndex = seconds)
-        received[seconds - 1] = receivedBytes
-        sent[seconds - 1] = sentBytes
-        if (count < seconds) count++
+    /** Sets [receivedBytes] and [sentBytes] down as the traffic of the newest [over] seconds, in equal shares. */
+    private fun spread(receivedBytes: Long, sentBytes: Long, over: Long) {
+        // An absence longer than the chart leaves its average on every bar of it.
+        val bars = min(over, seconds.toLong()).toInt()
+        // Moved along in place. Forty-four numbers a second is nothing to copy
+        // and, unlike a list rebuilt each time, nothing to collect.
+        if (bars < seconds) {
+            received.copyInto(received, destinationOffset = 0, startIndex = bars, endIndex = seconds)
+            sent.copyInto(sent, destinationOffset = 0, startIndex = bars, endIndex = seconds)
+        }
+        val eachReceived = receivedBytes / over
+        val eachSent = sentBytes / over
+        received.fill(eachReceived, fromIndex = seconds - bars, toIndex = seconds)
+        sent.fill(eachSent, fromIndex = seconds - bars, toIndex = seconds)
+        if (over <= seconds) {
+            // What did not divide went by in the newest of them, so that the
+            // bars of a reading add up to what the reading moved.
+            received[seconds - 1] += receivedBytes - eachReceived * over
+            sent[seconds - 1] += sentBytes - eachSent * over
+        }
+        count = min(seconds, count + bars)
         hasData = true
         stamp++
     }

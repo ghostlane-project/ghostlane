@@ -22,7 +22,6 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.model.SubscriptionSort
-import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
@@ -181,7 +180,6 @@ private class StillVpn : VpnManager {
     override val status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(false)
     override val connectedSince = MutableStateFlow<Long?>(null)
-    override val traffic: StateFlow<TrafficCounters?> = MutableStateFlow(null)
     override fun needsPermission(): Boolean = false
     override fun startVpn() {}
     override fun stopVpn() {}

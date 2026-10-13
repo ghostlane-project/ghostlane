@@ -29,8 +29,27 @@ object OlcboxVpnState {
     private val _connectedSince = MutableStateFlow<Long?>(null)
     val connectedSince = _connectedSince.asStateFlow()
 
-    private val _traffic = MutableStateFlow<TrafficCounters?>(null)
-    val traffic = _traffic.asStateFlow()
+    /**
+     * Reads the tunnel's own counters, there and then: set by the service for
+     * as long as it lives, because the counters are tun2socks's and only the
+     * service can ask it.
+     *
+     * A reader and not a value. The value was written when the service's
+     * watchdog happened to look, every fifteen seconds, and the screen draws a
+     * second of traffic from two readings a second apart.
+     */
+    @Volatile var trafficReader: (() -> TrafficCounters?)? = null
+
+    /**
+     * The session's counters as they stand now, or null: no session, no tunnel
+     * to count it (proxy mode), or a reading that failed. A session's counters
+     * belong to that session, so nothing is read once it is over.
+     */
+    fun readTraffic(): TrafficCounters? {
+        val status = _status.value
+        if (status !is VpnStatus.Connected && status !is VpnStatus.Reconnecting) return null
+        return trafficReader?.invoke()
+    }
 
     /** Android's always-on state as the running service last read it; null when it has not. */
     private val _systemVpnMode = MutableStateFlow<SystemVpnMode?>(null)
@@ -48,18 +67,9 @@ object OlcboxVpnState {
         _notices.tryEmit(message)
     }
 
-    fun setTraffic(bytesIn: Long, bytesOut: Long) {
-        _traffic.value = TrafficCounters(bytesIn = bytesIn, bytesOut = bytesOut)
-    }
-
     fun setStatus(status: VpnStatus) {
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
-        // A session's counters belong to that session; carrying them into the
-        // next one would show yesterday's gigabytes on a fresh connection.
-        if (status !is VpnStatus.Connected && status !is VpnStatus.Reconnecting) {
-            _traffic.value = null
-        }
         _connectedSince.value = when (status) {
             // Only the first Connected of a session stamps the clock; a
             // reconnect passes through Reconnecting and back, and must not

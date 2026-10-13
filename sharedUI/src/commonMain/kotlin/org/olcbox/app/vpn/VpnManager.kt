@@ -45,12 +45,32 @@ interface VpnManager {
     val connectedSince: StateFlow<Long?>
 
     /**
-     * Bytes carried this session, or null where the platform has no counter to
-     * read. Null rather than zeroes: a pair of counters frozen at 0 looks like a
+     * The session's counters as they stand at this call, or null where there is
+     * nothing to read: no session, or a platform or a mode that counts none.
+     * Null rather than zeroes: a pair of counters frozen at 0 looks like a
      * tunnel carrying nothing, which is a very different thing from a tunnel
-     * nobody is measuring.
+     * nobody is measuring. For the same reason a reading that failed is null,
+     * never zeroes: a count that drops is taken for a counter that started
+     * again.
+     *
+     * Read when asked, not kept up to date for whoever looks. It was a value
+     * each platform refreshed on a timer of its own — every three seconds on
+     * iOS, every fifteen on Android, never on a desktop — and the chart, which
+     * draws the difference between two readings a second apart, drew one second
+     * holding all of them and nothing in the seconds between.
      */
-    val traffic: StateFlow<TrafficCounters?>
+    suspend fun readTraffic(): TrafficCounters? = null
+
+    /**
+     * Whether a session here has its traffic counted, as things stand: what
+     * [readTraffic] would have something to say about once one is up.
+     *
+     * Asked before a session exists. The status strip is a chart taller where
+     * there will be one, from the press that asks for a session, and it has to
+     * know at that press — not seconds later, when the first reading does or
+     * does not arrive.
+     */
+    val countsTraffic: Boolean get() = false
 
     fun needsPermission(): Boolean
 

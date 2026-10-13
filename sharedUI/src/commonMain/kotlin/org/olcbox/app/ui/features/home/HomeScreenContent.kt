@@ -75,8 +75,12 @@ data class HomeChrome(
     val statusValue: () -> String,
     val isActive: Boolean,
     val isBusy: Boolean,
-    /** The session's traffic by the second. One object for the screen's life; its readers are told when it moves. */
-    val traffic: ThroughputWindow,
+    /**
+     * The session's traffic by the second, or null where nothing counts it and
+     * the strip has no chart. One object for the model's life; its readers are
+     * told when it moves.
+     */
+    val traffic: ThroughputWindow?,
     val notice: String?,
     /** Whether [notice] is a failure the user may wave away, rather than a block. */
     val noticeDismissible: Boolean,

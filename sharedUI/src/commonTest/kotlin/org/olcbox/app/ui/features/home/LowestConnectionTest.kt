@@ -29,7 +29,6 @@ class LowestConnectionTest {
         override val status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
         override val isConnected = MutableStateFlow(false)
         override val connectedSince = MutableStateFlow<Long?>(null)
-        override val traffic = MutableStateFlow<TrafficCounters?>(null)
         var onStart: () -> Unit = { status.value = VpnStatus.Connected }
         var probe: suspend (LocationConfig) -> Long? = { if (it.name == "fast") 10 else 100 }
         var starts = 0

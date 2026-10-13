@@ -214,7 +214,8 @@ class StoreArtRenderTest {
     private fun session(): ThroughputWindow = ThroughputWindow().apply {
         var received = 0L
         var sent = 0L
-        record(received, sent)
+        // A reading a second, as a session that is watched is read.
+        record(received, sent, atMillis = 0L)
         repeat(seconds) { second ->
             val (down, up) = when {
                 second < 6 -> 500L to 350L
@@ -226,7 +227,7 @@ class StoreArtRenderTest {
             }
             received += down
             sent += up
-            record(received, sent)
+            record(received, sent, atMillis = (second + 1) * 1_000L)
         }
     }
 
