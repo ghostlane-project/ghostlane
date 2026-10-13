@@ -60,11 +60,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.listSaver
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -315,8 +311,16 @@ fun RoomBoard(
     showGetSubscription: Boolean,
     refreshingSubscriptionUrl: String?,
     lowestSubscriptionUrls: Set<String>,
+    /**
+     * The server lists that are folded away, by address: the settings' to say,
+     * which is what makes a folded list still folded the next time the app
+     * opens. A press on a list's head asks through [onFoldToggle], and the list
+     * folds when this says so.
+     */
+    foldedSubscriptionUrls: Set<String>,
     onLocationSelected: (String) -> Unit,
     onLowestSelected: (subscriptionUrl: String, fallbackLocationId: String) -> Unit,
+    onFoldToggle: (subscriptionUrl: String) -> Unit,
     onLocationSettingsClick: (String) -> Unit,
     onMeasure: (List<String>) -> Unit,
     onRefreshSubscriptionClick: (String) -> Unit,
@@ -337,16 +341,7 @@ fun RoomBoard(
         return
     }
 
-    // Which groups are folded away. Two server lists of a dozen exits each is most
-    // of a phone screen before a user has scrolled at all, and the one they are not
-    // using is pure noise.
-    //
-    // Saveable, not merely remembered: opening a location's settings and coming
-    // back would otherwise unfold everything again.
     val words = listWords()
-    val collapsed = rememberSaveable(
-        saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })
-    ) { mutableStateListOf<String>() }
 
     // One measurement for the whole board, so the columns at the ends of the
     // cards' lines are the same width on every card.
@@ -356,11 +351,14 @@ fun RoomBoard(
             Text(stringResource(Res.string.pings_stale), style = MaterialTheme.typography.labelSmall)
         }
         model.subscriptionGroups.forEach { group ->
-            val isCollapsed = collapsible && group.key in collapsed
             val ids = group.locations.map { it.storageId }
             // A group comes from groupBy over at least one location.
             val first = group.locations.first()
             val groupUrl = first.subscriptionUrl?.trim()
+            // Two server lists of a dozen exits each is most of a phone screen
+            // before a user has scrolled at all, and the one they are not using
+            // is pure noise.
+            val isCollapsed = collapsible && !groupUrl.isNullOrBlank() && groupUrl in foldedSubscriptionUrls
             val lowestEnabled = !groupUrl.isNullOrBlank() && groupUrl in lowestSubscriptionUrls
             // Lowest is stored per subscription, but only the list containing
             // the active location is the current selection. Highlighting every
@@ -395,7 +393,7 @@ fun RoomBoard(
                     collapsed = isCollapsed,
                     collapsible = collapsible,
                     holdsSelection = group.locations.any { it.storageId == selectedLocationId },
-                    onToggle = { if (!collapsed.remove(group.key)) collapsed.add(group.key) }
+                    onToggle = { if (!groupUrl.isNullOrBlank()) onFoldToggle(groupUrl) }
                 ) {
                     // Every control the group has, on the title's line: an i in a
                     // circle for the provider's page, a paper plane for its

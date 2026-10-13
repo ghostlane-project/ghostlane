@@ -315,6 +315,28 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * Makes [change] to the settings as they stand: on the screen at once, and
+     * in the store after.
+     *
+     * For what a press on the board decides — a list folded away. Shown first,
+     * because the chevron turns under the finger and a disk is not that quick;
+     * and made to the settings as they stand rather than to the copy a screen
+     * was last drawn from, so that two presses inside one write are both kept.
+     * The store is asked to make the same change to what it holds, see
+     * [LocationsRepository.changeSubscriptionSettings], so [change] says what
+     * to change and is run twice.
+     *
+     * Nothing is changed before the stored settings have arrived. Until then
+     * what is held here is a fresh object, and a change written from it would
+     * replace everything the user had set.
+     */
+    fun changeSubscriptionSettings(change: (SubscriptionSettings) -> SubscriptionSettings) {
+        if (!_subscriptionSettingsLoaded.value) return
+        _subscriptionSettings.update { change(it).normalized() }
+        viewModelScope.launch { locationsRepository.changeSubscriptionSettings(change) }
+    }
+
     private val _routingSettings = MutableStateFlow(RoutingSettings())
     val routingSettings = _routingSettings.asStateFlow()
 
@@ -775,6 +797,10 @@ class HomeScreenViewModel(
                 _state.update { it.copy(isVpnConnected = false, isVpnLoading = false) }
             }
             val removed = locationsRepository.deleteSubscription(subscriptionUrl)
+            // The store forgot what the settings kept about the list as it
+            // removed it. The copy held here forgets it too, or the next
+            // setting saved from this screen would write it back.
+            _subscriptionSettings.update { it.withoutSubscription(subscriptionUrl) }
             loadCurrentConfigNow()
             onComplete(removed)
         }

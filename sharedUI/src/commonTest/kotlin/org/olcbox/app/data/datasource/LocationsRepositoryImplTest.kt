@@ -12,6 +12,7 @@ import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.share.ConfigShareService
 import io.ktor.http.HttpStatusCode
 import org.olcbox.app.net.PartnerLinkResolver
@@ -1251,6 +1252,58 @@ class LocationsRepositoryImplTest {
         assertFalse(repo.moveActiveLocation("a1", "gone", "exit"))
 
         assertEquals("a1", repo.getActiveLocationId())
+    }
+
+    // A choice made on the board — a list folded away — is one field of the
+    // settings changed, by a press. It is written as that: to the settings as
+    // they are stored, not as a copy somebody read a while ago, and without
+    // telling the app its locations changed.
+
+    @Test
+    fun aChangeToTheSettingsIsMadeToWhatIsStoredNow() = runTest {
+        val sub = "https://proofkit.org/sub/aaa"
+        val repo = LocationsRepositoryImpl(subSource("a1", subEntry("a1", sub), subEntry("a2", sub)))
+        // A session moved by itself meanwhile and remembered the line it ended on.
+        assertTrue(repo.moveActiveLocation("a1", "a2", "exit"))
+
+        val stored = repo.changeSubscriptionSettings { it.withFolded(sub, folded = true) }
+
+        assertTrue(stored.isFolded(sub))
+        assertEquals(stored, repo.getSubscriptionSettings())
+        assertEquals("a2", repo.getSubscriptionSettings().lastKnownGoodTransport["exit"])
+    }
+
+    @Test
+    fun aChangeToTheSettingsIsNotAChangeOfLocations() = runTest {
+        // Everything that listens for one reads the whole list again, and asks
+        // every room how full it is: a hundred requests for a list folded.
+        val sub = "https://proofkit.org/sub/aaa"
+        val repo = LocationsRepositoryImpl(subSource("a1", subEntry("a1", sub)))
+        val before = repo.changes.value
+
+        repo.changeSubscriptionSettings { it.withFolded(sub, folded = true) }
+
+        assertEquals(before, repo.changes.value)
+        assertEquals("a1", repo.getActiveLocationId())
+        assertEquals(1, repo.getAllLocations().size)
+    }
+
+    @Test
+    fun deleteSubscriptionLeavesNothingAboutItInTheSettings() = runTest {
+        val subA = "https://proofkit.org/sub/aaa"
+        val subB = "https://proofkit.org/sub/bbb"
+        val repo = LocationsRepositoryImpl(subSource("a1", subEntry("a1", subA), subEntry("b1", subB)))
+        repo.saveSubscriptionSettings(
+            SubscriptionSettings(lowestSubscriptionUrls = setOf(subA, subB))
+                .withFolded(subA, folded = true)
+                .withFolded(subB, folded = true)
+        )
+
+        repo.deleteSubscription(subA)
+
+        val settings = repo.getSubscriptionSettings()
+        assertEquals(setOf(subB), settings.foldedSubscriptionUrls)
+        assertEquals(setOf(subB), settings.lowestSubscriptionUrls)
     }
 
     @Test

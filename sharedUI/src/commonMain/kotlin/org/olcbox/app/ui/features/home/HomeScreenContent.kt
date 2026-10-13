@@ -105,6 +105,8 @@ data class HomeBoard(
     val refreshingSubscriptionUrl: String?,
     /** Server lists whose first row is the virtual Lowest selector. */
     val lowestSubscriptionUrls: Set<String>,
+    /** Server lists whose rows are folded away. The settings', so that it outlasts the process. */
+    val foldedSubscriptionUrls: Set<String>,
     val collapsible: Boolean,
     val showSettings: Boolean,
     val showCustomLocation: Boolean,
@@ -127,6 +129,7 @@ data class HomeCallbacks(
     val onPullToRefresh: () -> Unit,
     val onLocationSelected: (String) -> Unit,
     val onLowestSelected: (subscriptionUrl: String, fallbackLocationId: String) -> Unit,
+    val onFoldToggle: (subscriptionUrl: String) -> Unit,
     val onLocationSettingsClick: (String) -> Unit,
     val onMeasure: (List<String>) -> Unit,
     val onRefreshSubscriptionClick: (String) -> Unit,
@@ -448,8 +451,10 @@ private fun HomeRoomBoard(board: HomeBoard, callbacks: HomeCallbacks) {
         showGetSubscription = board.showGetSubscription,
         refreshingSubscriptionUrl = board.refreshingSubscriptionUrl,
         lowestSubscriptionUrls = board.lowestSubscriptionUrls,
+        foldedSubscriptionUrls = board.foldedSubscriptionUrls,
         onLocationSelected = callbacks.onLocationSelected,
         onLowestSelected = callbacks.onLowestSelected,
+        onFoldToggle = callbacks.onFoldToggle,
         onLocationSettingsClick = callbacks.onLocationSettingsClick,
         onMeasure = callbacks.onMeasure,
         onRefreshSubscriptionClick = callbacks.onRefreshSubscriptionClick,
