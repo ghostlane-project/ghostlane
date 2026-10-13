@@ -1,0 +1,53 @@
+name: Lab (the first run of a new file behind the Mac's block)
+
+# Not a check and never merged. The programs of a test build, as a Mac in the
+# field ran them: how long the first run of a newly copied one takes, with the
+# network there and with it withheld by the kill switch's block.
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: The release run whose macOS build is asked
+        default: "38434058758"
+  push:
+    branches: [lab/macos-tunnel]
+    paths: ['lab/macos-exec.sh', '.github/workflows/lab-exec.yml']
+
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+
+jobs:
+  mac:
+    name: The build's own programs on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    steps:
+      - uses: actions/checkout@v7
+      - name: The build that Mac ran
+        uses: actions/download-artifact@v8
+        with:
+          name: Ghostlane-macos-arm64-dmg
+          run-id: ${{ inputs.run || '38434058758' }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/build
+      - name: Its programs, run for the first time
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LABEL: ${{ matrix.os }}
+        run: |
+          set -u
+          dmg=$(find "$RUNNER_TEMP/build" -name '*.dmg' | head -1)
+          [ -n "$dmg" ] || { echo "no disk image in the build"; ls -R "$RUNNER_TEMP/build" | head -20; exit 1; }
+          echo "$(basename "$dmg"): $(stat -f %z "$dmg") bytes, $(shasum -a 256 "$dmg" | cut -c1-16)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/image" "$dmg" >/dev/null
+          app=$(find "$RUNNER_TEMP/image" -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$app" ] || { echo "no app in the image"; ls "$RUNNER_TEMP/image"; exit 1; }
+          cp -R "$app" "$RUNNER_TEMP/Ghostlane.app"
+          hdiutil detach "$RUNNER_TEMP/image" >/dev/null || true
+          sudo --preserve-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA,LABEL bash lab/macos-exec.sh "$RUNNER_TEMP/Ghostlane.app"
