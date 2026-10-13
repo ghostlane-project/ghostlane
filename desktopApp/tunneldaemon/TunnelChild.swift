@@ -73,6 +73,16 @@ final class TunnelChild {
         (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
     }
 
+    /// The daemon's own copy of this binary, in its own directory: the step a
+    /// child takes on its way to a group (GroupExec). For the tunnel here, and
+    /// for a line's program (LineChild).
+    func step() throws -> URL {
+        try makeRootOnlyDirectory(Self.stateDir)
+        let binDir = Self.stateDir.appendingPathComponent("bin", isDirectory: true)
+        try makeRootOnlyDirectory(binDir)
+        return try install(ownExecutable, as: "as-group", in: binDir)
+    }
+
     /// [group] is the group the child runs in, for a tunnel started under the
     /// kill switch's block (TrafficHold); nil leaves it in root's own, as ever.
     func start(config: String, files: [String: String] = [:], group: gid_t? = nil) throws {
