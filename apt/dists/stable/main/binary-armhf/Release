@@ -1,0 +1,5 @@
+Component: main
+Origin: Ghostlane
+Label: Ghostlane CLI
+Architecture: armhf
+Description: Ghostlane CLI for Linux

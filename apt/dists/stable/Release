@@ -1,0 +1,37 @@
+Origin: Ghostlane
+Label: Ghostlane CLI
+Codename: stable
+Date: Wed, 14 Oct 2026 01:36:34 UTC
+Architectures: amd64 arm64 armhf
+Components: main
+Description: Ghostlane CLI for Linux
+MD5Sum:
+ ffe7b69802f8b67cbc5e3195f7313733 708 main/binary-amd64/Packages
+ b86b3113b04846fb6d66f345d6e7d64e 482 main/binary-amd64/Packages.gz
+ c817077a1d334cc22aee7edf415ddc4c 112 main/binary-amd64/Release
+ 59999fb27d17a79b17203cbb57a2bdde 708 main/binary-arm64/Packages
+ b93f5255b4b413c58793d689ddc5d5f0 486 main/binary-arm64/Packages.gz
+ fd3d6d9a9e6d06f747aec13eaa541398 112 main/binary-arm64/Release
+ 1ee38efaebeec72b9d8fc18488094d7b 708 main/binary-armhf/Packages
+ 550d837c4898d3130b4eaaec641f5471 482 main/binary-armhf/Packages.gz
+ 02eea80f1e46ce9f1f3533d573371a1c 112 main/binary-armhf/Release
+SHA1:
+ ac5112ef92e444994a660777f88a9b45fdca100c 708 main/binary-amd64/Packages
+ 27b534954182baf9f44c4bb67c4af56269a0f844 482 main/binary-amd64/Packages.gz
+ c2fdecb3eda310a373aa198aa30a0d5bb0825302 112 main/binary-amd64/Release
+ 7c974dc04d02fcc6587a898121a128d0b985cb39 708 main/binary-arm64/Packages
+ b81fb535f4cc5e65c9176cf8d23c34158cbe9be9 486 main/binary-arm64/Packages.gz
+ 7ab0809669dcd950d4191f25d98e9a2393d81ef8 112 main/binary-arm64/Release
+ 77cb2ad265f7281bf32431e08133b01cfc21a25c 708 main/binary-armhf/Packages
+ 77a002575e042c2511e8a23217051e8a812a345c 482 main/binary-armhf/Packages.gz
+ 2c7c72420fbcbc09ba9c104bd42d63118562ab4e 112 main/binary-armhf/Release
+SHA256:
+ 2b828e34a899bff53aa5f37c55eadbf81c47b873861f587a35d0e233cc4ca7b1 708 main/binary-amd64/Packages
+ 29790f342c1ba87b1c612bbc9107bb908c002991612eedf110a8dc3d0eded63c 482 main/binary-amd64/Packages.gz
+ 80a7771c7ec5c1e04b77ff8f589d427d0436fbb19e6d795e19f7454d7d0b3f94 112 main/binary-amd64/Release
+ e1c4fa092d64eedba4c914c74a782d0868724b135f24ae402c0c57186d65cecf 708 main/binary-arm64/Packages
+ 50ab858fab142c6f353f8461c397b626ded59e7683dd76b4ab787c392f42fcb3 486 main/binary-arm64/Packages.gz
+ 9773590aae000ffb2047ca3ed9be67cbf1ca064735909eb9d25ee9f5799e3431 112 main/binary-arm64/Release
+ 0410b9509f6831cd3925de9f3b60b8af2165a2ca45013c9e203c48605e20fd59 708 main/binary-armhf/Packages
+ 8171799e1b40c3c58cca705bd3b161a456dd75051d3c04a92c560b0ad8bc5649 482 main/binary-armhf/Packages.gz
+ 4de73d1d667d79747e5344001e6bedc9cd443a661a30cdb5afd89dc8bbfcb6d3 112 main/binary-armhf/Release
