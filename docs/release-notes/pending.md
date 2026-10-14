@@ -27,7 +27,7 @@ Windows still has no kill switch: nothing there owns a filter that outlives the 
 
 ### What the app does when it opens, it does once
 
-"Connect on launch", "refresh on open" and "measure on launch" ran at every return to the app on an iPhone, where the screen is built again each time. With "connect on launch" on, somebody who disconnected, looked at another app and came back was connected again by an app that had been running all along. They run once for each time the app is started, on every platform.
+"Connect on launch", "Update on open" and "Ping on launch" ran at every return to the app on an iPhone, where the screen is built again each time. With "Connect on launch" on, somebody who disconnected, looked at another app and came back was connected again by an app that had been running all along. They run once for each time the app is started, on every platform.
 
 ### Country flags in the server list
 
