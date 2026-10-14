@@ -1,2 +1,0 @@
-- A server named by its country's code (DE Direct, GB) is shown with the country's flag in front.
-- "Connect on launch", "Update on open" and "Ping on launch" run once for each time the app is started.
