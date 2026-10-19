@@ -61,11 +61,11 @@ existing maintainer can object. This has not happened yet.
 
 ## Money
 
-See [FUNDING.md](FUNDING.md). In short: if the project is accepted by Open
-Source Collective, that body holds the funds and every expense is public;
-maintainers and contributors may be paid for actual work; and Globvent Inc.,
-which publishes the mobile applications, is separate from the project treasury
-and receives none of it.
+See [FUNDING.md](FUNDING.md). In short: Open Source Collective holds the funds,
+on [opencollective.com/ghostlane](https://opencollective.com/ghostlane), and every
+expense is public; maintainers and contributors may be paid for actual work; and
+Globvent Inc., which publishes the mobile applications, is separate from the
+project treasury and receives none of it.
 
 ## Code of conduct
 

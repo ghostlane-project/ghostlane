@@ -46,3 +46,7 @@ release-keystore.jks
 
 # Python tooling under scripts/
 __pycache__/
+
+# Logs and hand-made backups (sing-box writes its log where it is started)
+*.log
+*.bak-*

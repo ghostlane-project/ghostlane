@@ -1,9 +1,9 @@
-# The project, and how it would be funded
+# The project, and how it is funded
 
 This document exists for anyone assessing the project from outside: a potential
 funder, a fiscal host, a packager, or a contributor deciding whether this is a
 serious place to spend an evening. It says what the project is, who runs it,
-and what would happen to money given to it.
+and what happens to money given to it.
 
 ## One project, two repositories
 
@@ -52,9 +52,10 @@ becomes a maintainer.
 
 ## The money
 
-Open Source Collective would be the fiscal host: it holds the funds, handles
-compliance, and pays approved expenses, all of it public and itemised. The
-project is not a company and has no bank account.
+Open Source Collective has been the fiscal host since 9 October 2026, at
+[opencollective.com/ghostlane](https://opencollective.com/ghostlane): it holds the
+funds, handles compliance, and pays approved expenses, all of it public and
+itemised. The project is not a company and has no bank account.
 
 What funds pay for, and the rules the maintainers hold themselves to when they
 are the ones being paid, are in

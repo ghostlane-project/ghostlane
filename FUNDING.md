@@ -3,14 +3,16 @@
 Ghostlane and olcRTC are free software. Nobody has to pay to use them, and no
 feature is held back for people who do not.
 
-Development has been unfunded so far. This document says how funding will work
-if the project is accepted by [Open Source Collective](https://opencollective.com/),
-so that anyone deciding whether to give money can see where it goes first.
+The project takes its funding through its collective,
+[opencollective.com/ghostlane](https://opencollective.com/ghostlane), hosted by
+[Open Source Collective](https://opencollective.com/opensource) since 9 October
+2026. This document says how that money is handled, so that anyone deciding
+whether to give can see where it goes first.
 
 ## Who holds the money
 
-Open Source Collective, a 501(c)(6) non-profit in the United States, would act
-as **fiscal host** for the project. It holds the funds, handles compliance and
+Open Source Collective, a 501(c)(6) non-profit in the United States, acts as
+**fiscal host** for the project. It holds the funds, handles compliance and
 accounting, and pays out approved expenses. The project itself is not a company
 and has no bank account of its own.
 
@@ -85,5 +87,12 @@ entity, and anyone may build and distribute their own copy under those licences.
 
 ## Sponsoring
 
-Until the Open Source Collective application is accepted, there is no collective
-to give to. This file will name it as soon as there is one.
+Give once or monthly, as a person or as an organisation, at
+[opencollective.com/ghostlane](https://opencollective.com/ghostlane). Cards, PayPal and
+bank transfers are taken there; which of them a contributor is offered depends
+on the amount and the country.
+
+Organisations that give $100 a month or more are named on that page as
+sponsors. Nothing else is offered in return, by the rules above: the
+repositories and the apps carry no sponsor logos or links, because the project
+recommends no service, including the ones that fund it.
