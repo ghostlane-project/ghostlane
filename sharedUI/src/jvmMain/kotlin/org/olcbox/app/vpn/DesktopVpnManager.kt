@@ -1590,9 +1590,12 @@ class DesktopVpnManager private constructor(
      * Verifying through the core's port would prove the core works and say
      * nothing about the tun in front of it — which is the half that is new, so it
      * is the half a green light has to be about.
+     *
+     * The port of choice is [preferredVerifyPort]'s: next to the core's, but never
+     * the PAC server's old port, which other things on the machine still ask for.
      */
     private fun allocateVerifyPort(corePort: Int): Int {
-        val preferred = corePort + 1
+        val preferred = preferredVerifyPort(corePort)
         if (isLocalPortFree(preferred)) return preferred
         return runCatching {
             java.net.ServerSocket().use { socket ->
@@ -4041,6 +4044,22 @@ internal enum class DesktopMode {
             }
         }
     }
+}
+
+/**
+ * The verify listener's port of choice: the one after the core's, unless that is
+ * [PacServer.PAC_PORT], 10809, in which case the one after it. In an olcRTC session the
+ * core is on 10808, so the port after it was the PAC server's old port, and whatever
+ * still asks that port for a PAC — a PAC URL of this app's that an older build left
+ * enabled in the system (ghostlane-project/ghostlane#139), other local software by
+ * convention — knocked at the tunnel's own SOCKS listener with HTTP, and every knock was
+ * an "invalid argument" line in its log, four to six every ten seconds. On a closed port
+ * the same knocks are refused in silence. The caller still takes an ephemeral port when
+ * the choice is busy.
+ */
+internal fun preferredVerifyPort(corePort: Int): Int {
+    val next = corePort + 1
+    return if (next == PacServer.PAC_PORT) next + 1 else next
 }
 
 /**

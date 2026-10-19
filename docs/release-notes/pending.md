@@ -1,0 +1,3 @@
+### macOS: the tunnel's own listener stays off the PAC server's old port
+
+In an olcRTC session the tunnel's verification listener took the port after the room's SOCKS port, 10809, which was this app's PAC server's port until July. What still asks that port for a PAC, with HTTP — a PAC URL an older build left enabled in the system's proxy settings, other local software by convention — knocked at a SOCKS listener, and every knock was an "invalid argument" line in the tunnel's log, four to six every ten seconds, crowding out what the log is read for. The listener now keeps clear of that port; the knocks meet a closed port and leave no trace. The leftover PAC URL itself is the next step ([#139](https://github.com/ghostlane-project/ghostlane/issues/139)).

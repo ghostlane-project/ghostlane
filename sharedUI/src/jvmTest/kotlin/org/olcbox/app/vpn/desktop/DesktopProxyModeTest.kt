@@ -5,6 +5,7 @@ import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.vpn.OlcRtcConnectionChecker
 import org.olcbox.app.vpn.olcRtcNativeLibrarySpec
+import org.olcbox.app.vpn.preferredVerifyPort
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -457,6 +458,21 @@ class DesktopProxyModeTest {
             ),
             restore
         )
+    }
+
+    /**
+     * In an olcRTC session the core is on 10808, and the verify listener used to take
+     * 10809: the PAC server's old port, which a PAC URL an older build left enabled in
+     * the system still asks for, with HTTP, and every ask was an "invalid argument" line
+     * in the tunnel's log (ghostlane-project/ghostlane#139). The listener keeps clear of
+     * that port; next to any other core it is the port after the core's, as before.
+     */
+    @Test
+    fun theVerifyListenerKeepsClearOfThePacServersOldPort() {
+        assertEquals(10810, preferredVerifyPort(10808))
+        assertEquals(10811, preferredVerifyPort(10810))
+        assertEquals(PacServer.PAC_PORT + 1, preferredVerifyPort(PacServer.PAC_PORT - 1))
+        assertEquals(20001, preferredVerifyPort(20000))
     }
 
     @Test
