@@ -1,0 +1,3 @@
+- olcRTC rooms on one meeting service hold on mobile data: the app now reaches it over TCP, where UDP kept dropping out.
+- olcRTC video rooms keep their speed on a network that limits speed by dropping traffic.
+- An olcRTC room starts on a network where one of its service's addresses does not answer.
