@@ -22,7 +22,7 @@ hand.
 | --- | --- | --- |
 | `resolve` | Resolves the engine revision to a full commit, checks that it carries `internal/gate` and `cmd/gate-report`, and decides the mode and the legs | none |
 | `unit` (x2) | `go test -race ./...` of the engine, default build and lean build | none |
-| `suite` (x5) | One leg per provider: `jitsi`, `telemost`, `salutejazz`, `vkcalls`, `mtslink`; a sixth, `wbstream`, only when a manual run names it | that provider's own (`salutejazz` has none) |
+| `suite` (x4) | One leg per provider: `jitsi`, `salutejazz`, `vkcalls`, `mtslink`; `telemost` and `wbstream` only when a manual run names them (Telemost: [olcrtc#58](https://github.com/ghostlane-project/olcrtc/issues/58)) | that provider's own (`salutejazz` has none) |
 | `verdict` | Merges the legs, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
 
 Each suite leg runs the same steps:

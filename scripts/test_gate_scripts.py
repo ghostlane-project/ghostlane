@@ -66,7 +66,7 @@ ENGINE = "/repos/ghostlane-project/olcrtc"
 # gate-resolve.sh's two lists: every provider a leg can be named for, and the
 # legs of a run that names none.
 PROVIDERS = ["jitsi", "telemost", "wbstream", "salutejazz", "vkcalls", "mtslink"]
-DEFAULT_PROVIDERS = ["jitsi", "telemost", "salutejazz", "vkcalls", "mtslink"]
+DEFAULT_PROVIDERS = ["jitsi", "salutejazz", "vkcalls", "mtslink"]
 
 
 def pin_routes(date=PIN_DATE, sha=PIN_SHA, gate=True):
@@ -284,10 +284,10 @@ class Resolve(unittest.TestCase):
         out = outputs(r.stdout)
         self.assertEqual("scheduled", out["mode"])
         self.assertEqual(PIN_SHA, out["engine_sha"])
-        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "telemost"}, {"provider": "salutejazz"},
+        self.assertEqual({"include": [{"provider": "jitsi"}, {"provider": "salutejazz"},
                                       {"provider": "vkcalls"}, {"provider": "mtslink"}]},
                          json.loads(out["legs"]))
-        self.assertEqual("jitsi,telemost,salutejazz,vkcalls,mtslink", out["providers"])
+        self.assertEqual("jitsi,salutejazz,vkcalls,mtslink", out["providers"])
         self.assertEqual("false", out["skip"])
         self.assertEqual("false", out["limited"])
         self.assertEqual("warn", out["severity"])
@@ -306,7 +306,7 @@ class Resolve(unittest.TestCase):
         out = outputs(r.stdout)
         self.assertEqual("release", out["mode"])
         self.assertEqual("v1.0.999", out["current_tag"])
-        self.assertEqual(5, len(json.loads(out["legs"])["include"]))
+        self.assertEqual(len(DEFAULT_PROVIDERS), len(json.loads(out["legs"])["include"]))
 
     def test_a_release_walks_the_default_legs_and_wbstream_is_not_one(self):
         # WB Stream closed to the public on 2026-10-10 and answers every join
@@ -374,21 +374,42 @@ class Resolve(unittest.TestCase):
         out = outputs(r.stdout)
         self.assertEqual({"include": [{"provider": "wbstream"}]}, json.loads(out["legs"]))
         self.assertEqual("true", out["limited"])
-        # Named beside every default leg it is a sixth, in its place in the
+        # Named beside every default leg it is a fifth, in its place in the
         # list, and nothing is left out: not a limited run.
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch",
                          GATE_PROVIDERS=",".join(DEFAULT_PROVIDERS + ["wbstream"]))
         self.assertEqual(0, r.returncode, r.stderr)
         out = outputs(r.stdout)
+        self.assertEqual([p for p in PROVIDERS if p != "telemost"], self.legs(out))
+        self.assertEqual("false", out["limited"])
+        # With telemost too it is every provider there is, in the list's order.
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch",
+                         GATE_PROVIDERS=",".join(DEFAULT_PROVIDERS + ["wbstream", "telemost"]))
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
         self.assertEqual(PROVIDERS, self.legs(out))
         self.assertEqual(",".join(PROVIDERS), out["providers"])
         self.assertEqual("false", out["limited"])
-        # In a default leg's place it makes five legs again, and a limited run.
+        # In a default leg's place it makes four legs again, and a limited run.
         r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch",
-                         GATE_PROVIDERS="jitsi,telemost,wbstream,salutejazz,vkcalls")
+                         GATE_PROVIDERS="jitsi,wbstream,salutejazz,vkcalls")
         self.assertEqual(0, r.returncode, r.stderr)
         out = outputs(r.stdout)
-        self.assertEqual(5, len(self.legs(out)))
+        self.assertEqual(4, len(self.legs(out)))
+        self.assertEqual("true", out["limited"])
+
+    def test_telemost_is_a_leg_only_when_a_manual_run_names_it(self):
+        # Telemost carries guests' streams at a trickle (olcrtc#58) and the
+        # engine of olcrtc#66 on no longer counts its cells as known failures,
+        # so a run that names no provider leaves it out.
+        for event in ("schedule", "push", "workflow_dispatch"):
+            r = self.resolve(pin_routes(), GATE_EVENT=event)
+            self.assertEqual(0, r.returncode, r.stderr)
+            self.assertNotIn("telemost", self.legs(outputs(r.stdout)), event)
+        r = self.resolve(pin_routes(), GATE_EVENT="workflow_dispatch", GATE_PROVIDERS="telemost")
+        self.assertEqual(0, r.returncode, r.stderr)
+        out = outputs(r.stdout)
+        self.assertEqual({"include": [{"provider": "telemost"}]}, json.loads(out["legs"]))
         self.assertEqual("true", out["limited"])
 
     def test_a_manual_run_refuses_an_unknown_provider_or_none(self):
