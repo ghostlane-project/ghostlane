@@ -36,6 +36,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/ghostlane-project/ghostlane?color=b5f23d&labelColor=07080d" alt="License: MIT"></a>
   <a href="https://github.com/ghostlane-project/ghostlane/releases"><img src="https://img.shields.io/github/v/release/ghostlane-project/ghostlane?color=b5f23d&labelColor=07080d&label=release" alt="Latest release"></a>
   <a href="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml"><img src="https://github.com/ghostlane-project/ghostlane/actions/workflows/pr-checks.yml/badge.svg?branch=main" alt="PR checks"></a>
+  <a href="https://opencollective.com/ghostlane"><img src="https://img.shields.io/badge/funding-Open_Collective-b5f23d?labelColor=07080d&logo=opencollective&logoColor=white" alt="Funding: Open Collective"></a>
 </p>
 
 <p align="center">
@@ -106,10 +107,11 @@ release.
 
 **Publishing and funding are separate things.** The mobile applications are
 published on the App Store and Google Play by Globvent Inc., which holds those
-developer accounts; that is its only role here. Project funding, if the
-application to Open Source Collective is accepted, is held by Open Source
-Collective as fiscal host, is spent in public, and is neither received nor
-controlled by Globvent Inc. [FUNDING.md](FUNDING.md) says this at length.
+developer accounts; that is its only role here. Project funding is held by Open
+Source Collective as fiscal host, on
+[opencollective.com/ghostlane](https://opencollective.com/ghostlane), is spent
+in public, and is neither received nor controlled by Globvent Inc.
+[FUNDING.md](FUNDING.md) says this at length.
 
 ## Features
 - One tap to connect, with the session's elapsed time and traffic on screen.
@@ -405,9 +407,11 @@ pasted into a public issue. Security problems go through the private channel in
 ## Supporting the project
 
 The app is free and stays free: nothing in it is sold, there is no account, and
-no feature waits behind a payment. Development has been unfunded so far.
+no feature waits behind a payment. Ghostlane and olcRTC take their funding
+through **[Open Collective](https://opencollective.com/ghostlane)**, where anyone can
+give once or monthly, as a person or as an organisation.
 
-If the project is funded, the money goes to the work that keeps it alive:
+The money goes to the work that keeps the project alive:
 
 - development and maintenance, including review of other people's changes;
 - infrastructure: build machines, the relays the release gate exercises, code
@@ -418,15 +422,17 @@ If the project is funded, the money goes to the work that keeps it alive:
 - documentation and translation;
 - compensation of maintainers and contributors for actual project work.
 
-Funding would be held by Open Source Collective as fiscal host, and every
-contribution and expense is public and itemised there. Globvent Inc., which
-publishes the mobile applications, neither receives nor controls those funds.
+Open Source Collective holds the funds as fiscal host, and every contribution
+and every expense is public and itemised on the collective's page. Globvent
+Inc., which publishes the mobile applications, neither receives nor controls
+those funds.
 [FUNDING.md](FUNDING.md) sets out the rules, including the ones the maintainers
 hold themselves to when they are paid.
 
 > **Здесь ничего не продаётся.** Ни приложение, ни доступ, ни конфигурации, ни
 > списки серверов, ни поддержка. Проект принимает только добровольное
-> финансирование и тратит его открыто: см. [FUNDING.md](FUNDING.md).
+> финансирование, через [Open Collective](https://opencollective.com/ghostlane), и
+> тратит его открыто: см. [FUNDING.md](FUNDING.md).
 
 ## Building from source
 
