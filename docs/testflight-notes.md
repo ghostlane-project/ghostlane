@@ -5,17 +5,18 @@ Kept under TestFlight's 4000-character limit. English, to match the app.
 
 ---
 
-Two changes for the iPhone since 1.0.460: what the app does when it opens, it now does once; and servers named by a country's code get that country's flag.
+Three changes for the iPhone since 1.0.466, all in olcRTC rooms.
 
 WHAT CHANGED
 
-• "Connect on launch", "Update on open" and "Ping on launch" ran again every time you came back to the app. With "Connect on launch" on, if you disconnected, looked at another app and came back, the app connected again by itself. They now run once for each time the app is started.
-• A server named by its country's code (DE Direct, GB · olcRTC) is shown with the country's flag in front. Until now a flag was shown only when the server's name already had one in it.
+• Rooms on the meeting service that 1.0.466 added hold on mobile data. There its UDP dropped out for seconds at a time, so pages crawled or stopped loading; the app now reaches that service over TCP.
+• Video rooms keep their speed on a network that limits speed by dropping traffic. Such a network used to leave a room at a small part of what it carries.
+• A room starts on a network where one of its service's addresses does not answer.
 
 WHAT TO TEST
 
-1. Connect on launch. In Settings → Server lists, turn "Connect on launch" on. Close the app from the app switcher and open it: it must connect by itself. Now disconnect, go to the Home Screen or another app, wait ten seconds and come back: it must stay disconnected. Lock the phone, unlock it and look again: still disconnected.
+1. Mobile data. Turn Wi-Fi off. Connect to an olcRTC server on the meeting service that 1.0.466 added, then open a few pages and play a video for a few minutes: the pages must load, and the video must not stop for seconds at a time.
 
-2. Update on open and Ping on launch. Turn both on in the same place, close the app from the app switcher and open it: the server list must refresh once and the latencies must be measured once. Leave the app and come back a few times: nothing may refresh or measure again by itself.
+2. Wi-Fi. Turn Wi-Fi on and do the same with the same server: it must be as fast as before.
 
-3. Flags. Look at a server list whose names begin with a country's code: each such server must have the flag of that country in front of its name, and the name itself must be as it was. A server named after something that is not a country must have no flag. Pins, the order of the list and the selected server must be as before.
+3. Other olcRTC servers. Connect to an olcRTC server on another meeting service and open a few pages: they must load as they did in 1.0.466.

@@ -40,11 +40,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # PROVIDERS is every provider a leg can be named for; DEFAULT_PROVIDERS is the
 # legs of a run that names none: a release, the daily run, a pin push and a
-# manual run with no providers. wbstream is in the first alone: WB Stream closed
-# to the public on 2026-10-10 and answers every join 401, so its leg can only
-# fail, and it runs when a manual run names it.
+# manual run with no providers. wbstream and telemost are in the first alone,
+# and each runs when a manual run names it. WB Stream closed to the public on
+# 2026-10-10 and answers every join 401, so its leg can only fail. Telemost
+# carries guests' streams at a trickle since about 2026-10-01 (olcrtc#58), and
+# from the engine of olcrtc#66 on its cells are no longer known failures: the
+# engine walks it only when named, as this list does.
 readonly PROVIDERS=(jitsi telemost wbstream salutejazz vkcalls mtslink)
-readonly DEFAULT_PROVIDERS=(jitsi telemost salutejazz vkcalls mtslink)
+readonly DEFAULT_PROVIDERS=(jitsi salutejazz vkcalls mtslink)
 # Masks shorter than this shred every log line they match (gate-mask.sh).
 readonly MIN=6
 readonly MIN_TOKEN=16

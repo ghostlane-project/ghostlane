@@ -213,11 +213,16 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # and the gate walks it on a pool room (GATE_MTSLINK_ROOMS); telemost's cells are known
 # failures under olcrtc#58 until the service forwards guest tracks again, and WB Stream
 # runs only when named (the service closed its beta). Same API.
+# bac09891b3b4 -> b6cb4c417d17 (olcrtc#67): a client reaches MTS Link's SFU over ICE-TCP
+# unless its room link asks otherwise (olcrtc#60: UDP goes dark on mobile networks under
+# an allow list); vp8channel hands its rate to pace when loss follows the rate (#61); a
+# name's addresses dial staggered (#62); the MAX carrier, which the app does not offer;
+# Telemost and MAX are gated only when named (#66). Same API.
 # The pin must carry internal/gate. aaffe1e05c3b predates it and the gate refuses
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261012005350-bac09891b3b4}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261019022749-b6cb4c417d17}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -291,7 +296,11 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261012005350-bac09891b3b4}"
 # 33 -> 34: the engine pin above (f9edaa7f1ab5, olcrtc#52): the vkcalls carrier
 # (VK Calls, guest join, vp8channel) and a DTLS ClientHello profile; the API
 # grew Runtime.SetDTLSProfile, which the extension and the app's probes call.
-CORES_BUILD="${CORES_BUILD:-35}"
+# 34 -> 35: the engine pin above (bac09891b3b4, olcrtc#57): the mtslink carrier.
+# Same API.
+# 35 -> 36: the engine pin above (b6cb4c417d17, olcrtc#67): ICE-TCP for the
+# client side of an MTS Link room, and #61, #62. Same API.
+CORES_BUILD="${CORES_BUILD:-36}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
