@@ -1,14 +1,31 @@
 # Ghostlane privacy policy
 
-Effective 2026-09-25. Applies to the Ghostlane app on iOS, Android, macOS, Windows
+Effective 2026-10-20. Applies to the Ghostlane app on iOS, Android, macOS, Windows
 and Linux, published from this repository.
 
 ## What the app collects
 
-Nothing. The app has no account, no sign-in, no analytics, no advertising
-identifier and no crash-reporting service. It does not ask for your name, e-mail,
-phone number or location, and it does not read your contacts, photos or files
-beyond a server-list file you choose to import.
+Nothing for itself. The app has no account, no sign-in, no analytics, no
+advertising identifier and no crash-reporting service. It does not ask for your
+name, e-mail, phone number or location, and it does not read your contacts,
+photos or files beyond a server-list file you choose to import.
+
+## What the app tells the provider of a server list
+
+When the app refreshes a server list, it tells the list's provider which device
+it is: a random identifier made when the app was installed, the device model,
+and the system's name and version, so the provider can count the devices that
+use one subscription. The identifier is not the device's advertising or hardware
+identifier, it is not linked to a name or an account inside the app (the app has
+none), and it goes with the app when the app is removed. Nothing else about the
+device or its owner is sent. The iOS packet tunnel's room refresh and the Linux
+command-line client send the same.
+
+What a provider keeps is the provider's to say, and deleting it is asked of the
+provider. ProofKit's platform forgets a device 180 days after its last refresh,
+and every device of a subscription when the provider resets its link; a device
+the provider removed is kept as removed, so that it stays refused, for as long
+as the removal stands.
 
 ## What stays on your device
 
@@ -22,9 +39,11 @@ None of this leaves the device unless you export and send it yourself.
 
 ## Where the app connects
 
-- **The server-list URL you added**, to download and refresh that list.
+- **The server-list URL you added**, to download and refresh that list. Each
+  refresh carries the device identifier described above.
 - **The VPN servers in that list**, to carry your traffic. What those servers do
-  with it is governed by whoever operates them, not by this app.
+  with it is governed by whoever operates them, not by this app. An olcRTC
+  server is also told the device identifier when a session starts.
 - **A check that the tunnel works**, when a connection starts: one small HTTPS
   request to `1.1.1.1/cdn-cgi/trace` (or `cloudflare.com/cdn-cgi/trace`) through
   the tunnel. Its answer is the exit's address and country, which the app shows.
@@ -45,10 +64,13 @@ None of this leaves the device unless you export and send it yourself.
   `www.google.com/generate_204` through that room.
 - **A partner link resolver**, only when you open a partner link that has to be
   turned into a server-list URL. That request carries the link.
-- **GitHub**, to check for updates on the desktop and Android builds. The
-  request fetches the release list.
+- **GitHub**, to check for updates on the desktop builds and on the Android build
+  published on GitHub. The builds from the App Store and Google Play are updated
+  by their stores and never ask. The request fetches the release list and carries
+  the device identifier described above.
 
-None of these requests carries anything that identifies you or your device.
+Apart from the device identifier, where this list names it, none of these
+requests carries anything that identifies you or your device.
 
 The app never opens, mentions or links to any website of its own, and it has no
 purchase of any kind.
@@ -60,7 +82,8 @@ screen. No photo or video is recorded, stored or uploaded.
 
 ## Children
 
-The app is not directed at children and collects no data from anyone.
+The app is not directed at children. It asks no one's name or age, and the device
+identifier says nothing about who uses the device.
 
 ## Changes
 

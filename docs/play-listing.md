@@ -145,7 +145,7 @@ A tunnel inside a video call. olcRTC, Reality, Hysteria2 and XHTTP in one app.
 > does not), so the protocol names belong here rather than in a keyword field
 > Play does not have.
 
-**Full description** (4000 max) — [2714]
+**Full description** (4000 max) — [3003]
 
 ```
 Ghostlane carries your traffic inside a video call.
@@ -198,9 +198,14 @@ number it guessed.
 
 PRIVACY
 
-Nothing is collected. No account, no analytics, no advertising identifier, no
-crash reporting service. Your server lists and the app's own log stay on the
-device and are never sent anywhere.
+No account, no analytics, no advertising identifier, no crash reporting service.
+Your server lists and the app's own log stay on the device and are never sent
+anywhere.
+
+When the app refreshes a server list, it tells the list's provider which device
+it is: a random identifier made when the app was installed, the device model,
+and the system's name and version, so the provider can count the devices that
+use one subscription. Nothing else about the device or its owner is sent.
 
 Besides the server lists you add and the servers in them, the app makes a few
 small checks that carry nothing about you: whether the tunnel works and how fast
@@ -263,21 +268,51 @@ feature graphic from this document with the release's service account.
 
 ## Data safety
 
-- **Does your app collect or share any of the required user data types?** → **No**
+- **Does your app collect or share any of the required user data types?** → **Yes**
+- **Is all of the user data collected by your app encrypted in transit?** → **Yes**
+- **Do you provide a way for users to request that their data is deleted?** →
+  **Yes**, through the provider of the list: see Data deletion below.
 
-That ends the section. It is consistent with `PrivacyInfo.xcprivacy`, with the
-App Store answers, and with what the app does.
+One data type, **Device or other IDs**:
 
-> The two network calls the app makes are worth understanding rather than
-> guessing at. Fetching a server list sends its URL to the provider that issued
-> it; resolving a partner link sends that link to proofkit.org. Neither carries a
-> user identifier, and neither is one of Play's data types. The tunnel itself
+- **Collected or shared?** → **Collected**, not shared: it goes to no third party
+  beyond the provider of the server list the user chose.
+- **Is this data processed ephemerally?** → **No**: the provider keeps it to count
+  the devices on a subscription.
+- **Is this data required, or can users choose whether it is collected?** →
+  **Required**: the app has no setting that turns it off.
+- **Why is this user data collected?** → **App functionality**.
+
+When the app refreshes a server list, it tells the list's provider which device
+it is: a random identifier made when the app was installed, the device model,
+and the system's name and version, so the provider can count the devices that
+use one subscription. The identifier is not the device's advertising or hardware
+identifier, it is not linked to a name or an account inside the app (the app has
+none), and it goes with the app when the app is removed. Nothing else about the
+device or its owner is sent. An olcRTC server of that list is told the same
+identifier when a session starts. This is consistent with `PrivacyInfo.xcprivacy`,
+with the App Store answers, and with the privacy policy.
+
+> The network calls the app makes are worth understanding rather than guessing
+> at. Fetching a server list sends its URL, and the identifier above, to the
+> provider that issued it; resolving a partner link sends that link to
+> proofkit.org and nothing else. The Play build has no update check of its own,
+> since Google Play updates it, so GitHub hears nothing from it. The tunnel itself
 > carries the user's traffic to the server they picked and is ephemeral
-> processing, not collection. If analytics or crash reporting is ever added,
-> this answer and the privacy manifest change in the same commit as the SDK.
+> processing, not collection. If analytics or crash reporting is ever added, this
+> answer and the privacy manifest change in the same commit as the SDK.
 
-**Data deletion** — nothing is collected, so there is nothing to request the
-deletion of. Say so rather than leaving the URL field guessed at.
+> **Encrypted in transit** is Yes because providers serve their lists over https.
+> The app still fetches a list the user adds by a plain `http://` address (the
+> Android build permits cleartext), and that provider receives the identifier
+> unencrypted.
+
+**Data deletion**: the identifier is held by the provider of the list, so a user
+asks that provider to delete it. ProofKit's platform forgets a device 180 days
+after its last refresh, and every device of a subscription when the provider
+resets its link; a device the provider removed is kept as removed, so that it
+stays refused, for as long as the removal stands. Removing the app removes the
+identifier from the device.
 
 ---
 
@@ -287,10 +322,12 @@ deletion of. Say so rather than leaving the URL field guessed at.
 
 - **Does your app use VpnService?** → **Yes**
 - **Is VPN the app's core functionality?** → **Yes**
-- **What data does the VPN service collect or transmit?** → None. The tunnel
-  carries the user's traffic to the server in their own server list. The app
-  does not read, record or transmit its contents, its destinations, or DNS
-  queries.
+- **What data does the VPN service collect or transmit?** → None of the traffic
+  it carries. The tunnel carries the user's traffic to the server in their own
+  server list. The app does not read, record or transmit its contents, its
+  destinations, or DNS queries. What it sends about the device is the identifier
+  of Data safety above, to the list's provider; an olcRTC server of that list is
+  told it when a session starts.
 - **Does the app redirect or manipulate other apps' traffic for monetisation?**
   → **No.** There is no advertising in the app, no ad injection, no ad
   replacement, and no routing decision made for any reason other than the exit
@@ -343,8 +380,12 @@ protected by DTLS-SRTP, with an additional authenticated cipher on the tunnel
 stream itself. The engines are sing-box, Xray-core and our own olcRTC engine
 (github.com/ghostlane-project/olcrtc), all open source.
 
-**Does your app collect or transmit personal and sensitive user data?** → No.
-No account, no sign-in, no analytics, no advertising identifier, no crash
+**Does your app collect or transmit personal and sensitive user data?** → No
+personal or sensitive data. What it sends about the device is one random
+identifier made when the app was installed, with the device model and the
+system's name and version, to the provider of a server list the user added, so
+the provider can count the devices on one subscription (Data safety above). No
+account, no sign-in, no analytics, no advertising identifier, no crash
 reporting. The tunnel carries the user's traffic to the server they selected and
 nothing is retained. The prominent disclosure is shown anyway, before the first
 connection.
@@ -400,8 +441,11 @@ Server-list link:
 The link carries several servers over different protocols; any of them connects.
 Traffic is routed through Android's VpnService.
 
-The app collects no data. There is no account and no sign-in. The camera is used
-only to scan a QR code, and only when the user taps that button.
+When it refreshes a server list, the app sends the list's provider a random
+identifier made when the app was installed, with the device model and the
+system's name and version, so the provider can count the devices on one
+subscription; nothing else is collected. There is no account and no sign-in. The
+camera is used only to scan a QR code, and only when the user taps that button.
 ```
 
 > The link must be live on the day of review and for some days after. A list
