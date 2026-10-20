@@ -19,12 +19,16 @@
 	<!--
 		One entry, the device id, and nothing else. With each refresh of a
 		server list - the app's, and the room refresh of its packet tunnel -
-		the provider of that list is sent a random id made when the app was
-		installed, the device model and the version of the system, so that the
-		provider can count the devices on a subscription; the same id opens
-		each olcRTC session with the room's server. Locations, subscriptions
-		and logs stay on the device; the coordinator asked to resolve a partner
-		link is sent nothing about the person asking.
+		the provider of that list is sent a random id the app made the first
+		time it needed one, the device model and the version of the system, so
+		that the provider can count the devices on one server list; the same id
+		opens each olcRTC session with the room's server. The model and the
+		version are not declared as a data type of their own, and that is not
+		an omission: of Apple's categories, Device ID is the identifier, while
+		a model or a system version identifies no device and no person and is
+		not collected data in the manifest's sense. Do not declare more for
+		them. Server lists and logs stay on the device; the coordinator asked
+		to resolve a partner link is sent nothing about the person asking.
 	-->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>

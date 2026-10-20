@@ -119,7 +119,8 @@ enum DeviceHeadersTests {
         let request = DeviceHeaders.listRequest(url: url, headers: fiveHeaders)
         check(request.url == url, "the list's own address")
         check((request.httpMethod ?? "GET") == "GET", "a GET")
-        check(request.value(forHTTPHeaderField: "Accept") == DeviceHeaders.listAccept, "Accept as the app's")
+        // listAccept is held to the app's own Accept in sameAsTheKotlin.
+        check(request.value(forHTTPHeaderField: "Accept") == DeviceHeaders.listAccept, "Accept is listAccept")
         for (name, value) in fiveHeaders {
             check(request.value(forHTTPHeaderField: name) == value, "\(name) on the request: \(String(describing: request.value(forHTTPHeaderField: name)))")
             check(request.value(forHTTPHeaderField: name.uppercased()) == value, "\(name) read in any case")
@@ -256,13 +257,24 @@ enum DeviceHeadersTests {
             check(!found.isEmpty, "\(dir) holds Kotlin")
             return found
         }
-        /// The first capture of `pattern` in `text`.
-        func capture(_ pattern: String, in text: String) -> String? {
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-                  match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text)
-            else { return nil }
-            return String(text[range])
+        /// The first group of every match of `pattern` in `text`.
+        func captures(_ pattern: String, in text: String) -> [String] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                print("FAIL: the pattern \(pattern) does not compile")
+                exit(1)
+            }
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+                guard match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) else { return nil }
+                return String(text[range])
+            }
+        }
+        /// The one capture of `pattern` in `text`. The Kotlin of a source set is
+        /// joined in no fixed order (a dictionary's), so a value found twice
+        /// could be either: none or more than one fails, with the count.
+        func one(_ pattern: String, in text: String, _ what: String, line: Int = #line) -> String? {
+            let found = captures(pattern, in: text)
+            check(found.count == 1, "\(what): \(found.count) matches, want 1: \(found)", line: line)
+            return found.first
         }
         func has(_ pattern: String, in text: String) -> Bool {
             (try? NSRegularExpression(pattern: pattern))?
@@ -273,31 +285,37 @@ enum DeviceHeadersTests {
         let all = common.values.joined(separator: "\n")
 
         // The app's name in its user agent, and the user agent's shape.
-        let name = capture(#"\bNAME\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: read("sharedUI/build.gradle.kts"))
+        let name = one(#"\bNAME\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: read("sharedUI/build.gradle.kts"), "GeneratedAppInfo.NAME")
         check(name == DeviceHeaders.appName, "GeneratedAppInfo.NAME is \(String(describing: name))")
-        let agent = capture(#"\buserAgent\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: all) ?? ""
+        let agent = one(#"\buserAgent\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: all, "the user agent's template") ?? ""
         check(has(#"(?i)^\$\{?[\w.]*name\}?/\$\{?[\w.]*version\}?$"#, in: agent), "the user agent is name/version: \(agent)")
 
         // The cut: its length and its range of characters.
-        let limit = capture(#"\bDEVICE_HEADER_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all)
+        let limit = one(#"\bDEVICE_HEADER_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all, "DEVICE_HEADER_MAX_CHARS")
         check(limit == String(DeviceHeaders.maxChars), "DEVICE_HEADER_MAX_CHARS is \(String(describing: limit))")
         check(has(#"' '\s*\.\.\s*'~'"#, in: all), "the cut keeps ' '..'~', printable ASCII")
-        let announceLimit = capture(#"\bANNOUNCE_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all)
+        let announceLimit = one(#"\bANNOUNCE_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all, "ANNOUNCE_MAX_CHARS")
         check(announceLimit == String(DeviceHeaders.reasonMaxChars), "ANNOUNCE_MAX_CHARS is \(String(describing: announceLimit))")
 
-        // The names on the wire.
+        // The list fetch itself, the one file that has downloadTextFromUrl: the
+        // names on the wire, the Accept and the user agent are read where the
+        // request is made, not anywhere in the Kotlin. (The update check sent
+        // x-hwid too until 2026-10-20, and a name found there passed.)
+        let fetches = common.filter { has(#"fun\s+downloadTextFromUrl\b"#, in: $0.value) }
+        check(fetches.count == 1, "one list fetch: \(fetches.keys.sorted())")
+        let fetch = fetches.first?.value ?? ""
         for header in ["x-hwid", "x-device-os", "x-ver-os", "x-device-model", "announce"] + DeviceHeaders.refusalFlags {
-            check(all.contains("\"\(header)\""), "the app names \(header) too")
+            check(fetch.contains("\"\(header)\""), "the list fetch names \(header) too")
         }
-        // The list fetch sends the app's user agent beside the device headers.
-        check(common.values.contains { $0.contains("\"x-device-os\"") && $0.contains("CurrentAppInfo.userAgent") },
-              "the device headers go with CurrentAppInfo.userAgent")
+        check(fetch.contains("CurrentAppInfo.userAgent"), "the list fetch sends CurrentAppInfo.userAgent beside the device headers")
+        let accept = one(#"HttpHeaders\.Accept,\s*"([^"]*)""#, in: fetch, "the list fetch's Accept")
+        check(accept == DeviceHeaders.listAccept, "Accept is the app's: \(String(describing: accept))")
 
         // iOS's description: the system's name, the version's form, the model.
         let ios = sources("iosMain").values.filter { has(#"actual\s+fun\s+deviceDescription\b"#, in: $0) }
         check(ios.count == 1, "one iOS deviceDescription: \(ios.count)")
         let description = ios.first ?? ""
-        check(capture(#"\bos\s*=\s*"([^"]*)""#, in: description) == "iOS", "the system's name is iOS")
+        check(one(#"\bos\s*=\s*"([^"]*)""#, in: description, "the iOS description's os") == "iOS", "the system's name is iOS")
         check(has(#"\$\{?majorVersion\}?\.\$\{?minorVersion\}?"#, in: description)
             && has(#"patchVersion\s*>\s*0"#, in: description), "major.minor, and the patch only when it is not 0")
         check(has(#"\.machine\b"#, in: description), "the model is utsname's machine")

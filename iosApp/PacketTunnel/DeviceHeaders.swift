@@ -21,8 +21,10 @@ import FoundationNetworking
 /// - `User-Agent`: `olcbox/<version>`, `CurrentAppInfo.userAgent`. The name is
 ///   `GeneratedAppInfo.NAME` (sharedUI/build.gradle.kts); the version there is
 ///   MARKETING_VERSION, which is this bundle's CFBundleShortVersionString.
-/// - `x-hwid`: the id made at install (`PersistentDeviceIdentityProvider`),
-///   which the app hands this process as `OlcrtcEngine.Parameters.clientId`.
+/// - `x-hwid`: the app's id (`PersistentDeviceIdentityProvider`, made the
+///   first time the app needs one), which the app hands this process as
+///   `OlcrtcEngine.Parameters.clientId`; empty when the app could not read
+///   it, and then not sent at all.
 /// - `x-device-os`, `x-ver-os`, `x-device-model`: `DeviceDescription.ios.kt`,
 ///   the version NSProcessInfo reports and utsname's machine. Never UIDevice: a
 ///   main-actor class, and nothing here runs on the main actor.
