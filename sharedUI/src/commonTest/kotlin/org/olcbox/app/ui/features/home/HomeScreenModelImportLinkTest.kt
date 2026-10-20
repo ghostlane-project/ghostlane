@@ -424,6 +424,9 @@ class HomeScreenModelImportLinkTest {
 
             assertEquals(1, report.updatedCount)
             assertEquals("ours", repo.getActiveLocationId())
+            // The start comes right after the refresh hands its report on, not
+            // inside that call: it is waited for.
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
             assertEquals(1, vpn.starts)
         } finally { vm.viewModelScope.cancel() }
     }
