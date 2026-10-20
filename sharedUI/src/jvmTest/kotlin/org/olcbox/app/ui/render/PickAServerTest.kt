@@ -2,6 +2,7 @@ package org.olcbox.app.ui.render
 
 import androidx.compose.ui.test.DesktopComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -47,8 +48,14 @@ class PickAServerTest {
             val texts = texts()
             assertTrue("Pick a server" in texts, "the strip does not ask for a pick: $texts")
             assertFalse("Add a server list to start" in texts, "the strip asks for a list the person has: $texts")
-            assertFalse(texts.any { "NO SERVER LIST" in it || "ADD SERVER LIST" in it }, "a server list is asked for: $texts")
+            assertFalse("NO SERVER LIST" in texts, "the strip says there is no server list: $texts")
+            // The bar's button is named by what it says. (The board's own
+            // "Add server list" at its foot stays, as it is in every state.)
             onNodeWithContentDescription("PICK A SERVER").assertExists()
+            assertTrue(
+                onAllNodesWithContentDescription("ADD SERVER LIST").fetchSemanticsNodes().isEmpty(),
+                "the bar's button still asks for a server list"
+            )
         }
     }
 
