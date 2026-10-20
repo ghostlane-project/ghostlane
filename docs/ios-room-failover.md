@@ -68,7 +68,17 @@ origin changes the selection before that restart stops the tunnel.
   where the tunnel goes), parses it, and hands the engine the current list,
   which the engine reads at its next hop. Every five minutes as well, for
   whatever an event did not cover. One fetch per 15 s at most, so a client
-  cycling through dead rooms cannot storm the server. And a watchdog: an engine
+  cycling through dead rooms cannot storm the server. It asks as the app asks
+  in its Identity mode (`DeviceHeaders`): the app's id as `x-hwid` (the
+  `clientId` the app hands over in `olcrtc.json`), `olcbox/<version>` as its
+  user agent, and `x-device-os`, `x-ver-os`, `x-device-model` cut as the app
+  cuts them, so a host that holds a list to a number of devices counts the
+  refresh as the device the app is. An answer that turns the device away
+  (`x-hwid-max-devices-reached` or `x-hwid-not-supported`) is not a list: its
+  placeholder line is never read as a room, the rooms held stay, the reason
+  (`announce`) goes into `olcrtc.log`, and the host is asked again as after a
+  failure. `scripts/test-ios-room-list.sh` tests `DeviceHeaders` too, against
+  the Kotlin it copies. And a watchdog: an engine
   whose generation ended - every room tried once, none held - is started again
   over the rooms known now, with a 2-20 s backoff, indefinitely, since where the
   list lives behind the tunnel a restart is the only way back to one.
