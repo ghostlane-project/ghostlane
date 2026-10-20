@@ -285,16 +285,17 @@ fun HomeScreen(
     fun activeLocationConfig(): LocationConfig? =
         locations.firstOrNull { it.storageId == locationViewModel.selectedLocationId }?.config
 
-    /** Restarts only if the running tunnel's own config actually moved. */
+    /**
+     * Restarts only if the running tunnel's own config actually moved, by the
+     * rule every screen that refreshes asks ([SubscriptionRefreshReport.restartsRunningTunnel]).
+     */
     fun restartIfActiveChanged(before: LocationConfig?, report: SubscriptionRefreshReport) {
-        // Except where it moved because the list it came from refused this
-        // device: the host still carries the session, and the refusal takes
-        // the list's servers away, not the connection (see the report).
-        if (report.refusedSelection) return
-        val after = activeLocationConfig()
         // Vanished counts too: the location the tunnel runs on being gone is exactly
-        // when a restart is right, and comparing to null covers it.
-        if (after != before) viewModel.restartVpnIfRunning()
+        // when a restart is right, and comparing to null covers it. The report
+        // knows the one exception, a server a refusal took away.
+        if (report.restartsRunningTunnel(selectionMoved = activeLocationConfig() != before)) {
+            viewModel.restartVpnIfRunning()
+        }
     }
 
     fun refreshSubscriptions() {

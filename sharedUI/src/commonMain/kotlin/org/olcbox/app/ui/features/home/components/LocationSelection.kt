@@ -31,7 +31,6 @@ import multiplatform_app.sharedui.generated.resources.provider_site
 import multiplatform_app.sharedui.generated.resources.provider_support
 import multiplatform_app.sharedui.generated.resources.quota_available
 import multiplatform_app.sharedui.generated.resources.quota_used
-import multiplatform_app.sharedui.generated.resources.refresh_device_refused
 import multiplatform_app.sharedui.generated.resources.remove_named
 import multiplatform_app.sharedui.generated.resources.remove_server_list
 import multiplatform_app.sharedui.generated.resources.sub_server_list
@@ -73,6 +72,7 @@ import org.olcbox.app.data.model.PinnedLocation
 import org.olcbox.app.data.model.RefusedList
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.ui.features.home.TransportMismatch
+import org.olcbox.app.ui.features.home.fallbackText
 import org.olcbox.app.ui.features.home.providerTextShown
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.OlcrtcSlots
@@ -92,7 +92,6 @@ import org.olcbox.app.ui.components.kit.PkSectionEyebrow
 import org.olcbox.app.ui.components.kit.SeatDisplay
 import org.olcbox.app.ui.components.kit.pkSubscriptionHost
 import org.olcbox.app.ui.components.kit.pkSubscriptionIsSecret
-import org.olcbox.app.update.currentUpdatePlatform
 import org.olcbox.app.ui.components.kit.planFraction
 import org.olcbox.app.ui.components.kit.rememberBoardColumns
 import org.olcbox.app.ui.components.kit.roomIsBlocked
@@ -450,8 +449,12 @@ fun RoomBoard(
             val groupUrl = (first?.subscriptionUrl ?: refused?.subscriptionUrl)?.trim()
             // Two server lists of a dozen exits each is most of a phone screen
             // before a user has scrolled at all, and the one they are not using
-            // is pure noise.
-            val isCollapsed = collapsible && !groupUrl.isNullOrBlank() && groupUrl in foldedSubscriptionUrls
+            // is pure noise. Not a list whose host refused this device: it has
+            // no rows to hide, and folded it would hide the one thing it says,
+            // why. Folded before the refusal, it stands open; the fold is kept
+            // for when the list is served again.
+            val foldable = collapsible && refused == null
+            val isCollapsed = foldable && !groupUrl.isNullOrBlank() && groupUrl in foldedSubscriptionUrls
             val lowestEnabled = !groupUrl.isNullOrBlank() && groupUrl in lowestSubscriptionUrls
             // Lowest is stored per subscription, but only the list containing
             // the active location is the current selection. Highlighting every
@@ -492,7 +495,7 @@ fun RoomBoard(
                         words = words
                     ),
                     collapsed = isCollapsed,
-                    collapsible = collapsible,
+                    collapsible = foldable,
                     holdsSelection = headMarksSelection(group.locations, rows, selectedLocationId, lowestSelected),
                     onToggle = { if (!groupUrl.isNullOrBlank()) onFoldToggle(groupUrl) }
                 ) {
@@ -555,16 +558,16 @@ fun RoomBoard(
 
                 if (refused != null) {
                     // Where the rows of a list its host refused would be: why
-                    // there are none. The provider's own sentence, or ours where
-                    // it sent none, and ours on the iPhone (see below).
-                    val ours = stringResource(Res.string.refresh_device_refused)
-                    if (!isCollapsed) PkProviderNote(refusalNote(refused.subscription?.announce, ours))
+                    // there are none. The provider's own sentence, or ours for
+                    // the kind of refusal where it sent none, and ours on the
+                    // iPhone (providerTextShown). Never folded away (above).
+                    val ours = stringResource(refused.refusal.fallbackText())
+                    PkProviderNote(refusalNote(refused.subscription?.announce, ours))
                 } else {
                     // The provider's own note (`announce`), under its list. Not on the
-                    // iPhone: a provider's note is as often "renew here", and App Review
-                    // reads a purchase pointer shown in the app as the app's (3.1.1).
+                    // iPhone (providerTextShown).
                     val announce = subscription?.announce?.takeIf { it.isNotBlank() }
-                    if (announce != null && !isCollapsed && currentUpdatePlatform().os != "ios") {
+                    if (announce != null && !isCollapsed && providerTextShown()) {
                         PkProviderNote(announce)
                     }
                 }

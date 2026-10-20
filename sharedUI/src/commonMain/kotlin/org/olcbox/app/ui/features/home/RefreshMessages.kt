@@ -5,14 +5,17 @@ import multiplatform_app.sharedui.generated.resources.refresh_bulk_failed
 import multiplatform_app.sharedui.generated.resources.refresh_bulk_none
 import multiplatform_app.sharedui.generated.resources.refresh_bulk_partial
 import multiplatform_app.sharedui.generated.resources.refresh_bulk_updated
-import multiplatform_app.sharedui.generated.resources.refresh_device_refused
+import multiplatform_app.sharedui.generated.resources.refresh_device_limit_reached
+import multiplatform_app.sharedui.generated.resources.refresh_device_not_supported
 import multiplatform_app.sharedui.generated.resources.refresh_empty
 import multiplatform_app.sharedui.generated.resources.refresh_rejected
 import multiplatform_app.sharedui.generated.resources.refresh_server_error
 import multiplatform_app.sharedui.generated.resources.refresh_unchanged
 import multiplatform_app.sharedui.generated.resources.refresh_unreachable
 import multiplatform_app.sharedui.generated.resources.refresh_updated
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
+import org.olcbox.app.data.model.DeviceRefusal
 import org.olcbox.app.data.repository.SubscriptionRefreshError
 import org.olcbox.app.data.repository.SubscriptionRefreshFailure
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
@@ -54,16 +57,26 @@ suspend fun SubscriptionRefreshFailure.localizedMessage(): String {
 
 /**
  * Why a list's host refused this device, as the screen says it: the provider's
- * own sentence, in whatever language the provider wrote it, or ours in the
- * user's where it sent none.
+ * own sentence, in whatever language the provider wrote it, or ours for the
+ * kind of refusal in the user's where it sent none.
  *
- * Never the provider's on the iPhone, for the reason its notes are not shown
- * there (the board's `announce`): a provider's text is as often "renew here",
- * and App Review reads a purchase pointer shown in the app as the app's
- * (3.1.1). Ours says the same thing without one.
+ * Never the provider's on the iPhone ([providerTextShown]). Ours says the same
+ * thing without whatever else a provider's text may say.
  */
 suspend fun SubscriptionRefreshError.DeviceRefused.localizedText(): String =
-    message.takeIf { it.isNotBlank() && providerTextShown() } ?: getString(Res.string.refresh_device_refused)
+    message.takeIf { it.isNotBlank() && providerTextShown() } ?: getString(refusal.fallbackText())
 
-/** Whether a provider's own text may stand on this platform's screens: not on the iPhone. */
+/** What the app says for a refusal of this kind when the provider said nothing. */
+internal fun DeviceRefusal.fallbackText(): StringResource = when (this) {
+    DeviceRefusal.LimitReached -> Res.string.refresh_device_limit_reached
+    DeviceRefusal.NotSupported -> Res.string.refresh_device_not_supported
+}
+
+/**
+ * Whether a provider's own text may stand on this platform's screens: its note
+ * under a list (`announce`) and its reason for refusing this device. Not on the
+ * iPhone: a provider's text is as often "renew here", and App Review reads a
+ * purchase pointer shown in the app as the app's (3.1.1). The one rule both
+ * the board and the messages ask.
+ */
 internal fun providerTextShown(): Boolean = currentUpdatePlatform().os != "ios"

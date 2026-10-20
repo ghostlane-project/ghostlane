@@ -1,5 +1,7 @@
 package org.olcbox.app.data.repository
 
+import org.olcbox.app.data.model.DeviceRefusal
+
 /**
  * Why a subscription could not be refreshed. Kept as a closed set so the UI can
  * phrase it without the datasource owning user-facing copy.
@@ -20,18 +22,27 @@ sealed interface SubscriptionRefreshError {
     /**
      * The host answered this device, and the answer was no: the list is in use
      * on as many devices as it may be, this one was removed from it, or its
-     * provider lets in only an app that names its device. Final: the list keeps
-     * no server, and nothing is asked again without the device's id.
+     * provider lets in only an app that names its device ([refusal]). Final:
+     * the list keeps no server, and nothing is asked again without the
+     * device's id.
      *
      * [message] is the provider's own sentence (`announce`), at most 200
      * characters, and empty when it sent none: the phrasing then falls back to
-     * ours ([DEVICE_REFUSED_MESSAGE] in English).
+     * ours for the [refusal] ([DEVICE_LIMIT_REACHED_MESSAGE] or
+     * [DEVICE_NOT_SUPPORTED_MESSAGE] in English).
      */
-    data class DeviceRefused(val message: String) : SubscriptionRefreshError
+    data class DeviceRefused(
+        val message: String,
+        val refusal: DeviceRefusal = DeviceRefusal.LimitReached
+    ) : SubscriptionRefreshError
 }
 
-/** What a refusal says when the provider said nothing: see [SubscriptionRefreshError.DeviceRefused]. */
-const val DEVICE_REFUSED_MESSAGE = "This list is at its device limit. Ask your provider."
+/** What a refusal at the list's device limit says when the provider said nothing. */
+const val DEVICE_LIMIT_REACHED_MESSAGE = "This list is at its device limit. Ask your provider."
+
+/** What a refusal of a request whose device the provider could not read says when it said nothing. */
+const val DEVICE_NOT_SUPPORTED_MESSAGE =
+    "The provider could not read this device's id. Refresh the list; if it stays so, ask your provider."
 
 data class SubscriptionRefreshFailure(
     val url: String,
@@ -49,8 +60,12 @@ data class SubscriptionRefreshFailure(
             "Could not reach the server list host — check your connection"
         SubscriptionRefreshError.Empty ->
             "Server list returned no locations"
-        is SubscriptionRefreshError.DeviceRefused ->
-            error.message.ifBlank { DEVICE_REFUSED_MESSAGE }
+        is SubscriptionRefreshError.DeviceRefused -> error.message.ifBlank {
+            when (error.refusal) {
+                DeviceRefusal.LimitReached -> DEVICE_LIMIT_REACHED_MESSAGE
+                DeviceRefusal.NotSupported -> DEVICE_NOT_SUPPORTED_MESSAGE
+            }
+        }
     }
 }
 
@@ -66,15 +81,33 @@ data class SubscriptionRefreshReport(
     /**
      * Whether the selected server was one of a list whose host refused this
      * device in this run. The refusal took it away with the rest of its list,
-     * and the selection went where a removed list sends it, but a tunnel
-     * running on it is left to run: the host still carries the session, and
-     * a refusal is not a reason to cut it, still less to carry it on to
-     * another provider's server. So a screen that restarts the tunnel when
-     * the selection moved does not, after this.
+     * and nothing is selected in its place until the person chooses (the
+     * bundle's `selectionWithdrawn`). A tunnel running on that server is not
+     * stopped or started again for it, and keeps the server only until the
+     * platform next starts it, on a network change, a reconnect or a new line:
+     * that start then finds no location and says so, where it would otherwise
+     * have carried the session onto a server nobody chose. See
+     * [restartsRunningTunnel].
      */
     val refusedSelection: Boolean = false
 ) {
     val hasFailures: Boolean get() = failures.isNotEmpty()
+
+    /**
+     * Whether this refresh is a reason to start a running tunnel again: the one
+     * rule every screen that refreshes the lists asks, the home screen and the
+     * settings screens on Android, iOS and the desktop.
+     *
+     * Never after a refusal of the list the selected server came from
+     * ([refusedSelection]): nothing is selected, so a start now would find no
+     * location and take down a session the host still carries, for nothing.
+     * Otherwise when the selected location's own config moved in the refresh
+     * ([selectionMoved]), as the home screen knows; a screen that does not
+     * know passes null and starts the tunnel again after every refresh, as the
+     * settings screens always have.
+     */
+    fun restartsRunningTunnel(selectionMoved: Boolean? = null): Boolean =
+        !refusedSelection && (selectionMoved ?: true)
 
     /** Message for refreshing one server list. */
     fun singleMessage(): String = when {

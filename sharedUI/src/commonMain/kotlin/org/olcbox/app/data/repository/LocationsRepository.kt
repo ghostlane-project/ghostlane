@@ -58,6 +58,14 @@ interface LocationsRepository {
     suspend fun loadLocation(storageId: String): LocationConfig?
     suspend fun deleteLocation(storageId: String)
     suspend fun getAllLocations(): List<LocationEntry>
+
+    /**
+     * The selected location's id: none when no location is stored, or when the
+     * list the selected server came from refused this device and nothing has
+     * been chosen since (`LocationBundleV4.selectionWithdrawn`). Then the
+     * store chooses nothing by itself, and neither may a caller: a start finds
+     * no location and says so, until the person picks one.
+     */
     suspend fun getActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)
 
@@ -70,6 +78,8 @@ interface LocationsRepository {
      * the store.
      */
     suspend fun moveActiveLocation(fromStorageId: String, toStorageId: String, group: String): Boolean
+
+    /** The selected location, when there is one: see [getActiveLocationId]. */
     suspend fun getActiveLocation(): LocationEntry?
     suspend fun getDeviceIdentity(): String
 

@@ -700,7 +700,21 @@ data class LocationBundleV4(
      * [RefusedList]. Read back as none from a bundle written before it.
      */
     @SerialName("refused_lists")
-    val refusedLists: List<RefusedList> = emptyList()
+    val refusedLists: List<RefusedList> = emptyList(),
+    /**
+     * Nothing is selected, on purpose, while locations exist: the list the
+     * selected server came from refused this device and took that server away,
+     * and no other is put in its place until the person chooses one.
+     *
+     * Without it [normalized] selects the first location, as it does after a
+     * list is removed. Here that would carry a running session onto a server
+     * nobody chose, at the platform's next start of it (a network change on a
+     * phone, a reconnect, a new line on the desktop), while the screen named it
+     * as the one in use; with nothing selected that start has no location to
+     * start, and says so. Any selection of a location ends it.
+     */
+    @SerialName("selection_withdrawn")
+    val selectionWithdrawn: Boolean = false
 ) {
     fun normalized(): LocationBundleV4 {
         val normalizedLocations = locations
@@ -708,9 +722,9 @@ data class LocationBundleV4(
             .filter { it.storageId.isNotBlank() && it.location.isComplete() }
             .distinctBy { it.storageId }
 
-        val active = activeLocationId
-            ?.takeIf { id -> normalizedLocations.any { it.storageId == id } }
-            ?: normalizedLocations.firstOrNull()?.storageId
+        val chosen = activeLocationId?.takeIf { id -> normalizedLocations.any { it.storageId == id } }
+        val withdrawn = selectionWithdrawn && chosen == null && normalizedLocations.isNotEmpty()
+        val active = chosen ?: if (withdrawn) null else normalizedLocations.firstOrNull()?.storageId
 
         // A list with servers is not refused, whatever was written about it
         // before: an answer that served it, or a backup that brought its
@@ -730,7 +744,8 @@ data class LocationBundleV4(
             activeLocationId = active,
             locations = normalizedLocations,
             settings = settings.normalized(),
-            refusedLists = refused
+            refusedLists = refused,
+            selectionWithdrawn = withdrawn
         )
     }
 

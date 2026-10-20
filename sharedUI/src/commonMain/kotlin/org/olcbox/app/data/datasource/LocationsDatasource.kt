@@ -35,6 +35,7 @@ import org.olcbox.app.data.device.asciiHeader
 import org.olcbox.app.data.device.deviceDescription
 import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
+import org.olcbox.app.data.model.DeviceRefusal
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
@@ -136,25 +137,6 @@ class LocationsRepositoryImpl(
             supportUrl.isNullOrBlank() && webPageUrl.isNullOrBlank() &&
             announce == null && fallbackUrl == null && movedTo == null &&
             deviceRefusal == null
-    }
-
-    /**
-     * Why a list's host turned this device away, by the flags of its answer as
-     * Happ reads them (spec §7.4 of the device limit). Both are an HTTP 200 with
-     * the reason in `announce` and one line in place of the list.
-     */
-    private enum class DeviceRefusal {
-        /**
-         * `x-hwid-max-devices-reached: true`: the list is in use on as many
-         * devices as it may be, or this one was removed from it.
-         */
-        LimitReached,
-
-        /**
-         * `x-hwid-not-supported: true`: the provider lets in only an app that
-         * names its device, and this request named none.
-         */
-        NotSupported
     }
 
     private data class ParsedImport(
@@ -288,7 +270,7 @@ class LocationsRepositoryImpl(
                             ?: previousRefusal?.subscription
                     )
                     saveBundleUnlocked(current.withRefusal(refused))
-                    ImportReport(imported = false, refused = refused.refusal())
+                    ImportReport(imported = false, refused = refused.refusalError())
                 }
             }
         }
@@ -433,14 +415,17 @@ class LocationsRepositoryImpl(
                     refusedLists += refused
                     refusals += 1
                     // The server chosen was one of the list's, and the list has
-                    // none now: the selection goes where a removed list sends
-                    // it, and the report says so, for a tunnel running on it is
-                    // not to be moved or cut for it (see the report).
+                    // none now. Nothing is selected in its place until the
+                    // person chooses: the first remaining server, where a
+                    // removed list sends the selection, would be another
+                    // provider's, and a platform's next start of a running
+                    // tunnel would carry the session onto it unasked. The
+                    // report says so, and no screen restarts the tunnel for it.
                     if (activeBefore != null && previousEntries.any { it.storageId == activeBefore }) {
                         activeAfter = null
                         refusedSelection = true
                     }
-                    failures += SubscriptionRefreshFailure(url, refused.refusal())
+                    failures += SubscriptionRefreshFailure(url, refused.refusalError())
                     return@forEach
                 }
             }
@@ -539,7 +524,8 @@ class LocationsRepositoryImpl(
             bundle.copy(
                 activeLocationId = activeAfter,
                 locations = refreshedLocations,
-                refusedLists = refusedLists
+                refusedLists = refusedLists,
+                selectionWithdrawn = bundle.selectionWithdrawn || refusedSelection
             )
         )
         return SubscriptionRefreshReport(
@@ -902,22 +888,31 @@ class LocationsRepositoryImpl(
                     ?: previous?.updateIntervalHours
                     ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
                 lastRefreshAtEpochMs = nowEpochMs()
-            )
+            ),
+            refusal = source.profile?.deviceRefusal ?: DeviceRefusal.LimitReached
         ).normalized()
     }
 
     /** The refusal a refused list stands for, in the report's terms. */
-    private fun RefusedList.refusal(): SubscriptionRefreshError.DeviceRefused =
-        SubscriptionRefreshError.DeviceRefused(subscription?.announce.orEmpty())
+    private fun RefusedList.refusalError(): SubscriptionRefreshError.DeviceRefused =
+        SubscriptionRefreshError.DeviceRefused(subscription?.announce.orEmpty(), refusal)
 
     /**
      * This bundle with the list at [refused]'s address kept as refused: none of
-     * its servers, and its record in place of any before it.
+     * its servers, and its record in place of any before it. When the selected
+     * server was one of them, nothing is selected in its place (see
+     * [LocationBundleV4.selectionWithdrawn]).
      */
-    private fun LocationBundleV4.withRefusal(refused: RefusedList): LocationBundleV4 = copy(
-        locations = locations.filterNot { it.subscriptionUrl?.trim() == refused.subscriptionUrl },
-        refusedLists = refusedLists.filterNot { it.subscriptionUrl.trim() == refused.subscriptionUrl } + refused
-    )
+    private fun LocationBundleV4.withRefusal(refused: RefusedList): LocationBundleV4 {
+        val (gone, kept) = locations.partition { it.subscriptionUrl?.trim() == refused.subscriptionUrl }
+        val selectionGone = activeLocationId != null && gone.any { it.storageId == activeLocationId }
+        return copy(
+            activeLocationId = if (selectionGone) null else activeLocationId,
+            locations = kept,
+            refusedLists = refusedLists.filterNot { it.subscriptionUrl.trim() == refused.subscriptionUrl } + refused,
+            selectionWithdrawn = selectionWithdrawn || selectionGone
+        )
+    }
 
     private fun parseImportSource(
         source: ImportSource,
@@ -1274,10 +1269,18 @@ class LocationsRepositoryImpl(
     ): LocationBundleV4 {
         val currentBundle = current?.normalized()
         if (currentBundle == null || currentBundle.locations.isEmpty()) {
-            // The imported bundle carries default settings; the user's are on the
-            // one being replaced. Returning `imported` unchanged silently reset
-            // every preference the moment someone imported into an empty app.
-            return imported.copy(settings = currentBundle?.settings ?: imported.settings)
+            // The imported bundle carries defaults for everything but its
+            // locations; the user's are on the one being replaced. Returning
+            // `imported` unchanged silently reset every preference the moment
+            // someone imported into an empty app, and keeping its settings
+            // alone still lost the rest: the routing, when the disclosure was
+            // accepted, the first run seen, and a list whose host refused this
+            // device, the store's only list until this one. Only the locations
+            // and the selection are the import's.
+            return currentBundle?.copy(
+                activeLocationId = imported.activeLocationId,
+                locations = imported.locations
+            ) ?: imported
         }
 
         // Importing a subscription URL that is already here is nearly always

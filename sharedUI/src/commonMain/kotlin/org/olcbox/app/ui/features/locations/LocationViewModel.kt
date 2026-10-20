@@ -203,7 +203,12 @@ class LocationViewModel(
             refusedLists = bundle.refusedLists
             refreshOlcrtcSlots()
 
+            // Nothing selected on purpose stays so: the list the selected server
+            // came from refused this device, and choosing the first server here
+            // would choose for the person what the store declined to (see
+            // LocationBundleV4.selectionWithdrawn).
             val nextSelectedId = if (
+                !bundle.selectionWithdrawn &&
                 nextLocations.isNotEmpty() &&
                 (
                         currentSelectedId.isNullOrBlank() ||

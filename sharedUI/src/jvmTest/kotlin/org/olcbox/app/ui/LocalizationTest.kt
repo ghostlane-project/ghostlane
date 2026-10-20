@@ -12,7 +12,9 @@ import multiplatform_app.sharedui.generated.resources.vpn_disclosure_body
 import org.jetbrains.compose.resources.getPluralString
 import org.jetbrains.compose.resources.getString
 import multiplatform_app.sharedui.generated.resources.allStringResources
-import org.olcbox.app.data.repository.DEVICE_REFUSED_MESSAGE
+import org.olcbox.app.data.model.DeviceRefusal
+import org.olcbox.app.data.repository.DEVICE_LIMIT_REACHED_MESSAGE
+import org.olcbox.app.data.repository.DEVICE_NOT_SUPPORTED_MESSAGE
 import org.olcbox.app.data.repository.SubscriptionRefreshError
 import org.olcbox.app.data.repository.SubscriptionRefreshFailure
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
@@ -215,7 +217,8 @@ class LocalizationTest {
             SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.Empty))),
             // A refusal in the provider's words, and with none of them: ours.
             SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("Your provider: this link is already in use on its 1 device. Ask your provider to free one.")))),
-            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.DeviceRefused(""))))
+            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("")))),
+            SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.NotSupported))))
         )
         inLocale("en") {
             reports.forEach { report ->
@@ -225,12 +228,18 @@ class LocalizationTest {
         }
     }
 
-    // A refusal the provider gave no words to is said in ours, in the user's
-    // language; the provider's own words are shown as they came.
+    // A refusal the provider gave no words to is said in ours for its kind, in
+    // the user's language; the provider's own words are shown as they came.
     @Test fun aRefusalWithoutTheProvidersWordsIsSaidInTheUsersLanguage() {
-        val bare = SubscriptionRefreshError.DeviceRefused("")
-        assertEquals(DEVICE_REFUSED_MESSAGE, inLocale("en") { bare.localizedText() })
-        assertEquals("Список на лимите устройств. Спросите вашего провайдера.", inLocale("ru") { bare.localizedText() })
+        val limit = SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.LimitReached)
+        val unread = SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.NotSupported)
+        assertEquals(DEVICE_LIMIT_REACHED_MESSAGE, inLocale("en") { limit.localizedText() })
+        assertEquals(DEVICE_NOT_SUPPORTED_MESSAGE, inLocale("en") { unread.localizedText() })
+        assertEquals("У этого списка исчерпан лимит устройств. Обратитесь к провайдеру.", inLocale("ru") { limit.localizedText() })
+        assertEquals(
+            "Провайдер не смог прочитать идентификатор этого устройства. Обновите список; если не поможет, обратитесь к провайдеру.",
+            inLocale("ru") { unread.localizedText() }
+        )
         assertEquals("Ваш провайдер: лимит устройств", inLocale("ru") { SubscriptionRefreshError.DeviceRefused("Ваш провайдер: лимит устройств").localizedText() })
     }
 

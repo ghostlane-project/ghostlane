@@ -323,11 +323,15 @@ class HomeScreenModelImportLinkTest {
         } finally { vm.viewModelScope.cancel() }
     }
 
-    // The list refused is the one the session runs on: its servers go, that one
-    // among them, and the session is not cut for it, nor moved anywhere.
-    @Test fun aRefusalOfTheListInUseCutsNothing() = runTest {
+    // The list refused is the one the session runs on, beside another. Its
+    // servers go, that one among them, and nothing is selected in its place:
+    // the other list's server, which the store would otherwise have chosen,
+    // is one the person never chose, and the platform's next start of the
+    // tunnel would have carried the session onto it. Nothing is started or
+    // stopped now, and the screen names no server as the one in use.
+    @Test fun aRefusalOfTheListInUseCutsNothingAndChoosesNothing() = runTest {
         val store = MemoryLocationsDataSource(
-            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("theirs", theirs)))
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
         )
         val repo = answering(store)
         val vpn = IdleVpnManager()
@@ -338,13 +342,53 @@ class HomeScreenModelImportLinkTest {
             logExporter = NoLogExporter
         ).also { models += it }
         try {
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation?.storageId == "theirs" } }
+            }
             connectAndAwaitTheRefresh(vm, vpn, repo)
 
-            assertEquals(emptyList(), store.stored!!.locations)
+            assertNull(repo.getActiveLocationId())
+            assertEquals(listOf("ours"), store.stored!!.locations.map { it.storageId })
+            assertEquals("room-ours", store.stored!!.locations.single().location.id)
             assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
             assertEquals(0, vpn.starts)
             assertEquals(0, vpn.stops)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
         } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The board reads the store's selection and, finding none, used to choose
+    // the first location and write it back: a withdrawn selection stays so.
+    @Test fun theBoardLeavesAWithdrawnSelectionWithdrawn() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(
+                locations = listOf(
+                    LocationEntry.from(
+                        storageId = "ours",
+                        location = LocationConfig(name = "DE", kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink),
+                        subscriptionUrl = ours
+                    )
+                ),
+                selectionWithdrawn = true
+            )
+        )
+        val repo = LocationsRepositoryImpl(store)
+        val client = HttpClient(MockEngine { error("Address locations must not query room occupancy") })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(repo, org.olcbox.app.net.OlcrtcStatusClient(client))
+        try {
+            val loaded = CompletableDeferred<Unit>()
+            vm.loadLocations { loaded.complete(Unit) }
+            withContext(Dispatchers.Default) { withTimeout(10_000) { loaded.await() } }
+
+            assertEquals(listOf("ours"), vm.locations.map { it.storageId })
+            assertNull(vm.selectedLocationId)
+            assertNull(repo.getActiveLocationId())
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
     }
 
     // The person who pasted the link hears why there is nothing to connect to,

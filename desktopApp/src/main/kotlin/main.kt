@@ -669,9 +669,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         onSubscriptionRefreshClick = { url ->
                             dependencies.homeViewModel.refreshSubscription(url) { report ->
                                 reloadLocationsAfterImport {
-                                    // Not for a list that refused this device the server in use:
-                                    // a refusal takes the list's servers away, not the connection.
-                                    if (!report.refusedSelection) dependencies.homeViewModel.restartVpnIfRunning()
+                                    if (report.restartsRunningTunnel()) dependencies.homeViewModel.restartVpnIfRunning()
                                     scope.launch { updateMessage = report.localizedSingleMessage() }
                                 }
                             }

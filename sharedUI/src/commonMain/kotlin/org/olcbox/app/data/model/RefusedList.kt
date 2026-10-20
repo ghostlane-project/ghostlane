@@ -1,7 +1,13 @@
 package org.olcbox.app.data.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 /**
  * A server list whose host refused this device, kept with no servers.
@@ -38,11 +44,50 @@ data class RefusedList(
      * [SubscriptionMetadata.announce] is the refusal's own sentence, never a note
      * of the provider's from before it; none means the host gave none.
      */
-    val subscription: SubscriptionMetadata? = null
+    val subscription: SubscriptionMetadata? = null,
+    /** Which refusal it was: what the app says in its place when the host gave no sentence. */
+    @SerialName("refusal")
+    val refusal: DeviceRefusal = DeviceRefusal.LimitReached
 ) {
     fun normalized(): RefusedList = copy(
         subscriptionUrl = subscriptionUrl.trim(),
         subscriptionOriginLink = subscriptionOriginLink?.trim()?.ifBlank { null },
         subscription = subscription?.normalized()?.takeUnless { it.isEmpty() }
     )
+}
+
+/**
+ * Why a list's host turned this device away, by the flags of its answer as
+ * Happ reads them. Both come as an HTTP 200 with the reason in `announce`.
+ */
+@Serializable(with = DeviceRefusalSerializer::class)
+enum class DeviceRefusal(val wireName: String) {
+    /**
+     * `x-hwid-max-devices-reached: true`: the list is in use on as many devices
+     * as it may be, or this one was removed from it.
+     */
+    LimitReached("limit_reached"),
+
+    /**
+     * `x-hwid-not-supported: true`: the provider lets in only an app that names
+     * its device, and read no device in the request.
+     */
+    NotSupported("not_supported")
+}
+
+/**
+ * [DeviceRefusal] by its wire name, read leniently: a kind a later version wrote
+ * and this one does not know reads as [DeviceRefusal.LimitReached]. The bundle is
+ * read whole or not at all, and one that failed to read would be every list lost.
+ */
+object DeviceRefusalSerializer : KSerializer<DeviceRefusal> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("org.olcbox.app.data.model.DeviceRefusal", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: DeviceRefusal) = encoder.encodeString(value.wireName)
+
+    override fun deserialize(decoder: Decoder): DeviceRefusal {
+        val name = decoder.decodeString()
+        return DeviceRefusal.entries.firstOrNull { it.wireName == name } ?: DeviceRefusal.LimitReached
+    }
 }

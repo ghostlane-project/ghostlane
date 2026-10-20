@@ -14,17 +14,21 @@ import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.crypt.CryptCodec
 import org.olcbox.app.data.device.DeviceDescription
 import org.olcbox.app.data.identity.DeviceIdentityProvider
+import org.olcbox.app.data.model.DeviceRefusal
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RefusedList
+import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.share.ConfigShareService
 import io.ktor.http.HttpStatusCode
 import org.olcbox.app.net.PartnerLinkResolver
 import org.olcbox.app.net.PartnerLinkResult
-import org.olcbox.app.data.repository.DEVICE_REFUSED_MESSAGE
+import org.olcbox.app.data.repository.DEVICE_LIMIT_REACHED_MESSAGE
+import org.olcbox.app.data.repository.DEVICE_NOT_SUPPORTED_MESSAGE
 import org.olcbox.app.data.repository.SubscriptionRefreshError
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import kotlin.test.assertFalse
@@ -1183,7 +1187,7 @@ class LocationsRepositoryImplTest {
         val garbled = repo.refreshSubscription(url)
         assertNull(source.stored!!.refusedLists.single().subscription?.announce)
         assertEquals(SubscriptionRefreshError.DeviceRefused(""), garbled.failures.single().error)
-        assertEquals(DEVICE_REFUSED_MESSAGE, garbled.singleMessage())
+        assertEquals(DEVICE_LIMIT_REACHED_MESSAGE, garbled.singleMessage())
     }
 
     @Test
@@ -1411,16 +1415,57 @@ class LocationsRepositoryImplTest {
         val source = subscribedSource(url)
         val sentence = "Your provider: this app does not identify the device, or that is switched off in its " +
             "settings. Use Happ, v2RayTun or Ghostlane with the device id on."
+        var announce: String? = base64Header(sentence)
         var requests = 0
-        val report = repoRespondingWith(source, MockEngine {
+        val repo = repoRespondingWith(source, MockEngine {
             requests++
-            refusal(flag = "x-hwid-not-supported", announce = base64Header(sentence), body = refusalLine(sentence))
-        }).refreshSubscription(url)
+            refusal(flag = "x-hwid-not-supported", announce = announce, body = refusalLine(sentence))
+        })
+
+        val report = repo.refreshSubscription(url)
 
         assertEquals(1, requests)
-        assertEquals(SubscriptionRefreshError.DeviceRefused(sentence), report.failures.single().error)
+        assertEquals(
+            SubscriptionRefreshError.DeviceRefused(sentence, DeviceRefusal.NotSupported),
+            report.failures.single().error
+        )
         assertEquals(emptyList(), source.stored!!.locations)
-        assertEquals(sentence, source.stored!!.refusedLists.single().subscription?.announce)
+        val refused = source.stored!!.refusedLists.single()
+        assertEquals(sentence, refused.subscription?.announce)
+        assertEquals(DeviceRefusal.NotSupported, refused.refusal)
+
+        // Where the provider gives no sentence, ours for this kind: the device's
+        // id went unread, which is not the list's limit.
+        announce = null
+        assertEquals(DEVICE_NOT_SUPPORTED_MESSAGE, repo.refreshSubscription(url).singleMessage())
+    }
+
+    // The kind is kept with the list, so the board can say ours for it later;
+    // and read leniently: a kind a later version wrote reads as the limit, where
+    // a bundle that failed to read would be every list lost.
+    @Test
+    fun aRefusalsKindIsKeptAndAKindFromALaterVersionReadsAsTheLimit() {
+        val bundle = LocationBundleV4(
+            refusedLists = listOf(RefusedList("https://example.test/sub", refusal = DeviceRefusal.NotSupported))
+        )
+        val written = storedJson.encodeToString(LocationBundleV4.serializer(), bundle)
+        assertTrue("\"not_supported\"" in written, written)
+        assertEquals(
+            DeviceRefusal.NotSupported,
+            storedJson.decodeFromString(LocationBundleV4.serializer(), written).refusedLists.single().refusal
+        )
+        val later = written.replace("\"not_supported\"", "\"removed\"")
+        assertEquals(
+            DeviceRefusal.LimitReached,
+            storedJson.decodeFromString(LocationBundleV4.serializer(), later).refusedLists.single().refusal
+        )
+    }
+
+    /** Configured as the platforms' data sources read and write the bundle. */
+    private val storedJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
     }
 
     // The repository's half of a refusal that leaves a running tunnel alone (the
@@ -1456,19 +1501,116 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf(theirs), source.stored!!.refusedLists.map { it.subscriptionUrl })
     }
 
-    // The server chosen was the refused list's own: it goes with the rest, the
-    // selection goes where a removed list sends it, and the report says so, so
-    // that no screen restarts a tunnel still running on it.
-    @Test
-    fun aRefusalOfTheChosenServersListSaysSo() = runTest {
-        val url = "https://example.test/alpha"
-        val source = subscribedSource(url)
+    private val oursUrl = "https://example.test/ours"
+    private val theirsUrl = "https://partner.example.test/sub"
 
-        val report = repoRespondingWith(source, MockEngine { refusal() }).refreshSubscription(url)
+    /**
+     * Our list and the partner's, a server each, the partner's selected; the
+     * partner's host refuses this device once [partnerRefuses] says so.
+     */
+    private suspend fun theirsSelected(
+        source: FakeLocationsDataSource,
+        partnerRefuses: () -> Boolean
+    ): LocationsRepositoryImpl {
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            when {
+                request.url.host != "partner.example.test" ->
+                    respond("olcrtc://wbstream?vp8channel@room-ours#${"a".repeat(64)}${'$'}Ours")
+                partnerRefuses() -> refusal()
+                else -> respond("olcrtc://wbstream?vp8channel@room-theirs#${"b".repeat(64)}${'$'}Theirs")
+            }
+        })
+        assertTrue(repo.importText(oursUrl))
+        assertTrue(repo.importText(theirsUrl))
+        repo.setActiveLocationId(repo.getAllLocations().single { it.subscriptionUrl == theirsUrl }.storageId)
+        return repo
+    }
+
+    // The selected server was the refused list's own. It goes with the rest,
+    // and nothing is selected in its place: the first remaining server is
+    // another list's, and a platform's next start of a running tunnel would
+    // carry the session onto it unasked. The report says so, and the store
+    // keeps no selection until the person chooses one: read again, and
+    // through a refresh of the other list.
+    @Test
+    fun aRefusalOfTheSelectedServersListLeavesNoSelection() = runTest {
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = theirsSelected(source) { partnerRefuses }
+        val ours = repo.getAllLocations().filter { it.subscriptionUrl == oursUrl }
+
+        partnerRefuses = true
+        val report = repo.refreshSubscription(theirsUrl)
 
         assertTrue(report.refusedSelection)
+        assertNull(repo.getActiveLocationId(), "the selection went to a server nobody chose")
+        assertNull(repo.getActiveLocation())
+        assertEquals(ours, repo.getAllLocations(), "the other list was touched")
+        assertEquals(listOf(theirsUrl), source.stored!!.refusedLists.map { it.subscriptionUrl })
+        assertTrue(source.stored!!.selectionWithdrawn)
+
+        assertNull(LocationsRepositoryImpl(source).getActiveLocationId(), "read again, a server was chosen")
+        assertEquals(1, repo.refreshSubscription(oursUrl).updatedCount)
+        assertNull(repo.getActiveLocationId(), "a refresh of the other list chose a server")
+
+        // Until the person chooses.
+        repo.setActiveLocationId(ours.single().storageId)
+        assertEquals(ours.single().storageId, repo.getActiveLocationId())
+        assertFalse(source.stored!!.selectionWithdrawn)
+    }
+
+    // The same when the list in use is pasted again and its host refuses it.
+    @Test
+    fun aRefusedPasteOfTheListInUseLeavesNoSelection() = runTest {
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = theirsSelected(source) { partnerRefuses }
+
+        partnerRefuses = true
+        assertNotNull(repo.importReport(theirsUrl).refused)
+
+        assertNull(repo.getActiveLocationId())
+        assertEquals(listOf(oursUrl), repo.getAllLocations().map { it.subscriptionUrl })
+    }
+
+    @Test
+    fun aWithdrawnSelectionIsKeptUntilALocationIsChosen() {
+        val entry = subEntry("b1", "https://proofkit.org/sub/bbb")
+        val withdrawn = LocationBundleV4(locations = listOf(entry), selectionWithdrawn = true).normalized()
+        assertNull(withdrawn.activeLocationId)
+        assertTrue(withdrawn.selectionWithdrawn)
+        // Without it a missing selection is the first location, as it always was.
+        assertEquals("b1", LocationBundleV4(locations = listOf(entry)).normalized().activeLocationId)
+        // A choice ends it.
+        val chosen = withdrawn.copy(activeLocationId = "b1").normalized()
+        assertEquals("b1", chosen.activeLocationId)
+        assertFalse(chosen.selectionWithdrawn)
+        // With no location left to choose it means nothing, and goes.
+        assertFalse(LocationBundleV4(selectionWithdrawn = true).normalized().selectionWithdrawn)
+    }
+
+    // A store whose only list was refused holds no location, and an import
+    // into it takes the empty store's way in: the refused list survives it,
+    // with everything else the store keeps beside its locations.
+    @Test
+    fun aRefusedListSurvivesTheImportOfAnotherListIntoAnOtherwiseEmptyStore() = runTest {
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.host == "partner.example.test") refusal() else respond(listBody)
+        })
+        assertNotNull(repo.importReport(theirsUrl).refused)
+        repo.acceptVpnDisclosure(atMillis = 42L)
+        repo.saveRoutingSettings(RoutingSettings(verboseDebugLogs = true))
         assertEquals(emptyList(), source.stored!!.locations)
-        assertNull(source.stored!!.activeLocationId)
+
+        assertTrue(repo.importText("https://example.test/alpha"))
+
+        val stored = source.stored!!
+        assertEquals(listOf("https://example.test/alpha"), stored.locations.map { it.subscriptionUrl })
+        assertEquals(listOf(theirsUrl), stored.refusedLists.map { it.subscriptionUrl })
+        assertEquals(42L, stored.vpnDisclosureAcceptedAt)
+        assertTrue(stored.routing.verboseDebugLogs)
+        assertNotNull(stored.activeLocationId, "the imported list's server is selected, as into any empty store")
     }
 
     @Test
