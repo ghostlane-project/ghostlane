@@ -7,6 +7,7 @@ import io.ktor.client.request.headers
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.request
+import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.URLProtocol
@@ -29,6 +30,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.crypt.CryptCodec
+import org.olcbox.app.data.device.DeviceDescription
+import org.olcbox.app.data.device.asciiHeader
+import org.olcbox.app.data.device.deviceDescription
 import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
@@ -81,6 +85,7 @@ class LocationsRepositoryImpl(
     private val dataSource: LocationsDataSource,
     private val httpClient: HttpClient = createProxyHttpClient(),
     private val deviceIdentityProvider: DeviceIdentityProvider = PersistentDeviceIdentityProvider(dataSource),
+    private val describeDevice: () -> DeviceDescription = ::deviceDescription,
     private val nowEpochMs: () -> Long = { kotlin.time.Clock.System.now().toEpochMilliseconds() },
     private val cryptCodec: CryptCodec? = CryptCodec.default(),
     private val partnerLinkResolver: PartnerLinkResolver? = HttpPartnerLinkResolver(httpClient)
@@ -841,6 +846,9 @@ class LocationsRepositoryImpl(
         } else {
             null
         }
+        // Beside the id, the device it is, as Happ names its own: a provider
+        // that holds a list to a number of devices shows these on each one.
+        val device = if (requestMode == SubscriptionRequestMode.Identity) describeDevice() else null
         val client = if (subscriptionProxy == null) {
             httpClient
         } else {
@@ -859,6 +867,11 @@ class LocationsRepositoryImpl(
                             if (requestMode == SubscriptionRequestMode.Identity) {
                                 append(HttpHeaders.UserAgent, CurrentAppInfo.userAgent)
                                 append("x-hwid", hwid.orEmpty())
+                                if (device != null) {
+                                    appendDeviceHeader("x-device-os", device.os)
+                                    appendDeviceHeader("x-ver-os", device.osVersion)
+                                    appendDeviceHeader("x-device-model", device.model)
+                                }
                             } else {
                                 append(
                                     HttpHeaders.UserAgent,
@@ -902,6 +915,12 @@ class LocationsRepositoryImpl(
                 client.close()
             }
         }
+    }
+
+    /** [value] cut by [asciiHeader]; a header with nothing left in it is not sent at all. */
+    private fun HeadersBuilder.appendDeviceHeader(name: String, value: String) {
+        val kept = asciiHeader(value)
+        if (kept.isNotEmpty()) append(name, kept)
     }
 
     private fun String.isHttpUrl(): Boolean {

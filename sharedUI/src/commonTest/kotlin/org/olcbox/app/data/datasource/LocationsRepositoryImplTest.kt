@@ -3,11 +3,13 @@ package org.olcbox.app.data.datasource
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.crypt.CryptCodec
+import org.olcbox.app.data.device.DeviceDescription
 import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
@@ -687,13 +689,96 @@ class LocationsRepositoryImplTest {
         assertEquals("https://example.test/sub.txt", imported.locations.single().subscriptionUrl)
     }
 
+    // A provider that holds a list to a number of devices counts them by the
+    // id and shows the three device headers beside each one, as Happ sends them.
+    @Test
+    fun subscriptionIdentityRequestNamesTheDevice() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+
+        assertTrue(
+            LocationsRepositoryImpl(
+                dataSource = FakeLocationsDataSource(),
+                httpClient = HttpClient(engine),
+                deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+                describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
+            ).importText("https://example.test/sub.txt")
+        )
+
+        val headers = assertNotNull(sent)
+        assertEquals("hwid-test", headers["x-hwid"])
+        assertEquals("Android", headers["x-device-os"])
+        assertEquals("16", headers["x-ver-os"])
+        assertEquals("Pixel 9 Pro", headers["x-device-model"])
+        val names = headers.names()
+        for (name in listOf("x-hwid", "x-device-os", "x-ver-os", "x-device-model")) {
+            assertTrue(name in names, "$name is spelled in lower case on the wire: $names")
+        }
+    }
+
+    // What the platform says may be anything; a header carries what the server
+    // keeps of it, and a value with nothing printable in it is not sent at all.
+    @Test
+    fun subscriptionDeviceHeadersAreCutAndAnEmptyOneIsNotSent() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+        val model = "iPhone17,1 ✓" + "x".repeat(70)
+
+        LocationsRepositoryImpl(
+            dataSource = FakeLocationsDataSource(),
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            describeDevice = { DeviceDescription(os = "iOS", osVersion = " \u0007 é ", model = model) }
+        ).importText("https://example.test/sub.txt")
+
+        val headers = assertNotNull(sent)
+        assertEquals("iOS", headers["x-device-os"])
+        assertNull(headers["x-ver-os"], "nothing printable left: no header, not an empty one")
+        assertEquals("iPhone17,1 " + "x".repeat(53), headers["x-device-model"])
+    }
+
+    // Without a stand-in the request names the machine the test runs on, within
+    // the same bounds: the platform's own description is what production sends.
+    @Test
+    fun subscriptionIdentityRequestNamesThePlatformItRunsOn() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+
+        LocationsRepositoryImpl(
+            dataSource = FakeLocationsDataSource(),
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).importText("https://example.test/sub.txt")
+
+        val headers = assertNotNull(sent)
+        assertTrue(
+            headers["x-device-os"] in setOf("Android", "iOS", "macOS", "Windows", "Linux"),
+            "x-device-os: ${headers["x-device-os"]}"
+        )
+        for (name in listOf("x-ver-os", "x-device-model")) {
+            val value = assertNotNull(headers[name], "$name is sent")
+            assertTrue(value.length in 1..64 && value.all { it in ' '..'~' }, "$name: $value")
+        }
+    }
+
     @Test
     fun subscriptionImportFallsBackWhenIdentityResponseIsNotConfig() = runTest {
         val userAgents = mutableListOf<String?>()
         val hwids = mutableListOf<String?>()
+        val sent = mutableListOf<Headers>()
         val engine = MockEngine { request ->
             userAgents += request.headers[HttpHeaders.UserAgent]
             hwids += request.headers["x-hwid"]
+            sent += request.headers
             if (userAgents.size == 1) {
                 respond("<html>blocked</html>")
             } else {
@@ -708,7 +793,8 @@ class LocationsRepositoryImplTest {
         val imported = LocationsRepositoryImpl(
             dataSource = source,
             httpClient = HttpClient(engine),
-            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
         ).importText("http://example.test/sub.txt")
 
         val bundle = source.stored
@@ -717,8 +803,13 @@ class LocationsRepositoryImplTest {
         assertEquals(2, userAgents.size)
         assertEquals(CurrentAppInfo.userAgent, userAgents[0])
         assertEquals("hwid-test", hwids[0])
+        assertEquals("Android", sent[0]["x-device-os"])
         assertTrue(userAgents[1]?.startsWith("Mozilla/5.0") == true)
         assertNull(hwids[1])
+        // The retry stands in for a browser, and a browser names no device.
+        for (name in listOf("x-hwid", "x-device-os", "x-ver-os", "x-device-model")) {
+            assertNull(sent[1][name], "the Compatibility request carries no $name")
+        }
         assertEquals("room", bundle.locations.single().location.id)
         assertEquals(12, bundle.locations.single().metadata?.subscription?.updateIntervalHours)
         assertEquals("http://example.test/sub.txt", bundle.locations.single().subscriptionUrl)
