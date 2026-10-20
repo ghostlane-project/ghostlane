@@ -1573,6 +1573,85 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf(oursUrl), repo.getAllLocations().map { it.subscriptionUrl })
     }
 
+    // With the selection withdrawn, a refresh that brings lines the store has
+    // not seen chooses none of them. A line with no previous entry matched
+    // "the selected entry's new id" when there was no selection at all, and
+    // the last new line of any list was chosen unasked.
+    @Test
+    fun aWithdrawnSelectionSurvivesRefreshesThatBringNewLines() = runTest {
+        var oursBody = "olcrtc://wbstream?vp8channel@room-ours#${"a".repeat(64)}${'$'}Ours"
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            when {
+                request.url.host != "partner.example.test" -> respond(oursBody)
+                partnerRefuses -> refusal()
+                else -> respond(
+                    "olcrtc://wbstream?vp8channel@room-theirs#${"b".repeat(64)}${'$'}Theirs\n" +
+                        "olcrtc://wbstream?vp8channel@room-theirs-2#${"b".repeat(64)}${'$'}Theirs 2"
+                )
+            }
+        })
+        assertTrue(repo.importText(oursUrl))
+        assertTrue(repo.importText(theirsUrl))
+        repo.setActiveLocationId(repo.getAllLocations().first { it.subscriptionUrl == theirsUrl }.storageId)
+        partnerRefuses = true
+        assertTrue(repo.refreshSubscription(theirsUrl).refusedSelection)
+        assertNull(repo.getActiveLocationId())
+
+        // (a) Our list again, its room moved and a line added: both new to the store.
+        oursBody = "olcrtc://wbstream?vp8channel@room-ours-moved#${"a".repeat(64)}${'$'}Ours\n" +
+            "olcrtc://wbstream?vp8channel@room-ours-2#${"a".repeat(64)}${'$'}Ours 2"
+        assertEquals(1, repo.refreshSubscription(oursUrl).updatedCount)
+        assertEquals(listOf("room-ours-moved", "room-ours-2"), repo.getAllLocations().map { it.location.id })
+        assertNull(repo.getActiveLocationId(), "a new line of the other list was chosen")
+        assertTrue(source.stored!!.selectionWithdrawn)
+
+        // (b) The refused list served again: every line of it is new.
+        partnerRefuses = false
+        assertEquals(1, repo.refreshSubscription(theirsUrl).updatedCount)
+        assertEquals(4, repo.getAllLocations().size)
+        assertEquals(emptyList(), source.stored!!.refusedLists)
+        assertNull(repo.getActiveLocationId(), "a line of the list served again was chosen")
+        assertTrue(source.stored!!.selectionWithdrawn)
+    }
+
+    // The store's only list refused leaves nothing to choose from, and so
+    // nothing withdrawn to keep. Served again, its first line is chosen, as a
+    // list imported into an empty store has it: not the last, which "the
+    // selected entry's new id" matching every new line used to choose, nor
+    // the one chosen before the refusal, whose entry the refusal took away.
+    @Test
+    fun theOnlyListServedAgainAfterARefusalHasItsFirstLineChosen() = runTest {
+        var refuses = false
+        val url = "https://example.test/alpha"
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine {
+            if (refuses) {
+                refusal()
+            } else {
+                respond(
+                    "olcrtc://wbstream?vp8channel@room-1#${"c".repeat(64)}${'$'}First\n" +
+                        "olcrtc://wbstream?vp8channel@room-2#${"c".repeat(64)}${'$'}Second\n" +
+                        "olcrtc://wbstream?vp8channel@room-3#${"c".repeat(64)}${'$'}Third"
+                )
+            }
+        })
+        assertTrue(repo.importText(url))
+        repo.setActiveLocationId(repo.getAllLocations().last().storageId)
+        refuses = true
+        assertTrue(repo.refreshSubscription(url).refusedSelection)
+        assertNull(repo.getActiveLocationId())
+        assertFalse(source.stored!!.selectionWithdrawn, "with no location left, nothing is withdrawn")
+
+        refuses = false
+        assertEquals(1, repo.refreshSubscription(url).updatedCount)
+
+        val lines = repo.getAllLocations()
+        assertEquals(listOf("room-1", "room-2", "room-3"), lines.map { it.location.id })
+        assertEquals(lines.first().storageId, repo.getActiveLocationId())
+    }
+
     @Test
     fun aWithdrawnSelectionIsKeptUntilALocationIsChosen() {
         val entry = subEntry("b1", "https://proofkit.org/sub/bbb")

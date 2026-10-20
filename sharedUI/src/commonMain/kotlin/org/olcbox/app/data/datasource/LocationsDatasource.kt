@@ -478,7 +478,13 @@ class LocationsRepositoryImpl(
                     base = "imported_${entry.location.storageSlug().ifBlank { "location_${index + 1}" }}",
                     used = usedStorageIds
                 )
-                if (activeBefore == reusedEntry?.storageId) {
+                // The selection follows its server to the id the refresh gives
+                // it, when there is a selection. With none (a refusal withdrew
+                // it, or nothing is stored), `null == null` matched every line
+                // with no previous entry, and the last new line was selected
+                // unasked: the next start of a running tunnel, or a settings
+                // screen's restart after a refresh, then connected it.
+                if (activeBefore != null && activeBefore == reusedEntry?.storageId) {
                     activeAfter = storageId
                 }
                 entry.copy(
