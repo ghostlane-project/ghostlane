@@ -379,11 +379,14 @@ jobs:
   apple-compile:
     # On a change to the shared Kotlin, and on request. Anything else would
     # bill a macOS runner at ten times the rate to compile what has not moved.
+    # !cancelled() and not always(), as the extension job below: it still runs
+    # past the skipped scope job of a dispatched run, and a run that a newer
+    # push supersedes takes it with it.
     needs: scope
     if: >-
-      always() &&
       ((github.event_name == 'workflow_dispatch' && inputs.apple_compile) ||
-       needs.scope.outputs.shared_kotlin == 'true')
+       needs.scope.outputs.shared_kotlin == 'true') &&
+      !cancelled()
     name: Apple Kotlin compilation
     runs-on: macos-latest
     timeout-minutes: 25
@@ -413,7 +416,7 @@ jobs:
     # It loads a block into the packet filter, points the system's resolver at
     # a tun and kills the tun, which a hosted runner is the right place for.
     needs: scope
-    if: always() && needs.scope.outputs.mac_helper == 'true'
+    if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper
     runs-on: macos-latest
     timeout-minutes: 15
