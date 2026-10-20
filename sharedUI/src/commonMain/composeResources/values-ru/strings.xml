@@ -65,6 +65,7 @@
     <string name="blocked_incomplete">Сначала заполните активную локацию</string>
     <string name="blocked_invalid">Сначала добавьте рабочую локацию</string>
     <string name="blocked_no_location">Сначала добавьте локацию</string>
+    <string name="blocked_no_server_picked">Выберите сервер</string>
     <string name="board_empty">Здесь пока пусто</string>
     <string name="board_key_gone_caps">КЛЮЧ НЕДЕЙСТВИТЕЛЕН · ОБНОВИТЕ СПИСОК</string>
     <string name="board_rooms">Комнаты</string>

@@ -692,6 +692,12 @@ class LocationsRepositoryImpl(
         }
     }
 
+    override suspend fun peekActiveLocationId(): String? {
+        val stored = dataSource.loadLocationBundle()?.normalized()?.takeIf { it.locations.isNotEmpty() }
+            ?: return getActiveLocationId()
+        return stored.activeLocationId
+    }
+
     override suspend fun setActiveLocationId(storageId: String?) {
         mutationMutex.withLock {
             val bundle = getBundleUnlocked()

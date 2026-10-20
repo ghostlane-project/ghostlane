@@ -67,6 +67,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override val status: StateFlow<VpnStatus> = OlcboxVpnState.status
     /** What the service did on its own, such as moving the session to another line of the country. */
     override val notices: SharedFlow<String> = OlcboxVpnState.notices
+    override val hold: StateFlow<TunnelHold?> = OlcboxVpnState.hold
     override val isConnected: StateFlow<Boolean> = OlcboxVpnState.isConnected
     override val connectedSince: StateFlow<Long?> = OlcboxVpnState.connectedSince
     /** The tunnel is what is counted (tun2socks keeps the figures); proxy mode has none. */

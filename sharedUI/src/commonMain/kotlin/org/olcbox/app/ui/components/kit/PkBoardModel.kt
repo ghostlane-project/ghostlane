@@ -319,6 +319,15 @@ fun boardAction(
 }
 
 /**
+ * The second button beside [boardAction]'s, when there is one: Disconnect,
+ * while the tunnel holds its traffic for a server to be picked
+ * ([offersDisconnect]). The first button is then the pick, and the hold is
+ * ended here.
+ */
+fun boardSecondaryAction(offersDisconnect: Boolean, words: BoardWords = BoardWords()): PkAction? =
+    if (offersDisconnect) PkAction(words.disconnect, PkActionKind.Stop) else null
+
+/**
  * Trims an exit name to something a single-line button can hold.
  *
  * Cut at the last separator inside the budget where there is one, so

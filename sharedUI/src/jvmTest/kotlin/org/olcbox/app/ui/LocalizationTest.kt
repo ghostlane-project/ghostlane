@@ -2,6 +2,8 @@ package org.olcbox.app.ui
 
 import kotlinx.coroutines.runBlocking
 import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.blocked_no_location
+import multiplatform_app.sharedui.generated.resources.blocked_no_server_picked
 import multiplatform_app.sharedui.generated.resources.kill_switch_note
 import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
 import multiplatform_app.sharedui.generated.resources.kill_switch_note_mac
@@ -20,6 +22,7 @@ import org.olcbox.app.data.repository.SubscriptionRefreshFailure
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.desktop.DESKTOP_MODE_TEXTS
 import org.olcbox.app.ui.components.DISCLOSURE_BODY
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.ui.components.kit.BoardWords
 import org.olcbox.app.ui.features.home.NOTICES
 import org.olcbox.app.ui.features.home.StatusWords
@@ -104,6 +107,15 @@ class LocalizationTest {
             assertFalse(old in body, "the $tag disclosure still says nothing identifying is sent")
             assertTrue("olcRTC" in body, "the $tag disclosure does not say who else is told the identifier")
         }
+    }
+
+    // The Android service's notification says why it holds a tunnel by the
+    // reason's English text, which is the key of its translation there: each
+    // text is its resource's English, and the pick is said in every language.
+    @Test fun aHoldsNotificationTextIsItsResource() {
+        assertEquals(TunnelHold.NoLocation.notificationText, inLocale("en") { getString(Res.string.blocked_no_location) })
+        assertEquals(TunnelHold.NonePicked.notificationText, inLocale("en") { getString(Res.string.blocked_no_server_picked) })
+        assertEquals("Выберите сервер", inLocale("ru") { getString(Res.string.blocked_no_server_picked) })
     }
 
     @Test fun chineseAndPersianOnTheirSystems() {

@@ -65,6 +65,7 @@
     <string name="blocked_incomplete">Complete active location first</string>
     <string name="blocked_invalid">Add a valid location first</string>
     <string name="blocked_no_location">Add a location first</string>
+    <string name="blocked_no_server_picked">Pick a server</string>
     <string name="board_empty">Nothing here yet</string>
     <string name="board_key_gone_caps">KEY NO LONGER VALID · REFRESH THIS LIST</string>
     <string name="board_rooms">Rooms</string>

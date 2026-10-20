@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -737,13 +738,52 @@ fun PkHairline(modifier: Modifier = Modifier) {
  * a second problem: it could not say what it would do. This one always names its
  * object, so a user who has scrolled away from their selection can still read it
  * off the button.
+ *
+ * [secondary], when there is one, is a smaller button beside it: Disconnect,
+ * while a tunnel holds its traffic for a server to be picked and the one
+ * button is the pick.
  */
 @Composable
 fun PkActionBar(
     action: PkAction,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    secondary: PkAction? = null,
+    onSecondaryClick: () -> Unit = {}
 ) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f))
+    ) {
+        PkHairline()
+        // Inside the background, not around it: the bar's own surface has to
+        // reach the bottom edge of the screen, while the buttons it holds sit
+        // above the home indicator rather than under it.
+        val inset = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+        if (secondary == null) {
+            PkActionButton(action, onClick, inset)
+        } else {
+            Row(
+                modifier = inset,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PkActionButton(action, onClick, Modifier.weight(1f))
+                // Its own width, one short word, and never so wide that the
+                // first button is left without room.
+                PkActionButton(secondary, onSecondaryClick, Modifier.widthIn(max = 168.dp))
+            }
+        }
+    }
+}
+
+/** One button of [PkActionBar], laid out by [modifier]. */
+@Composable
+private fun PkActionButton(action: PkAction, onClick: () -> Unit, modifier: Modifier) {
     val palette = LocalPkPalette.current
     val haptics = LocalHapticFeedback.current
     val background by animateColorAsState(
@@ -763,59 +803,46 @@ fun PkActionBar(
     }
     val enabled = action.kind != PkActionKind.Blocked
 
-    Column(
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f))
-    ) {
-        PkHairline()
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                // Inside the background, not around it: the bar's own surface has
-                // to reach the bottom edge of the screen, while the button it
-                // holds sits above the home indicator rather than under it.
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                // At least the height it always had, and more when its sentence —
-                // which names the room it acts on — needs a second line.
-                .heightIn(min = 56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(background)
-                .clickable(enabled = enabled, onClickLabel = action.label, role = Role.Button) {
-                    // Connecting and leaving both take a moment to show; a tap
-                    // with no confirmation reads as a tap that missed.
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onClick()
-                }
-                .semantics { contentDescription = action.label },
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (action.kind == PkActionKind.Busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(17.dp),
-                        color = foreground,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(10.dp))
-                }
-                PkBalancedText(
-                    text = pkTied(action.label),
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.5.sp
-                    ),
-                    color = foreground,
-                    // Not weighted to fill: the spinner and the words are centred
-                    // together, as they were when the words were one line.
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+            // At least the height it always had, and more when its sentence
+            // (which names the room it acts on) needs a second line.
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(background)
+            .clickable(enabled = enabled, onClickLabel = action.label, role = Role.Button) {
+                // Connecting and leaving both take a moment to show; a tap
+                // with no confirmation reads as a tap that missed.
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
             }
+            .semantics { contentDescription = action.label },
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (action.kind == PkActionKind.Busy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(17.dp),
+                    color = foreground,
+                    strokeWidth = 2.dp
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+            PkBalancedText(
+                text = pkTied(action.label),
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.5.sp
+                ),
+                color = foreground,
+                // Not weighted to fill: the spinner and the words are centred
+                // together, as they were when the words were one line.
+                modifier = Modifier.weight(1f, fill = false)
+            )
         }
     }
 }

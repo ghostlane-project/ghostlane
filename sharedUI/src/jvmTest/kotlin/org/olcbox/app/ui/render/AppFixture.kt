@@ -41,6 +41,7 @@ import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.navigation.AppScreen
 import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.TrafficCounters
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 
@@ -202,6 +203,7 @@ internal class Tunnel(
 
     override val logs: StateFlow<List<String>> = MutableStateFlow(emptyList())
     override val status = MutableStateFlow(if (upSince != null) VpnStatus.Connected else VpnStatus.Disconnected)
+    override val hold = MutableStateFlow<TunnelHold?>(null)
     override val isConnected: StateFlow<Boolean> = MutableStateFlow(upSince != null)
     override val connectedSince = MutableStateFlow(upSince)
     override val countsTraffic: Boolean get() = counts

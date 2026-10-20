@@ -63,6 +63,7 @@ import org.olcbox.app.ui.components.AdminPasswordDialog
 import org.olcbox.app.ui.components.CameraRationaleSheet
 import org.olcbox.app.ui.components.VpnDisclosureScreen
 import org.olcbox.app.ui.components.kit.boardAction
+import org.olcbox.app.ui.components.kit.boardSecondaryAction
 import org.olcbox.app.ui.components.kit.boardHeading
 import org.olcbox.app.ui.components.kit.nextSort
 import org.olcbox.app.ui.components.kit.roomIsBlocked
@@ -151,7 +152,7 @@ fun HomeScreen(
     // visible regardless.
     val admin = AdminState.plumbingVisible
 
-    val requiresSetup = !state.canStartVpn && !state.isVpnConnected && !state.isVpnLoading
+    val requiresSetup = state.requiresSetup
 
     /**
      * Building a location by hand is plumbing, so it answers to the same gate the
@@ -432,8 +433,9 @@ fun HomeScreen(
     val selectedConfig = selectedItem?.config
     // Servers on the board and none of them selected: a refusal took the
     // selected one with its list (LocationBundleV4.selectionWithdrawn). The
-    // strip and the button ask for a pick, not for a list, which the person has.
-    val pickServer = requiresSetup && locations.isNotEmpty() && selectedId == null
+    // strip and the button ask for a pick, not for a list, which the person has;
+    // so too while Android holds the tunnel for that pick.
+    val pickServer = state.picksServer(hasLocations = locations.isNotEmpty(), selectedId = selectedId)
     val knownSubscriptionUrls = remember(locations) {
         locations.mapNotNull {
             it.subscriptionUrl?.trim()?.takeIf(String::isNotEmpty)
@@ -581,7 +583,8 @@ fun HomeScreen(
             ),
             showAppSettingsButton = showAppSettingsButton,
             showSplitTunnelingButton = showSplitTunnelingButton,
-            showLock = AdminState.showLock
+            showLock = AdminState.showLock,
+            secondaryAction = boardSecondaryAction(state.offersDisconnect, boardWords)
         ),
         board = HomeBoard(
             model = model,
@@ -734,7 +737,10 @@ fun HomeScreen(
             onOpenUrl = onOpenExternalUrl,
             onAddLocationClick = onAddLocation,
             onGetSubscriptionClick = onGetSubscriptionClick,
-            canPing = { config -> viewModel.canPing(config) }
+            canPing = { config -> viewModel.canPing(config) },
+            // Ends the hold: the platform is holding the tunnel (Reconnecting),
+            // which a toggle stops.
+            onSecondaryActionClick = { onToggleClick() }
         ),
         scrollState = scrollState,
         snackbarHostState = snackbarHostState

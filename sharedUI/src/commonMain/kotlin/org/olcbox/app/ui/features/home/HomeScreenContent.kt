@@ -89,7 +89,9 @@ data class HomeChrome(
     val action: PkAction,
     val showAppSettingsButton: Boolean,
     val showSplitTunnelingButton: Boolean,
-    val showLock: Boolean
+    val showLock: Boolean,
+    /** A second button beside [action]: Disconnect, while the tunnel holds for a server to be picked. */
+    val secondaryAction: PkAction? = null
 )
 
 /** Everything the scrolling list needs to draw itself. */
@@ -143,7 +145,9 @@ data class HomeCallbacks(
     val onOpenUrl: (String) -> Unit,
     val onAddLocationClick: () -> Unit,
     val onGetSubscriptionClick: () -> Unit,
-    val canPing: (LocationConfig) -> Boolean
+    val canPing: (LocationConfig) -> Boolean,
+    /** The press of [HomeChrome.secondaryAction]. */
+    val onSecondaryActionClick: () -> Unit = {}
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,7 +198,12 @@ fun HomeScreenContent(
                 // On one pane the bar spans the screen. On two it belongs under
                 // the room it acts on, which is the right one.
                 if (!twoPane) {
-                    PkActionBar(action = chrome.action, onClick = callbacks.onActionClick)
+                    PkActionBar(
+                        action = chrome.action,
+                        onClick = callbacks.onActionClick,
+                        secondary = chrome.secondaryAction,
+                        onSecondaryClick = callbacks.onSecondaryActionClick
+                    )
                 }
             }
         ) { innerPadding ->
@@ -217,7 +226,9 @@ fun HomeScreenContent(
                         }
                         PkActionBar(
                             action = chrome.action,
-                            onClick = callbacks.onActionClick
+                            onClick = callbacks.onActionClick,
+                            secondary = chrome.secondaryAction,
+                            onSecondaryClick = callbacks.onSecondaryActionClick
                         )
                     }
                 }

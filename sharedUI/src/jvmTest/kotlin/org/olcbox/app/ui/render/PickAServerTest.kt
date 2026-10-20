@@ -9,6 +9,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.ui.components.kit.pkTied
+import org.olcbox.app.util.nowMillis
+import org.olcbox.app.vpn.TunnelHold
+import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -77,6 +80,37 @@ class PickAServerTest {
             assertEquals(atTheTop, whereTheLastRoomIs(), 1f, "the button did not take the board back to its top")
             assertFalse("Paste link or URI" in texts(), "the button opened the sheet that adds a server list")
             assertEquals(0, app.toggled, "the button asked for a connection with nothing selected")
+        }
+    }
+
+    // Android holds the tunnel until a server is picked: a network change came
+    // after a refusal took the selected one. That is no reconnect on its way
+    // (a spinner and CANCEL) but the pick, with Disconnect beside its button:
+    // the pick's press goes to the board, Disconnect's ends the hold.
+    @Test fun aTunnelHeldForAPickIsThePickWithDisconnectBesideIt() {
+        val tunnel = Tunnel(upSince = nowMillis()).apply {
+            hold.value = TunnelHold.NonePicked
+            status.value = VpnStatus.Reconnecting
+        }
+        app.onTheScreen(phone, app.models(Memory(withdrawn()), tunnel)) {
+            waitForIdle()
+            val texts = texts()
+            assertTrue("Pick a server" in texts, "the held tunnel does not ask for a pick: $texts")
+            assertTrue(
+                onAllNodesWithContentDescription("CANCEL").fetchSemanticsNodes().isEmpty(),
+                "the hold is drawn as a reconnect on its way"
+            )
+
+            onNodeWithContentDescription("PICK A SERVER").performClick()
+            waitForIdle()
+            mainClock.advanceTimeBy(2_000)
+            waitForIdle()
+            assertEquals(0, app.toggled, "the pick's button touched the tunnel")
+            assertFalse("Paste link or URI" in texts(), "the pick's button opened the sheet that adds a server list")
+
+            onNodeWithContentDescription("DISCONNECT").performClick()
+            waitForIdle()
+            assertEquals(1, app.toggled, "Disconnect did not end the hold")
         }
     }
 

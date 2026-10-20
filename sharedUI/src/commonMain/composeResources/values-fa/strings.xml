@@ -65,6 +65,7 @@
     <string name="blocked_incomplete">ابتدا مکان فعال را کامل کنید</string>
     <string name="blocked_invalid">ابتدا یک مکان معتبر اضافه کنید</string>
     <string name="blocked_no_location">ابتدا یک مکان اضافه کنید</string>
+    <string name="blocked_no_server_picked">یک سرور انتخاب کنید</string>
     <string name="board_empty">هنوز چیزی اینجا نیست</string>
     <string name="board_key_gone_caps">کلید دیگر معتبر نیست · این فهرست را به‌روز کنید</string>
     <string name="board_rooms">اتاق‌ها</string>

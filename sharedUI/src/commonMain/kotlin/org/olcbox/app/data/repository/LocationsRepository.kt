@@ -67,6 +67,16 @@ interface LocationsRepository {
      * no location and says so, until the person picks one.
      */
     suspend fun getActiveLocationId(): String?
+
+    /**
+     * [getActiveLocationId] read past the store's lock, as the Android service
+     * reads its bundle: a refresh holds that lock for as long as it downloads,
+     * and a restart of a running tunnel must not wait for a download. The file
+     * is replaced in one step, so what is read is the old selection or the new.
+     * A store with no locations is asked through the lock (older versions kept
+     * theirs elsewhere).
+     */
+    suspend fun peekActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)
 
     /**

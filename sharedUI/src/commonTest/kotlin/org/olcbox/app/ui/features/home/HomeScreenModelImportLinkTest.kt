@@ -45,6 +45,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.assertNull
 
@@ -537,6 +538,90 @@ class HomeScreenModelImportLinkTest {
         } finally { vm.viewModelScope.cancel() }
     }
 
+    /** A server of no list, which no refresh asks for. */
+    private fun mine() = LocationEntry.from(
+        storageId = "mine",
+        location = LocationConfig(name = "DE", kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink)
+    )
+
+    // A restart reads the selection, which can take a moment (the disk). A
+    // Disconnect pressed meanwhile stands: the start that was on its way is
+    // not made, on a tunnel the person has just ended.
+    @Test fun aDisconnectWhileARestartReadsTheSelectionStands() = runTest {
+        val store = GatedLocationsDataSource(LocationBundleV4(activeLocationId = "mine", locations = listOf(mine())))
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = LocationsRepositoryImpl(store),
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            vpn.status.value = VpnStatus.Connecting
+
+            val slowRead = CompletableDeferred<Unit>()
+            store.gate = slowRead
+            vm.restartVpnIfRunning()
+            vpn.status.value = VpnStatus.Disconnected
+            store.gate = null
+            slowRead.complete(Unit)
+            // Whatever the read was going to do, it has done by now.
+            withContext(Dispatchers.Default) { delay(200) }
+
+            assertEquals(0, vpn.starts, "a start undid the Disconnect pressed while the selection was read")
+
+            // The same read with nothing pressed meanwhile starts the tunnel again.
+            vpn.status.value = VpnStatus.Connecting
+            val again = CompletableDeferred<Unit>()
+            store.gate = again
+            vm.restartVpnIfRunning()
+            store.gate = null
+            again.complete(Unit)
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+            assertEquals(1, vpn.starts)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A refresh holds the store's lock while it downloads. A restart reads the
+    // selection past that lock and starts at once, not when the download ends.
+    @Test fun aRestartWaitsForNoRefreshDownload() = runTest {
+        val downloading = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<Unit>()
+        val store = MemoryLocationsDataSource(LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours))))
+        val repo = LocationsRepositoryImpl(
+            dataSource = store,
+            httpClient = HttpClient(MockEngine {
+                downloading.complete(Unit)
+                answer.await()
+                respond("olcrtc://telemost?vp8channel@room-ours#$roomKey${'$'}ours")
+            })
+        )
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            // The tunnel comes up: the model asks for every list through it,
+            // and that download hangs with the store's lock held.
+            vpn.status.value = VpnStatus.Connected
+            withContext(Dispatchers.Default) { withTimeout(10_000) { downloading.await() } }
+
+            vm.restartVpnIfRunning()
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+
+            assertEquals(1, vpn.starts)
+            assertFalse(answer.isCompleted, "the download had ended")
+        } finally {
+            answer.complete(Unit)
+            vm.viewModelScope.cancel()
+        }
+    }
+
     // The board reads the store's selection and, finding none, used to choose
     // the first location and write it back: a withdrawn selection stays so.
     @Test fun theBoardLeavesAWithdrawnSelectionWithdrawn() = runTest {
@@ -589,6 +674,18 @@ class HomeScreenModelImportLinkTest {
         assertTrue(repo.getAllLocations().isEmpty())
         assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
     }
+}
+
+/** A store kept in memory whose reads wait for [gate] while it is set: a disk that takes its time. */
+private class GatedLocationsDataSource(var stored: LocationBundleV4? = null) : LocationsDataSource {
+    var gate: CompletableDeferred<Unit>? = null
+    override suspend fun loadLocationBundle(): LocationBundleV4? {
+        gate?.await()
+        return stored
+    }
+    override suspend fun saveLocationBundle(bundle: LocationBundleV4) { stored = bundle }
+    override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
+    override suspend fun loadLegacyActiveLocationId(): String? = null
 }
 
 private class MemoryLocationsDataSource(var stored: LocationBundleV4? = null) : LocationsDataSource {

@@ -65,6 +65,7 @@
     <string name="blocked_incomplete">请先完善当前节点</string>
     <string name="blocked_invalid">请先添加有效的节点</string>
     <string name="blocked_no_location">请先添加节点</string>
+    <string name="blocked_no_server_picked">选择一台服务器</string>
     <string name="board_empty">这里还是空的</string>
     <string name="board_key_gone_caps">密钥已失效 · 请刷新此列表</string>
     <string name="board_rooms">房间</string>

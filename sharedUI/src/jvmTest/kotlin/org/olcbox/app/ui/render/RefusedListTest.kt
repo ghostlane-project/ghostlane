@@ -14,10 +14,10 @@ import kotlin.test.assertTrue
  * A list whose host refused this device, as the board draws it: its head, and
  * where its rooms would be, why there are none.
  *
- * Its host turned the device away (the list is at its device limit, or this
- * device was removed from it), so it keeps no room. A list that vanished
- * would leave nobody any wiser; one that stood empty and silent would read
- * as the app having lost it.
+ * Its host turned the device away ("This list has no place for this device":
+ * every place on it is taken, or this device was removed from it), so it
+ * keeps no room. A list that vanished would leave nobody any wiser; one that
+ * stood empty and silent would read as the app having lost it.
  */
 @OptIn(ExperimentalTestApi::class)
 class RefusedListTest {
