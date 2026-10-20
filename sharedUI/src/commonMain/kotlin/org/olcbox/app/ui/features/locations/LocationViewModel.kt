@@ -26,6 +26,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RefusedList
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.repository.LocationsRepository
 
@@ -70,6 +71,13 @@ class LocationViewModel(
         private set
 
     var selectedLocationId by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * The server lists whose host refused this device: no rows, and on the
+     * board all the same, saying why (see RefusedList). Read with [locations].
+     */
+    var refusedLists by mutableStateOf<List<RefusedList>>(emptyList())
         private set
 
     var pingsState by mutableStateOf<PingsState>(PingsState.Idle)
@@ -192,6 +200,7 @@ class LocationViewModel(
 
             locations.clear()
             locations.addAll(nextLocations)
+            refusedLists = bundle.refusedLists
             refreshOlcrtcSlots()
 
             val nextSelectedId = if (

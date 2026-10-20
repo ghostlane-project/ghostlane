@@ -542,7 +542,9 @@ fun AndroidMainScreen(
             onSubscriptionRefreshClick = { url ->
                 viewModel.refreshSubscription(url) { report ->
                     reloadLocationsAfterImport {
-                        viewModel.restartVpnIfRunning()
+                        // Not for a list that refused this device the server in use:
+                        // a refusal takes the list's servers away, not the connection.
+                        if (!report.refusedSelection) viewModel.restartVpnIfRunning()
                         scope.launch {
                             Toast.makeText(
                                 context,

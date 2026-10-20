@@ -31,6 +31,7 @@ import multiplatform_app.sharedui.generated.resources.provider_site
 import multiplatform_app.sharedui.generated.resources.provider_support
 import multiplatform_app.sharedui.generated.resources.quota_available
 import multiplatform_app.sharedui.generated.resources.quota_used
+import multiplatform_app.sharedui.generated.resources.refresh_device_refused
 import multiplatform_app.sharedui.generated.resources.remove_named
 import multiplatform_app.sharedui.generated.resources.remove_server_list
 import multiplatform_app.sharedui.generated.resources.sub_server_list
@@ -69,7 +70,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.PinnedLocation
+import org.olcbox.app.data.model.RefusedList
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.ui.features.home.TransportMismatch
+import org.olcbox.app.ui.features.home.providerTextShown
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.OlcrtcSlots
 import org.olcbox.app.net.TransportGroup
@@ -134,7 +138,12 @@ data class TransportFilterOption(
 @Immutable
 data class BoardGroup(
     val key: String,
-    val locations: List<LocationItem>
+    val locations: List<LocationItem>,
+    /**
+     * Set for a list whose host refused this device. It has no rows; its head
+     * is made from what the host said, and under it stands why.
+     */
+    val refused: RefusedList? = null
 )
 
 @Immutable
@@ -172,12 +181,13 @@ fun rememberBoardModel(
     sort: SubscriptionSort,
     lowestSubscriptionUrls: Set<String> = emptySet(),
     pinned: List<PinnedLocation> = emptyList(),
+    refused: List<RefusedList> = emptyList(),
     pingsState: PingsState
-): BoardModel = remember(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned, pingsState) {
+): BoardModel = remember(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned, refused, pingsState) {
     // Keyed on the ping state itself, not on a `(String) -> Int?` built at the call
     // site: that lambda is a fresh object every composition, so remembering on it
     // would never hit and this would be memoisation in name only.
-    buildBoardModel(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned) { id -> pingsState.pingFor(id) }
+    buildBoardModel(locations, activeFilterKey, sort, lowestSubscriptionUrls, pinned, refused) { id -> pingsState.pingFor(id) }
 }
 
 /**
@@ -193,6 +203,8 @@ fun buildBoardModel(
     sort: SubscriptionSort,
     lowestSubscriptionUrls: Set<String> = emptySet(),
     pinned: List<PinnedLocation> = emptyList(),
+    /** The lists whose host refused this device: each a group of no rows, after the rest. */
+    refused: List<RefusedList> = emptyList(),
     pingFor: (String) -> Int?
 ): BoardModel {
     // olcRTC's own carriers (VP8 / SEI / DataChannel) sit one level below the
@@ -259,14 +271,25 @@ fun buildBoardModel(
             BoardGroup(key, items.sorted(groupSort).pinnedFirst())
         }
 
+    // A list its host refused stands on the board with no rows, whatever the
+    // filter: it has none of any transport, and what it says is about the list.
+    // After the lists that have rows, which are what a board is for.
+    val refusedGroups = refused.map { list ->
+        BoardGroup(
+            key = listOfNotNull(list.subscription?.name?.takeIf { it.isNotBlank() }, list.subscriptionUrl).joinToString("|"),
+            locations = emptyList(),
+            refused = list
+        )
+    }
+
     return BoardModel(
         filterOptions = options,
         filterCounts = counts,
         totalCount = locations.size,
-        subscriptionGroups = groups,
+        subscriptionGroups = groups + refusedGroups,
         customLocations = visible.filter { it.subscriptionUrl.isNullOrBlank() }.sorted().pinnedFirst(),
         hasRooms = locations.any { it.config?.transportKind() == TransportKind.Olcrtc },
-        isEmpty = locations.isEmpty(),
+        isEmpty = locations.isEmpty() && refused.isEmpty(),
         pinnedIds = pinPlace.keys
     )
 }
@@ -419,9 +442,12 @@ fun RoomBoard(
         }
         model.subscriptionGroups.forEach { group ->
             val ids = group.locations.map { it.storageId }
-            // A group comes from groupBy over at least one location.
-            val first = group.locations.first()
-            val groupUrl = first.subscriptionUrl?.trim()
+            // A group comes from groupBy over at least one location, or is a
+            // list its host refused, which has none: its head is made from what
+            // the host said instead.
+            val first = group.locations.firstOrNull()
+            val refused = group.refused
+            val groupUrl = (first?.subscriptionUrl ?: refused?.subscriptionUrl)?.trim()
             // Two server lists of a dozen exits each is most of a phone screen
             // before a user has scrolled at all, and the one they are not using
             // is pure noise.
@@ -444,17 +470,20 @@ fun RoomBoard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                val subscription = first.metadata?.subscription
+                val subscription = first?.metadata?.subscription ?: refused?.subscription
                 val fraction = planFraction(subscription?.used, subscription?.available)
+                val quota = quotaText(subscription?.used, subscription?.available, words)
 
                 PkGroupHeader(
-                    title = first.subscriptionTitle(words).ifBlank { words.serverList },
+                    title = (first?.subscriptionTitle(words) ?: refused?.subscriptionTitle(words))
+                        .orEmpty()
+                        .ifBlank { words.serverList },
                     // Both the quota and the expiry move into the bar where there
                     // is one, rather than being printed twice in two shapes. What
                     // is left on this line is how stale the list is, which is
                     // short enough to survive four buttons beside it.
                     meta = subscriptionMetaLine(
-                        quota = if (fraction == null) first.subscriptionQuota(words) else null,
+                        quota = if (fraction == null) quota else null,
                         expiresAtEpochMs = subscription?.expiresAtEpochMs
                             ?.takeIf { fraction == null },
                         lastRefreshAtEpochMs = subscription?.lastRefreshAtEpochMs,
@@ -519,17 +548,25 @@ fun RoomBoard(
                 if (fraction != null && !isCollapsed) {
                     PkPlanBar(
                         label = planLabel(subscription?.expiresAtEpochMs, nowMillis(), words),
-                        value = first.subscriptionQuota(words).orEmpty(),
+                        value = quota.orEmpty(),
                         fraction = fraction
                     )
                 }
 
-                // The provider's own note (`announce`), under its list. Not on the
-                // iPhone: a provider's note is as often "renew here", and App Review
-                // reads a purchase pointer shown in the app as the app's (3.1.1).
-                val announce = subscription?.announce?.takeIf { it.isNotBlank() }
-                if (announce != null && !isCollapsed && currentUpdatePlatform().os != "ios") {
-                    PkProviderNote(announce)
+                if (refused != null) {
+                    // Where the rows of a list its host refused would be: why
+                    // there are none. The provider's own sentence, or ours where
+                    // it sent none, and ours on the iPhone (see below).
+                    val ours = stringResource(Res.string.refresh_device_refused)
+                    if (!isCollapsed) PkProviderNote(refusalNote(refused.subscription?.announce, ours))
+                } else {
+                    // The provider's own note (`announce`), under its list. Not on the
+                    // iPhone: a provider's note is as often "renew here", and App Review
+                    // reads a purchase pointer shown in the app as the app's (3.1.1).
+                    val announce = subscription?.announce?.takeIf { it.isNotBlank() }
+                    if (announce != null && !isCollapsed && currentUpdatePlatform().os != "ios") {
+                        PkProviderNote(announce)
+                    }
                 }
 
                 if (rows.isNotEmpty()) {
@@ -563,7 +600,8 @@ fun RoomBoard(
                                 } else {
                                     stringResource(Res.string.lowest_fastest_caps)
                                 },
-                                onClick = { onLowestSelected(groupUrl, first.storageId) },
+                                // A list with rows to measure has a first one.
+                                onClick = { onLowestSelected(groupUrl, group.locations.first().storageId) },
                                 onMeasure = if (measurable.isNotEmpty()) ({ onMeasure(ids) }) else null
                             )
                         }
@@ -891,12 +929,23 @@ private fun LocationItem.subscriptionGroupKey(): String = listOfNotNull(
     subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }
 ).joinToString("|").ifBlank { storageId }
 
-internal fun LocationItem.subscriptionTitle(words: ListWords = ListWords()): String {
-    val subscription = metadata?.subscription
+internal fun LocationItem.subscriptionTitle(words: ListWords = ListWords()): String =
+    listTitle(metadata?.subscription, subscriptionUrl, subscriptionOriginLink, words)
+
+/** [LocationItem.subscriptionTitle] for a list whose host refused this device, which has no rows to ask. */
+internal fun RefusedList.subscriptionTitle(words: ListWords = ListWords()): String =
+    listTitle(subscription, subscriptionUrl, subscriptionOriginLink, words)
+
+private fun listTitle(
+    subscription: SubscriptionMetadata?,
+    subscriptionUrl: String?,
+    originLink: String?,
+    words: ListWords
+): String {
     // Falling back to a literal labelled every unnamed server list identically, so
     // two of them read as the same heading twice. Identify by host instead —
     // except for an encrypted one, whose host is a thing its link was hiding.
-    val secret = subscriptionUrl?.let { pkSubscriptionIsSecret(it, subscriptionOriginLink) } == true
+    val secret = subscriptionUrl?.let { pkSubscriptionIsSecret(it, originLink) } == true
     val name = subscription?.name?.takeIf { it.isNotBlank() }
         ?: subscriptionUrl?.takeUnless { secret }?.let { pkSubscriptionHost(it) }
         ?: if (secret) words.encryptedList else words.serverList
@@ -904,10 +953,14 @@ internal fun LocationItem.subscriptionTitle(words: ListWords = ListWords()): Str
     return listOfNotNull(subscription?.icon?.takeIf { it.isNotBlank() }, name).joinToString(" ")
 }
 
-private fun LocationItem.subscriptionQuota(words: ListWords): String? {
-    val subscription = metadata?.subscription ?: return null
-    return quotaText(subscription.used, subscription.available, words)
-}
+/**
+ * What stands under a list whose host refused this device, where its rows
+ * would be: the provider's own sentence ([announce]), or [ours] where it sent
+ * none. Ours on the iPhone always, for the reason a provider's note is not
+ * shown there: [providersOwnText] is false on it.
+ */
+internal fun refusalNote(announce: String?, ours: String, providersOwnText: Boolean = providerTextShown()): String =
+    announce?.takeIf { it.isNotBlank() && providersOwnText } ?: ours
 
 /**
  * The one line a server list gets under its name: what is left of the plan, when

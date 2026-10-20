@@ -18,6 +18,7 @@ import multiplatform_app.sharedui.generated.resources.remove_location_question
 import multiplatform_app.sharedui.generated.resources.remove_server_list_body
 import multiplatform_app.sharedui.generated.resources.remove_server_list_question
 import multiplatform_app.sharedui.generated.resources.removed_locations
+import multiplatform_app.sharedui.generated.resources.server_list_removed
 import multiplatform_app.sharedui.generated.resources.status_add_list_to_start
 import multiplatform_app.sharedui.generated.resources.status_connected
 import multiplatform_app.sharedui.generated.resources.status_connecting
@@ -54,6 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.olcbox.app.admin.AdminState
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.AdminPasswordDialog
@@ -233,8 +235,14 @@ fun HomeScreen(
             text = {
                 Text(
                     when (pending) {
-                        is PendingRemoval.ServerList ->
+                        // A list its host refused brought no locations in: "and
+                        // the 0 locations it brought in" would be a sentence
+                        // about nothing. It goes as one thing does.
+                        is PendingRemoval.ServerList -> if (pending.count == 0) {
+                            stringResource(Res.string.remove_location_body, pending.title)
+                        } else {
                             pluralStringResource(Res.plurals.remove_server_list_body, pending.count, pending.title, pending.count)
+                        }
                         is PendingRemoval.Location ->
                             stringResource(Res.string.remove_location_body, pending.title)
                     }
@@ -245,7 +253,10 @@ fun HomeScreen(
                     when (pending) {
                         is PendingRemoval.ServerList -> viewModel.deleteSubscription(pending.url) { removed ->
                             scope.launch {
-                                snackbarHostState.showSnackbar(getPluralString(Res.plurals.removed_locations, removed, removed))
+                                snackbarHostState.showSnackbar(
+                                    if (removed == 0) getString(Res.string.server_list_removed)
+                                    else getPluralString(Res.plurals.removed_locations, removed, removed)
+                                )
                             }
                             locationViewModel.loadLocations()
                         }
@@ -275,7 +286,11 @@ fun HomeScreen(
         locations.firstOrNull { it.storageId == locationViewModel.selectedLocationId }?.config
 
     /** Restarts only if the running tunnel's own config actually moved. */
-    fun restartIfActiveChanged(before: LocationConfig?) {
+    fun restartIfActiveChanged(before: LocationConfig?, report: SubscriptionRefreshReport) {
+        // Except where it moved because the list it came from refused this
+        // device: the host still carries the session, and the refusal takes
+        // the list's servers away, not the connection (see the report).
+        if (report.refusedSelection) return
         val after = activeLocationConfig()
         // Vanished counts too: the location the tunnel runs on being gone is exactly
         // when a restart is right, and comparing to null covers it.
@@ -288,7 +303,7 @@ fun HomeScreen(
         viewModel.refreshSubscriptions { report ->
             locationViewModel.loadLocations {
                 isRefreshingSubscriptions = false
-                restartIfActiveChanged(activeBefore)
+                restartIfActiveChanged(activeBefore, report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedBulkMessage()) }
             }
         }
@@ -300,7 +315,7 @@ fun HomeScreen(
         viewModel.refreshSubscription(url) { report ->
             locationViewModel.loadLocations {
                 refreshingSubscriptionUrl = null
-                restartIfActiveChanged(activeBefore)
+                restartIfActiveChanged(activeBefore, report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedSingleMessage()) }
             }
         }
@@ -430,6 +445,7 @@ fun HomeScreen(
         sort = subscriptionSettings.sort,
         lowestSubscriptionUrls = lowestSubscriptionUrls,
         pinned = subscriptionSettings.pinnedLocations,
+        refused = locationViewModel.refusedLists,
         pingsState = pingsState
     )
     val lowestActive = selectedItem?.subscriptionUrl?.trim()?.let { it in lowestSubscriptionUrls } == true
@@ -700,9 +716,12 @@ fun HomeScreen(
             },
             onDeleteSubscriptionClick = { url ->
                 val members = locations.filter { it.subscriptionUrl?.trim() == url.trim() }
+                // A list its host refused has no members, and its name from what the host said.
+                val refused = locationViewModel.refusedLists.firstOrNull { it.subscriptionUrl.trim() == url.trim() }
                 confirmRemove = PendingRemoval.ServerList(
                     url = url,
-                    title = members.firstOrNull()?.subscriptionTitle(words)?.takeIf { it.isNotBlank() }
+                    title = (members.firstOrNull()?.subscriptionTitle(words) ?: refused?.subscriptionTitle(words))
+                        ?.takeIf { it.isNotBlank() }
                         ?: thisServerList,
                     count = members.size
                 )

@@ -296,6 +296,7 @@
     <string name="refresh_bulk_none">Нет списков серверов для обновления</string>
     <string name="refresh_bulk_partial">Обновлено: %1$d, с ошибкой: %2$d. %3$s</string>
     <string name="refresh_bulk_updated">Обновлено списков серверов: %1$d</string>
+    <string name="refresh_device_refused">Список на лимите устройств. Спросите вашего провайдера.</string>
     <string name="refresh_empty">В списке серверов нет локаций</string>
     <string name="refresh_rejected">Список серверов отклонён%1$s — возможно, доступ отозван</string>
     <string name="refresh_server_error">Ошибка на сервере списка%1$s — попробуйте позже</string>

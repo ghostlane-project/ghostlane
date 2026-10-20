@@ -12,6 +12,7 @@ import multiplatform_app.sharedui.generated.resources.vpn_disclosure_body
 import org.jetbrains.compose.resources.getPluralString
 import org.jetbrains.compose.resources.getString
 import multiplatform_app.sharedui.generated.resources.allStringResources
+import org.olcbox.app.data.repository.DEVICE_REFUSED_MESSAGE
 import org.olcbox.app.data.repository.SubscriptionRefreshError
 import org.olcbox.app.data.repository.SubscriptionRefreshFailure
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
@@ -23,6 +24,7 @@ import org.olcbox.app.ui.features.home.StatusWords
 import org.olcbox.app.ui.features.home.TransportMismatch
 import org.olcbox.app.ui.features.home.localizedBulkMessage
 import org.olcbox.app.ui.features.home.localizedSingleMessage
+import org.olcbox.app.ui.features.home.localizedText
 import org.olcbox.app.ui.features.home.components.ListWords
 import org.olcbox.app.ui.components.disclosureBlocks
 import java.io.File
@@ -210,7 +212,10 @@ class LocalizationTest {
             SubscriptionRefreshReport(updatedCount = 2),
             SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.Rejected, 403))),
             SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.ServerError), failure(SubscriptionRefreshError.Unreachable))),
-            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.Empty)))
+            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.Empty))),
+            // A refusal in the provider's words, and with none of them: ours.
+            SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("Your provider: this link is already in use on its 1 device. Ask your provider to free one.")))),
+            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.DeviceRefused(""))))
         )
         inLocale("en") {
             reports.forEach { report ->
@@ -218,6 +223,15 @@ class LocalizationTest {
                 assertEquals(report.bulkMessage(), report.localizedBulkMessage())
             }
         }
+    }
+
+    // A refusal the provider gave no words to is said in ours, in the user's
+    // language; the provider's own words are shown as they came.
+    @Test fun aRefusalWithoutTheProvidersWordsIsSaidInTheUsersLanguage() {
+        val bare = SubscriptionRefreshError.DeviceRefused("")
+        assertEquals(DEVICE_REFUSED_MESSAGE, inLocale("en") { bare.localizedText() })
+        assertEquals("Список на лимите устройств. Спросите вашего провайдера.", inLocale("ru") { bare.localizedText() })
+        assertEquals("Ваш провайдер: лимит устройств", inLocale("ru") { SubscriptionRefreshError.DeviceRefused("Ваш провайдер: лимит устройств").localizedText() })
     }
 
     // A string added in English only would show English inside a translated screen.

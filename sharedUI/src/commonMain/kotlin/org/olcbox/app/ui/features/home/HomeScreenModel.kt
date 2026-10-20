@@ -785,13 +785,22 @@ class HomeScreenViewModel(
         }
         viewModelScope.launch {
             try {
-                val imported = withContext(Dispatchers.IO) {
-                    locationsRepository.importText(
+                val report = withContext(Dispatchers.IO) {
+                    locationsRepository.importReport(
                         text = rawText,
                         subscriptionProxy = vpnManager.subscriptionFetchProxy()
                     )
                 }
-                if (!imported) {
+                // The list's host refused this device. The list is on the board
+                // now with nothing in it but why; said here too, because the
+                // person who pasted it is waiting to hear what came of it, and
+                // "Server list added" would be the wrong answer.
+                report.refused?.let { refusal ->
+                    loadCurrentConfigNow()
+                    onError(refusal.localizedText())
+                    return@launch
+                }
+                if (!report.imported) {
                     // A partner link that did not resolve is not a malformed config
                     // — the user's next move is their provider's bot, not another paste.
                     onError(

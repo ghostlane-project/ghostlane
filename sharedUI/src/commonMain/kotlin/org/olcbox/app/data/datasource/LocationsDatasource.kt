@@ -41,7 +41,9 @@ import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RefusedList
 import org.olcbox.app.data.model.SubscriptionMetadata
+import org.olcbox.app.data.repository.ImportReport
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.net.HttpPartnerLinkResolver
 import org.olcbox.app.net.LinkParser
@@ -125,12 +127,34 @@ class LocationsRepositoryImpl(
         val announce: String? = null,
         val fallbackUrl: String? = null,
         /** Where the list lives from now on (`new-url`, or `new-domain` applied to this URL). */
-        val movedTo: String? = null
+        val movedTo: String? = null,
+        /** Set when the host refused this device: the answer is final, and carries no list. */
+        val deviceRefusal: DeviceRefusal? = null
     ) {
         fun isEmpty(): Boolean = title.isNullOrBlank() &&
             usedBytes == null && totalBytes == null && expiresAtEpochMs == null &&
             supportUrl.isNullOrBlank() && webPageUrl.isNullOrBlank() &&
-            announce == null && fallbackUrl == null && movedTo == null
+            announce == null && fallbackUrl == null && movedTo == null &&
+            deviceRefusal == null
+    }
+
+    /**
+     * Why a list's host turned this device away, by the flags of its answer as
+     * Happ reads them (spec §7.4 of the device limit). Both are an HTTP 200 with
+     * the reason in `announce` and one line in place of the list.
+     */
+    private enum class DeviceRefusal {
+        /**
+         * `x-hwid-max-devices-reached: true`: the list is in use on as many
+         * devices as it may be, or this one was removed from it.
+         */
+        LimitReached,
+
+        /**
+         * `x-hwid-not-supported: true`: the provider lets in only an app that
+         * names its device, and this request named none.
+         */
+        NotSupported
     }
 
     private data class ParsedImport(
@@ -138,10 +162,18 @@ class LocationsRepositoryImpl(
         val mode: ImportMode
     )
 
-    private data class ResolvedImport(
-        val source: ImportSource,
-        val parsed: ParsedImport
-    )
+    /** What asking for a list came to, when it came to anything. */
+    private sealed interface Resolution {
+        /** The list, read. */
+        data class Parsed(val source: ImportSource, val parsed: ParsedImport) : Resolution
+
+        /**
+         * The host answered this device, and said no: [source] holds what the
+         * answer said about the list and none of its body. [originLink] is the
+         * encrypted link the import began with, when it did.
+         */
+        data class Refused(val source: ImportSource, val originLink: String?) : Resolution
+    }
 
     private data class ParsedOlcRtcUri(
         val location: LocationConfig,
@@ -215,21 +247,51 @@ class LocationsRepositoryImpl(
         return json.encodeToString(LocationBundleV4.serializer(), getBundle())
     }
 
-    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): Boolean {
+    override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): Boolean =
+        importReport(text, subscriptionProxy).imported
+
+    override suspend fun importReport(text: String, subscriptionProxy: SubscriptionFetchProxy?): ImportReport {
         val resolved = resolveParsedImport(
             text = text,
             subscriptionProxy = subscriptionProxy
-        ) ?: return false
+        ) ?: return ImportReport(imported = false)
 
-        mutationMutex.withLock {
-            val merged = mergeImportedBundle(
-                current = getBundleUnlocked(),
-                imported = resolved.parsed.bundle.normalized(),
-                replaceMatchingStorageIds = resolved.parsed.mode == ImportMode.Restore
-            )
-            saveBundleUnlocked(merged)
+        return mutationMutex.withLock {
+            val current = getBundleUnlocked()
+            when (resolved) {
+                is Resolution.Parsed -> {
+                    val merged = mergeImportedBundle(
+                        current = current,
+                        imported = resolved.parsed.bundle.normalized(),
+                        replaceMatchingStorageIds = resolved.parsed.mode == ImportMode.Restore
+                    )
+                    // A list refused before and served now leaves the refused
+                    // ones as it is saved (LocationBundleV4.normalized).
+                    saveBundleUnlocked(merged)
+                    ImportReport(imported = true)
+                }
+
+                is Resolution.Refused -> {
+                    // The list is kept with what its host said about it and
+                    // none of its servers: the ones a paste of a link already
+                    // here brought before go too, as a refresh takes them.
+                    val listUrl = resolved.source.subscriptionUrl ?: text.trim()
+                    val previousEntries = current.locations.filter { it.subscriptionUrl?.trim() == listUrl }
+                    val previousRefusal = current.refusedLists.firstOrNull { it.subscriptionUrl == listUrl }
+                    val refused = refusedListOf(
+                        source = resolved.source,
+                        listUrl = listUrl,
+                        originLink = resolved.originLink
+                            ?: previousEntries.firstNotNullOfOrNull { it.subscriptionOriginLink }
+                            ?: previousRefusal?.subscriptionOriginLink,
+                        previous = previousEntries.firstNotNullOfOrNull { it.metadata?.subscription }
+                            ?: previousRefusal?.subscription
+                    )
+                    saveBundleUnlocked(current.withRefusal(refused))
+                    ImportReport(imported = false, refused = refused.refusal())
+                }
+            }
         }
-        return true
     }
 
     override suspend fun refreshSubscriptions(
@@ -262,25 +324,37 @@ class LocationsRepositoryImpl(
         subscriptionProxy: SubscriptionFetchProxy?
     ): SubscriptionRefreshReport {
         val bundle = getBundleUnlocked()
-        if (bundle.locations.isEmpty()) return SubscriptionRefreshReport.EMPTY
+        if (bundle.locations.isEmpty() && bundle.refusedLists.isEmpty()) return SubscriptionRefreshReport.EMPTY
 
         val groupedByUrl = bundle.locations
             .mapNotNull { entry -> entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }?.let { it to entry } }
             .groupBy({ it.first }, { it.second })
             .filterKeys { url -> onlyUrls == null || url in onlyUrls }
-        if (groupedByUrl.isEmpty()) return SubscriptionRefreshReport.EMPTY
+        // A list its host refused has no servers to be found by, and is asked
+        // again all the same: the provider may have made room since.
+        val refusedByUrl = bundle.refusedLists
+            .associateBy { it.subscriptionUrl.trim() }
+            .filterKeys { url -> url.isNotBlank() && url !in groupedByUrl && (onlyUrls == null || url in onlyUrls) }
+        if (groupedByUrl.isEmpty() && refusedByUrl.isEmpty()) return SubscriptionRefreshReport.EMPTY
 
-        val targetUrls = groupedByUrl.keys
+        val targetUrls = groupedByUrl.keys + refusedByUrl.keys
         val refreshedLocations = bundle.locations
             .filter { entry ->
                 val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }
                 url == null || (onlyUrls != null && url !in targetUrls)
             }
             .toMutableList()
+        // The refused lists not asked now stay as they are; each one asked is
+        // decided below by its answer.
+        val refusedLists = bundle.refusedLists
+            .filter { it.subscriptionUrl.trim() !in targetUrls }
+            .toMutableList()
         val usedStorageIds = refreshedLocations.mapTo(mutableSetOf()) { it.storageId }
         val activeBefore = bundle.activeLocationId
         var activeAfter = activeBefore
         var successfulRefreshes = 0
+        var refusals = 0
+        var refusedSelection = false
         val failures = mutableListOf<SubscriptionRefreshFailure>()
 
         fun preservePreviousEntries(entries: List<LocationEntry>) {
@@ -291,12 +365,23 @@ class LocationsRepositoryImpl(
             }
         }
 
-        groupedByUrl.forEach { (url, previousEntries) ->
+        targetUrls.forEach { url ->
+            val previousEntries = groupedByUrl[url].orEmpty()
+            val previousRefusal = refusedByUrl[url]
             val previousInterval = previousEntries.subscriptionUpdateIntervalHours()
+                ?: previousRefusal?.subscription?.updateIntervalHours
             // A refresh re-imports from the stored plaintext URL and never sees the
             // encrypted link the subscription arrived as. Without this, the first
             // auto-refresh quietly declassifies it.
             val previousOriginLink = previousEntries.firstNotNullOfOrNull { it.subscriptionOriginLink }
+                ?: previousRefusal?.subscriptionOriginLink
+
+            /** A list whose answer changed nothing stays as it was: its servers, or its refusal. */
+            fun keepAsItWas() {
+                preservePreviousEntries(previousEntries)
+                previousRefusal?.let { refusedLists += it }
+            }
+
             // Keep the last reported reason: it belongs to the attempt that
             // ultimately failed (Identity is retried in Compatibility mode).
             var lastFailure: SubscriptionRefreshFailure? = null
@@ -307,8 +392,10 @@ class LocationsRepositoryImpl(
             // list's address does not answer now: a blocked domain is the usual
             // reason. The list stays filed under its own address; only `new-url`
             // or `new-domain` moves it.
-            val fallbackUrl = previousEntries
-                .firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+            val fallbackUrl = (
+                previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+                    ?: previousRefusal?.subscription?.fallbackUrl
+                )
                 ?.takeIf { it != url }
             val resolved = resolveParsedImport(
                 text = url,
@@ -323,33 +410,63 @@ class LocationsRepositoryImpl(
                     onFailure = recordFailure
                 )
             } ?: run {
-                preservePreviousEntries(previousEntries)
+                keepAsItWas()
                 // Downloaded fine but nothing importable ⇒ Empty.
                 failures += lastFailure
                     ?: SubscriptionRefreshFailure(url, SubscriptionRefreshError.Empty)
                 return@forEach
             }
-            val source = resolved.source
+            val served = when (resolved) {
+                is Resolution.Parsed -> resolved
+                is Resolution.Refused -> {
+                    // The host said no to this device. The list keeps none of
+                    // its servers, and is kept itself, with what the host said.
+                    // Nothing else moves: not a running tunnel, and not the
+                    // server chosen in another list.
+                    val refused = refusedListOf(
+                        source = resolved.source,
+                        listUrl = resolved.source.profile?.movedTo ?: url,
+                        originLink = previousOriginLink,
+                        previous = previousEntries.firstNotNullOfOrNull { it.metadata?.subscription }
+                            ?: previousRefusal?.subscription
+                    )
+                    refusedLists += refused
+                    refusals += 1
+                    // The server chosen was one of the list's, and the list has
+                    // none now: the selection goes where a removed list sends
+                    // it, and the report says so, for a tunnel running on it is
+                    // not to be moved or cut for it (see the report).
+                    if (activeBefore != null && previousEntries.any { it.storageId == activeBefore }) {
+                        activeAfter = null
+                        refusedSelection = true
+                    }
+                    failures += SubscriptionRefreshFailure(url, refused.refusal())
+                    return@forEach
+                }
+            }
+            val source = served.source
             // Filed from now on where the provider says the list lives.
             val listUrl = source.profile?.movedTo ?: url
             // A refresh parses fresh entries, which remember nothing: a note the
             // provider put up and has not taken down, and its spare address,
-            // carry over from the entries they replace.
+            // carry over from the entries they replace. A refusal's sentence does
+            // not: it said why the list was empty, and the list is served now.
             val carriedProfile = (source.profile ?: SubscriptionProfile()).let { profile ->
                 profile.copy(
                     announce = profile.announce
                         ?: previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.announce },
                     fallbackUrl = profile.fallbackUrl
                         ?: previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+                        ?: previousRefusal?.subscription?.fallbackUrl
                 )
             }.takeUnless { it.isEmpty() }
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
             val refreshTimestamp = nowEpochMs()
-            val refreshed = resolved.parsed.bundle.locations
+            val refreshed = served.parsed.bundle.locations
             if (refreshed.isEmpty()) {
-                preservePreviousEntries(previousEntries)
+                keepAsItWas()
                 failures += SubscriptionRefreshFailure(url, SubscriptionRefreshError.Empty)
                 return@forEach
             }
@@ -412,17 +529,24 @@ class LocationsRepositoryImpl(
             successfulRefreshes += 1
         }
 
-        if (successfulRefreshes == 0) {
+        // A refusal updates nothing, and changes the list all the same: its
+        // servers are gone, and it says why.
+        if (successfulRefreshes == 0 && refusals == 0) {
             return SubscriptionRefreshReport(updatedCount = 0, failures = failures)
         }
 
         saveBundleUnlocked(
             bundle.copy(
                 activeLocationId = activeAfter,
-                locations = refreshedLocations
+                locations = refreshedLocations,
+                refusedLists = refusedLists
             )
         )
-        return SubscriptionRefreshReport(updatedCount = successfulRefreshes, failures = failures)
+        return SubscriptionRefreshReport(
+            updatedCount = successfulRefreshes,
+            failures = failures,
+            refusedSelection = refusedSelection
+        )
     }
 
     override suspend fun refreshDueSubscriptions(
@@ -433,10 +557,16 @@ class LocationsRepositoryImpl(
             val settings = bundle.settings.normalized()
             if (!settings.autoUpdate) return@withLock SubscriptionRefreshReport.EMPTY
             val now = nowEpochMs()
-            val dueUrls = bundle.locations
-                .mapNotNull { entry ->
-                    val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val metadata = entry.metadata?.subscription
+            // A list its host refused is due like any other, by what the host
+            // said in its refusal and when that was: the provider may have made
+            // room since.
+            val lists = bundle.locations.mapNotNull { entry ->
+                entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }?.let { it to entry.metadata?.subscription }
+            } + bundle.refusedLists.mapNotNull { refused ->
+                refused.subscriptionUrl.trim().takeIf { it.isNotBlank() }?.let { it to refused.subscription }
+            }
+            val dueUrls = lists
+                .mapNotNull { (url, metadata) ->
                     val interval = minOf(
                         metadata?.updateIntervalHours ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
                         settings.updateIntervalHours
@@ -520,7 +650,9 @@ class LocationsRepositoryImpl(
                 entry.subscriptionUrl?.trim() == normalizedUrl
             }
             val removed = bundle.locations.size - remaining.size
-            if (removed > 0) {
+            // A list its host refused has no locations, and is removed all the same.
+            val refusedRemaining = bundle.refusedLists.filterNot { it.subscriptionUrl.trim() == normalizedUrl }
+            if (removed > 0 || refusedRemaining.size < bundle.refusedLists.size) {
                 // normalized() re-points activeLocationId at a surviving entry when
                 // the active one belonged to the deleted subscription.
                 saveBundleUnlocked(
@@ -528,6 +660,7 @@ class LocationsRepositoryImpl(
                         activeLocationId = bundle.activeLocationId
                             ?.takeIf { id -> remaining.any { it.storageId == id } },
                         locations = remaining,
+                        refusedLists = refusedRemaining,
                         // With the list goes what the settings kept about it.
                         // They know it by its address, which for an encrypted
                         // list is the thing its link was hiding.
@@ -661,7 +794,7 @@ class LocationsRepositoryImpl(
         fallbackSubscriptionInterval: Int? = null,
         subscriptionProxy: SubscriptionFetchProxy? = null,
         onFailure: SubscriptionFailureSink? = null
-    ): ResolvedImport? {
+    ): Resolution? {
         val input = text.normalizedImportText()
         if (input.isBlank()) return null
 
@@ -696,19 +829,27 @@ class LocationsRepositoryImpl(
         // plain link falls straight through unchanged.
         val effective = cryptCodec?.decryptLink(resolvedInput) ?: resolvedInput
 
-        var source = resolveImportSource(
+        val identity = resolveImportSource(
             text = effective,
             requestMode = SubscriptionRequestMode.Identity,
             subscriptionProxy = subscriptionProxy,
             onFailure = onFailure
-        ) ?: run {
+        )
+        // The host answered this device, and said no. That is the answer, and
+        // the attempt ends on it. Asked again as a browser, without the id, a
+        // provider that counts devices softly would serve the list uncounted and
+        // a strict one would refuse it again; and the line the answer carries is
+        // its reason written as a server, for the apps that read no header.
+        if (identity?.profile?.deviceRefusal != null) return Resolution.Refused(identity, originLink)
+
+        var source = identity ?: run {
             if (effective.isHttpUrl()) {
                 resolveImportSource(
                     text = effective,
                     requestMode = SubscriptionRequestMode.Compatibility,
                     subscriptionProxy = subscriptionProxy,
                     onFailure = onFailure
-                )
+                )?.unlessRefused()
             } else {
                 null
             }
@@ -721,15 +862,62 @@ class LocationsRepositoryImpl(
                 requestMode = SubscriptionRequestMode.Compatibility,
                 subscriptionProxy = subscriptionProxy,
                 onFailure = onFailure
-            )
+            )?.unlessRefused()
             if (fallbackSource != null) {
                 source = fallbackSource
                 parsed = parseImportSource(fallbackSource, fallbackSubscriptionInterval, originLink)
             }
         }
 
-        return parsed?.let { ResolvedImport(source, it) }
+        return parsed?.let { Resolution.Parsed(source, it) }
     }
+
+    /**
+     * This answer, unless its host refused it. Asked of the Compatibility answer
+     * alone: that request names no device, so a refusal of it says nothing about
+     * this one, and the line it carries is no server either. The attempt then
+     * came to nothing, and what the list held stays as it was.
+     */
+    private fun ImportSource.unlessRefused(): ImportSource? = takeUnless { it.profile?.deviceRefusal != null }
+
+    /**
+     * What is kept of a list its host refused: its address, the link it arrived
+     * as, and what the host said about it over what was known of it before.
+     * The sentence is the refusal's own, or none: a note the provider left on
+     * the list earlier is not why it is empty now.
+     */
+    private fun refusedListOf(
+        source: ImportSource,
+        listUrl: String,
+        originLink: String?,
+        previous: SubscriptionMetadata?
+    ): RefusedList {
+        val subscription = previous.withProfile(source.profile) ?: SubscriptionMetadata()
+        return RefusedList(
+            subscriptionUrl = listUrl,
+            subscriptionOriginLink = originLink,
+            subscription = subscription.copy(
+                announce = source.profile?.announce?.takeIf { it.isNotEmpty() },
+                updateIntervalHours = source.updateIntervalHours
+                    ?: previous?.updateIntervalHours
+                    ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
+                lastRefreshAtEpochMs = nowEpochMs()
+            )
+        ).normalized()
+    }
+
+    /** The refusal a refused list stands for, in the report's terms. */
+    private fun RefusedList.refusal(): SubscriptionRefreshError.DeviceRefused =
+        SubscriptionRefreshError.DeviceRefused(subscription?.announce.orEmpty())
+
+    /**
+     * This bundle with the list at [refused]'s address kept as refused: none of
+     * its servers, and its record in place of any before it.
+     */
+    private fun LocationBundleV4.withRefusal(refused: RefusedList): LocationBundleV4 = copy(
+        locations = locations.filterNot { it.subscriptionUrl?.trim() == refused.subscriptionUrl },
+        refusedLists = refusedLists.filterNot { it.subscriptionUrl.trim() == refused.subscriptionUrl } + refused
+    )
 
     private fun parseImportSource(
         source: ImportSource,
@@ -811,6 +999,19 @@ class LocationsRepositoryImpl(
             subscriptionProxy = subscriptionProxy,
             onFailure = onFailure
         ) ?: return null
+        // A refusal carries no list, whatever its body holds: the server writes
+        // one line there for the apps that read no header, a server named with
+        // its sentence. Only what the answer says about the list is kept, and
+        // the line is never read, so it can never be taken for a server.
+        downloaded.profile?.takeIf { it.deviceRefusal != null }?.let { profile ->
+            return ImportSource(
+                content = "",
+                subscriptionUrl = profile.movedTo ?: text.trim(),
+                updateIntervalHours = downloaded.updateIntervalHours,
+                profile = profile,
+                requestMode = requestMode
+            )
+        }
         // crypt1: decrypt the body ONLY when the request URL carries ?crypt=1 (and
         // a codec is baked). Never heuristic-guess — a plaintext subscription must
         // never be mis-decrypted. On decrypt failure, fall back to the raw content.
@@ -896,6 +1097,18 @@ class LocationsRepositoryImpl(
                     return@withProxyAuthentication null
                 }
 
+                val profile = response.subscriptionProfile()
+                // A refusal is an answer however little it carries: what makes it
+                // one is in its headers, and its body is not read at all. Taken
+                // for an empty answer, it would be asked again without the id.
+                if (profile?.deviceRefusal != null) {
+                    return@withProxyAuthentication DownloadedSubscription(
+                        content = "",
+                        updateIntervalHours = response.profileUpdateIntervalHours(),
+                        profile = profile
+                    )
+                }
+
                 val content = runCatching {
                     response.bodyAsText()
                 }.onFailure { if (it is CancellationException) throw it }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -907,7 +1120,7 @@ class LocationsRepositoryImpl(
                 DownloadedSubscription(
                     content = content,
                     updateIntervalHours = response.profileUpdateIntervalHours(),
-                    profile = response.subscriptionProfile()
+                    profile = profile
                 )
             }
         } finally {
@@ -1570,8 +1783,22 @@ class LocationsRepositoryImpl(
      * An address is taken only from an answer that came over https and only
      * if it is https itself: over plain http anyone on the path could write
      * these headers, and a moved list never comes back by itself.
+     *
+     * And the two flags with which a host that holds its list to a number of
+     * devices refuses one, as Happ reads them: `x-hwid-max-devices-reached`,
+     * the list in use on as many devices as it may be or this one removed from
+     * it, and `x-hwid-not-supported`, a provider that lets in only an app that
+     * names its device. Its reason is in `announce`. `x-hwid-active` and
+     * `x-hwid-limit` come with them and say nothing more. A refusal over plain
+     * http is believed: it takes away nothing a later answer cannot give back.
      */
     private fun HttpResponse.subscriptionProfile(): SubscriptionProfile? {
+        val deviceRefusal = when {
+            flag("x-hwid-max-devices-reached") -> DeviceRefusal.LimitReached
+            flag("x-hwid-not-supported") -> DeviceRefusal.NotSupported
+            else -> null
+        }
+
         val title = headers["profile-title"]?.trim()?.let(::headerText)?.takeIf { it.isNotBlank() }
 
         // `upload=..; download=..; total=..; expire=..` — used is what the two
@@ -1617,10 +1844,15 @@ class LocationsRepositoryImpl(
             webPageUrl = headers["profile-web-page-url"]?.trim()?.takeIf { it.isNotBlank() },
             announce = announce,
             fallbackUrl = if (secure) headers["fallback-url"]?.trim()?.let(::httpsUrlOrNull) else null,
-            movedTo = movedTo
+            movedTo = movedTo,
+            deviceRefusal = deviceRefusal
         )
         return profile.takeUnless { it.isEmpty() }
     }
+
+    /** Whether the header [name] says `true`, as the `x-hwid-*` flags are written. */
+    private fun HttpResponse.flag(name: String): Boolean =
+        headers[name]?.trim()?.equals("true", ignoreCase = true) == true
 
     /** A header's text, plain or behind the `base64:` prefix providers use for anything non-ASCII. */
     @OptIn(ExperimentalEncodingApi::class)

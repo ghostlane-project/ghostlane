@@ -296,6 +296,7 @@
     <string name="refresh_bulk_none">فهرست سروری برای به‌روزرسانی نیست</string>
     <string name="refresh_bulk_partial">%1$d به‌روز شد، %2$d ناموفق: %3$s</string>
     <string name="refresh_bulk_updated">فهرست‌های سرور به‌روز شد: %1$d</string>
+    <string name="refresh_device_refused">این فهرست به سقف دستگاه‌هایش رسیده است. از ارائه‌دهنده‌تان بپرسید.</string>
     <string name="refresh_empty">فهرست سرورها هیچ مکانی برنگرداند</string>
     <string name="refresh_rejected">فهرست سرورها رد شد%1$s — شاید لغو شده باشد</string>
     <string name="refresh_server_error">خطای میزبان فهرست سرورها%1$s — بعداً دوباره تلاش کنید</string>

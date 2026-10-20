@@ -22,13 +22,21 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.headersOf
 import org.olcbox.app.data.datasource.LocationsDataSource
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.net.ImportLink
+import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
@@ -239,6 +247,125 @@ class HomeScreenModelImportLinkTest {
         )
         assertEquals("error: Not a Ghostlane import link", awaitForReal(outcome))
         assertTrue(repository.getAllLocations().isEmpty())
+    }
+
+    // ── a list's host refusing this device ────────────────────────────────
+
+    private val ours = "https://example.com/ours"
+    private val theirs = "https://partner.example.com/sub"
+    private val roomKey = "c".repeat(64)
+
+    /** A room of [list], refreshed a moment ago: the due pass the model runs at its start leaves it be. */
+    private fun room(id: String, list: String) = LocationEntry.from(
+        storageId = id,
+        location = LocationConfig(
+            name = id,
+            id = "room-$id",
+            key = roomKey,
+            bypassProvider = LocationConfig.PROVIDER_TELEMOST,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ),
+        subscriptionUrl = list,
+        metadata = LocationMetadata(subscription = SubscriptionMetadata(lastRefreshAtEpochMs = nowMillis()))
+    )
+
+    /** Our list serves its room; the partner's host refuses this device, as the server words it. */
+    private fun answering(store: LocationsDataSource) = LocationsRepositoryImpl(
+        dataSource = store,
+        httpClient = HttpClient(MockEngine { request ->
+            if (request.url.host == "partner.example.com") {
+                respond(
+                    content = "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?type=tcp&security=none#No%20room",
+                    headers = headersOf(
+                        "x-hwid-max-devices-reached" to listOf("true"),
+                        "announce" to listOf("No room for this device")
+                    )
+                )
+            } else {
+                respond("olcrtc://telemost?vp8channel@room-ours#$roomKey${'$'}ours")
+            }
+        })
+    )
+
+    /** The tunnel comes up, the model asks for every list through it, and the one write that makes is waited for. */
+    private suspend fun connectAndAwaitTheRefresh(vm: HomeScreenViewModel, vpn: IdleVpnManager, repo: LocationsRepositoryImpl) {
+        withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+        val before = repo.changes.value
+        vpn.status.value = VpnStatus.Connected
+        // The pass runs on a real thread, so its write is waited for in real time.
+        withContext(Dispatchers.Default) { withTimeout(10_000) { repo.changes.first { it > before } } }
+    }
+
+    // A list refused while the tunnel is up — asked through it as the session
+    // begins — loses its servers there and then, and nothing else moves: the
+    // session runs on, on the server chosen in another list, which stays chosen,
+    // and nothing is started or stopped for it.
+    @Test fun aRefusalKeepsTheRunningTunnel() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
+            assertEquals(listOf("ours"), store.stored!!.locations.map { it.storageId })
+            assertEquals("ours", repo.getActiveLocationId())
+            assertEquals(0, vpn.starts)
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The list refused is the one the session runs on: its servers go, that one
+    // among them, and the session is not cut for it, nor moved anywhere.
+    @Test fun aRefusalOfTheListInUseCutsNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            assertEquals(emptyList(), store.stored!!.locations)
+            assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
+            assertEquals(0, vpn.starts)
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The person who pasted the link hears why there is nothing to connect to,
+    // in the provider's words, and the list stands on the board with its reason.
+    @Test fun anImportItsHostRefusesSaysWhyAndKeepsTheList() = runTest {
+        val store = MemoryLocationsDataSource()
+        val repo = answering(store)
+        val outcome = CompletableDeferred<String>()
+        HomeScreenViewModel(
+            vpnManager = IdleVpnManager(),
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }.onImportFullConfig(
+            rawText = theirs,
+            onComplete = { outcome.complete("ok") },
+            onError = { outcome.complete("error: $it") }
+        )
+        assertEquals("error: No room for this device", awaitForReal(outcome))
+        assertTrue(repo.getAllLocations().isEmpty())
+        assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
     }
 }
 

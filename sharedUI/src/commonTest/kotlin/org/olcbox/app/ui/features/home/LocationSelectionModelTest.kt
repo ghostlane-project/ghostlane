@@ -7,6 +7,8 @@ import kotlin.test.assertTrue
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.PinnedLocation
+import org.olcbox.app.data.model.RefusedList
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.TransportKind
@@ -14,6 +16,8 @@ import org.olcbox.app.ui.features.home.components.buildBoardModel
 import org.olcbox.app.ui.features.home.components.headMarksSelection
 import org.olcbox.app.ui.features.home.components.locationDisplayParts
 import org.olcbox.app.ui.features.home.components.pin
+import org.olcbox.app.ui.features.home.components.refusalNote
+import org.olcbox.app.ui.features.home.components.subscriptionTitle
 import org.olcbox.app.ui.features.locations.LocationItem
 
 class LocationSelectionModelTest {
@@ -242,6 +246,61 @@ class LocationSelectionModelTest {
         assertEquals("" to "DE Direct", locationDisplayParts(room("a", "DE Direct"), drawFlags = false))
         // What a name brings is still shown as it came.
         assertEquals("\uD83C\uDDE8\uD83C\uDDE6" to "CA · VP8", locationDisplayParts(room("b", "\uD83C\uDDE8\uD83C\uDDE6 CA · VP8"), drawFlags = false))
+    }
+
+    // ── a list whose host refused this device ──────────────────────────────
+
+    private val refusedList = RefusedList(
+        subscriptionUrl = theirs,
+        subscription = SubscriptionMetadata(name = "Partner VPN", announce = "No room for this device")
+    )
+
+    @Test
+    fun aRefusedListIsAListWithNoRowsAfterTheOthers() {
+        val model = buildBoardModel(
+            locations = listOf(room("a", "CA")),
+            activeFilterKey = null,
+            sort = SubscriptionSort.None,
+            refused = listOf(refusedList),
+            pingFor = { null }
+        )
+
+        assertEquals(listOf(listOf("a"), emptyList()), model.subscriptionGroups.map { group -> group.locations.map { it.storageId } })
+        assertEquals(refusedList, model.subscriptionGroups.last().refused)
+        // It counts no rows, and its head is the list's own name.
+        assertEquals(1, model.totalCount)
+        assertEquals("Partner VPN", refusedList.subscriptionTitle())
+    }
+
+    @Test
+    fun aBoardOfARefusedListAloneIsNotTheEmptyBoard() {
+        // The empty board introduces the app to somebody with no list. This
+        // person has one, and the board has to say why it holds nothing.
+        val model = buildBoardModel(emptyList(), null, SubscriptionSort.None, refused = listOf(refusedList)) { null }
+        assertFalse(model.isEmpty)
+        assertEquals(listOf(refusedList), model.subscriptionGroups.map { it.refused })
+    }
+
+    @Test
+    fun aRefusedListIsOnTheBoardWhateverTheFilter() {
+        // It has no rows of any transport, and what it says is about the list.
+        val model = buildBoardModel(
+            locations = listOf(item("server", ours), room("room", "ES · olcRTC")),
+            activeFilterKey = TransportKind.Tls.name,
+            sort = SubscriptionSort.None,
+            refused = listOf(refusedList)
+        ) { null }
+        assertEquals(listOf(listOf("server"), emptyList()), model.subscriptionGroups.map { group -> group.locations.map { it.storageId } })
+        assertEquals(refusedList, model.subscriptionGroups.last().refused)
+    }
+
+    @Test
+    fun aRefusalIsSaidInTheProvidersWordsOrOurs() {
+        assertEquals("No room", refusalNote("No room", ours = "Ours", providersOwnText = true))
+        assertEquals("Ours", refusalNote(null, ours = "Ours", providersOwnText = true))
+        assertEquals("Ours", refusalNote("  ", ours = "Ours", providersOwnText = true))
+        // Never the provider's own text on the iPhone, where its notes are not shown.
+        assertEquals("Ours", refusalNote("No room", ours = "Ours", providersOwnText = false))
     }
 
     private fun item(id: String, subscriptionUrl: String) = LocationItem(

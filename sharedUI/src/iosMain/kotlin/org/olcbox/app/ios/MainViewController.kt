@@ -350,7 +350,9 @@ private fun IosApp(
                     onSubscriptionRefreshClick = { url ->
                         dependencies.homeViewModel.refreshSubscription(url) { report ->
                             reloadLocationsAfterImport {
-                                dependencies.homeViewModel.restartVpnIfRunning()
+                                // Not for a list that refused this device the server in use:
+                                // a refusal takes the list's servers away, not the connection.
+                                if (!report.refusedSelection) dependencies.homeViewModel.restartVpnIfRunning()
                                 dependencies.homeViewModel.viewModelScope.launch {
                                     platformBridge.showMessage(report.localizedSingleMessage())
                                 }

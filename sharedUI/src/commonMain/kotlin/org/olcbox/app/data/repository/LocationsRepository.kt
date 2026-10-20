@@ -26,6 +26,15 @@ interface LocationsRepository {
      */
     suspend fun exportBundle(): String
     suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): Boolean
+
+    /**
+     * [importText], answering what came of it: whether locations were stored,
+     * and when the list's host refused this device, its reason. A refused list
+     * is stored all the same, with no servers and what the host said about it,
+     * so the board can say whose list it is and why it is empty, and so it can
+     * be asked again once the provider has made room.
+     */
+    suspend fun importReport(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): ImportReport
     suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy? = null
     ): SubscriptionRefreshReport
@@ -41,7 +50,8 @@ interface LocationsRepository {
     /**
      * Removes every location that came from [subscriptionUrl]. Returns how many
      * were removed. Manually added locations are matched by the same trimmed-URL
-     * rule the refresh path uses, so they are never touched.
+     * rule the refresh path uses, so they are never touched. A list its host
+     * refused is removed too, and has no locations to count.
      */
     suspend fun deleteSubscription(subscriptionUrl: String): Int
     suspend fun saveLocation(storageId: String, location: LocationConfig)

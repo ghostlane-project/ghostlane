@@ -296,6 +296,7 @@
     <string name="refresh_bulk_none">没有需要更新的服务器列表</string>
     <string name="refresh_bulk_partial">已更新 %1$d 个，%2$d 个失败：%3$s</string>
     <string name="refresh_bulk_updated">已更新服务器列表：%1$d</string>
+    <string name="refresh_device_refused">此列表已达到设备数量上限。请咨询您的服务商。</string>
     <string name="refresh_empty">服务器列表中没有节点</string>
     <string name="refresh_rejected">服务器列表被拒绝%1$s——可能已被撤销</string>
     <string name="refresh_server_error">服务器列表主机出错%1$s——请稍后重试</string>

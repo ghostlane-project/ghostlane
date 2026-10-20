@@ -694,7 +694,13 @@ data class LocationBundleV4(
      * thing already persisted identically on every platform.
      */
     @SerialName("onboarding_seen_at")
-    val onboardingSeenAt: Long? = null
+    val onboardingSeenAt: Long? = null,
+    /**
+     * The server lists whose host refused this device, with no servers: see
+     * [RefusedList]. Read back as none from a bundle written before it.
+     */
+    @SerialName("refused_lists")
+    val refusedLists: List<RefusedList> = emptyList()
 ) {
     fun normalized(): LocationBundleV4 {
         val normalizedLocations = locations
@@ -706,11 +712,25 @@ data class LocationBundleV4(
             ?.takeIf { id -> normalizedLocations.any { it.storageId == id } }
             ?: normalizedLocations.firstOrNull()?.storageId
 
+        // A list with servers is not refused, whatever was written about it
+        // before: an answer that served it, or a backup that brought its
+        // servers back, has the last word. One record to an address, the last.
+        val servedUrls = normalizedLocations
+            .mapNotNull { entry -> entry.subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() } }
+            .toSet()
+        val refused = refusedLists
+            .map { it.normalized() }
+            .filter { it.subscriptionUrl.isNotEmpty() && it.subscriptionUrl !in servedUrls }
+            .associateBy { it.subscriptionUrl }
+            .values
+            .toList()
+
         return copy(
             version = CURRENT_VERSION,
             activeLocationId = active,
             locations = normalizedLocations,
-            settings = settings.normalized()
+            settings = settings.normalized(),
+            refusedLists = refused
         )
     }
 
