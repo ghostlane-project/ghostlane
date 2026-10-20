@@ -105,7 +105,7 @@ data class SubscriptionRefreshReport(
      *
      * Never while nothing is selected ([hasSelection], the selection as the
      * refresh left it): a start would find no location and take down a
-     * session the host still carries, for nothing — on Android the transports
+     * session the host still carries, for nothing: on Android the transports
      * stop and the tunnel holds, on iOS and the desktop the session ends. That
      * is so after the refusal that withdrew the selection ([refusedSelection])
      * and after every refresh until the person chooses again, a refresh of

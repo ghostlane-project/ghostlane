@@ -292,7 +292,7 @@ fun HomeScreen(
      */
     fun restartIfActiveChanged(before: LocationConfig?, report: SubscriptionRefreshReport) {
         // Vanished counts too: the location the tunnel runs on being gone is exactly
-        // when a restart is right, and comparing to null covers it — once another
+        // when a restart is right, and comparing to null covers it, once another
         // is selected. With nothing selected (a refusal took the server away) the
         // rule starts nothing, whatever moved.
         viewModel.restartVpnAfterRefresh(report, selectionMoved = activeLocationConfig() != before)

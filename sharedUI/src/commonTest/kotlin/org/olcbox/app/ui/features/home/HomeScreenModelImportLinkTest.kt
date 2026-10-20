@@ -298,8 +298,8 @@ class HomeScreenModelImportLinkTest {
         withContext(Dispatchers.Default) { withTimeout(10_000) { repo.changes.first { it > before } } }
     }
 
-    // A list refused while the tunnel is up — asked through it as the session
-    // begins — loses its servers there and then, and nothing else moves: the
+    // A list refused while the tunnel is up, asked through it as the session
+    // begins, loses its servers there and then, and nothing else moves: the
     // session runs on, on the server chosen in another list, which stays chosen,
     // and nothing is started or stopped for it.
     @Test fun aRefusalKeepsTheRunningTunnel() = runTest {

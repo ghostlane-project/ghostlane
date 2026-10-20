@@ -27,7 +27,7 @@ internal const val DEVICE_HEADER_MAX_CHARS = 64
 /**
  * [value] as a device header carries it, cut as ProofKit's server keeps one,
  * so that what is sent is what a provider shows: only printable ASCII is
- * kept — anything else is dropped, never turned into a space — then the first
+ * kept (anything else is dropped, never turned into a space), then the first
  * [DEVICE_HEADER_MAX_CHARS] characters, trimmed at the edges. Empty when
  * nothing is left, and an empty value is not sent at all.
  */
