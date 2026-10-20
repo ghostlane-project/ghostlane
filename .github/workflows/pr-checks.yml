@@ -17,6 +17,10 @@ on:
         description: Compile shared Kotlin for Apple targets without signing or building Go frameworks
         type: boolean
         default: true
+      ios_extension:
+        description: Build the iPhone tunnel extension unsigned and run its Swift tests
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -48,6 +52,7 @@ jobs:
       shared_kotlin: ${{ steps.paths.outputs.shared_kotlin }}
       cli: ${{ steps.paths.outputs.cli }}
       mac_helper: ${{ steps.paths.outputs.mac_helper }}
+      ios_extension: ${{ steps.paths.outputs.ios_extension }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -95,6 +100,7 @@ jobs:
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
             echo 'cli=true' >> "$GITHUB_OUTPUT"
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
+            echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -123,6 +129,20 @@ jobs:
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'mac_helper=false' >> "$GITHUB_OUTPUT"
+          fi
+          # The iPhone's tunnel extension links no Kotlin, so a Mac builds it
+          # without Gradle, on a change to what that job builds or reads: the
+          # extension and its tests, the project file, the privacy manifest it
+          # checks, the script of its tests, and what it links, the prebuilt
+          # frameworks and their pins. Not on a change to this file alone, as
+          # above; the shared Kotlin its tests read runs them in apple-compile.
+          # A here-string: a pipe into grep -q can end in SIGPIPE under
+          # pipefail once grep has its match.
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-room-list\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+            echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
+            echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'ios_extension=false' >> "$GITHUB_OUTPUT"
           fi
 
   checks:
@@ -359,11 +379,14 @@ jobs:
   apple-compile:
     # On a change to the shared Kotlin, and on request. Anything else would
     # bill a macOS runner at ten times the rate to compile what has not moved.
+    # !cancelled() and not always(), as the extension job below: it still runs
+    # past the skipped scope job of a dispatched run, and a run that a newer
+    # push supersedes takes it with it.
     needs: scope
     if: >-
-      always() &&
       ((github.event_name == 'workflow_dispatch' && inputs.apple_compile) ||
-       needs.scope.outputs.shared_kotlin == 'true')
+       needs.scope.outputs.shared_kotlin == 'true') &&
+      !cancelled()
     name: Apple Kotlin compilation
     runs-on: macos-latest
     timeout-minutes: 25
@@ -379,6 +402,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Compile existing Apple targets
         run: ./gradlew :sharedUI:compileKotlinIosArm64 :sharedUI:compileKotlinMacosArm64 --stacktrace
+      # The iPhone tunnel extension copies what the shared Kotlin sends with a
+      # list fetch (the user agent's name, the device headers, their cut), and
+      # its tests read that Kotlin: a change here is where the two drift apart.
+      # Run whatever the compilation said; about twenty seconds.
+      - name: The room keeper's tests, against this Kotlin
+        if: ${{ !cancelled() }}
+        run: scripts/test-ios-room-list.sh
 
   mac-helper:
     # The Mac's tunnel helper, built and asked on a Mac: the one part of the
@@ -386,7 +416,7 @@ jobs:
     # It loads a block into the packet filter, points the system's resolver at
     # a tun and kills the tun, which a hosted runner is the right place for.
     needs: scope
-    if: always() && needs.scope.outputs.mac_helper == 'true'
+    if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper
     runs-on: macos-latest
     timeout-minutes: 15
@@ -420,3 +450,67 @@ jobs:
           "$RUNNER_TEMP/sing-box" version | head -1
       - name: Ask the helper what it does
         run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"
+
+  ios-extension:
+    # The iPhone's packet tunnel extension, which nothing else compiles before
+    # a release build dispatched by hand. It links no Kotlin: Cores (sing-box,
+    # Xray, olcRTC) and hev-socks5-tunnel come prebuilt from this repository's
+    # releases, fetched by the target's own first build phase. So a Mac builds
+    # it with neither Gradle nor a signing identity, and runs the tests of its
+    # Foundation-only parts beside it. On a change to it, and on request.
+    #
+    # ai-generated: the whole job.
+    # !cancelled() and not always(): a run that a newer push supersedes is
+    # cancelled, and this job goes with it. Either still runs past the skipped
+    # scope job of a dispatched run.
+    needs: scope
+    if: >-
+      ((github.event_name == 'workflow_dispatch' && inputs.ios_extension) ||
+       needs.scope.outputs.ios_extension == 'true') &&
+      !cancelled()
+    name: iPhone tunnel extension
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # The release's Xcode (release.yml, build-ios).
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+      # RoomList, RoomMemoryRecord and DeviceHeaders with their tests; the last
+      # holds the extension's device headers to the Kotlin they copy.
+      - name: The room keeper's tests
+        run: scripts/test-ios-room-list.sh
+      # A file nothing references is not in the bundle (app-store-submission.md),
+      # and until 2026-10-20 the manifest was such a file.
+      - name: The privacy manifest is a plist, and one of the app's resources
+        run: |
+          set -euo pipefail
+          plutil -lint iosApp/iosApp/PrivacyInfo.xcprivacy
+          plutil -convert json -o "$RUNNER_TEMP/project.json" iosApp/iosApp.xcodeproj/project.pbxproj
+          python3 - "$RUNNER_TEMP/project.json" <<'PY'
+          import json, sys
+          objects = json.load(open(sys.argv[1]))["objects"]
+          app = next(o for o in objects.values() if o.get("isa") == "PBXNativeTarget" and o.get("name") == "iosApp")
+          phase = next(objects[i] for i in app["buildPhases"] if objects[i]["isa"] == "PBXResourcesBuildPhase")
+          paths = [objects[objects[f]["fileRef"]].get("path") for f in phase["files"]]
+          print("iosApp resources:", paths)
+          if "PrivacyInfo.xcprivacy" not in paths:
+              print("::error::PrivacyInfo.xcprivacy is not among the resources of the iosApp target")
+              sys.exit(1)
+          PY
+      # The target, not its scheme: an extension's scheme builds its host app
+      # too, and the app's first phase runs Gradle.
+      - name: Build the extension, unsigned
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -target PacketTunnel \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build

@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ghostlane-project/ghostlane/cli/internal/crypt1"
 	"github.com/ghostlane-project/ghostlane/cli/internal/daemon"
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
@@ -88,9 +90,11 @@ func runDaemon(args []string, stderr io.Writer) int {
 	ua := links.UserAgentPrefix + version + " (linux)"
 	d := daemon.New(daemon.Deps{
 		ConfigPath: filepath.Join(*stateDir, "config.yaml"), StateDir: *stateDir, SocketPath: *socket,
-		Fetch: func(ctx context.Context, url string) ([]byte, links.Headers, error) {
-			return links.Fetch(ctx, httpClient, url, ua)
+		Fetch: func(ctx context.Context, url string, dev links.Device) ([]byte, links.Headers, error) {
+			return links.Fetch(ctx, httpClient, url, ua, dev)
 		},
+		// the id is the daemon's: it reads or makes the state directory's device-id
+		Device: links.Device{OS: "Linux", OSVersion: kernelRelease(), Model: "PC"},
 		StartEngine: func(ctx context.Context, p olcrtc.Params) (daemon.Engine, error) {
 			return olcrtc.Start(ctx, p)
 		},
@@ -117,6 +121,17 @@ func runDaemon(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// kernelRelease is what a list host is told of this machine's system, as the
+// app tells its Android, iOS or desktop version: the kernel's release, "" when
+// it cannot be read (the header is then not sent).
+func kernelRelease() string {
+	var u unix.Utsname
+	if err := unix.Uname(&u); err != nil {
+		return ""
+	}
+	return unix.ByteSliceToString(u.Release[:])
 }
 
 func versionInfo() ipc.VersionInfo {

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.CancellationException
@@ -69,6 +70,7 @@ import org.olcbox.app.vpn.isKillSwitchHoldSentence
 import org.olcbox.app.vpn.OlcrtcFailure
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.vpn.failureKeptAcrossAttempts
 
 class HomeScreenViewModel(
@@ -512,9 +514,9 @@ class HomeScreenViewModel(
         }
 
         viewModelScope.launch {
-            vpnManager.status.collect { status ->
+            combine(vpnManager.status, vpnManager.hold) { status, hold -> status to hold }.collect { (status, hold) ->
                 _state.update {
-                    val next = it.applying(status)
+                    val next = it.applying(status, hold)
                     // Between failover attempts the old tunnel is deliberately
                     // down. Keep Cancel visible until the selection job ends.
                     if (selectionJob?.isActive == true && status is VpnStatus.Disconnected) {
@@ -668,12 +670,48 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * After a refresh of the server lists, starts a running tunnel again when
+     * the refresh calls for it, by the one rule
+     * ([SubscriptionRefreshReport.restartsRunningTunnel]) and the selection as
+     * the refresh left it, which this model has read by the time a refresh
+     * hands its report on. [selectionMoved] as the home screen knows it; the
+     * settings screens do not say. [restartVpnIfRunning] asks the store again
+     * before it starts anything.
+     */
+    fun restartVpnAfterRefresh(report: SubscriptionRefreshReport, selectionMoved: Boolean? = null) {
+        val hasSelection = _state.value.selectedLocation != null
+        if (report.restartsRunningTunnel(hasSelection = hasSelection, selectionMoved = selectionMoved)) {
+            restartVpnIfRunning()
+        }
+    }
+
+    /**
+     * Starts a running tunnel again on the selected server: after a change of
+     * a setting the tunnel is built from (routing, the connection mode, the
+     * proxy, the apps that bypass it), after a pick or an edit of a server,
+     * after a refresh that calls for it.
+     *
+     * With nothing selected there is nothing to start it again on, so nothing
+     * is started and nothing is stopped. That is the state a refusal leaves
+     * when its list held the selected server (LocationBundleV4.selectionWithdrawn):
+     * the session runs on, and a start with no server would end it on iOS
+     * and the desktop, or hold it on Android, for a setting the person changed.
+     * The store is asked and not this model's [HomeScreenState.selectedLocation]:
+     * a pick writes the store and then calls here before the model has read it.
+     * It is asked past its lock ([LocationsRepository.peekActiveLocationId]): a
+     * refresh holds that lock while it downloads, and a restart waits for no
+     * download. And the status is asked again once the answer is in: a
+     * Disconnect pressed meanwhile stands, and is not undone by a start.
+     */
     fun restartVpnIfRunning() {
         cancelAutomaticSelection()
         when (vpnManager.status.value) {
             VpnStatus.Connected,
             VpnStatus.Connecting,
             VpnStatus.Reconnecting -> viewModelScope.launch {
+                if (locationsRepository.peekActiveLocationId() == null) return@launch
+                if (!vpnManager.status.value.isRunning()) return@launch
                 _state.update { it.copy(isVpnLoading = true, failure = null) }
                 vpnManager.startVpn()
             }
@@ -785,13 +823,22 @@ class HomeScreenViewModel(
         }
         viewModelScope.launch {
             try {
-                val imported = withContext(Dispatchers.IO) {
-                    locationsRepository.importText(
+                val report = withContext(Dispatchers.IO) {
+                    locationsRepository.importReport(
                         text = rawText,
                         subscriptionProxy = vpnManager.subscriptionFetchProxy()
                     )
                 }
-                if (!imported) {
+                // The list's host refused this device. The list is on the board
+                // now with nothing in it but why; said here too, because the
+                // person who pasted it is waiting to hear what came of it, and
+                // "Server list added" would be the wrong answer.
+                report.refused?.let { refusal ->
+                    loadCurrentConfigNow()
+                    onError(refusal.localizedText())
+                    return@launch
+                }
+                if (!report.imported) {
                     // A partner link that did not resolve is not a malformed config
                     // — the user's next move is their provider's bot, not another paste.
                     onError(
@@ -983,8 +1030,31 @@ data class HomeScreenState(
     /** Why the last connection attempt failed, or null when nothing has. */
     val failure: String? = null,
     /** What smart connect is doing ("Checking Reality…"), until the connection settles. */
-    val progress: String? = null
+    val progress: String? = null,
+    /**
+     * The platform holds the tunnel until a server is picked
+     * ([TunnelHold.NonePicked]): traffic waits, and the screen is the pick,
+     * with Disconnect beside it to end the hold.
+     */
+    val heldForPick: Boolean = false
 ) {
+    /** Nothing to connect and no session on its way: the screen asks for a list, or for a pick. */
+    val requiresSetup: Boolean
+        get() = !canStartVpn && !isVpnConnected && !isVpnLoading
+
+    /**
+     * Servers on the board ([hasLocations]) and none of them selected
+     * ([selectedId] null): the strip and the button ask for a pick, never for
+     * a list the person has. So after a refusal took the selected server with
+     * its list, and while the platform holds a tunnel for a pick.
+     */
+    fun picksServer(hasLocations: Boolean, selectedId: String?): Boolean =
+        requiresSetup && hasLocations && selectedId == null
+
+    /** Disconnect is offered beside the pick: the hold blocks traffic, and the person may end it instead. */
+    val offersDisconnect: Boolean
+        get() = heldForPick
+
     /**
      * The one line worth putting under the status pill: what went wrong, or
      * failing that what is stopping the user from starting at all.
@@ -1018,16 +1088,25 @@ data class HomeScreenState(
     val noticeDismissible: Boolean
         get() = failure != null && !failure.isKillSwitchHoldSentence()
 
-    /** The state after the platform reports [status]. Pure, so it can be tested. */
-    fun applying(status: VpnStatus): HomeScreenState = when (status) {
+    /**
+     * The state after the platform reports [status], and why it holds when it
+     * does ([hold]). Pure, so it can be tested.
+     */
+    fun applying(status: VpnStatus, hold: TunnelHold? = null): HomeScreenState = when (status) {
         VpnStatus.Connected ->
-            copy(isVpnConnected = true, isVpnLoading = false, failure = null, progress = null)
+            copy(isVpnConnected = true, isVpnLoading = false, failure = null, progress = null, heldForPick = false)
 
         VpnStatus.Connecting ->
-            copy(isVpnConnected = false, isVpnLoading = true, failure = null)
+            copy(isVpnConnected = false, isVpnLoading = true, failure = null, heldForPick = false)
 
-        VpnStatus.Reconnecting ->
-            copy(isVpnConnected = true, isVpnLoading = true)
+        // A hold for a pick is no reconnect: nothing is on its way until the
+        // person picks a server, so it is not drawn as one (a spinner and
+        // CANCEL) but as the pick it waits for.
+        VpnStatus.Reconnecting -> if (hold == TunnelHold.NonePicked) {
+            copy(isVpnConnected = false, isVpnLoading = false, progress = null, heldForPick = true)
+        } else {
+            copy(isVpnConnected = true, isVpnLoading = true, heldForPick = false)
+        }
 
         // A stop is the user acting on the message — or on nothing, but either
         // way past it. These two used to leave `failure` alone, which meant the
@@ -1035,10 +1114,10 @@ data class HomeScreenState(
         // and a red box about a room you had given up on stayed for the rest
         // of the session.
         VpnStatus.Stopping ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null)
+            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null, heldForPick = false)
 
         VpnStatus.Disconnected ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null)
+            copy(isVpnConnected = false, isVpnLoading = false, failure = null, progress = null, heldForPick = false)
 
         // The reason used to stop here. The extension goes to real trouble to
         // explain itself — it writes a stage breadcrumb the app reads back
@@ -1047,7 +1126,7 @@ data class HomeScreenState(
         // returns to START and says nothing. The commonest case of all is a
         // user who declined the VPN permission prompt.
         is VpnStatus.Error ->
-            copy(isVpnConnected = false, isVpnLoading = false, failure = OlcrtcFailure.describe(status.message), progress = null)
+            copy(isVpnConnected = false, isVpnLoading = false, failure = OlcrtcFailure.describe(status.message), progress = null, heldForPick = false)
     }
 }
 
@@ -1058,3 +1137,7 @@ data class HomeScreenState(
  */
 private const val SUBSCRIPTION_AUTO_REFRESH_POLL_MS = 5L * 60L * 1_000L
 private const val PRE_DISCONNECT_REFRESH_TIMEOUT_MS = 3_000L
+
+/** A tunnel that is up or on its way up: one [HomeScreenViewModel.restartVpnIfRunning] starts again. */
+private fun VpnStatus.isRunning(): Boolean =
+    this is VpnStatus.Connected || this is VpnStatus.Connecting || this is VpnStatus.Reconnecting

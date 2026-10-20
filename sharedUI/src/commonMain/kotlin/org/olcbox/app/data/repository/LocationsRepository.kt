@@ -26,6 +26,15 @@ interface LocationsRepository {
      */
     suspend fun exportBundle(): String
     suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): Boolean
+
+    /**
+     * [importText], answering what came of it: whether locations were stored,
+     * and when the list's host refused this device, its reason. A refused list
+     * is stored all the same, with no servers and what the host said about it,
+     * so the board can say whose list it is and why it is empty, and so it can
+     * be asked again once the provider has made room.
+     */
+    suspend fun importReport(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): ImportReport
     suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy? = null
     ): SubscriptionRefreshReport
@@ -41,14 +50,33 @@ interface LocationsRepository {
     /**
      * Removes every location that came from [subscriptionUrl]. Returns how many
      * were removed. Manually added locations are matched by the same trimmed-URL
-     * rule the refresh path uses, so they are never touched.
+     * rule the refresh path uses, so they are never touched. A list its host
+     * refused is removed too, and has no locations to count.
      */
     suspend fun deleteSubscription(subscriptionUrl: String): Int
     suspend fun saveLocation(storageId: String, location: LocationConfig)
     suspend fun loadLocation(storageId: String): LocationConfig?
     suspend fun deleteLocation(storageId: String)
     suspend fun getAllLocations(): List<LocationEntry>
+
+    /**
+     * The selected location's id: none when no location is stored, or when the
+     * list the selected server came from refused this device and nothing has
+     * been chosen since (`LocationBundleV4.selectionWithdrawn`). Then the
+     * store chooses nothing by itself, and neither may a caller: a start finds
+     * no location and says so, until the person picks one.
+     */
     suspend fun getActiveLocationId(): String?
+
+    /**
+     * [getActiveLocationId] read past the store's lock, as the Android service
+     * reads its bundle: a refresh holds that lock for as long as it downloads,
+     * and a restart of a running tunnel must not wait for a download. The file
+     * is replaced in one step, so what is read is the old selection or the new.
+     * A store with no locations is asked through the lock (older versions kept
+     * theirs elsewhere).
+     */
+    suspend fun peekActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)
 
     /**
@@ -60,7 +88,15 @@ interface LocationsRepository {
      * the store.
      */
     suspend fun moveActiveLocation(fromStorageId: String, toStorageId: String, group: String): Boolean
+
+    /** The selected location, when there is one: see [getActiveLocationId]. */
     suspend fun getActiveLocation(): LocationEntry?
+
+    /**
+     * This install's id, as a list fetch sends it, for the olcRTC engine; empty
+     * when the stored id could not be read this time, which the engine takes
+     * as none.
+     */
     suspend fun getDeviceIdentity(): String
 
     /** How subscriptions behave. Persisted with the bundle, so one copy per device. */

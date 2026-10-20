@@ -33,7 +33,8 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return d.remove(req.Subscription)
 	case "refresh":
 		d.refresh(ctx, true)
-		return ipc.Response{OK: true, Message: "refreshed"}
+		// a list its host turned away again is refreshed too, and says so
+		return ipc.Response{OK: true, Message: withRefusals("refreshed", d.refusals(""))}
 	case "connect":
 		return d.connect(ctx, req)
 	case "disconnect":
@@ -87,6 +88,10 @@ func (d *Daemon) status() *ipc.Status {
 			sv.FetchedAt = c.FetchedAt.UTC().Format(time.RFC3339)
 			sv.NextRefresh = c.FetchedAt.Add(time.Duration(max(s.IntervalHours, 1)) * time.Hour).UTC().Format(time.RFC3339)
 			sv.UserInfo = c.Headers.UserInfo
+			// the last refresh's own failure, if it had one, is the newer news
+			if why := refusalText(c); why != "" && sv.Error == "" {
+				sv.Error = "device refused: " + why
+			}
 		}
 		st.Subscriptions = append(st.Subscriptions, sv)
 	}
@@ -99,7 +104,44 @@ func (d *Daemon) list(ctx context.Context, only string) ipc.Response {
 	for i, e := range all {
 		out = append(out, entryView(i, e.entry))
 	}
-	return ipc.Response{OK: true, Entries: out}
+	return ipc.Response{OK: true, Entries: out, Message: d.refusals(only)}
+}
+
+// refusalText is the sentence for a list whose host refused this device, from
+// the record fetchInto keeps of it; "" for a list that is served.
+func refusalText(c *store.Cache) string {
+	if c == nil || c.Headers.Refusal == links.RefusalNone {
+		return ""
+	}
+	return links.RefusalText(c.Headers.Refusal, c.Headers.Announce)
+}
+
+// refusals says, a line to a list, which of the lists in scope are empty
+// because their host refused this device: a list with no lines is otherwise a
+// list the person has to guess about.
+func (d *Daemon) refusals(only string) string {
+	d.mu.Lock()
+	subs := append([]store.Subscription(nil), d.cfg.Subscriptions...)
+	d.mu.Unlock()
+	var lines []string
+	for _, s := range subs {
+		if _, inline := inlineBody(s.URL); inline || (only != "" && !matchesSub(s.URL, only)) {
+			continue
+		}
+		c, _ := store.LoadCache(d.deps.StateDir, s.URL)
+		if why := refusalText(c); why != "" {
+			lines = append(lines, fmt.Sprintf("%s: device refused: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(s.URL)), why))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// withRefusals is msg with the refusal lines under it, when there are any.
+func withRefusals(msg, refusals string) string {
+	if refusals == "" {
+		return msg
+	}
+	return msg + "\n" + refusals
 }
 
 func matchesSub(url, needle string) bool {
@@ -144,6 +186,12 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 			d.mu.Unlock()
 			return ipc.Fail("fetch", Scrub(err.Error()))
 		}
+		title := firstNonEmpty(c.Headers.Title, store.MaskURL(payload))
+		if why := refusalText(c); why != "" {
+			// added all the same: the host may make room, and the next refresh asks again
+			msg = fmt.Sprintf("%s: device refused: %s", title, why)
+			break
+		}
 		entries := links.Entries(payload, links.DecodeBodyWith(c.Body, d.deps.Decrypt))
 		groups := links.GroupByCountry(entries)
 		countries := make([]string, 0, len(groups))
@@ -151,7 +199,7 @@ func (d *Daemon) add(ctx context.Context, source string) ipc.Response {
 			countries = append(countries, g.Country)
 		}
 		usable := len(connectable(entries))
-		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", firstNonEmpty(c.Headers.Title, store.MaskURL(payload)), len(entries), usable, strings.Join(countries, " "))
+		msg = fmt.Sprintf("%s: %d entries (%d usable now); countries: %s", title, len(entries), usable, strings.Join(countries, " "))
 	case strings.HasPrefix(payload, "olcrtc://"), strings.HasPrefix(payload, "vless://"),
 		strings.HasPrefix(payload, "hysteria2://"), strings.HasPrefix(payload, "hy2://"):
 		return d.addInline(payload, "")
@@ -268,10 +316,12 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Fail("no_subscription", err.Error())
 	}
 	if _, err := links.Select(flatten(all), req.Selector); err != nil {
+		// A list its host refused has no lines to match: the answer says so.
+		msg := withRefusals(err.Error(), d.refusals(req.Subscription))
 		if errors.Is(err, links.ErrNoMatch) {
-			return ipc.Fail("no_match", err.Error())
+			return ipc.Fail("no_match", msg)
 		}
-		return ipc.Fail("no_subscription", err.Error())
+		return ipc.Fail("no_subscription", msg)
 	}
 	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode, KillSwitch: req.KillSwitch}
 	d.mu.Lock()

@@ -259,36 +259,128 @@ func (d *Daemon) connectLoop(ctx context.Context, sel store.Selection) {
 	}
 }
 
-// resolve turns the selection into candidates. A numeric selector names a
-// line, not a position: the first resolution remembers the line's id with the
-// selection, and later ones (another round, the next start, a list that
-// cannot be read today) find that line wherever it sits; only a line that is
-// gone falls back to the index.
+// resolve turns the selection into candidates. An index or a label names a
+// line, not a position: the first resolution remembers the line's id and its
+// list with the selection, and later ones (another round, the next start, a
+// list that cannot be read today) find that line wherever it sits. A line that
+// is gone is looked for again by the index or the label in its own list only:
+// another list's line is another provider's server, which the person did not
+// choose. While that list's host refuses this device the round fails and says
+// why; the selection waits for the list to be served again. A country names
+// every line of that country, in whichever list.
 func (d *Daemon) resolve(all []indexed, sel *store.Selection) ([]links.Entry, error) {
 	if sel.EntryID != "" {
 		for _, e := range all {
 			if e.entry.ID == sel.EntryID {
+				if sel.EntrySub != e.sub {
+					d.remember(sel, e.entry.ID, e.sub) // a selection stored before its list was
+				}
 				return []links.Entry{e.entry}, nil
 			}
 		}
+		return d.lineInItsList(all, sel)
 	}
 	cands, err := links.Select(flatten(all), sel.Selector)
 	if err != nil {
 		return nil, err
 	}
-	if _, numeric := strconv.Atoi(strings.TrimSpace(sel.Selector)); numeric == nil && len(cands) == 1 && sel.EntryID != cands[0].ID {
-		sel.EntryID = cands[0].ID
-		d.mu.Lock()
-		if d.cfg != nil && d.cfg.Selection != nil && d.cfg.Selection.Selector == sel.Selector && d.cfg.Selection.Subscription == sel.Subscription {
-			d.cfg.Selection.EntryID = sel.EntryID
-		}
-		cfg := d.cfg.Clone()
-		d.mu.Unlock()
-		if err := d.saveConfig(cfg); err != nil {
-			d.logf("config: %v", err)
-		}
+	if line, ok := oneNamedLine(all, cands, sel.Selector); ok {
+		d.remember(sel, line.entry.ID, line.sub)
 	}
 	return cands, nil
+}
+
+// lineInItsList finds a remembered line that is gone again, in its own list:
+// by the index, as long as the line `ghostlane list` numbers so is in that
+// list, or by the label among that list's lines.
+func (d *Daemon) lineInItsList(all []indexed, sel *store.Selection) ([]links.Entry, error) {
+	if sel.EntrySub == "" {
+		// Remembered before its list was: which list it is in is known only
+		// when the selection's scope holds one.
+		sel.EntrySub = d.onlyListIn(sel.Subscription)
+		if sel.EntrySub == "" {
+			return nil, fmt.Errorf("%w: the line %s named is no longer in its list; pick one from `ghostlane list`", links.ErrNoMatch, sel.Selector)
+		}
+	}
+	if c, _ := store.LoadCache(d.deps.StateDir, sel.EntrySub); refusalText(c) != "" {
+		return nil, fmt.Errorf("device refused: %s", refusalText(c))
+	}
+	var cands []links.Entry
+	if n, err := strconv.Atoi(strings.TrimSpace(sel.Selector)); err == nil {
+		if n < 1 || n > len(all) || all[n-1].sub != sel.EntrySub {
+			return nil, fmt.Errorf("%w: line %d is no longer in its list; pick one from `ghostlane list`", links.ErrNoMatch, n)
+		}
+		cands = []links.Entry{all[n-1].entry}
+	} else {
+		var own []indexed
+		for _, e := range all {
+			if e.sub == sel.EntrySub {
+				own = append(own, e)
+			}
+		}
+		var err error
+		if cands, err = links.Select(flatten(own), sel.Selector); err != nil {
+			return nil, err
+		}
+	}
+	if line, ok := oneNamedLine(all, cands, sel.Selector); ok {
+		d.remember(sel, line.entry.ID, line.sub)
+	}
+	return cands, nil
+}
+
+// oneNamedLine is the line an index or a label named, when cands is one: a
+// country of a single line names the country, not the line.
+func oneNamedLine(all []indexed, cands []links.Entry, selector string) (indexed, bool) {
+	if len(cands) != 1 {
+		return indexed{}, false
+	}
+	selector = strings.TrimSpace(selector)
+	if _, err := strconv.Atoi(selector); err != nil && cands[0].Label != selector {
+		return indexed{}, false
+	}
+	for _, e := range all {
+		if e.entry.ID == cands[0].ID {
+			return e, true
+		}
+	}
+	return indexed{}, false
+}
+
+// remember keeps the line a selection resolved to, and its list, with the
+// selection and in the stored one when that is still this selection.
+func (d *Daemon) remember(sel *store.Selection, id, sub string) {
+	if sel.EntryID == id && sel.EntrySub == sub {
+		return
+	}
+	sel.EntryID, sel.EntrySub = id, sub
+	d.mu.Lock()
+	if d.cfg != nil && d.cfg.Selection != nil && d.cfg.Selection.Selector == sel.Selector && d.cfg.Selection.Subscription == sel.Subscription {
+		d.cfg.Selection.EntryID, d.cfg.Selection.EntrySub = id, sub
+	}
+	cfg := d.cfg.Clone()
+	d.mu.Unlock()
+	if err := d.saveConfig(cfg); err != nil {
+		d.logf("config: %v", err)
+	}
+}
+
+// onlyListIn is the one list a selection's scope holds, or "" when it holds
+// none or more than one.
+func (d *Daemon) onlyListIn(scope string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	only := ""
+	for _, s := range d.cfg.Subscriptions {
+		if scope != "" && !matchesSub(s.URL, scope) {
+			continue
+		}
+		if only != "" {
+			return ""
+		}
+		only = s.URL
+	}
+	return only
 }
 
 // rotateAfter starts the next round after the line the last one ended on, so
@@ -596,7 +688,18 @@ func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]l
 }
 
 func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, error) {
-	body, headers, err := d.deps.Fetch(ctx, subURL)
+	body, headers, err := d.deps.Fetch(ctx, subURL, d.device())
+	var refused *links.ErrDeviceRefused
+	if errors.As(err, &refused) {
+		// The host answered, and its answer is about this device: its list is
+		// empty for it. That is no failed fetch, and the lines this device had
+		// must stop working, so they are replaced by a record with none. The
+		// record keeps what the host sent beside the refusal (title, interval,
+		// usage, its sentence) for status, list and add to say why.
+		d.logf("list %s: device refused: %s", store.MaskURL(subURL), links.RefusalText(refused.Kind, refused.Announce))
+		body, err = nil, nil
+		headers.Refusal, headers.Announce = refused.Kind, refused.Announce
+	}
 	d.mu.Lock()
 	if err != nil {
 		d.subErr[subURL] = Scrub(err.Error())

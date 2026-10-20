@@ -108,9 +108,14 @@ guessed.
 
 PRIVACY
 
-Nothing is collected. No account, no analytics, no advertising identifier, no
-crash reporting service. Your server lists and the app's own log stay on the
-device and are never sent anywhere.
+No account, no analytics, no advertising identifier, no crash reporting service.
+Your server lists and the app's own log stay on the device and are never sent
+anywhere.
+
+When the app refreshes a server list, it tells the list's provider which device
+it is: a random identifier the app makes the first time it needs one, the device
+model, and the system's name and version, so the provider can count the devices
+that use one server list. Nothing else about the device or its owner is sent.
 
 Besides the server lists you add and the servers in them, the app makes a few
 small checks that carry nothing about you: whether the tunnel works and how fast
@@ -188,20 +193,46 @@ First release.
 > binary. The client's own pages describe the client: what it does, how to import,
 > what it collects (nothing). The marketplace site may link to the app; the app's
 > listing never links to the marketplace.
+>
+> 2026-10-20: what it collects is no longer nothing. When it refreshes a server
+> list, the app tells the list's provider which device it is, and the privacy
+> policy and the App Privacy answers below say so.
 
 ---
 
 ## App Privacy answers
 
-Every question, answered "no data collected", because that is what the app
-does. This section is the one Apple checks against behaviour, so it must stay
-true if analytics or crash reporting is ever added.
+This section is the one Apple checks against behaviour, so it must stay true
+whenever what the app sends changes. The answers to give in App Store Connect,
+under App Privacy:
 
-- **Do you or your third-party partners collect data from this app?** → **No**
+- **Do you or your third-party partners collect data from this app?** → **Yes**
+- **Data types** → Identifiers: **Device ID**, and no other
+- **How is the Device ID used?** → **App Functionality**
+- **Is it linked to the user's identity?** → **No**
+- **Is it used for tracking?** → **No**
 
-That single answer ends the questionnaire. It is consistent with
-`PrivacyInfo.xcprivacy`, which declares no collected data types, no tracking
-domains, and one required-reason API (`NSUserDefaults`, `CA92.1`).
+The Device ID is a random identifier the app makes the first time it needs one:
+at the first refresh of a server list, or at the first olcRTC session. When the
+app refreshes a server list, and when its packet tunnel refreshes an olcRTC room
+list, it tells the list's provider which device it is: that identifier, the
+device model, and the system's name and version, so the provider can count the
+devices that use one server list. The identifier is not the device's advertising
+or hardware identifier, and it is not linked to a name or an account inside the
+app (the app has none). It is kept with the app's data and goes with it when the
+app is removed, though a backup of the device can bring it back. Nothing else
+about the device or its owner is sent.
+
+This is consistent with `PrivacyInfo.xcprivacy`, which declares that one
+collected data type, no tracking domains, and one required-reason API
+(`NSUserDefaults`, `CA92.1`), and with the privacy policy. The model and the
+system's version are declared under Device ID alone, as the manifest declares
+them: the owner's call.
+
+> Until 2026-10-20 the answer here was **No**, the privacy manifest declared
+> nothing collected, and no build carried the manifest. App Store Connect must
+> give the answers above before a build with the manifest's Device ID is
+> submitted.
 
 > If a crash reporter or analytics SDK is ever added, both this answer and the
 > privacy manifest have to change in the same commit as the SDK. A mismatch
@@ -326,9 +357,12 @@ TO SEE THAT PART (two minutes)
 
 <PASTE A LIVE SERVER-LIST URL HERE>
 
-Traffic is routed through Apple's NEPacketTunnelProvider. The app collects no
-data. The camera is used only to scan a server-list QR code, and only when the
-user taps that button.
+Traffic is routed through Apple's NEPacketTunnelProvider. When it refreshes a
+server list, the app sends the list's provider a random identifier the app makes
+the first time it needs one, with the device model and the system's name and
+version, so the provider can count the devices on one server list; nothing else
+is collected. The camera is used only to scan a server-list QR code, and only
+when the user taps that button.
 ```
 
 > **This is the single most likely cause of a rejection.** A reviewer who

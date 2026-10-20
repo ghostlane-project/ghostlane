@@ -11,6 +11,7 @@
 		9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000012 /* SwiftPlatformBridge.swift */; };
 		9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000013 /* SwiftOlcRtcManager.swift */; };
 		9A0000010000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000015 /* Assets.xcassets */; };
+		9A0000010000000000000005 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000016 /* PrivacyInfo.xcprivacy */; };
 		B31340D0301599E5009B5598 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B31340CF301599E5009B5598 /* NetworkExtension.framework */; };
 		B31340D8301599E5009B5598 /* PacketTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B31340CE301599E5009B5598 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -46,6 +47,7 @@
 		9A0000010000000000000013 /* SwiftOlcRtcManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftOlcRtcManager.swift; sourceTree = "<group>"; };
 		9A0000010000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9A0000010000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		9A0000010000000000000016 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B31340CE301599E5009B5598 /* PacketTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B31340CF301599E5009B5598 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 		B31340DE30159A8C009B5598 /* iosApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iosApp.entitlements; sourceTree = "<group>"; };
@@ -102,6 +104,7 @@
 				9A0000010000000000000012 /* SwiftPlatformBridge.swift */,
 				9A0000010000000000000013 /* SwiftOlcRtcManager.swift */,
 				9A0000010000000000000014 /* Info.plist */,
+				9A0000010000000000000016 /* PrivacyInfo.xcprivacy */,
 				9A0000010000000000000015 /* Assets.xcassets */,
 			);
 			path = iosApp;
@@ -213,6 +216,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9A0000010000000000000004 /* Assets.xcassets in Resources */,
+				9A0000010000000000000005 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

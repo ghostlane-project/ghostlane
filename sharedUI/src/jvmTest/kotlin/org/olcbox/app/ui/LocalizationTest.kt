@@ -2,6 +2,8 @@ package org.olcbox.app.ui
 
 import kotlinx.coroutines.runBlocking
 import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.blocked_no_location
+import multiplatform_app.sharedui.generated.resources.blocked_no_server_picked
 import multiplatform_app.sharedui.generated.resources.kill_switch_note
 import multiplatform_app.sharedui.generated.resources.kill_switch_note_ios
 import multiplatform_app.sharedui.generated.resources.kill_switch_note_mac
@@ -12,17 +14,22 @@ import multiplatform_app.sharedui.generated.resources.vpn_disclosure_body
 import org.jetbrains.compose.resources.getPluralString
 import org.jetbrains.compose.resources.getString
 import multiplatform_app.sharedui.generated.resources.allStringResources
+import org.olcbox.app.data.model.DeviceRefusal
+import org.olcbox.app.data.repository.DEVICE_LIMIT_REACHED_MESSAGE
+import org.olcbox.app.data.repository.DEVICE_NOT_SUPPORTED_MESSAGE
 import org.olcbox.app.data.repository.SubscriptionRefreshError
 import org.olcbox.app.data.repository.SubscriptionRefreshFailure
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.desktop.DESKTOP_MODE_TEXTS
 import org.olcbox.app.ui.components.DISCLOSURE_BODY
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.ui.components.kit.BoardWords
 import org.olcbox.app.ui.features.home.NOTICES
 import org.olcbox.app.ui.features.home.StatusWords
 import org.olcbox.app.ui.features.home.TransportMismatch
 import org.olcbox.app.ui.features.home.localizedBulkMessage
 import org.olcbox.app.ui.features.home.localizedSingleMessage
+import org.olcbox.app.ui.features.home.localizedText
 import org.olcbox.app.ui.features.home.components.ListWords
 import org.olcbox.app.ui.components.disclosureBlocks
 import java.io.File
@@ -86,6 +93,31 @@ class LocalizationTest {
         }
     }
 
+    // Every language says what a list's provider is told, as the privacy policy
+    // does, and none still says that nothing identifying is sent.
+    @Test fun everyDisclosureSaysWhatAListsProviderIsTold() {
+        val oldClaims = mapOf(
+            "en" to "anything identifying you",
+            "ru" to "Ничего не собирается",
+            "fa" to "هیچ چیزی جمع‌آوری نمی‌شود",
+            "zh" to "不收集任何信息"
+        )
+        for ((tag, old) in oldClaims) {
+            val body = inLocale(tag) { getString(Res.string.vpn_disclosure_body) }
+            assertFalse(old in body, "the $tag disclosure still says nothing identifying is sent")
+            assertTrue("olcRTC" in body, "the $tag disclosure does not say who else is told the identifier")
+        }
+    }
+
+    // The Android service's notification says why it holds a tunnel by the
+    // reason's English text, which is the key of its translation there: each
+    // text is its resource's English, and the pick is said in every language.
+    @Test fun aHoldsNotificationTextIsItsResource() {
+        assertEquals(TunnelHold.NoLocation.notificationText, inLocale("en") { getString(Res.string.blocked_no_location) })
+        assertEquals(TunnelHold.NonePicked.notificationText, inLocale("en") { getString(Res.string.blocked_no_server_picked) })
+        assertEquals("Выберите сервер", inLocale("ru") { getString(Res.string.blocked_no_server_picked) })
+    }
+
     @Test fun chineseAndPersianOnTheirSystems() {
         assertEquals("设置", inLocale("zh-CN") { getString(Res.string.settings_title) })
         assertEquals("设置", inLocale("zh-TW") { getString(Res.string.settings_title) })
@@ -115,6 +147,7 @@ class LocalizationTest {
             "seats_full" to board.seatsFull,
             "seats_free" to board.seatsFree,
             "onboarding_add_list_caps" to board.addServerList,
+            "action_pick_server_caps" to board.pickServer,
             "action_cancel_caps" to board.cancel,
             "action_leave_caps" to board.leave,
             "action_disconnect_caps" to board.disconnect,
@@ -148,6 +181,7 @@ class LocalizationTest {
             "status_no_server_list" to status.noServerList,
             "status_not_connected" to status.notConnected,
             "status_add_list_to_start" to status.addServerListToStart,
+            "status_pick_server" to status.pickServer,
             "status_room_full" to status.roomFull,
             "mismatch_caption_caps" to TransportMismatch.CAPTION,
             "mismatch_explanation" to TransportMismatch.EXPLANATION
@@ -210,7 +244,11 @@ class LocalizationTest {
             SubscriptionRefreshReport(updatedCount = 2),
             SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.Rejected, 403))),
             SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.ServerError), failure(SubscriptionRefreshError.Unreachable))),
-            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.Empty)))
+            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.Empty))),
+            // A refusal in the provider's words, and with none of them: ours.
+            SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("Your provider: this link is already in use on its 1 device. Ask your provider to free one.")))),
+            SubscriptionRefreshReport(updatedCount = 1, failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("")))),
+            SubscriptionRefreshReport(failures = listOf(failure(SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.NotSupported))))
         )
         inLocale("en") {
             reports.forEach { report ->
@@ -218,6 +256,21 @@ class LocalizationTest {
                 assertEquals(report.bulkMessage(), report.localizedBulkMessage())
             }
         }
+    }
+
+    // A refusal the provider gave no words to is said in ours for its kind, in
+    // the user's language; the provider's own words are shown as they came.
+    @Test fun aRefusalWithoutTheProvidersWordsIsSaidInTheUsersLanguage() {
+        val limit = SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.LimitReached)
+        val unread = SubscriptionRefreshError.DeviceRefused("", DeviceRefusal.NotSupported)
+        assertEquals(DEVICE_LIMIT_REACHED_MESSAGE, inLocale("en") { limit.localizedText() })
+        assertEquals(DEVICE_NOT_SUPPORTED_MESSAGE, inLocale("en") { unread.localizedText() })
+        assertEquals("В этом списке нет места для этого устройства. Обратитесь к провайдеру.", inLocale("ru") { limit.localizedText() })
+        assertEquals(
+            "Провайдер не смог прочитать идентификатор этого устройства. Обновите список; если не поможет, обратитесь к провайдеру.",
+            inLocale("ru") { unread.localizedText() }
+        )
+        assertEquals("Ваш провайдер: лимит устройств", inLocale("ru") { SubscriptionRefreshError.DeviceRefused("Ваш провайдер: лимит устройств").localizedText() })
     }
 
     // A string added in English only would show English inside a translated screen.

@@ -694,7 +694,27 @@ data class LocationBundleV4(
      * thing already persisted identically on every platform.
      */
     @SerialName("onboarding_seen_at")
-    val onboardingSeenAt: Long? = null
+    val onboardingSeenAt: Long? = null,
+    /**
+     * The server lists whose host refused this device, with no servers: see
+     * [RefusedList]. Read back as none from a bundle written before it.
+     */
+    @SerialName("refused_lists")
+    val refusedLists: List<RefusedList> = emptyList(),
+    /**
+     * Nothing is selected, on purpose, while locations exist: the list the
+     * selected server came from refused this device and took that server away,
+     * and no other is put in its place until the person chooses one.
+     *
+     * Without it [normalized] selects the first location, as it does after a
+     * list is removed. Here that would carry a running session onto a server
+     * nobody chose, at the platform's next start of it (a network change on a
+     * phone, a reconnect, a new line on the desktop), while the screen named it
+     * as the one in use; with nothing selected that start has no location to
+     * start, and says so. Any selection of a location ends it.
+     */
+    @SerialName("selection_withdrawn")
+    val selectionWithdrawn: Boolean = false
 ) {
     fun normalized(): LocationBundleV4 {
         val normalizedLocations = locations
@@ -702,15 +722,30 @@ data class LocationBundleV4(
             .filter { it.storageId.isNotBlank() && it.location.isComplete() }
             .distinctBy { it.storageId }
 
-        val active = activeLocationId
-            ?.takeIf { id -> normalizedLocations.any { it.storageId == id } }
-            ?: normalizedLocations.firstOrNull()?.storageId
+        val chosen = activeLocationId?.takeIf { id -> normalizedLocations.any { it.storageId == id } }
+        val withdrawn = selectionWithdrawn && chosen == null && normalizedLocations.isNotEmpty()
+        val active = chosen ?: if (withdrawn) null else normalizedLocations.firstOrNull()?.storageId
+
+        // A list with servers is not refused, whatever was written about it
+        // before: an answer that served it, or a backup that brought its
+        // servers back, has the last word. One record to an address, the last.
+        val servedUrls = normalizedLocations
+            .mapNotNull { entry -> entry.subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() } }
+            .toSet()
+        val refused = refusedLists
+            .map { it.normalized() }
+            .filter { it.subscriptionUrl.isNotEmpty() && it.subscriptionUrl !in servedUrls }
+            .associateBy { it.subscriptionUrl }
+            .values
+            .toList()
 
         return copy(
             version = CURRENT_VERSION,
             activeLocationId = active,
             locations = normalizedLocations,
-            settings = settings.normalized()
+            settings = settings.normalized(),
+            refusedLists = refused,
+            selectionWithdrawn = withdrawn
         )
     }
 

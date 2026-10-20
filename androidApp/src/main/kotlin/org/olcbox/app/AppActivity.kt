@@ -11,9 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.olcbox.app.data.datasource.AndroidLocations
-import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.exporter.AndroidLogExporter
-import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.AndroidConfigImporter
 import org.olcbox.app.ui.activities.AndroidMainScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
@@ -43,7 +41,6 @@ class AppActivity : ComponentActivity() {
         }
 
         val vpnManager = AndroidVpnManager(this)
-        val locationsDataSource = LocationsDataSourceImpl(this)
         // The process's one repository: the VPN service writes through it too.
         val locationsRepository = AndroidLocations.repository(this)
         val configImporter = AndroidConfigImporter(this)
@@ -52,9 +49,7 @@ class AppActivity : ComponentActivity() {
         // neither polls the release feed nor shows the Updates section, and the
         // manifest of that flavor carries no REQUEST_INSTALL_PACKAGES to use.
         val updateService = if (resources.getBoolean(R.bool.store_self_update)) {
-            AppUpdateService(
-                deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
-            )
+            AppUpdateService()
         } else {
             null
         }

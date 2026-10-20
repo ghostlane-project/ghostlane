@@ -196,6 +196,12 @@ private const val SENTENCE_ENDS = ".。!！?？؟…:："
  * charge to App Review, and it cost two rejections under Guideline 3.1.1. Wire
  * and storage names keep the old spelling on purpose — this is about what a user
  * reads.
+ *
+ * **It says what a list's provider is told.** A refresh names the device to
+ * the list's provider (an id the app made, the model, the system's version),
+ * and the privacy policy, both stores' privacy answers and the iOS privacy
+ * manifest say so. Until 2026-10-20 this text said nothing identifying was
+ * sent, which contradicted all four.
  */
 internal const val DISCLOSURE_BODY = """Ghostlane connects using your device's system VPN.
 
@@ -207,13 +213,13 @@ Your device will ask you to allow this separately, in its own dialog, the first 
 
 WHAT THIS APP DOES WITH IT
 
-Nothing is collected. The app does not read, record or transmit the contents of your traffic, the addresses you visit, or anything identifying you. There is no account here, no analytics, and no advertising identifier.
+The app does not read, record or transmit the contents of your traffic or the addresses you visit. When a server list is refreshed, its provider is told a random identifier the app made for this device, the device model and the system version, so it can count the devices on one list; an olcRTC server of that list is told the same identifier when you connect. Nothing else about you or this device is sent. There is no account here, no analytics, and no advertising identifier.
 
 Your server lists and the app's own log stay on this device.
 
 WHERE YOUR TRAFFIC GOES
 
-To the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them — Ghostlane does not run it and does not sell one.
+To the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them. Ghostlane does not run it and does not sell one.
 
 Traffic is encrypted between this device and that server.
 

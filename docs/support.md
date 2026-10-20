@@ -61,7 +61,9 @@ orders the list. Annotated screenshots (captions in Russian):
 
 ## Privacy
 
-The app collects nothing. See [privacy.md](privacy.md).
+The app has no account and collects nothing for itself. When it refreshes a
+server list, it tells the list's provider which device it is, so the provider can
+count the devices that use one server list. See [privacy.md](privacy.md).
 
 ## Source
 

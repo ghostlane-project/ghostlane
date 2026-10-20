@@ -18,6 +18,7 @@ import multiplatform_app.sharedui.generated.resources.remove_location_question
 import multiplatform_app.sharedui.generated.resources.remove_server_list_body
 import multiplatform_app.sharedui.generated.resources.remove_server_list_question
 import multiplatform_app.sharedui.generated.resources.removed_locations
+import multiplatform_app.sharedui.generated.resources.server_list_removed
 import multiplatform_app.sharedui.generated.resources.status_add_list_to_start
 import multiplatform_app.sharedui.generated.resources.status_connected
 import multiplatform_app.sharedui.generated.resources.status_connecting
@@ -25,6 +26,7 @@ import multiplatform_app.sharedui.generated.resources.status_in_room
 import multiplatform_app.sharedui.generated.resources.status_joining_room
 import multiplatform_app.sharedui.generated.resources.status_no_server_list
 import multiplatform_app.sharedui.generated.resources.status_not_connected
+import multiplatform_app.sharedui.generated.resources.status_pick_server
 import multiplatform_app.sharedui.generated.resources.status_room_full
 import multiplatform_app.sharedui.generated.resources.this_server_list
 import multiplatform_app.sharedui.generated.resources.unpinned_named
@@ -54,12 +56,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.olcbox.app.admin.AdminState
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.ui.components.AdminPasswordDialog
 import org.olcbox.app.ui.components.CameraRationaleSheet
 import org.olcbox.app.ui.components.VpnDisclosureScreen
 import org.olcbox.app.ui.components.kit.boardAction
+import org.olcbox.app.ui.components.kit.boardSecondaryAction
 import org.olcbox.app.ui.components.kit.boardHeading
 import org.olcbox.app.ui.components.kit.nextSort
 import org.olcbox.app.ui.components.kit.roomIsBlocked
@@ -148,7 +152,7 @@ fun HomeScreen(
     // visible regardless.
     val admin = AdminState.plumbingVisible
 
-    val requiresSetup = !state.canStartVpn && !state.isVpnConnected && !state.isVpnLoading
+    val requiresSetup = state.requiresSetup
 
     /**
      * Building a location by hand is plumbing, so it answers to the same gate the
@@ -233,8 +237,14 @@ fun HomeScreen(
             text = {
                 Text(
                     when (pending) {
-                        is PendingRemoval.ServerList ->
+                        // A list its host refused brought no locations in: "and
+                        // the 0 locations it brought in" would be a sentence
+                        // about nothing. It goes as one thing does.
+                        is PendingRemoval.ServerList -> if (pending.count == 0) {
+                            stringResource(Res.string.remove_location_body, pending.title)
+                        } else {
                             pluralStringResource(Res.plurals.remove_server_list_body, pending.count, pending.title, pending.count)
+                        }
                         is PendingRemoval.Location ->
                             stringResource(Res.string.remove_location_body, pending.title)
                     }
@@ -245,7 +255,10 @@ fun HomeScreen(
                     when (pending) {
                         is PendingRemoval.ServerList -> viewModel.deleteSubscription(pending.url) { removed ->
                             scope.launch {
-                                snackbarHostState.showSnackbar(getPluralString(Res.plurals.removed_locations, removed, removed))
+                                snackbarHostState.showSnackbar(
+                                    if (removed == 0) getString(Res.string.server_list_removed)
+                                    else getPluralString(Res.plurals.removed_locations, removed, removed)
+                                )
                             }
                             locationViewModel.loadLocations()
                         }
@@ -274,12 +287,16 @@ fun HomeScreen(
     fun activeLocationConfig(): LocationConfig? =
         locations.firstOrNull { it.storageId == locationViewModel.selectedLocationId }?.config
 
-    /** Restarts only if the running tunnel's own config actually moved. */
-    fun restartIfActiveChanged(before: LocationConfig?) {
-        val after = activeLocationConfig()
+    /**
+     * Restarts only if the running tunnel's own config actually moved, by the
+     * rule every screen that refreshes asks ([SubscriptionRefreshReport.restartsRunningTunnel]).
+     */
+    fun restartIfActiveChanged(before: LocationConfig?, report: SubscriptionRefreshReport) {
         // Vanished counts too: the location the tunnel runs on being gone is exactly
-        // when a restart is right, and comparing to null covers it.
-        if (after != before) viewModel.restartVpnIfRunning()
+        // when a restart is right, and comparing to null covers it, once another
+        // is selected. With nothing selected (a refusal took the server away) the
+        // rule starts nothing, whatever moved.
+        viewModel.restartVpnAfterRefresh(report, selectionMoved = activeLocationConfig() != before)
     }
 
     fun refreshSubscriptions() {
@@ -288,7 +305,7 @@ fun HomeScreen(
         viewModel.refreshSubscriptions { report ->
             locationViewModel.loadLocations {
                 isRefreshingSubscriptions = false
-                restartIfActiveChanged(activeBefore)
+                restartIfActiveChanged(activeBefore, report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedBulkMessage()) }
             }
         }
@@ -300,7 +317,7 @@ fun HomeScreen(
         viewModel.refreshSubscription(url) { report ->
             locationViewModel.loadLocations {
                 refreshingSubscriptionUrl = null
-                restartIfActiveChanged(activeBefore)
+                restartIfActiveChanged(activeBefore, report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedSingleMessage()) }
             }
         }
@@ -414,6 +431,11 @@ fun HomeScreen(
     val selectedId = locationViewModel.selectedLocationId
     val selectedItem = locations.firstOrNull { it.storageId == selectedId }
     val selectedConfig = selectedItem?.config
+    // Servers on the board and none of them selected: a refusal took the
+    // selected one with its list (LocationBundleV4.selectionWithdrawn). The
+    // strip and the button ask for a pick, not for a list, which the person has;
+    // so too while Android holds the tunnel for that pick.
+    val pickServer = state.picksServer(hasLocations = locations.isNotEmpty(), selectedId = selectedId)
     val knownSubscriptionUrls = remember(locations) {
         locations.mapNotNull {
             it.subscriptionUrl?.trim()?.takeIf(String::isNotEmpty)
@@ -430,6 +452,7 @@ fun HomeScreen(
         sort = subscriptionSettings.sort,
         lowestSubscriptionUrls = lowestSubscriptionUrls,
         pinned = subscriptionSettings.pinnedLocations,
+        refused = locationViewModel.refusedLists,
         pingsState = pingsState
     )
     val lowestActive = selectedItem?.subscriptionUrl?.trim()?.let { it in lowestSubscriptionUrls } == true
@@ -511,6 +534,7 @@ fun HomeScreen(
                 requiresSetup = requiresSetup,
                 hasSeats = selectedSlots != null,
                 transportLabel = selectedConfig?.transportKind()?.label(),
+                pickServer = pickServer,
                 words = statusWords
             ),
             statusMeta = {
@@ -522,6 +546,7 @@ fun HomeScreen(
                     requiresSetup = requiresSetup,
                     isFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                     protocolLine = selectedConfig?.protocolLabels()?.joinToString(" · "),
+                    pickServer = pickServer,
                     words = statusWords
                 ) + if (state.isVpnConnected) {
                     " · " + (channelLatency?.label() ?: "HTTP …")
@@ -553,11 +578,13 @@ fun HomeScreen(
                 selectedIsRoom = !lowestActive && selectedConfig?.transportKind() == TransportKind.Olcrtc,
                 selectedIsFull = roomIsBlocked(selectedSlots, mine = state.isVpnConnected),
                 exitName = selectedName,
+                pickServer = pickServer,
                 words = boardWords
             ),
             showAppSettingsButton = showAppSettingsButton,
             showSplitTunnelingButton = showSplitTunnelingButton,
-            showLock = AdminState.showLock
+            showLock = AdminState.showLock,
+            secondaryAction = boardSecondaryAction(state.offersDisconnect, boardWords)
         ),
         board = HomeBoard(
             model = model,
@@ -593,14 +620,11 @@ fun HomeScreen(
             },
             onFilterSelected = { key -> viewModel.changeSubscriptionSettings { it.copy(transportFilter = key) } },
             onActionClick = {
-                when {
-                    requiresSetup -> isAddSheetOpen = true
-                    // Only on the way up, and before the system's own VPN dialog:
-                    // the disclosure has to be what explains that prompt, not
-                    // something the user meets after granting it. Stopping never
-                    // asks.
-                    !vpnDisclosureAccepted && !state.isVpnConnected -> showVpnDisclosure = true
-                    else -> startSelectedConnection()
+                when (actionTarget(requiresSetup, pickServer, vpnDisclosureAccepted, state.isVpnConnected)) {
+                    ActionTarget.Board -> scope.launch { scrollState.animateScrollTo(0) }
+                    ActionTarget.AddServerList -> isAddSheetOpen = true
+                    ActionTarget.Disclosure -> showVpnDisclosure = true
+                    ActionTarget.Connection -> startSelectedConnection()
                 }
             },
             onDismissNotice = { viewModel.dismissFailure() },
@@ -700,9 +724,12 @@ fun HomeScreen(
             },
             onDeleteSubscriptionClick = { url ->
                 val members = locations.filter { it.subscriptionUrl?.trim() == url.trim() }
+                // A list its host refused has no members, and its name from what the host said.
+                val refused = locationViewModel.refusedLists.firstOrNull { it.subscriptionUrl.trim() == url.trim() }
                 confirmRemove = PendingRemoval.ServerList(
                     url = url,
-                    title = members.firstOrNull()?.subscriptionTitle(words)?.takeIf { it.isNotBlank() }
+                    title = (members.firstOrNull()?.subscriptionTitle(words) ?: refused?.subscriptionTitle(words))
+                        ?.takeIf { it.isNotBlank() }
                         ?: thisServerList,
                     count = members.size
                 )
@@ -710,7 +737,10 @@ fun HomeScreen(
             onOpenUrl = onOpenExternalUrl,
             onAddLocationClick = onAddLocation,
             onGetSubscriptionClick = onGetSubscriptionClick,
-            canPing = { config -> viewModel.canPing(config) }
+            canPing = { config -> viewModel.canPing(config) },
+            // Ends the hold: the platform is holding the tunnel (Reconnecting),
+            // which a toggle stops.
+            onSecondaryActionClick = { onToggleClick() }
         ),
         scrollState = scrollState,
         snackbarHostState = snackbarHostState
@@ -830,6 +860,7 @@ internal data class StatusWords(
     val noServerList: String = "no server list",
     val notConnected: String = "not connected",
     val addServerListToStart: String = "Add a server list to start",
+    val pickServer: String = "Pick a server",
     val roomFull: String = "this room is full"
 )
 
@@ -843,16 +874,22 @@ internal fun statusWords(): StatusWords = StatusWords(
     noServerList = stringResource(Res.string.status_no_server_list),
     notConnected = stringResource(Res.string.status_not_connected),
     addServerListToStart = stringResource(Res.string.status_add_list_to_start),
+    pickServer = stringResource(Res.string.status_pick_server),
     roomFull = stringResource(Res.string.status_room_full)
 )
 
-/** What the status strip's first line says. */
+/**
+ * What the status strip's first line says. [pickServer]: servers are on the
+ * board and none is selected (a refusal took the selected one with its list),
+ * which is no case of "no server list".
+ */
 internal fun statusLabel(
     isConnected: Boolean,
     isConnecting: Boolean,
     requiresSetup: Boolean,
     hasSeats: Boolean,
     transportLabel: String?,
+    pickServer: Boolean = false,
     words: StatusWords = StatusWords()
 ): String = when {
     isConnected -> listOfNotNull(
@@ -860,6 +897,7 @@ internal fun statusLabel(
         transportLabel
     ).joinToString(" · ")
     isConnecting -> if (hasSeats) words.joiningRoom else words.connecting
+    requiresSetup && pickServer -> words.notConnected
     requiresSetup -> words.noServerList
     else -> words.notConnected
 }
@@ -871,13 +909,50 @@ internal fun statusMeta(
     requiresSetup: Boolean,
     isFull: Boolean,
     protocolLine: String?,
+    pickServer: Boolean = false,
     words: StatusWords = StatusWords()
 ): String = when {
     isConnected && bytesLine.isNotBlank() -> bytesLine
     isConnected -> protocolLine.orEmpty()
+    requiresSetup && pickServer -> words.pickServer
     requiresSetup -> words.addServerListToStart
     isFull -> words.roomFull
     else -> protocolLine.orEmpty()
+}
+
+/** Where a press of the bar's one button goes. */
+internal enum class ActionTarget {
+    /** The board, scrolled to its top: there are servers on it and none is selected. */
+    Board,
+
+    /** The sheet that adds a server list: there is nothing to connect to yet. */
+    AddServerList,
+
+    /** The VPN disclosure, before the first connection. */
+    Disclosure,
+
+    /** Connect, or end the session. */
+    Connection
+}
+
+/**
+ * Where a press of the bar's one button goes. With servers on the board and
+ * none selected it is the board, never the add sheet: the person has lists,
+ * and adding the refused one again would change nothing.
+ */
+internal fun actionTarget(
+    requiresSetup: Boolean,
+    pickServer: Boolean,
+    disclosureAccepted: Boolean,
+    isConnected: Boolean
+): ActionTarget = when {
+    requiresSetup && pickServer -> ActionTarget.Board
+    requiresSetup -> ActionTarget.AddServerList
+    // Only on the way up, and before the system's own VPN dialog: the
+    // disclosure has to be what explains that prompt, not something the user
+    // meets after granting it. Stopping never asks.
+    !disclosureAccepted && !isConnected -> ActionTarget.Disclosure
+    else -> ActionTarget.Connection
 }
 
 /**

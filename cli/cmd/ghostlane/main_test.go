@@ -83,6 +83,52 @@ func TestStatusAndListRendering(t *testing.T) {
 	}
 }
 
+// An empty list that is empty because its host refused the device says so,
+// and does not tell the person to add the list they have added.
+func TestListSaysWhyItIsEmpty(t *testing.T) {
+	why := "Partner: device refused: Acme: this link is already in use on its 2 devices. Ask Acme to free one."
+	listing := func(msg string) string {
+		return fakeDaemon(t, func(_ context.Context, r ipc.Request) ipc.Response {
+			if r.Verb != "list" {
+				return ipc.Fail("bad_verb", r.Verb)
+			}
+			return ipc.Response{OK: true, Entries: []ipc.EntryView{}, Message: msg}
+		})
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"list", "--socket", listing(why)}, &out, &errb); code != 0 || !strings.Contains(out.String(), why) || strings.Contains(out.String(), "no lines") {
+		t.Fatalf("%d\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	if code := run([]string{"list", "--socket", listing("")}, &out, &errb); code != 0 || !strings.Contains(out.String(), "(no lines; ghostlane add <url>)") {
+		t.Fatalf("%d\n%s%s", code, out.String(), errb.String())
+	}
+}
+
+// The status line of a refused list is the daemon's sentence, under ERROR.
+func TestStatusShowsARefusedList(t *testing.T) {
+	var out bytes.Buffer
+	printStatus(&out, &ipc.Status{State: "idle", Subscriptions: []ipc.SubscriptionView{
+		{URL: "https://sub.example/sub/a/…", Title: "Acme", IntervalHours: 1, Error: "device refused: This list has no place for this device. Ask your provider."},
+	}})
+	if !strings.Contains(out.String(), "ERROR: device refused: This list has no place for this device. Ask your provider.") {
+		t.Fatalf("%s", out.String())
+	}
+}
+
+// The kernel's release goes to a list host as x-ver-os: one printable line.
+func TestKernelReleaseIsAHeaderValue(t *testing.T) {
+	got := kernelRelease()
+	if got == "" || got != strings.TrimSpace(got) {
+		t.Fatalf("%q", got)
+	}
+	for _, r := range got {
+		if r < ' ' || r > '~' {
+			t.Fatalf("%q", got)
+		}
+	}
+}
+
 func TestHelpIsUsable(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb); code != 0 {

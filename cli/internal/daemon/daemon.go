@@ -4,9 +4,14 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,7 +50,8 @@ type Deps struct {
 	ConfigPath  string
 	StateDir    string
 	SocketPath  string
-	Fetch       func(ctx context.Context, url string) ([]byte, links.Headers, error)
+	Fetch       func(ctx context.Context, url string, dev links.Device) ([]byte, links.Headers, error)
+	Device      links.Device    // what a list fetch says about this machine; the id is the daemon's own (deviceID)
 	Decrypt     links.Decryptor // crypt1 lists and links; nil = this build has no key
 	StartEngine func(ctx context.Context, p olcrtc.Params) (Engine, error)
 	StartXray   func(ctx context.Context, p xray.Params) (Engine, error)
@@ -103,6 +109,12 @@ type Daemon struct {
 	runCtx   context.Context
 	ksOn     bool   // the kill switch is in; the own-address rules belong to it, not to the line
 	ksStop   func() // its address watcher
+
+	// devMu guards devID, this machine's id once it is had (deviceID), and
+	// devErr, the last reason it could not be had, which is logged once.
+	devMu  sync.Mutex
+	devID  string
+	devErr string
 }
 
 // indexed is one entry with the subscription it came from; the daemon numbers
@@ -197,6 +209,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.ensureConfig(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	d.device() // the id is made now, not at the first fetch: an engine that starts finds the same file
 
 	var listener interface{ Close() error }
 	if d.deps.SocketPath != "" {
@@ -218,7 +231,79 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return nil
 }
 
-func (d *Daemon) deviceIDPath() string { return filepath.Join(d.deps.StateDir, "device-id") }
+func (d *Daemon) deviceIDPath() string { return deviceIDPath(d.deps.StateDir) }
+
+// device is what a list fetch says about this machine: Deps.Device and the
+// id of deviceID, kept once it is had. While there is no id (the file can be
+// neither read nor made) each fetch names the machine without one and asks
+// again at the next, and the log says so once for each reason; the host then
+// tells the person, where an id made up here would be a new device at every
+// start.
+func (d *Daemon) device() links.Device {
+	d.devMu.Lock()
+	defer d.devMu.Unlock()
+	if d.devID == "" {
+		id, err := deviceID(d.deps.StateDir)
+		switch {
+		case err == nil:
+			d.devID, d.devErr = id, ""
+		case err.Error() != d.devErr:
+			d.devErr = err.Error()
+			d.logf("device id: %v; lists are fetched without one until it can be read or made", err)
+		}
+	}
+	dev := d.deps.Device
+	dev.ID = d.devID
+	return dev
+}
+
+// deviceIDFile is the file the olcRTC engine keeps its own device id in (the
+// engine is handed its path), so it is the one place this machine's id lives.
+const deviceIDFile = "device-id"
+
+func deviceIDPath(stateDir string) string { return filepath.Join(stateDir, deviceIDFile) }
+
+// deviceID is the id this machine names itself by to a list host, so that a
+// provider's device limit counts it as one device: the content of the state
+// directory's device-id, trimmed, the way the engine reads it. With no id in
+// the file (absent, or empty) a UUID v4 is written, the line and a newline,
+// mode 0600, the way the engine writes it. A file the engine made first is the
+// id here, a file made here is the one the engine finds when a line starts,
+// and a file that exists is never rewritten.
+func deviceID(stateDir string) (string, error) {
+	path := deviceIDPath(stateDir)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if id := strings.TrimSpace(string(data)); id != "" {
+			return id, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	id, err := newUUID()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return "", fmt.Errorf("make %s: %w", stateDir, err)
+	}
+	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("write %s: %w", path, err)
+	}
+	return id, nil
+}
+
+// newUUID is a version 4 UUID in its lower-case 36-character form.
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("random: %w", err)
+	}
+	b[6] = b[6]&0x0f | 0x40 // version 4
+	b[8] = b[8]&0x3f | 0x80 // variant 10
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:], nil
+}
 
 func (d *Daemon) saveConfig(cfg *store.Config) error {
 	d.saveMu.Lock()

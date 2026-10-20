@@ -174,6 +174,52 @@ func TestParseHeaders(t *testing.T) {
 	}
 }
 
+// A title is printed beside a list's every refusal and in status: it reaches
+// the terminal as one clean line, whatever the provider put in it, and its
+// base64 prefix is read in any case, as the app reads it.
+func TestParseHeadersCleansTheTitle(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"Acme\x1b[2J\nVPN", "Acme [2J VPN"},
+		{"\u202eNPV emcA", "NPV emcA"},
+		{"BASE64:" + base64.StdEncoding.EncodeToString([]byte("Acme\tVPN")), "Acme VPN"},
+		{"Base64: " + base64.StdEncoding.EncodeToString([]byte("Acme")) + " ", "Acme"},
+		{strings.Repeat("я", 300), strings.Repeat("я", 200)},
+	} {
+		h := http.Header{}
+		h.Set("Profile-Title", tc.raw)
+		if got := ParseHeaders(h).Title; got != tc.want {
+			t.Errorf("Profile-Title %q: %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+// The app reads the same two flags (LocationsDatasource.subscriptionProfile):
+// the CLI and the app never read one answer differently.
+func TestParseHeadersReadsADeviceRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		want    Refusal
+	}{
+		{"none", map[string]string{"x-hwid-active": "true", "x-hwid-limit": "true", "subscription-always-hwid-enable": "1"}, RefusalNone},
+		{"max devices", map[string]string{"x-hwid-max-devices-reached": "true", "x-hwid-active": "true"}, RefusalLimit},
+		{"not supported", map[string]string{"x-hwid-not-supported": "true"}, RefusalNoDevice},
+		{"case and space do not matter", map[string]string{"X-HWID-MAX-DEVICES-REACHED": " True "}, RefusalLimit},
+		{"only true counts", map[string]string{"x-hwid-max-devices-reached": "false", "x-hwid-not-supported": "1"}, RefusalNone},
+		{"both: the limit is the older word", map[string]string{"x-hwid-not-supported": "true", "x-hwid-max-devices-reached": "true"}, RefusalLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := http.Header{}
+			for k, v := range tc.headers {
+				h.Set(k, v)
+			}
+			if got := ParseHeaders(h).Refusal; got != tc.want {
+				t.Fatalf("Refusal = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecodeBodyWithDecryptor(t *testing.T) {
 	plain := "olcrtc://telemost?vp8channel@r#" + key + "$DE · olcRTC\n"
 	blob := "QkxPQg\nQkxPQg" // stands in for a wrapped crypt1 blob; the decryptor knows it

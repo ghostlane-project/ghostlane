@@ -10,6 +10,7 @@ import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.SystemVpnMode
 import org.olcbox.app.vpn.TrafficCounters
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.log.LogScrubber
 
 object OlcboxVpnState {
@@ -22,6 +23,10 @@ object OlcboxVpnState {
 
     private val _status = MutableStateFlow<VpnStatus>(VpnStatus.Disconnected)
     val status = _status.asStateFlow()
+
+    /** Why the service holds its tunnel with nothing behind it (VpnManager.hold); null when it does not. */
+    private val _hold = MutableStateFlow<TunnelHold?>(null)
+    val hold = _hold.asStateFlow()
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected = _isConnected.asStateFlow()
@@ -67,7 +72,14 @@ object OlcboxVpnState {
         _notices.tryEmit(message)
     }
 
-    fun setStatus(status: VpnStatus) {
+    /**
+     * [hold] says why a [VpnStatus.Reconnecting] holds the tunnel with nothing
+     * behind it; any other status, or a reconnect that is one, has none. Set
+     * before the status, so that a reader of both never sees the hold's status
+     * without its reason.
+     */
+    fun setStatus(status: VpnStatus, hold: TunnelHold? = null) {
+        _hold.value = hold.takeIf { status is VpnStatus.Reconnecting }
         _status.value = status
         _isConnected.value = status is VpnStatus.Connected
         _connectedSince.value = when (status) {

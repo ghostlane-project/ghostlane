@@ -279,6 +279,11 @@ private const val ACTION_NAME_MAX = 18
  *
  * [requiresSetup] is the caller's existing predicate, not a second opinion about
  * it — the bar must not offer to connect where the screen would refuse.
+ *
+ * [pickServer]: servers are on the board and none is selected, which is what a
+ * list's refusal leaves when it held the selected one. Then there is a server
+ * to pick, not a list to add: the button says so, and takes the person to the
+ * board.
  */
 fun boardAction(
     requiresSetup: Boolean,
@@ -287,10 +292,12 @@ fun boardAction(
     selectedIsRoom: Boolean,
     selectedIsFull: Boolean,
     exitName: String?,
+    pickServer: Boolean = false,
     words: BoardWords = BoardWords()
 ): PkAction {
     val name = exitName?.trim()?.takeIf { it.isNotEmpty() }?.let(::shortenExitName)?.uppercase()
     return when {
+        requiresSetup && pickServer -> PkAction(words.pickServer, PkActionKind.Go)
         requiresSetup -> PkAction(words.addServerList, PkActionKind.Go)
         isConnecting -> PkAction(words.cancel, PkActionKind.Busy)
         isConnected -> PkAction(
@@ -310,6 +317,15 @@ fun boardAction(
         )
     }
 }
+
+/**
+ * The second button beside [boardAction]'s, when there is one: Disconnect,
+ * while the tunnel holds its traffic for a server to be picked
+ * ([offersDisconnect]). The first button is then the pick, and the hold is
+ * ended here.
+ */
+fun boardSecondaryAction(offersDisconnect: Boolean, words: BoardWords = BoardWords()): PkAction? =
+    if (offersDisconnect) PkAction(words.disconnect, PkActionKind.Stop) else null
 
 /**
  * Trims an exit name to something a single-line button can hold.
@@ -435,6 +451,7 @@ data class BoardWords(
     val seatsFull: String = "full",
     val seatsFree: String = "%1\$d free",
     val addServerList: String = "ADD SERVER LIST",
+    val pickServer: String = "PICK A SERVER",
     val cancel: String = "CANCEL",
     val leave: String = "LEAVE %1\$s",
     val disconnect: String = "DISCONNECT",

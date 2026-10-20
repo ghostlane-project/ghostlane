@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RefusedList
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.model.SubscriptionSort
 import org.olcbox.app.net.LocationKind
@@ -209,7 +210,9 @@ internal object BoardFixture {
         /** The rooms pinned to the top of their lists, by storage id, in the order they were pinned. */
         val pinned: List<String> = emptyList(),
         /** The delays on the cards were measured on another network: the line over the lists that says so. */
-        val stalePings: Boolean = false
+        val stalePings: Boolean = false,
+        /** The lists whose host refused this device: no rooms, and why. */
+        val refused: List<RefusedList> = emptyList()
     )
 
     @Composable
@@ -243,7 +246,8 @@ internal object BoardFixture {
                 activeFilterKey = null,
                 sort = SubscriptionSort.None,
                 lowestSubscriptionUrls = lowestUrls,
-                pinned = pinned
+                pinned = pinned,
+                refused = scene.refused
             ) { pings[it] }
         }
         val slots: Map<String, OlcrtcSlots> = remember {

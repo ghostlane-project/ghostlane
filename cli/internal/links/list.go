@@ -112,6 +112,20 @@ func tryBase64(s string) (string, bool) {
 
 type UserInfo struct{ Upload, Download, Total, Expire int64 }
 
+// Refusal says how a list host turned this device away. The app reads the same
+// two flags (LocationsDatasource.subscriptionProfile).
+type Refusal string
+
+const (
+	RefusalNone Refusal = ""
+	// RefusalLimit: x-hwid-max-devices-reached. The link is in use on all the
+	// devices its provider allows, or this device was removed from it.
+	RefusalLimit Refusal = "limit"
+	// RefusalNoDevice: x-hwid-not-supported. The host got no device id it can
+	// read.
+	RefusalNoDevice Refusal = "no-device"
+)
+
 type Headers struct {
 	Title               string
 	UpdateIntervalHours int
@@ -119,14 +133,24 @@ type Headers struct {
 	SupportURL          string
 	WebPageURL          string
 	Announce            string
+	Refusal             Refusal `json:",omitempty"`
 }
 
 func ParseHeaders(h http.Header) Headers {
 	out := Headers{UpdateIntervalHours: 24}
-	out.Title = maybeBase64(h.Get("Profile-Title"))
+	// A title goes to a terminal beside every line of a list: one line, at most
+	// titleMax characters, with nothing in it that moves the cursor or turns the
+	// text around.
+	out.Title = oneLine(maybeBase64(h.Get("Profile-Title")), titleMax)
 	out.Announce = maybeBase64(h.Get("Announce"))
 	out.SupportURL = strings.TrimSpace(h.Get("Support-Url"))
 	out.WebPageURL = strings.TrimSpace(h.Get("Profile-Web-Page-Url"))
+	switch {
+	case flagTrue(h, "X-Hwid-Max-Devices-Reached"):
+		out.Refusal = RefusalLimit
+	case flagTrue(h, "X-Hwid-Not-Supported"):
+		out.Refusal = RefusalNoDevice
+	}
 	if n, err := strconv.Atoi(strings.TrimSpace(h.Get("Profile-Update-Interval"))); err == nil && n > 0 {
 		out.UpdateIntervalHours = n
 	}
@@ -154,14 +178,33 @@ func ParseHeaders(h http.Header) Headers {
 	return out
 }
 
+// flagTrue reads a header the platform sets to true, as the app does: any case.
+func flagTrue(h http.Header, name string) bool {
+	return strings.EqualFold(strings.TrimSpace(h.Get(name)), "true")
+}
+
+// maybeBase64 is a header's text, plain or behind the base64: prefix (in any
+// case, as the app reads it) that providers put before anything that is not
+// ASCII. A payload that does not decode to UTF-8 is left as it came, prefix and
+// all.
 func maybeBase64(v string) string {
 	v = strings.TrimSpace(v)
-	if rest, ok := strings.CutPrefix(v, "base64:"); ok {
-		if d, ok := tryBase64(rest); ok {
+	if rest, ok := cutBase64Prefix(v); ok {
+		if d, ok := tryBase64(strings.TrimSpace(rest)); ok {
 			return strings.TrimSpace(d)
 		}
 	}
 	return v
+}
+
+// cutBase64Prefix is v without its base64: prefix, and whether it had one, in
+// any case.
+func cutBase64Prefix(v string) (string, bool) {
+	const prefix = "base64:"
+	if len(v) >= len(prefix) && strings.EqualFold(v[:len(prefix)], prefix) {
+		return v[len(prefix):], true
+	}
+	return v, false
 }
 
 // Entries parses every line; ids are stable across refreshes by (list, label),

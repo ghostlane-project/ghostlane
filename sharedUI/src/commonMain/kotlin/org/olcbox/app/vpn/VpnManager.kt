@@ -1,8 +1,10 @@
 package org.olcbox.app.vpn
 
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 
@@ -33,6 +35,13 @@ interface VpnManager {
      * opening the log. Empty where a platform has nothing to say.
      */
     val notices: SharedFlow<String> get() = MutableSharedFlow()
+
+    /**
+     * Why the tunnel holds with nothing behind it, while it does (its status
+     * is then [VpnStatus.Reconnecting]), or null. Only Android's service holds
+     * so; elsewhere a start with nothing to connect ends, and this stays null.
+     */
+    val hold: StateFlow<TunnelHold?> get() = NOT_HOLDING
 
     /**
      * When the current session came up, in epoch milliseconds, or null when
@@ -111,3 +120,6 @@ interface VpnManager {
      */
     suspend fun diagnosticsLog(): String = ""
 }
+
+/** [VpnManager.hold] of a platform that never holds. */
+private val NOT_HOLDING: StateFlow<TunnelHold?> = MutableStateFlow<TunnelHold?>(null).asStateFlow()

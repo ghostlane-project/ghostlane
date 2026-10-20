@@ -5,6 +5,7 @@ import org.olcbox.app.net.toRules
 import org.olcbox.app.data.model.RoutingSettings
 import multiplatform_app.sharedui.generated.resources.Res
 import multiplatform_app.sharedui.generated.resources.blocked_no_location
+import multiplatform_app.sharedui.generated.resources.blocked_no_server_picked
 import multiplatform_app.sharedui.generated.resources.notification_connecting
 import multiplatform_app.sharedui.generated.resources.notification_connection_failed
 import multiplatform_app.sharedui.generated.resources.notification_holding
@@ -109,6 +110,7 @@ import org.olcbox.app.vpn.UpstreamCandidate
 import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
@@ -585,20 +587,24 @@ class OlcboxVpnService : VpnService() {
                     val active = stored.locations.firstOrNull { it.storageId == stored.activeLocationId }
                     val location = active?.location?.normalized()
                     if (active == null || location == null || !location.isComplete()) {
+                        // Servers there and none picked (a refusal took the
+                        // selected one) is not "no location": the screen and the
+                        // notification ask for a pick.
+                        val missing = TunnelHold.of(stored)
                         if (behindTunnel) {
                             // Inside a session a missing location is a reason to
                             // wait, not to let traffic out: the interface stays and
                             // the notification says what is missing. Nothing is
                             // retried; picking a location starts it again.
-                            addLog("No active location; keeping the tunnel")
+                            addLog(if (missing == TunnelHold.NonePicked) "No server picked; keeping the tunnel" else "No active location; keeping the tunnel")
                             stopMobileAndWait()
                             stopBridgeForHold()
-                            setStatus(VpnStatus.Reconnecting)
-                            updateNotification("Add a location first")
+                            setStatus(VpnStatus.Reconnecting, hold = missing)
+                            updateNotification(missing.notificationText)
                             return@withLock
                         }
                         setStatus(VpnStatus.Error("No active location"))
-                        updateNotification("Add a location first")
+                        updateNotification(missing.notificationText)
                         stopTransportProcesses(closeTun = true, waitForSocksPort = false)
                         return@withLock
                     }
@@ -1379,7 +1385,7 @@ class OlcboxVpnService : VpnService() {
         return try {
             installMobileCallbacks()
             val targetSocksPort = socksListenPort
-            val deviceId = deviceIdentityProvider.hwid()
+            val deviceId = deviceIdentityProvider.hwid().orEmpty()
             resetRtcHealthState()
 
             waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
@@ -2541,7 +2547,8 @@ class OlcboxVpnService : VpnService() {
         )
     }
 
-    private fun setStatus(status: VpnStatus) {
+    /** [hold]: why a [VpnStatus.Reconnecting] holds with nothing behind it, see OlcboxVpnState.setStatus. */
+    private fun setStatus(status: VpnStatus, hold: TunnelHold? = null) {
         // The first verified connection is where a tun session begins: from
         // here its interface is held (TunnelSession.holdsInterface).
         if (status is VpnStatus.Connected && connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) {
@@ -2565,7 +2572,7 @@ class OlcboxVpnService : VpnService() {
             OlcboxVpnState.channelProbe?.close()
             OlcboxVpnState.channelProbe = null
         }
-        OlcboxVpnState.setStatus(status)
+        OlcboxVpnState.setStatus(status, hold)
         publishSystemVpnMode(status)
     }
 
@@ -2855,6 +2862,7 @@ private val NOTIFICATION_TEXTS: Map<String, StringResource> = mapOf(
     "VPN tunnel error" to Res.string.notification_tunnel_error,
     "Split tunneling error" to Res.string.notification_split_error,
     "Add a location first" to Res.string.blocked_no_location,
+    "Pick a server" to Res.string.blocked_no_server_picked,
     "Ghostlane Proxy" to Res.string.notification_title_proxy,
     "Stop" to Res.string.notification_stop
 )

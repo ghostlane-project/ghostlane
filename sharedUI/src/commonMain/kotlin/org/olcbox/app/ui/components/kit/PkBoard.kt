@@ -5,6 +5,7 @@ import multiplatform_app.sharedui.generated.resources.action_connect_caps
 import multiplatform_app.sharedui.generated.resources.action_connect_via_caps
 import multiplatform_app.sharedui.generated.resources.action_disconnect_caps
 import multiplatform_app.sharedui.generated.resources.action_leave_caps
+import multiplatform_app.sharedui.generated.resources.action_pick_server_caps
 import multiplatform_app.sharedui.generated.resources.action_room_full_caps
 import multiplatform_app.sharedui.generated.resources.action_take_seat_caps
 import multiplatform_app.sharedui.generated.resources.action_take_seat_in_caps
@@ -929,6 +930,7 @@ fun boardWords(): BoardWords = BoardWords(
     seatsFull = stringResource(Res.string.seats_full),
     seatsFree = stringResource(Res.string.seats_free),
     addServerList = stringResource(Res.string.onboarding_add_list_caps),
+    pickServer = stringResource(Res.string.action_pick_server_caps),
     cancel = stringResource(Res.string.action_cancel_caps),
     leave = stringResource(Res.string.action_leave_caps),
     disconnect = stringResource(Res.string.action_disconnect_caps),

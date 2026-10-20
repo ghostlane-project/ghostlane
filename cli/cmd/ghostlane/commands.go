@@ -72,7 +72,8 @@ Examples:
 Shows every line of every subscription: its index (for 'connect <index>'),
 country, kind (olcrtc, vless, hysteria2), carrier and label. A line this
 version cannot connect (VLESS over grpc/ws, trojan, shadowsocks, vmess) is
-listed with a note saying why.
+listed with a note saying why. A list whose provider turned this device away
+has no lines, and the reason is printed under the table.
 
 Example:
   ghostlane list
@@ -107,7 +108,10 @@ server never gets the tun.
 
 The selection is remembered: the service reconnects it after a reboot.
 A line that does not answer within a minute, or three failed liveness probes
-in a row, moves the connection to the next line of the selection.
+in a row, moves the connection to the next line of the selection. A line
+chosen by its label or index stays that line, in its own list: while that
+list's provider turns this device away, the connection waits ('status' says
+why) and never moves to another list's line.
 
 Examples:
   ghostlane connect DE --tun
@@ -130,6 +134,7 @@ again) and clears the stored selection, so nothing reconnects at boot.
 
 Re-fetches every subscription now. A refresh never disconnects by itself;
 if the connected room or key was rotated, the daemon reconnects to the new one.
+A list whose provider turned this device away is named with the reason.
 `,
 	"remove": `ghostlane remove <subscription>
 
@@ -299,7 +304,7 @@ func client(cmd string, args []string, stdout, stderr io.Writer) int {
 	case "status":
 		printStatus(stdout, resp.Status)
 	case "list":
-		printList(stdout, resp.Entries)
+		printList(stdout, resp.Entries, resp.Message)
 	default:
 		if resp.Message != "" {
 			fmt.Fprintln(stdout, resp.Message)
@@ -365,14 +370,19 @@ func printStatus(w io.Writer, st *ipc.Status) {
 	}
 }
 
-func printList(w io.Writer, entries []ipc.EntryView) {
+// printList prints the lines; note is what the daemon says of the lists, such
+// as why one has none.
+func printList(w io.Writer, entries []ipc.EntryView, note string) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "#\tCOUNTRY\tKIND\tCARRIER\tLABEL\tNOTE")
 	for _, e := range entries {
 		fmt.Fprintf(tw, " %d \t%s\t%s\t%s\t%s\t%s\n", e.Index, e.Country, e.Kind, e.Carrier, e.Label, e.Problem)
 	}
 	_ = tw.Flush()
-	if len(entries) == 0 {
+	if len(entries) == 0 && note == "" {
 		fmt.Fprintln(w, "(no lines; ghostlane add <url>)")
+	}
+	if note != "" {
+		fmt.Fprintln(w, note)
 	}
 }

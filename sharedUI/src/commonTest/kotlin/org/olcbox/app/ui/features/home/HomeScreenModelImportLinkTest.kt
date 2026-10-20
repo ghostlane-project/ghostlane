@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -22,19 +23,29 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.headersOf
 import org.olcbox.app.data.datasource.LocationsDataSource
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RoutingSettings
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.net.ImportLink
+import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.VpnManager
 import org.olcbox.app.vpn.VpnStatus
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.assertNull
 
@@ -240,6 +251,444 @@ class HomeScreenModelImportLinkTest {
         assertEquals("error: Not a Ghostlane import link", awaitForReal(outcome))
         assertTrue(repository.getAllLocations().isEmpty())
     }
+
+    // ── a list's host refusing this device ────────────────────────────────
+
+    private val ours = "https://example.com/ours"
+    private val theirs = "https://partner.example.com/sub"
+    private val roomKey = "c".repeat(64)
+
+    /** A room of [list], refreshed a moment ago: the due pass the model runs at its start leaves it be. */
+    private fun room(id: String, list: String) = LocationEntry.from(
+        storageId = id,
+        location = LocationConfig(
+            name = id,
+            id = "room-$id",
+            key = roomKey,
+            bypassProvider = LocationConfig.PROVIDER_TELEMOST,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ),
+        subscriptionUrl = list,
+        metadata = LocationMetadata(subscription = SubscriptionMetadata(lastRefreshAtEpochMs = nowMillis()))
+    )
+
+    /** Our list serves its room; the partner's host refuses this device, as the server words it. */
+    private fun answering(store: LocationsDataSource) = LocationsRepositoryImpl(
+        dataSource = store,
+        httpClient = HttpClient(MockEngine { request ->
+            if (request.url.host == "partner.example.com") {
+                respond(
+                    content = "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?type=tcp&security=none#No%20room",
+                    headers = headersOf(
+                        "x-hwid-max-devices-reached" to listOf("true"),
+                        "announce" to listOf("No room for this device")
+                    )
+                )
+            } else {
+                respond("olcrtc://telemost?vp8channel@room-ours#$roomKey${'$'}ours")
+            }
+        })
+    )
+
+    /** The tunnel comes up, the model asks for every list through it, and the one write that makes is waited for. */
+    private suspend fun connectAndAwaitTheRefresh(vm: HomeScreenViewModel, vpn: IdleVpnManager, repo: LocationsRepositoryImpl) {
+        withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+        val before = repo.changes.value
+        vpn.status.value = VpnStatus.Connected
+        // The pass runs on a real thread, so its write is waited for in real time.
+        withContext(Dispatchers.Default) { withTimeout(10_000) { repo.changes.first { it > before } } }
+    }
+
+    // A list refused while the tunnel is up, asked through it as the session
+    // begins, loses its servers there and then, and nothing else moves: the
+    // session runs on, on the server chosen in another list, which stays chosen,
+    // and nothing is started or stopped for it.
+    @Test fun aRefusalKeepsTheRunningTunnel() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
+            assertEquals(listOf("ours"), store.stored!!.locations.map { it.storageId })
+            assertEquals("ours", repo.getActiveLocationId())
+            assertEquals(0, vpn.starts)
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The list refused is the one the session runs on, beside another. Its
+    // servers go, that one among them, and nothing is selected in its place:
+    // the other list's server, which the store would otherwise have chosen,
+    // is one the person never chose, and the platform's next start of the
+    // tunnel would have carried the session onto it. Nothing is started or
+    // stopped now, and the screen names no server as the one in use.
+    @Test fun aRefusalOfTheListInUseCutsNothingAndChoosesNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation?.storageId == "theirs" } }
+            }
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            assertNull(repo.getActiveLocationId())
+            assertEquals(listOf("ours"), store.stored!!.locations.map { it.storageId })
+            assertEquals("room-ours", store.stored!!.locations.single().location.id)
+            assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
+            assertEquals(0, vpn.starts)
+            assertEquals(0, vpn.stops)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    /** A refresh of one list, as a settings screen makes it: the report, then the one rule for a restart. */
+    private suspend fun refreshAsTheSettingsScreensDo(vm: HomeScreenViewModel, url: String): org.olcbox.app.data.repository.SubscriptionRefreshReport {
+        val done = CompletableDeferred<org.olcbox.app.data.repository.SubscriptionRefreshReport>()
+        vm.refreshSubscription(url) { report ->
+            vm.restartVpnAfterRefresh(report)
+            done.complete(report)
+        }
+        return withContext(Dispatchers.Default) { withTimeout(10_000) { done.await() } }
+    }
+
+    // The selection a refusal withdrew stays withdrawn through later refreshes,
+    // and a settings screen restarts the tunnel after every refresh: with
+    // nothing selected that start would end the session the host still
+    // carries, at the first refresh of any list after the refusal.
+    @Test fun aRefreshWhileNothingIsSelectedStartsNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
+
+            val report = refreshAsTheSettingsScreensDo(vm, ours)
+
+            assertEquals(1, report.updatedCount)
+            assertNull(repo.getActiveLocationId())
+            assertEquals(0, vpn.starts, "a refresh started a tunnel with nothing selected")
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A refresh of the list the selected server is in starts the tunnel again,
+    // as a settings screen always has.
+    @Test fun aRefreshOfTheSelectedListStartsTheTunnelAgainAsBefore() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            val report = refreshAsTheSettingsScreensDo(vm, ours)
+
+            assertEquals(1, report.updatedCount)
+            assertEquals("ours", repo.getActiveLocationId())
+            // The start comes right after the refresh hands its report on, not
+            // inside that call: it is waited for.
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+            assertEquals(1, vpn.starts)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A setting the tunnel is built from (here the routing) starts a running
+    // tunnel again on the selected server. With nothing selected, as a refusal
+    // of the selected server's list leaves it, there is nothing to start it
+    // again on: a start with no server would end the session on iOS and the
+    // desktop for a setting the person changed. Nothing is started, nothing is
+    // stopped.
+    @Test fun aSettingChangedWhileNothingIsSelectedStartsNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            assertNull(repo.getActiveLocationId())
+
+            vm.updateRoutingSettings(RoutingSettings(killSwitch = true))
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { repo.changes.first { store.stored?.routing?.killSwitch == true } }
+            }
+
+            assertEquals(0, vpn.starts, "a setting changed with nothing selected started a tunnel")
+            assertEquals(0, vpn.stops)
+            assertNull(repo.getActiveLocationId())
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The same change with a server selected starts the tunnel again on it, as
+    // it always has.
+    @Test fun aSettingChangedWithAServerSelectedStartsTheTunnelAgain() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            assertEquals("ours", repo.getActiveLocationId())
+
+            vm.updateRoutingSettings(RoutingSettings(killSwitch = true))
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+
+            assertEquals(1, vpn.starts)
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The store's only list refused while its server was selected: no server
+    // is left, so none is selected. Served again, its first line is selected,
+    // as for a list added to an empty store, and a running tunnel is started
+    // again on it. The selection before the refresh (none) differs from the
+    // one after it, which is the one the rule reads.
+    @Test fun aListServedAgainAfterItsRefusalStartsTheTunnelOnItsFirstLine() = runTest {
+        var refusing = true
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("theirs", theirs)))
+        )
+        val repo = LocationsRepositoryImpl(
+            dataSource = store,
+            httpClient = HttpClient(MockEngine {
+                if (refusing) {
+                    respond(
+                        content = "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?type=tcp&security=none#No%20room",
+                        headers = headersOf(
+                            "x-hwid-max-devices-reached" to listOf("true"),
+                            "announce" to listOf("No room for this device")
+                        )
+                    )
+                } else {
+                    respond("olcrtc://telemost?vp8channel@room-back#$roomKey${'$'}back")
+                }
+            })
+        )
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
+            assertTrue(store.stored!!.locations.isEmpty())
+            assertEquals(0, vpn.starts)
+
+            refusing = false
+            refreshAsTheSettingsScreensDo(vm, theirs)
+
+            assertEquals("room-back", repo.getActiveLocation()?.location?.id)
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+            assertEquals(1, vpn.starts, "the tunnel was not started again on the line the refresh selected")
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    /** A server of no list, which no refresh asks for. */
+    private fun mine() = LocationEntry.from(
+        storageId = "mine",
+        location = LocationConfig(name = "DE", kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink)
+    )
+
+    // A restart reads the selection, which can take a moment (the disk). A
+    // Disconnect pressed meanwhile stands: the start that was on its way is
+    // not made, on a tunnel the person has just ended.
+    @Test fun aDisconnectWhileARestartReadsTheSelectionStands() = runTest {
+        val store = GatedLocationsDataSource(LocationBundleV4(activeLocationId = "mine", locations = listOf(mine())))
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = LocationsRepositoryImpl(store),
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            vpn.status.value = VpnStatus.Connecting
+
+            val slowRead = CompletableDeferred<Unit>()
+            store.gate = slowRead
+            vm.restartVpnIfRunning()
+            vpn.status.value = VpnStatus.Disconnected
+            store.gate = null
+            slowRead.complete(Unit)
+            // Whatever the read was going to do, it has done by now.
+            withContext(Dispatchers.Default) { delay(200) }
+
+            assertEquals(0, vpn.starts, "a start undid the Disconnect pressed while the selection was read")
+
+            // The same read with nothing pressed meanwhile starts the tunnel again.
+            vpn.status.value = VpnStatus.Connecting
+            val again = CompletableDeferred<Unit>()
+            store.gate = again
+            vm.restartVpnIfRunning()
+            store.gate = null
+            again.complete(Unit)
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+            assertEquals(1, vpn.starts)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A refresh holds the store's lock while it downloads. A restart reads the
+    // selection past that lock and starts at once, not when the download ends.
+    @Test fun aRestartWaitsForNoRefreshDownload() = runTest {
+        val downloading = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<Unit>()
+        val store = MemoryLocationsDataSource(LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours))))
+        val repo = LocationsRepositoryImpl(
+            dataSource = store,
+            httpClient = HttpClient(MockEngine {
+                downloading.complete(Unit)
+                answer.await()
+                respond("olcrtc://telemost?vp8channel@room-ours#$roomKey${'$'}ours")
+            })
+        )
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
+            // The tunnel comes up: the model asks for every list through it,
+            // and that download hangs with the store's lock held.
+            vpn.status.value = VpnStatus.Connected
+            withContext(Dispatchers.Default) { withTimeout(10_000) { downloading.await() } }
+
+            vm.restartVpnIfRunning()
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+
+            assertEquals(1, vpn.starts)
+            assertFalse(answer.isCompleted, "the download had ended")
+        } finally {
+            answer.complete(Unit)
+            vm.viewModelScope.cancel()
+        }
+    }
+
+    // The board reads the store's selection and, finding none, used to choose
+    // the first location and write it back: a withdrawn selection stays so.
+    @Test fun theBoardLeavesAWithdrawnSelectionWithdrawn() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(
+                locations = listOf(
+                    LocationEntry.from(
+                        storageId = "ours",
+                        location = LocationConfig(name = "DE", kind = org.olcbox.app.net.LocationKind.Vless, rawLink = realityLink),
+                        subscriptionUrl = ours
+                    )
+                ),
+                selectionWithdrawn = true
+            )
+        )
+        val repo = LocationsRepositoryImpl(store)
+        val client = HttpClient(MockEngine { error("Address locations must not query room occupancy") })
+        val vm = org.olcbox.app.ui.features.locations.LocationViewModel(repo, org.olcbox.app.net.OlcrtcStatusClient(client))
+        try {
+            val loaded = CompletableDeferred<Unit>()
+            vm.loadLocations { loaded.complete(Unit) }
+            withContext(Dispatchers.Default) { withTimeout(10_000) { loaded.await() } }
+
+            assertEquals(listOf("ours"), vm.locations.map { it.storageId })
+            assertNull(vm.selectedLocationId)
+            assertNull(repo.getActiveLocationId())
+        } finally {
+            vm.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            client.close()
+        }
+    }
+
+    // The person who pasted the link hears why there is nothing to connect to,
+    // in the provider's words, and the list stands on the board with its reason.
+    @Test fun anImportItsHostRefusesSaysWhyAndKeepsTheList() = runTest {
+        val store = MemoryLocationsDataSource()
+        val repo = answering(store)
+        val outcome = CompletableDeferred<String>()
+        HomeScreenViewModel(
+            vpnManager = IdleVpnManager(),
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }.onImportFullConfig(
+            rawText = theirs,
+            onComplete = { outcome.complete("ok") },
+            onError = { outcome.complete("error: $it") }
+        )
+        assertEquals("error: No room for this device", awaitForReal(outcome))
+        assertTrue(repo.getAllLocations().isEmpty())
+        assertEquals(listOf(theirs), store.stored!!.refusedLists.map { it.subscriptionUrl })
+    }
+}
+
+/** A store kept in memory whose reads wait for [gate] while it is set: a disk that takes its time. */
+private class GatedLocationsDataSource(var stored: LocationBundleV4? = null) : LocationsDataSource {
+    var gate: CompletableDeferred<Unit>? = null
+    override suspend fun loadLocationBundle(): LocationBundleV4? {
+        gate?.await()
+        return stored
+    }
+    override suspend fun saveLocationBundle(bundle: LocationBundleV4) { stored = bundle }
+    override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
+    override suspend fun loadLegacyActiveLocationId(): String? = null
 }
 
 private class MemoryLocationsDataSource(var stored: LocationBundleV4? = null) : LocationsDataSource {

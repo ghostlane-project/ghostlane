@@ -2,22 +2,35 @@ package org.olcbox.app.data.datasource
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.HttpResponseData
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.encodeURLParameter
 import io.ktor.http.headersOf
 import kotlinx.coroutines.test.runTest
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.crypt.CryptCodec
+import org.olcbox.app.data.device.DeviceDescription
 import org.olcbox.app.data.identity.DeviceIdentityProvider
+import org.olcbox.app.data.model.DeviceRefusal
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RefusedList
+import org.olcbox.app.data.model.RoutingSettings
+import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.data.share.ConfigShareService
 import io.ktor.http.HttpStatusCode
 import org.olcbox.app.net.PartnerLinkResolver
 import org.olcbox.app.net.PartnerLinkResult
+import org.olcbox.app.data.repository.DEVICE_LIMIT_REACHED_MESSAGE
+import org.olcbox.app.data.repository.DEVICE_NOT_SUPPORTED_MESSAGE
 import org.olcbox.app.data.repository.SubscriptionRefreshError
+import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import kotlin.test.assertFalse
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -687,13 +700,133 @@ class LocationsRepositoryImplTest {
         assertEquals("https://example.test/sub.txt", imported.locations.single().subscriptionUrl)
     }
 
+    // A provider that holds a list to a number of devices counts them by the
+    // id and shows the three device headers beside each one, as Happ sends them.
+    @Test
+    fun subscriptionIdentityRequestNamesTheDevice() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+
+        assertTrue(
+            LocationsRepositoryImpl(
+                dataSource = FakeLocationsDataSource(),
+                httpClient = HttpClient(engine),
+                deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+                describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
+            ).importText("https://example.test/sub.txt")
+        )
+
+        val headers = assertNotNull(sent)
+        assertEquals("hwid-test", headers["x-hwid"])
+        assertEquals("Android", headers["x-device-os"])
+        assertEquals("16", headers["x-ver-os"])
+        assertEquals("Pixel 9 Pro", headers["x-device-model"])
+        val names = headers.names()
+        for (name in listOf("x-hwid", "x-device-os", "x-ver-os", "x-device-model")) {
+            assertTrue(name in names, "$name is spelled in lower case on the wire: $names")
+        }
+    }
+
+    // What the platform says may be anything; a header carries what the server
+    // keeps of it, and a value with nothing printable in it is not sent at all.
+    @Test
+    fun subscriptionDeviceHeadersAreCutAndAnEmptyOneIsNotSent() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+        val model = "iPhone17,1 ✓" + "x".repeat(70)
+
+        LocationsRepositoryImpl(
+            dataSource = FakeLocationsDataSource(),
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            describeDevice = { DeviceDescription(os = "iOS", osVersion = " \u0007 é ", model = model) }
+        ).importText("https://example.test/sub.txt")
+
+        val headers = assertNotNull(sent)
+        assertEquals("iOS", headers["x-device-os"])
+        assertNull(headers["x-ver-os"], "nothing printable left: no header, not an empty one")
+        assertEquals("iPhone17,1 " + "x".repeat(53), headers["x-device-model"])
+    }
+
+    // Without a stand-in the request names the machine the test runs on, within
+    // the same bounds: the platform's own description is what production sends.
+    @Test
+    fun subscriptionIdentityRequestNamesThePlatformItRunsOn() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+
+        LocationsRepositoryImpl(
+            dataSource = FakeLocationsDataSource(),
+            httpClient = HttpClient(engine),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+        ).importText("https://example.test/sub.txt")
+
+        val headers = assertNotNull(sent)
+        assertTrue(
+            headers["x-device-os"] in setOf("Android", "iOS", "macOS", "Windows", "Linux"),
+            "x-device-os: ${headers["x-device-os"]}"
+        )
+        for (name in listOf("x-ver-os", "x-device-model")) {
+            val value = assertNotNull(headers[name], "$name is sent")
+            assertTrue(value.length in 1..64 && value.all { it in ' '..'~' }, "$name: $value")
+        }
+    }
+
+    // The stored id cannot be read this time (the file is there, the read
+    // fails). The list is asked without an id, never with a new one, which the
+    // provider would count as another device for good; the device headers go
+    // as always, and nothing is written in place of the id.
+    @Test
+    fun aDeviceIdThatCannotBeReadIsNotSentAndNotReplaced() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+        var idWrites = 0
+        val source = object : LocationsDataSource {
+            var stored: LocationBundleV4? = null
+            override suspend fun loadLocationBundle(): LocationBundleV4? = stored
+            override suspend fun saveLocationBundle(bundle: LocationBundleV4) { stored = bundle }
+            override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
+            override suspend fun loadLegacyActiveLocationId(): String? = null
+            override suspend fun loadDeviceIdentity(): String? = throw IllegalStateException("device_identity: read failed")
+            override suspend fun saveDeviceIdentity(value: String) { idWrites++ }
+        }
+        val repository = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
+        )
+
+        assertTrue(repository.importText("https://example.test/sub.txt"))
+
+        val headers = assertNotNull(sent)
+        assertNull(headers["x-hwid"], "an id went out though the stored one could not be read")
+        assertEquals(CurrentAppInfo.userAgent, headers[HttpHeaders.UserAgent])
+        assertEquals("Android", headers["x-device-os"])
+        assertEquals(0, idWrites, "a new id was stored in place of the one that could not be read")
+        assertEquals("", repository.getDeviceIdentity(), "the engine is handed none, not a new one")
+    }
+
     @Test
     fun subscriptionImportFallsBackWhenIdentityResponseIsNotConfig() = runTest {
         val userAgents = mutableListOf<String?>()
         val hwids = mutableListOf<String?>()
+        val sent = mutableListOf<Headers>()
         val engine = MockEngine { request ->
             userAgents += request.headers[HttpHeaders.UserAgent]
             hwids += request.headers["x-hwid"]
+            sent += request.headers
             if (userAgents.size == 1) {
                 respond("<html>blocked</html>")
             } else {
@@ -708,7 +841,8 @@ class LocationsRepositoryImplTest {
         val imported = LocationsRepositoryImpl(
             dataSource = source,
             httpClient = HttpClient(engine),
-            deviceIdentityProvider = StaticIdentityProvider("hwid-test")
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
         ).importText("http://example.test/sub.txt")
 
         val bundle = source.stored
@@ -717,8 +851,13 @@ class LocationsRepositoryImplTest {
         assertEquals(2, userAgents.size)
         assertEquals(CurrentAppInfo.userAgent, userAgents[0])
         assertEquals("hwid-test", hwids[0])
+        assertEquals("Android", sent[0]["x-device-os"])
         assertTrue(userAgents[1]?.startsWith("Mozilla/5.0") == true)
         assertNull(hwids[1])
+        // The retry stands in for a browser, and a browser names no device.
+        for (name in listOf("x-hwid", "x-device-os", "x-ver-os", "x-device-model")) {
+            assertNull(sent[1][name], "the Compatibility request carries no $name")
+        }
         assertEquals("room", bundle.locations.single().location.id)
         assertEquals(12, bundle.locations.single().metadata?.subscription?.updateIntervalHours)
         assertEquals("http://example.test/sub.txt", bundle.locations.single().subscriptionUrl)
@@ -1047,9 +1186,14 @@ class LocationsRepositoryImplTest {
         val note = "Серверы переехали, обновите подписку"
         val encoded = "base64:" + kotlin.io.encoding.Base64.Default.encode(note.encodeToByteArray())
         var announce: String? = encoded
+        var refused = false
         val repo = repoRespondingWith(source, MockEngine {
             val value = announce
-            if (value == null) respond(listBody) else respond(listBody, headers = headersOf("announce", value))
+            when {
+                refused -> refusal(announce = value)
+                value == null -> respond(listBody)
+                else -> respond(listBody, headers = headersOf("announce", value))
+            }
         })
 
         repo.refreshSubscription(url)
@@ -1066,6 +1210,21 @@ class LocationsRepositoryImplTest {
         announce = "0"
         repo.refreshSubscription(url)
         assertNull(source.subscription()?.announce)
+
+        // A refusal says why in the same header, held to the same length: a
+        // sentence too long is shown cut, and one that is not the base64 it says
+        // it is leaves ours in its place. Neither is a reason to fail.
+        refused = true
+        announce = "y".repeat(300)
+        val long = repo.refreshSubscription(url)
+        assertEquals("y".repeat(200), source.stored!!.refusedLists.single().subscription?.announce)
+        assertEquals(SubscriptionRefreshError.DeviceRefused("y".repeat(200)), long.failures.single().error)
+
+        announce = "base64:%%% not base64 %%%"
+        val garbled = repo.refreshSubscription(url)
+        assertNull(source.stored!!.refusedLists.single().subscription?.announce)
+        assertEquals(SubscriptionRefreshError.DeviceRefused(""), garbled.failures.single().error)
+        assertEquals(DEVICE_LIMIT_REACHED_MESSAGE, garbled.singleMessage())
     }
 
     @Test
@@ -1175,6 +1334,498 @@ class LocationsRepositoryImplTest {
         repo.refreshSubscription(url)
         assertEquals(url, source.listUrl())
         assertNull(source.subscription()?.fallbackUrl)
+    }
+
+    // ---- a device refusal ----------------------------------------------------
+    // A list's host that holds its list to a number of devices answers one past
+    // it, or one it removed, and a provider that lets in only an app naming its
+    // device answers one that names none: a 200 that says so in its headers,
+    // with the reason in `announce` and one line in place of the list, a server
+    // named with that reason, for the apps that read no header (spec §7.4 of the
+    // device limit). The answer is final: asked again without the id, a soft
+    // provider would serve the list uncounted and a strict one refuse it again.
+
+    private val refusalSentence =
+        "Your provider: this link is already in use on its 1 device. Ask your provider to free one."
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private fun base64Header(text: String) =
+        "base64:" + kotlin.io.encoding.Base64.Default.encode(text.encodeToByteArray())
+
+    /** The one line the server writes in place of the list: a server at 127.0.0.1:1 named with the reason. */
+    private fun refusalLine(sentence: String = refusalSentence) =
+        "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?type=tcp&security=none#" +
+            sentence.encodeURLParameter()
+
+    /** The refusal as the server sends it, with the headers any answer to a subscriber carries. */
+    private fun MockRequestHandleScope.refusal(
+        flag: String = "x-hwid-max-devices-reached",
+        announce: String? = base64Header(refusalSentence),
+        body: String = refusalLine()
+    ): HttpResponseData = respond(
+        content = body,
+        headers = headersOf(
+            *listOfNotNull(
+                "x-hwid-active" to listOf("true"),
+                flag to listOf("true"),
+                "x-hwid-limit" to listOf("true"),
+                announce?.let { "announce" to listOf(it) },
+                "profile-title" to listOf(base64Header("Partner VPN")),
+                "support-url" to listOf("https://t.me/partner_support"),
+                "subscription-userinfo" to listOf("upload=0; download=1073741824; total=10737418240; expire=0"),
+                "profile-update-interval" to listOf("12")
+            ).toTypedArray()
+        )
+    )
+
+    @Test
+    fun aDeviceRefusalMakesNoSecondRequest() = runTest {
+        val url = "https://example.test/alpha"
+        val spare = "https://spare.example.test/alpha"
+        // A list served before, with a spare address arranged and a note of the
+        // provider's on it: the refusal is the answer, so neither the spare nor
+        // a request without the id is asked, and the old note is not the reason.
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "alpha",
+                locations = listOf(
+                    LocationEntry.from(
+                        "alpha",
+                        LocationConfig("Alpha", "room-alpha", "a".repeat(64), LocationConfig.PROVIDER_WB_STREAM),
+                        subscriptionUrl = url,
+                        metadata = LocationMetadata(
+                            subscription = SubscriptionMetadata(fallbackUrl = spare, announce = "Servers moved")
+                        )
+                    )
+                )
+            )
+        )
+        val asked = mutableListOf<Headers>()
+        val report = repoRespondingWith(source, MockEngine { request ->
+            asked += request.headers
+            refusal()
+        }).refreshSubscription(url)
+
+        assertEquals(1, asked.size, "asked again after the host refused this device")
+        assertEquals("hwid-test", asked.single()["x-hwid"])
+        assertEquals(0, report.updatedCount)
+        assertEquals(SubscriptionRefreshError.DeviceRefused(refusalSentence), report.failures.single().error)
+        assertEquals(refusalSentence, report.singleMessage())
+        val stored = source.stored!!
+        assertEquals(emptyList(), stored.locations, "a refused list keeps no server")
+        // What the list says about itself stays, so the board can say whose
+        // list it is, how to reach its provider, and why it is empty.
+        val refused = stored.refusedLists.single()
+        assertEquals(url, refused.subscriptionUrl)
+        assertEquals(refusalSentence, refused.subscription?.announce)
+        assertEquals("Partner VPN", refused.subscription?.name)
+        assertEquals("https://t.me/partner_support", refused.subscription?.supportUrl)
+        assertEquals(spare, refused.subscription?.fallbackUrl)
+        assertEquals(12, refused.subscription?.updateIntervalHours)
+    }
+
+    @Test
+    fun aRefusalsRemarkLineIsNotAServer() = runTest {
+        val url = "https://example.test/partner"
+        // The line is a server to any reader of lines: without the flags, it is
+        // imported as one, named with the reason.
+        val reader = FakeLocationsDataSource()
+        assertTrue(repoRespondingWith(reader, MockEngine { respond(refusalLine()) }).importText(url))
+        assertEquals(listOf(refusalSentence), reader.stored!!.locations.map { it.name })
+
+        // With them it is the answer's way of saying no, and none of it is kept.
+        val source = FakeLocationsDataSource()
+        var requests = 0
+        val outcome = repoRespondingWith(source, MockEngine { requests++; refusal() }).importReport(url)
+
+        assertEquals(1, requests)
+        assertFalse(outcome.imported)
+        assertEquals(SubscriptionRefreshError.DeviceRefused(refusalSentence), outcome.refused)
+        assertEquals(emptyList(), source.stored!!.locations)
+        assertNull(source.stored!!.activeLocationId)
+        assertEquals(listOf(url), source.stored!!.refusedLists.map { it.subscriptionUrl })
+    }
+
+    @Test
+    fun anUnsupportedDeviceAnswerIsARefusalToo() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subscribedSource(url)
+        val sentence = "Your provider: this app does not identify the device, or that is switched off in its " +
+            "settings. Use Happ, v2RayTun or Ghostlane with the device id on."
+        var announce: String? = base64Header(sentence)
+        var requests = 0
+        val repo = repoRespondingWith(source, MockEngine {
+            requests++
+            refusal(flag = "x-hwid-not-supported", announce = announce, body = refusalLine(sentence))
+        })
+
+        val report = repo.refreshSubscription(url)
+
+        assertEquals(1, requests)
+        assertEquals(
+            SubscriptionRefreshError.DeviceRefused(sentence, DeviceRefusal.NotSupported),
+            report.failures.single().error
+        )
+        assertEquals(emptyList(), source.stored!!.locations)
+        val refused = source.stored!!.refusedLists.single()
+        assertEquals(sentence, refused.subscription?.announce)
+        assertEquals(DeviceRefusal.NotSupported, refused.refusal)
+
+        // Where the provider gives no sentence, ours for this kind: the device's
+        // id went unread, which is not the list's limit.
+        announce = null
+        assertEquals(DEVICE_NOT_SUPPORTED_MESSAGE, repo.refreshSubscription(url).singleMessage())
+    }
+
+    // The kind is kept with the list, so the board can say ours for it later;
+    // and read leniently: a kind a later version wrote reads as the limit, where
+    // a bundle that failed to read would be every list lost.
+    @Test
+    fun aRefusalsKindIsKeptAndAKindFromALaterVersionReadsAsTheLimit() {
+        val bundle = LocationBundleV4(
+            refusedLists = listOf(RefusedList("https://example.test/sub", refusal = DeviceRefusal.NotSupported))
+        )
+        val written = storedJson.encodeToString(LocationBundleV4.serializer(), bundle)
+        assertTrue("\"not_supported\"" in written, written)
+        assertEquals(
+            DeviceRefusal.NotSupported,
+            storedJson.decodeFromString(LocationBundleV4.serializer(), written).refusedLists.single().refusal
+        )
+        val later = written.replace("\"not_supported\"", "\"removed\"")
+        assertEquals(
+            DeviceRefusal.LimitReached,
+            storedJson.decodeFromString(LocationBundleV4.serializer(), later).refusedLists.single().refusal
+        )
+    }
+
+    /** Configured as the platforms' data sources read and write the bundle. */
+    private val storedJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
+    // The repository's half of a refusal that leaves a running tunnel alone (the
+    // tunnel's half: HomeScreenModelImportLinkTest.aRefusalKeepsTheRunningTunnel):
+    // the server chosen in another list stays chosen, and that list is served.
+    @Test
+    fun aRefusalOfOneListLeavesTheServerChosenInAnotherChosen() = runTest {
+        val ours = "https://example.test/ours"
+        val theirs = "https://partner.example.test/sub"
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            when {
+                request.url.host != "partner.example.test" ->
+                    respond("olcrtc://wbstream?vp8channel@room-ours#${"a".repeat(64)}${'$'}Ours")
+                partnerRefuses -> refusal()
+                else -> respond("olcrtc://wbstream?vp8channel@room-theirs#${"b".repeat(64)}${'$'}Theirs")
+            }
+        })
+        assertTrue(repo.importText(ours))
+        assertTrue(repo.importText(theirs))
+        val chosen = repo.getAllLocations().single { it.subscriptionUrl == ours }.storageId
+        repo.setActiveLocationId(chosen)
+
+        partnerRefuses = true
+        val report = repo.refreshSubscriptions()
+
+        assertEquals(1, report.updatedCount)
+        assertEquals(SubscriptionRefreshError.DeviceRefused(refusalSentence), report.failures.single().error)
+        assertFalse(report.refusedSelection)
+        assertEquals(chosen, repo.getActiveLocationId(), "a refusal of another list moved the selection")
+        assertEquals(listOf(ours), repo.getAllLocations().map { it.subscriptionUrl })
+        assertEquals(listOf(theirs), source.stored!!.refusedLists.map { it.subscriptionUrl })
+    }
+
+    private val oursUrl = "https://example.test/ours"
+    private val theirsUrl = "https://partner.example.test/sub"
+
+    /**
+     * Our list and the partner's, a server each, the partner's selected; the
+     * partner's host refuses this device once [partnerRefuses] says so.
+     */
+    private suspend fun theirsSelected(
+        source: FakeLocationsDataSource,
+        partnerRefuses: () -> Boolean
+    ): LocationsRepositoryImpl {
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            when {
+                request.url.host != "partner.example.test" ->
+                    respond("olcrtc://wbstream?vp8channel@room-ours#${"a".repeat(64)}${'$'}Ours")
+                partnerRefuses() -> refusal()
+                else -> respond("olcrtc://wbstream?vp8channel@room-theirs#${"b".repeat(64)}${'$'}Theirs")
+            }
+        })
+        assertTrue(repo.importText(oursUrl))
+        assertTrue(repo.importText(theirsUrl))
+        repo.setActiveLocationId(repo.getAllLocations().single { it.subscriptionUrl == theirsUrl }.storageId)
+        return repo
+    }
+
+    // The selected server was the refused list's own. It goes with the rest,
+    // and nothing is selected in its place: the first remaining server is
+    // another list's, and a platform's next start of a running tunnel would
+    // carry the session onto it unasked. The report says so, and the store
+    // keeps no selection until the person chooses one: read again, and
+    // through a refresh of the other list.
+    @Test
+    fun aRefusalOfTheSelectedServersListLeavesNoSelection() = runTest {
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = theirsSelected(source) { partnerRefuses }
+        val ours = repo.getAllLocations().filter { it.subscriptionUrl == oursUrl }
+
+        partnerRefuses = true
+        val report = repo.refreshSubscription(theirsUrl)
+
+        assertTrue(report.refusedSelection)
+        assertNull(repo.getActiveLocationId(), "the selection went to a server nobody chose")
+        assertNull(repo.getActiveLocation())
+        assertEquals(ours, repo.getAllLocations(), "the other list was touched")
+        assertEquals(listOf(theirsUrl), source.stored!!.refusedLists.map { it.subscriptionUrl })
+        assertTrue(source.stored!!.selectionWithdrawn)
+
+        assertNull(LocationsRepositoryImpl(source).getActiveLocationId(), "read again, a server was chosen")
+        assertEquals(1, repo.refreshSubscription(oursUrl).updatedCount)
+        assertNull(repo.getActiveLocationId(), "a refresh of the other list chose a server")
+
+        // Until the person chooses.
+        repo.setActiveLocationId(ours.single().storageId)
+        assertEquals(ours.single().storageId, repo.getActiveLocationId())
+        assertFalse(source.stored!!.selectionWithdrawn)
+    }
+
+    // The same when the list in use is pasted again and its host refuses it.
+    @Test
+    fun aRefusedPasteOfTheListInUseLeavesNoSelection() = runTest {
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = theirsSelected(source) { partnerRefuses }
+
+        partnerRefuses = true
+        assertNotNull(repo.importReport(theirsUrl).refused)
+
+        assertNull(repo.getActiveLocationId())
+        assertEquals(listOf(oursUrl), repo.getAllLocations().map { it.subscriptionUrl })
+    }
+
+    // With the selection withdrawn, a refresh that brings lines the store has
+    // not seen chooses none of them. A line with no previous entry matched
+    // "the selected entry's new id" when there was no selection at all, and
+    // the last new line of any list was chosen unasked.
+    @Test
+    fun aWithdrawnSelectionSurvivesRefreshesThatBringNewLines() = runTest {
+        var oursBody = "olcrtc://wbstream?vp8channel@room-ours#${"a".repeat(64)}${'$'}Ours"
+        var partnerRefuses = false
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            when {
+                request.url.host != "partner.example.test" -> respond(oursBody)
+                partnerRefuses -> refusal()
+                else -> respond(
+                    "olcrtc://wbstream?vp8channel@room-theirs#${"b".repeat(64)}${'$'}Theirs\n" +
+                        "olcrtc://wbstream?vp8channel@room-theirs-2#${"b".repeat(64)}${'$'}Theirs 2"
+                )
+            }
+        })
+        assertTrue(repo.importText(oursUrl))
+        assertTrue(repo.importText(theirsUrl))
+        repo.setActiveLocationId(repo.getAllLocations().first { it.subscriptionUrl == theirsUrl }.storageId)
+        partnerRefuses = true
+        assertTrue(repo.refreshSubscription(theirsUrl).refusedSelection)
+        assertNull(repo.getActiveLocationId())
+
+        // (a) Our list again, its room moved and a line added: both new to the store.
+        oursBody = "olcrtc://wbstream?vp8channel@room-ours-moved#${"a".repeat(64)}${'$'}Ours\n" +
+            "olcrtc://wbstream?vp8channel@room-ours-2#${"a".repeat(64)}${'$'}Ours 2"
+        assertEquals(1, repo.refreshSubscription(oursUrl).updatedCount)
+        assertEquals(listOf("room-ours-moved", "room-ours-2"), repo.getAllLocations().map { it.location.id })
+        assertNull(repo.getActiveLocationId(), "a new line of the other list was chosen")
+        assertTrue(source.stored!!.selectionWithdrawn)
+
+        // (b) The refused list served again: every line of it is new.
+        partnerRefuses = false
+        assertEquals(1, repo.refreshSubscription(theirsUrl).updatedCount)
+        assertEquals(4, repo.getAllLocations().size)
+        assertEquals(emptyList(), source.stored!!.refusedLists)
+        assertNull(repo.getActiveLocationId(), "a line of the list served again was chosen")
+        assertTrue(source.stored!!.selectionWithdrawn)
+    }
+
+    // The store's only list refused leaves nothing to choose from, and so
+    // nothing withdrawn to keep. Served again, its first line is chosen, as a
+    // list imported into an empty store has it: not the last, which "the
+    // selected entry's new id" matching every new line used to choose, nor
+    // the one chosen before the refusal, whose entry the refusal took away.
+    @Test
+    fun theOnlyListServedAgainAfterARefusalHasItsFirstLineChosen() = runTest {
+        var refuses = false
+        val url = "https://example.test/alpha"
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine {
+            if (refuses) {
+                refusal()
+            } else {
+                respond(
+                    "olcrtc://wbstream?vp8channel@room-1#${"c".repeat(64)}${'$'}First\n" +
+                        "olcrtc://wbstream?vp8channel@room-2#${"c".repeat(64)}${'$'}Second\n" +
+                        "olcrtc://wbstream?vp8channel@room-3#${"c".repeat(64)}${'$'}Third"
+                )
+            }
+        })
+        assertTrue(repo.importText(url))
+        repo.setActiveLocationId(repo.getAllLocations().last().storageId)
+        refuses = true
+        assertTrue(repo.refreshSubscription(url).refusedSelection)
+        assertNull(repo.getActiveLocationId())
+        assertFalse(source.stored!!.selectionWithdrawn, "with no location left, nothing is withdrawn")
+
+        refuses = false
+        assertEquals(1, repo.refreshSubscription(url).updatedCount)
+
+        val lines = repo.getAllLocations()
+        assertEquals(listOf("room-1", "room-2", "room-3"), lines.map { it.location.id })
+        assertEquals(lines.first().storageId, repo.getActiveLocationId())
+    }
+
+    @Test
+    fun aWithdrawnSelectionIsKeptUntilALocationIsChosen() {
+        val entry = subEntry("b1", "https://proofkit.org/sub/bbb")
+        val withdrawn = LocationBundleV4(locations = listOf(entry), selectionWithdrawn = true).normalized()
+        assertNull(withdrawn.activeLocationId)
+        assertTrue(withdrawn.selectionWithdrawn)
+        // Without it a missing selection is the first location, as it always was.
+        assertEquals("b1", LocationBundleV4(locations = listOf(entry)).normalized().activeLocationId)
+        // A choice ends it.
+        val chosen = withdrawn.copy(activeLocationId = "b1").normalized()
+        assertEquals("b1", chosen.activeLocationId)
+        assertFalse(chosen.selectionWithdrawn)
+        // With no location left to choose it means nothing, and goes.
+        assertFalse(LocationBundleV4(selectionWithdrawn = true).normalized().selectionWithdrawn)
+    }
+
+    // A store whose only list was refused holds no location, and an import
+    // into it takes the empty store's way in: the refused list survives it,
+    // with everything else the store keeps beside its locations.
+    @Test
+    fun aRefusedListSurvivesTheImportOfAnotherListIntoAnOtherwiseEmptyStore() = runTest {
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.host == "partner.example.test") refusal() else respond(listBody)
+        })
+        assertNotNull(repo.importReport(theirsUrl).refused)
+        repo.acceptVpnDisclosure(atMillis = 42L)
+        repo.saveRoutingSettings(RoutingSettings(verboseDebugLogs = true))
+        assertEquals(emptyList(), source.stored!!.locations)
+
+        assertTrue(repo.importText("https://example.test/alpha"))
+
+        val stored = source.stored!!
+        assertEquals(listOf("https://example.test/alpha"), stored.locations.map { it.subscriptionUrl })
+        assertEquals(listOf(theirsUrl), stored.refusedLists.map { it.subscriptionUrl })
+        assertEquals(42L, stored.vpnDisclosureAcceptedAt)
+        assertTrue(stored.routing.verboseDebugLogs)
+        assertNotNull(stored.activeLocationId, "the imported list's server is selected, as into any empty store")
+    }
+
+    @Test
+    fun aRefusedListIsAskedAgainWhenDueAndServedOnceTheHostLetsTheDeviceIn() = runTest {
+        var now = 1_000L
+        var refuses = true
+        val url = "https://example.test/alpha"
+        val source = FakeLocationsDataSource()
+        val repo = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(MockEngine { if (refuses) refusal() else respond(listBody) }),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            nowEpochMs = { now }
+        )
+        assertNotNull(repo.importReport(url).refused)
+        // The refusal was the list's last answer, and counts as its last refresh.
+        assertEquals(SubscriptionRefreshReport.EMPTY, repo.refreshDueSubscriptions())
+
+        refuses = false
+        now += 12 * 3_600_000L
+        val report = repo.refreshDueSubscriptions()
+
+        assertEquals(1, report.updatedCount)
+        assertFalse(report.hasFailures)
+        assertEquals(listOf(url), source.stored!!.locations.map { it.subscriptionUrl })
+        assertEquals(emptyList(), source.stored!!.refusedLists)
+        // Served, its servers carry what the list says about itself; the
+        // refusal's reason is not that any more.
+        assertNull(source.stored!!.locations.single().metadata?.subscription?.announce)
+    }
+
+    // The request asked again without the id names no device, and a provider
+    // that lets in only an app naming one says so to it. That says nothing of
+    // this device, and its line is no server either: what the list held stays.
+    @Test
+    fun aRefusalOfTheRequestWithoutTheIdIsNoRefusalOfTheDevice() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subscribedSource(url)
+        val hwids = mutableListOf<String?>()
+        val report = repoRespondingWith(source, MockEngine { request ->
+            hwids += request.headers["x-hwid"]
+            if (request.headers["x-hwid"] != null) throw IllegalStateException("no route to host")
+            refusal(flag = "x-hwid-not-supported")
+        }).refreshSubscription(url)
+
+        assertEquals(listOf("hwid-test", null), hwids)
+        assertEquals(SubscriptionRefreshError.Unreachable, report.failures.single().error)
+        assertEquals(listOf("alpha"), source.stored!!.locations.map { it.storageId })
+        assertEquals(emptyList(), source.stored!!.refusedLists)
+    }
+
+    // Everything else that is not a list is asked again as a browser would ask,
+    // as it always was: a refusal is the one answer that ends the attempt.
+    @Test
+    fun everyOtherFailureIsStillAskedAgainWithoutTheId() = runTest {
+        for (what in listOf("a 404", "a 500", "no answer", "an empty body", "a page")) {
+            val url = "https://example.test/alpha"
+            val hwids = mutableListOf<String?>()
+            repoRespondingWith(subscribedSource(url), MockEngine { request ->
+                hwids += request.headers["x-hwid"]
+                when (what) {
+                    "a 404" -> respond("gone", HttpStatusCode.NotFound)
+                    "a 500" -> respond("boom", HttpStatusCode.InternalServerError)
+                    "no answer" -> throw IllegalStateException("no route to host")
+                    "an empty body" -> respond("   ")
+                    else -> respond("<html>blocked</html>")
+                }
+            }).refreshSubscription(url)
+            assertEquals(listOf("hwid-test", null), hwids, "after $what")
+        }
+    }
+
+    // A list kept with no servers is as secret as one with them: it is shown by
+    // name, never by the address its link was hiding, and shared as that link.
+    @Test
+    fun aRefusedEncryptedListStaysEncrypted() = runTest {
+        val source = FakeLocationsDataSource()
+        val link = "olcrtc://crypt1/$cryptUrlBlob"
+
+        LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(MockEngine { refusal() }),
+            cryptCodec = CryptCodec(CryptCodec.decodeMaster(cryptKeyB64)!!)
+        ).importReport(link)
+
+        val refused = source.stored!!.refusedLists.single()
+        assertEquals(cryptUrl, refused.subscriptionUrl)
+        assertEquals(link, refused.subscriptionOriginLink)
+    }
+
+    @Test
+    fun deleteSubscriptionRemovesAListItsHostRefused() = runTest {
+        val url = "https://example.test/partner"
+        val source = FakeLocationsDataSource()
+        val repo = repoRespondingWith(source, MockEngine { refusal() })
+        assertNotNull(repo.importReport(url).refused)
+
+        assertEquals(0, repo.deleteSubscription(url), "it had no locations to count")
+        assertEquals(emptyList(), source.stored!!.refusedLists)
     }
 
     // ---- deleteSubscription ------------------------------------------------
