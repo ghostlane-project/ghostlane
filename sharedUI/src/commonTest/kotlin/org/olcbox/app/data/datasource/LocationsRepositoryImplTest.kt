@@ -781,6 +781,43 @@ class LocationsRepositoryImplTest {
         }
     }
 
+    // The stored id cannot be read this time (the file is there, the read
+    // fails). The list is asked without an id, never with a new one, which the
+    // provider would count as another device for good; the device headers go
+    // as always, and nothing is written in place of the id.
+    @Test
+    fun aDeviceIdThatCannotBeReadIsNotSentAndNotReplaced() = runTest {
+        var sent: Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond("olcrtc://wbstream?vp8channel@room#${"c".repeat(64)}${'$'}Sub")
+        }
+        var idWrites = 0
+        val source = object : LocationsDataSource {
+            var stored: LocationBundleV4? = null
+            override suspend fun loadLocationBundle(): LocationBundleV4? = stored
+            override suspend fun saveLocationBundle(bundle: LocationBundleV4) { stored = bundle }
+            override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
+            override suspend fun loadLegacyActiveLocationId(): String? = null
+            override suspend fun loadDeviceIdentity(): String? = throw IllegalStateException("device_identity: read failed")
+            override suspend fun saveDeviceIdentity(value: String) { idWrites++ }
+        }
+        val repository = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(engine),
+            describeDevice = { DeviceDescription(os = "Android", osVersion = "16", model = "Pixel 9 Pro") }
+        )
+
+        assertTrue(repository.importText("https://example.test/sub.txt"))
+
+        val headers = assertNotNull(sent)
+        assertNull(headers["x-hwid"], "an id went out though the stored one could not be read")
+        assertEquals(CurrentAppInfo.userAgent, headers[HttpHeaders.UserAgent])
+        assertEquals("Android", headers["x-device-os"])
+        assertEquals(0, idWrites, "a new id was stored in place of the one that could not be read")
+        assertEquals("", repository.getDeviceIdentity(), "the engine is handed none, not a new one")
+    }
+
     @Test
     fun subscriptionImportFallsBackWhenIdentityResponseIsNotConfig() = runTest {
         val userAgents = mutableListOf<String?>()

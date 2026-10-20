@@ -18,6 +18,7 @@
     <string name="action_export">Export</string>
     <string name="action_later">Later</string>
     <string name="action_leave_caps">LEAVE %1$s</string>
+    <string name="action_pick_server_caps">PICK A SERVER</string>
     <string name="action_qr_share">QR/share</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_remove">Remove</string>
@@ -296,7 +297,7 @@
     <string name="refresh_bulk_none">No server lists to update</string>
     <string name="refresh_bulk_partial">Updated %1$d, %2$d failed: %3$s</string>
     <string name="refresh_bulk_updated">Server lists updated: %1$d</string>
-    <string name="refresh_device_limit_reached">This list is at its device limit. Ask your provider.</string>
+    <string name="refresh_device_limit_reached">This list has no place for this device. Ask your provider.</string>
     <string name="refresh_device_not_supported">The provider could not read this device's id. Refresh the list; if it stays so, ask your provider.</string>
     <string name="refresh_empty">Server list returned no locations</string>
     <string name="refresh_rejected">Server list rejected%1$s — it may have been revoked</string>
@@ -452,6 +453,7 @@
     <string name="status_joining_room">joining room</string>
     <string name="status_no_server_list">no server list</string>
     <string name="status_not_connected">not connected</string>
+    <string name="status_pick_server">Pick a server</string>
     <string name="status_room_full">this room is full</string>
     <string name="sub_auto_update">Auto update</string>
     <string name="sub_collapsible">Collapsible server lists</string>
@@ -504,7 +506,7 @@
     <string name="updates_title">Updates</string>
     <string name="username_required">Username is required</string>
     <string name="vpn_disclosure_accept">I understand</string>
-    <string name="vpn_disclosure_body">Ghostlane connects using your device's system VPN.\n\nWHAT IT DOES\n\nWhile connected, network traffic from this device is routed through the server you selected from your own server list. This is what a VPN is, and it is the only reason this app asks for VPN permission.\n\nYour device will ask you to allow this separately, in its own dialog, the first time you connect. You can end the connection at any time from this app or from system settings.\n\nWHAT THIS APP DOES WITH IT\n\nNothing is collected. The app does not read, record or transmit the contents of your traffic, the addresses you visit, or anything identifying you. There is no account here, no analytics, and no advertising identifier.\n\nYour server lists and the app's own log stay on this device.\n\nWHERE YOUR TRAFFIC GOES\n\nTo the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them — Ghostlane does not run it and does not sell one.\n\nTraffic is encrypted between this device and that server.\n\nTraffic is never redirected for advertising, and never routed anywhere for any purpose other than the connection you asked for.</string>
+    <string name="vpn_disclosure_body">Ghostlane connects using your device's system VPN.\n\nWHAT IT DOES\n\nWhile connected, network traffic from this device is routed through the server you selected from your own server list. This is what a VPN is, and it is the only reason this app asks for VPN permission.\n\nYour device will ask you to allow this separately, in its own dialog, the first time you connect. You can end the connection at any time from this app or from system settings.\n\nWHAT THIS APP DOES WITH IT\n\nThe app does not read, record or transmit the contents of your traffic or the addresses you visit. When a server list is refreshed, its provider is told a random identifier the app made for this device, the device model and the system version, so it can count the devices on one list; an olcRTC server of that list is told the same identifier when you connect. Nothing else about you or this device is sent. There is no account here, no analytics, and no advertising identifier.\n\nYour server lists and the app's own log stay on this device.\n\nWHERE YOUR TRAFFIC GOES\n\nTo the server you selected, and nowhere else. That server is operated by whoever gave you the server list, and what it does with your traffic is governed by them. Ghostlane does not run it and does not sell one.\n\nTraffic is encrypted between this device and that server.\n\nTraffic is never redirected for advertising, and never routed anywhere for any purpose other than the connection you asked for.</string>
     <string name="vpn_disclosure_decline">Not now</string>
     <string name="vpn_disclosure_subtitle">System VPN · your approval</string>
     <string name="vpn_disclosure_title">How the VPN connection works</string>

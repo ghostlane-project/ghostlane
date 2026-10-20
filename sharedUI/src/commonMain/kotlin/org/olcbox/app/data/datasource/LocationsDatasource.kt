@@ -67,7 +67,14 @@ interface LocationsDataSource {
     suspend fun saveLocationBundle(bundle: LocationBundleV4)
     suspend fun loadLegacyLocations(): List<Pair<String, String>>
     suspend fun loadLegacyActiveLocationId(): String?
+    /**
+     * The stored device id: null when none is stored. An id that is stored and
+     * cannot be read is an exception, never null: null makes a new id, and a
+     * new id is a new device on every list that counts them.
+     */
     suspend fun loadDeviceIdentity(): String? = null
+
+    /** Stores the device id; an exception when it could not be stored. */
     suspend fun saveDeviceIdentity(value: String) = Unit
 }
 
@@ -719,7 +726,7 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun getDeviceIdentity(): String {
-        return deviceIdentityProvider.hwid()
+        return deviceIdentityProvider.hwid().orEmpty()
     }
 
     override suspend fun getSubscriptionSettings(): SubscriptionSettings =
@@ -1065,7 +1072,10 @@ class LocationsRepositoryImpl(
                             )
                             if (requestMode == SubscriptionRequestMode.Identity) {
                                 append(HttpHeaders.UserAgent, CurrentAppInfo.userAgent)
-                                append("x-hwid", hwid.orEmpty())
+                                // None when the stored id could not be read this
+                                // time: no header then, never an empty one or a
+                                // new id (PersistentDeviceIdentityProvider).
+                                if (hwid != null) append("x-hwid", hwid)
                                 if (device != null) {
                                     appendDeviceHeader("x-device-os", device.os)
                                     appendDeviceHeader("x-ver-os", device.osVersion)
@@ -1796,7 +1806,9 @@ class LocationsRepositoryImpl(
      * it, and `x-hwid-not-supported`, a provider that lets in only an app that
      * names its device. Its reason is in `announce`. `x-hwid-active` and
      * `x-hwid-limit` come with them and say nothing more. A refusal over plain
-     * http is believed: it takes away nothing a later answer cannot give back.
+     * http is believed. It takes the list's servers, which a later answer
+     * gives back, and when one of them was selected it takes the selection
+     * too, which no answer gives back: the person picks a server again.
      */
     private fun HttpResponse.subscriptionProfile(): SubscriptionProfile? {
         val deviceRefusal = when {

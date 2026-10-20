@@ -72,12 +72,15 @@ class JvmLocationsDataSourceImpl(
 
     override suspend fun loadLegacyActiveLocationId(): String? = null
 
+    /**
+     * None only when the file is known not to be there. A file that is there,
+     * or that cannot be told to be absent (a folder the app may not look
+     * into), is read, and a read that fails is an exception: a new id in its
+     * place would be another device on every list that counts them.
+     */
     override suspend fun loadDeviceIdentity(): String? = withContext(Dispatchers.IO) {
-        deviceIdentityFile
-            .takeIf { it.exists() }
-            ?.readText()
-            ?.trim()
-            ?.ifBlank { null }
+        if (Files.notExists(deviceIdentityFile)) return@withContext null
+        deviceIdentityFile.readText().trim().ifBlank { null }
     }
 
     override suspend fun saveDeviceIdentity(value: String): Unit = withContext(Dispatchers.IO) {

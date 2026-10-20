@@ -674,7 +674,8 @@ class HomeScreenViewModel(
      * ([SubscriptionRefreshReport.restartsRunningTunnel]) and the selection as
      * the refresh left it, which this model has read by the time a refresh
      * hands its report on. [selectionMoved] as the home screen knows it; the
-     * settings screens do not say.
+     * settings screens do not say. [restartVpnIfRunning] asks the store again
+     * before it starts anything.
      */
     fun restartVpnAfterRefresh(report: SubscriptionRefreshReport, selectionMoved: Boolean? = null) {
         val hasSelection = _state.value.selectedLocation != null
@@ -683,12 +684,27 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * Starts a running tunnel again on the selected server: after a change of
+     * a setting the tunnel is built from (routing, the connection mode, the
+     * proxy, the apps that bypass it), after a pick or an edit of a server,
+     * after a refresh that calls for it.
+     *
+     * With nothing selected there is nothing to start it again on, so nothing
+     * is started and nothing is stopped. That is the state a refusal leaves
+     * when its list held the selected server (LocationBundleV4.selectionWithdrawn):
+     * the session runs on, and a start with no server would end it on iOS
+     * and the desktop, or hold it on Android, for a setting the person changed.
+     * The store is asked and not this model's [HomeScreenState.selectedLocation]:
+     * a pick writes the store and then calls here before the model has read it.
+     */
     fun restartVpnIfRunning() {
         cancelAutomaticSelection()
         when (vpnManager.status.value) {
             VpnStatus.Connected,
             VpnStatus.Connecting,
             VpnStatus.Reconnecting -> viewModelScope.launch {
+                if (locationsRepository.getActiveLocationId() == null) return@launch
                 _state.update { it.copy(isVpnLoading = true, failure = null) }
                 vpnManager.startVpn()
             }

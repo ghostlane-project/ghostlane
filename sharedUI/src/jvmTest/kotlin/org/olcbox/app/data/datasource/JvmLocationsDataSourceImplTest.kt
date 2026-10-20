@@ -7,7 +7,10 @@ import org.olcbox.app.data.model.LocationEntry
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class JvmLocationsDataSourceImplTest {
 
@@ -41,6 +44,23 @@ class JvmLocationsDataSourceImplTest {
         source.saveDeviceIdentity("install-test")
 
         assertEquals("install-test", source.loadDeviceIdentity())
+    }
+
+    // No file is no id, and the provider makes one. A file that is there and
+    // cannot be read (here a folder in its place) is an error, never "no id":
+    // a new id would be another device on every list that counts them.
+    @Test
+    fun aDeviceIdThatIsThereAndUnreadableIsAnErrorNotNone() = runTest {
+        val dir = Files.createTempDirectory("olcbox-device-id-unreadable")
+        val source = JvmLocationsDataSourceImpl(dir)
+        assertNull(source.loadDeviceIdentity())
+
+        Files.createDirectory(dir.resolve("device_identity"))
+        assertFailsWith<java.io.IOException> { source.loadDeviceIdentity() }
+
+        val provider = org.olcbox.app.data.identity.PersistentDeviceIdentityProvider(source)
+        assertNull(provider.hwid(), "an unreadable id was replaced")
+        assertTrue(Files.isDirectory(dir.resolve("device_identity")), "the place of the id was written over")
     }
 
     @Test

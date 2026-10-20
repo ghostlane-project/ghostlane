@@ -94,7 +94,6 @@ import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.data.datasource.JvmLocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.JvmLogExporter
-import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.JvmConfigImporter
 import org.olcbox.app.data.share.ConfigShareService
 import org.olcbox.app.desktop.DesktopWindowChrome
@@ -138,9 +137,7 @@ private class DesktopAppDependencies {
     val configImporter = JvmConfigImporter()
 
     val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
-    val updateService = AppUpdateService(
-        deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
-    )
+    val updateService = AppUpdateService()
     val updateSettingsStore = JvmUpdateSettingsStore()
     val updateInstaller = JvmUpdateInstaller()
     val socksProxySettingsStore = JvmDesktopSocksProxySettingsStore()
@@ -376,6 +373,12 @@ private fun runDesktopApplication(args: Array<String>) = application {
         trayHomeState.isVpnLoading -> DesktopText.Connecting
         else -> DesktopText.NotConnected
     }
+    // Servers on the board and none selected, as a refusal of the selected
+    // server's list leaves it: Start is greyed, and the tooltip says what it
+    // waits for, as the window's status strip does.
+    val trayPickServer = !trayHomeState.isVpnConnected && !trayHomeState.isVpnLoading &&
+        dependencies.locationViewModel.selectedLocationId == null &&
+        dependencies.locationViewModel.locations.isNotEmpty()
     Tray(
         state = trayState,
         // Monochrome where the platform's other tray icons are (a template image in
@@ -386,7 +389,8 @@ private fun runDesktopApplication(args: Array<String>) = application {
             connected = trayConnected
         ),
         // In words as well: a colour is not something everyone tells apart.
-        tooltip = "Ghostlane: " + trayStatus.text(),
+        tooltip = "Ghostlane: " + trayStatus.text() +
+            if (trayPickServer) " · " + DesktopText.PickServer.text() else "",
         menu = {
             Item(DesktopText.Open.text(), onClick = { isWindowVisible = true })
             Item(

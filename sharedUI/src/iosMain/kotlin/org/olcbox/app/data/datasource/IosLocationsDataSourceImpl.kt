@@ -62,13 +62,28 @@ class IosLocationsDataSourceImpl(
 
     override suspend fun loadLegacyActiveLocationId(): String? = null
 
+    /**
+     * None only when there is no file. A file that is there and cannot be read
+     * is an exception, not none: none makes a new id, which a list's provider
+     * would count as another device.
+     */
     override suspend fun loadDeviceIdentity(): String? = withContext(Dispatchers.Default) {
-        readText(deviceIdentityPath)?.trim()?.ifBlank { null }
+        if (!fileExists(deviceIdentityPath)) return@withContext null
+        val text = readText(deviceIdentityPath)
+            ?: throw IllegalStateException("device_identity is there and could not be read")
+        text.trim().ifBlank { null }
     }
 
+    /** An exception when the id is not written: an id that is not kept is not handed out. */
     override suspend fun saveDeviceIdentity(value: String): Unit = withContext(Dispatchers.Default) {
         ensureDirectory(appDir)
-        writeText(deviceIdentityPath, value.trim())
+        val written = NSString.create(string = value.trim()).writeToFile(
+            path = deviceIdentityPath,
+            atomically = true,
+            encoding = NSUTF8StringEncoding,
+            error = null
+        )
+        if (!written) throw IllegalStateException("device_identity could not be written")
     }
 
     private fun readText(path: String): String? {

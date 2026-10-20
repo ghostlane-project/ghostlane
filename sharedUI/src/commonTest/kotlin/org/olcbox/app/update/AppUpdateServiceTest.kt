@@ -4,10 +4,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import kotlinx.coroutines.test.runTest
-import org.olcbox.app.data.identity.DeviceIdentityProvider
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class AppUpdateServiceTest {
@@ -50,7 +50,6 @@ class AppUpdateServiceTest {
         }
         val service = AppUpdateService(
             httpClient = HttpClient(engine),
-            deviceIdentityProvider = StaticIdentityProvider("hwid"),
             currentVersion = "1.0.42",
             platform = UpdatePlatform("android", "arm64")
         )
@@ -189,9 +188,44 @@ class AppUpdateServiceTest {
         )
     }
 
-    private class StaticIdentityProvider(
-        private val value: String
-    ) : DeviceIdentityProvider {
-        override suspend fun hwid(): String = value
+    // The update check asks GitHub for the release list. It names the app and
+    // nothing about the device: the device id goes to a server list's
+    // provider alone (docs/privacy.md).
+    @Test
+    fun theUpdateCheckSendsNoDeviceId() = runTest {
+        var sent: io.ktor.http.Headers? = null
+        val engine = MockEngine { request ->
+            sent = request.headers
+            respond(
+                """
+                {
+                  "tag_name": "nightly",
+                  "html_url": "https://example/release",
+                  "published_at": "2026-05-13T12:00:00Z",
+                  "assets": [
+                    {
+                      "name": "Ghostlane-1.0.42-android-release.apk",
+                      "browser_download_url": "https://example/app.apk",
+                      "size": 100,
+                      "updated_at": "2026-05-13T12:00:00Z"
+                    }
+                  ]
+                }
+                """.trimIndent()
+            )
+        }
+
+        AppUpdateService(
+            httpClient = HttpClient(engine),
+            currentVersion = "1.0.42",
+            platform = UpdatePlatform("android", "arm64")
+        ).check(ReleaseChannel.Nightly).getOrThrow()
+
+        val headers = assertNotNull(sent)
+        assertEquals(null, headers["x-hwid"], "the update check sent a device id: ${headers.names()}")
+        for (name in listOf("x-device-os", "x-ver-os", "x-device-model")) {
+            assertEquals(null, headers[name], "the update check sent $name")
+        }
+        assertEquals(org.olcbox.app.CurrentAppInfo.userAgent, headers[io.ktor.http.HttpHeaders.UserAgent])
     }
 }

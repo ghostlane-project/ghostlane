@@ -341,6 +341,27 @@ class PkBoardModelTest {
         )
     }
 
+    // Servers on the board and none selected, which a refusal of the selected
+    // server's list leaves: there is a server to pick, not a list to add.
+    @Test
+    fun serversWithNoneSelectedAskForAPickNotAList() {
+        assertEquals(
+            PkAction("PICK A SERVER", PkActionKind.Go),
+            boardAction(
+                requiresSetup = true, isConnected = false, isConnecting = false,
+                selectedIsRoom = false, selectedIsFull = false, exitName = null, pickServer = true
+            )
+        )
+        // A session still up on the server that went is ended as any other.
+        assertEquals(
+            PkAction("DISCONNECT", PkActionKind.Stop),
+            boardAction(
+                requiresSetup = false, isConnected = true, isConnecting = false,
+                selectedIsRoom = false, selectedIsFull = false, exitName = null, pickServer = true
+            )
+        )
+    }
+
     @Test
     fun anUnnamedExitStillProducesAButtonThatReads() {
         assertEquals(PkAction("TAKE A SEAT", PkActionKind.Go), action(exitName = null))

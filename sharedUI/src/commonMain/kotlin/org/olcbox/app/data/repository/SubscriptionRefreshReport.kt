@@ -37,8 +37,13 @@ sealed interface SubscriptionRefreshError {
     ) : SubscriptionRefreshError
 }
 
-/** What a refusal at the list's device limit says when the provider said nothing. */
-const val DEVICE_LIMIT_REACHED_MESSAGE = "This list is at its device limit. Ask your provider."
+/**
+ * What a refusal at the list's device limit says when the provider said
+ * nothing, and on iOS, where the provider's words are never shown, always. The
+ * host sends the same flag for a device the provider removed from the list, so
+ * the words fit both: no place, whichever the reason.
+ */
+const val DEVICE_LIMIT_REACHED_MESSAGE = "This list has no place for this device. Ask your provider."
 
 /** What a refusal of a request whose device the provider could not read says when it said nothing. */
 const val DEVICE_NOT_SUPPORTED_MESSAGE =

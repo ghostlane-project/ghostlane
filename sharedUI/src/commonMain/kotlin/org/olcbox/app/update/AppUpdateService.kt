@@ -11,7 +11,6 @@ import kotlinx.serialization.json.Json
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.data.datasource.createProxyHttpClient
 import org.olcbox.app.data.datasource.withProxyAuthentication
-import org.olcbox.app.data.identity.DeviceIdentityProvider
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 
 @Serializable
@@ -56,9 +55,14 @@ data class AppUpdateInfo(
     val isUpdateAvailable: Boolean
 )
 
+/**
+ * Asks this repository's releases on GitHub whether a newer build is out, on
+ * the desktop and on the Android build published there. The request names the
+ * app (its user agent) and nothing about the device: the device id goes to a
+ * server list's provider alone, who counts devices by it; GitHub counts none.
+ */
 class AppUpdateService(
     private val httpClient: HttpClient = createUpdateHttpClient(),
-    private val deviceIdentityProvider: DeviceIdentityProvider,
     private val mirror: ReleaseMirror = ReleaseMirror.GitHub,
     private val currentVersion: String = CurrentAppInfo.value.version,
     private val platform: UpdatePlatform = UpdatePlatform.current()
@@ -118,12 +122,10 @@ class AppUpdateService(
             ReleaseChannel.Nightly -> "https://api.github.com/repos/${mirror.ownerRepo}/releases/tags/nightly"
         }
 
-        val hwid = deviceIdentityProvider.hwid()
         val response = client.get(endpoint) {
             headers {
                 append(HttpHeaders.Accept, "application/vnd.github+json")
                 append(HttpHeaders.UserAgent, CurrentAppInfo.userAgent)
-                append("x-hwid", hwid)
             }
         }
 

@@ -81,6 +81,12 @@ interface LocationsRepository {
 
     /** The selected location, when there is one: see [getActiveLocationId]. */
     suspend fun getActiveLocation(): LocationEntry?
+
+    /**
+     * This install's id, as a list fetch sends it, for the olcRTC engine; empty
+     * when the stored id could not be read this time, which the engine takes
+     * as none.
+     */
     suspend fun getDeviceIdentity(): String
 
     /** How subscriptions behave. Persisted with the bundle, so one copy per device. */

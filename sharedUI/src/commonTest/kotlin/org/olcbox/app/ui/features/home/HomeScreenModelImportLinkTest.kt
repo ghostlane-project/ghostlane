@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,7 @@ import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
+import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.net.ImportLink
 import org.olcbox.app.util.nowMillis
@@ -422,6 +424,116 @@ class HomeScreenModelImportLinkTest {
             assertEquals(1, report.updatedCount)
             assertEquals("ours", repo.getActiveLocationId())
             assertEquals(1, vpn.starts)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A setting the tunnel is built from (here the routing) starts a running
+    // tunnel again on the selected server. With nothing selected, as a refusal
+    // of the selected server's list leaves it, there is nothing to start it
+    // again on: a start with no server would end the session on iOS and the
+    // desktop for a setting the person changed. Nothing is started, nothing is
+    // stopped.
+    @Test fun aSettingChangedWhileNothingIsSelectedStartsNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            assertNull(repo.getActiveLocationId())
+
+            vm.updateRoutingSettings(RoutingSettings(killSwitch = true))
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { repo.changes.first { store.stored?.routing?.killSwitch == true } }
+            }
+
+            assertEquals(0, vpn.starts, "a setting changed with nothing selected started a tunnel")
+            assertEquals(0, vpn.stops)
+            assertNull(repo.getActiveLocationId())
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The same change with a server selected starts the tunnel again on it, as
+    // it always has.
+    @Test fun aSettingChangedWithAServerSelectedStartsTheTunnelAgain() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            assertEquals("ours", repo.getActiveLocationId())
+
+            vm.updateRoutingSettings(RoutingSettings(killSwitch = true))
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+
+            assertEquals(1, vpn.starts)
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // The store's only list refused while its server was selected: no server
+    // is left, so none is selected. Served again, its first line is selected,
+    // as for a list added to an empty store, and a running tunnel is started
+    // again on it. The selection before the refresh (none) differs from the
+    // one after it, which is the one the rule reads.
+    @Test fun aListServedAgainAfterItsRefusalStartsTheTunnelOnItsFirstLine() = runTest {
+        var refusing = true
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("theirs", theirs)))
+        )
+        val repo = LocationsRepositoryImpl(
+            dataSource = store,
+            httpClient = HttpClient(MockEngine {
+                if (refusing) {
+                    respond(
+                        content = "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?type=tcp&security=none#No%20room",
+                        headers = headersOf(
+                            "x-hwid-max-devices-reached" to listOf("true"),
+                            "announce" to listOf("No room for this device")
+                        )
+                    )
+                } else {
+                    respond("olcrtc://telemost?vp8channel@room-back#$roomKey${'$'}back")
+                }
+            })
+        )
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
+            assertTrue(store.stored!!.locations.isEmpty())
+            assertEquals(0, vpn.starts)
+
+            refusing = false
+            refreshAsTheSettingsScreensDo(vm, theirs)
+
+            assertEquals("room-back", repo.getActiveLocation()?.location?.id)
+            withContext(Dispatchers.Default) { withTimeout(10_000) { while (vpn.starts == 0) delay(10) } }
+            assertEquals(1, vpn.starts, "the tunnel was not started again on the line the refresh selected")
+            assertEquals(0, vpn.stops)
         } finally { vm.viewModelScope.cancel() }
     }
 

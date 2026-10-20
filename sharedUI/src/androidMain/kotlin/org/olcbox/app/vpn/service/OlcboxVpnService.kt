@@ -1379,7 +1379,7 @@ class OlcboxVpnService : VpnService() {
         return try {
             installMobileCallbacks()
             val targetSocksPort = socksListenPort
-            val deviceId = deviceIdentityProvider.hwid()
+            val deviceId = deviceIdentityProvider.hwid().orEmpty()
             resetRtcHealthState()
 
             waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)

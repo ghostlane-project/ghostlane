@@ -308,7 +308,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         }
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
-            deviceId = deviceIdentityProvider.hwid(),
+            deviceId = deviceIdentityProvider.hwid().orEmpty(),
             dtlsProfile = olcrtcDtlsProfile()
         )
     }
@@ -366,7 +366,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
-            deviceId = deviceIdentityProvider.hwid(),
+            deviceId = deviceIdentityProvider.hwid().orEmpty(),
             dtlsProfile = olcrtcDtlsProfile()
         )
     }

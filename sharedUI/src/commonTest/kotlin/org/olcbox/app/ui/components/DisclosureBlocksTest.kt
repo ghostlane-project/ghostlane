@@ -50,6 +50,21 @@ class DisclosureBlocksTest {
         }
     }
 
+    /**
+     * A refresh names the device to the list's provider, and the privacy
+     * policy and both stores' privacy answers say so: this notice says the
+     * same, and no longer that nothing identifying is sent.
+     */
+    @Test
+    fun theDisclosureSaysWhatAListsProviderIsTold() {
+        listOf("random identifier", "device model", "system version", "count the devices on one list", "olcRTC server").forEach { words ->
+            assertTrue(words in DISCLOSURE_BODY, "the disclosure does not say \"$words\"")
+        }
+        listOf("Nothing is collected", "anything identifying you").forEach { claim ->
+            assertTrue(claim !in DISCLOSURE_BODY, "the disclosure still says \"$claim\"")
+        }
+    }
+
     @Test
     fun aParagraphWithNoHeadingAboveItStillBecomesABlock() {
         val blocks = disclosureBlocks("One line.\n\nTWO\n\nThree.")
