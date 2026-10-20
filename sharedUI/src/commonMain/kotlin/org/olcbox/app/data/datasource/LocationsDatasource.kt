@@ -478,15 +478,6 @@ class LocationsRepositoryImpl(
                     base = "imported_${entry.location.storageSlug().ifBlank { "location_${index + 1}" }}",
                     used = usedStorageIds
                 )
-                // The selection follows its server to the id the refresh gives
-                // it, when there is a selection. With none (a refusal withdrew
-                // it, or nothing is stored), `null == null` matched every line
-                // with no previous entry, and the last new line was selected
-                // unasked: the next start of a running tunnel, or a settings
-                // screen's restart after a refresh, then connected it.
-                if (activeBefore != null && activeBefore == reusedEntry?.storageId) {
-                    activeAfter = storageId
-                }
                 entry.copy(
                     storageId = storageId,
                     subscriptionUrl = listUrl,
@@ -510,6 +501,12 @@ class LocationsRepositoryImpl(
             // refresh re-dialled you onto a server you had not chosen.
             //
             // Refresh updates a list. It is not a command to change servers.
+            //
+            // A reused line keeps its entry's id, so a selection whose server
+            // came through is kept as it stands; nothing here assigns it. A step
+            // that "carried" it to the id of the line reusing its entry did
+            // nothing but compare: with no selection, `null` matched every new
+            // line, and the last of them was chosen unasked.
             if (activeBefore != null &&
                 previousEntries.any { it.storageId == activeBefore } &&
                 reassigned.none { it.storageId == activeAfter }

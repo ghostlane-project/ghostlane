@@ -359,6 +359,72 @@ class HomeScreenModelImportLinkTest {
         } finally { vm.viewModelScope.cancel() }
     }
 
+    /** A refresh of one list, as a settings screen makes it: the report, then the one rule for a restart. */
+    private suspend fun refreshAsTheSettingsScreensDo(vm: HomeScreenViewModel, url: String): org.olcbox.app.data.repository.SubscriptionRefreshReport {
+        val done = CompletableDeferred<org.olcbox.app.data.repository.SubscriptionRefreshReport>()
+        vm.refreshSubscription(url) { report ->
+            vm.restartVpnAfterRefresh(report)
+            done.complete(report)
+        }
+        return withContext(Dispatchers.Default) { withTimeout(10_000) { done.await() } }
+    }
+
+    // The selection a refusal withdrew stays withdrawn through later refreshes,
+    // and a settings screen restarts the tunnel after every refresh: with
+    // nothing selected that start would end the session the host still
+    // carries, at the first refresh of any list after the refusal.
+    @Test fun aRefreshWhileNothingIsSelectedStartsNothing() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "theirs", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { vm.state.first { it.selectedLocation == null } }
+            }
+
+            val report = refreshAsTheSettingsScreensDo(vm, ours)
+
+            assertEquals(1, report.updatedCount)
+            assertNull(repo.getActiveLocationId())
+            assertEquals(0, vpn.starts, "a refresh started a tunnel with nothing selected")
+            assertEquals(0, vpn.stops)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
+    // A refresh of the list the selected server is in starts the tunnel again,
+    // as a settings screen always has.
+    @Test fun aRefreshOfTheSelectedListStartsTheTunnelAgainAsBefore() = runTest {
+        val store = MemoryLocationsDataSource(
+            LocationBundleV4(activeLocationId = "ours", locations = listOf(room("ours", ours), room("theirs", theirs)))
+        )
+        val repo = answering(store)
+        val vpn = IdleVpnManager()
+        val vm = HomeScreenViewModel(
+            vpnManager = vpn,
+            locationsRepository = repo,
+            configImporter = NoConfigImporter,
+            logExporter = NoLogExporter
+        ).also { models += it }
+        try {
+            connectAndAwaitTheRefresh(vm, vpn, repo)
+
+            val report = refreshAsTheSettingsScreensDo(vm, ours)
+
+            assertEquals(1, report.updatedCount)
+            assertEquals("ours", repo.getActiveLocationId())
+            assertEquals(1, vpn.starts)
+        } finally { vm.viewModelScope.cancel() }
+    }
+
     // The board reads the store's selection and, finding none, used to choose
     // the first location and write it back: a withdrawn selection stays so.
     @Test fun theBoardLeavesAWithdrawnSelectionWithdrawn() = runTest {

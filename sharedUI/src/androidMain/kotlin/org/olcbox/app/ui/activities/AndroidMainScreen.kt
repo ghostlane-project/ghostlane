@@ -542,7 +542,7 @@ fun AndroidMainScreen(
             onSubscriptionRefreshClick = { url ->
                 viewModel.refreshSubscription(url) { report ->
                     reloadLocationsAfterImport {
-                        if (report.restartsRunningTunnel()) viewModel.restartVpnIfRunning()
+                        viewModel.restartVpnAfterRefresh(report)
                         scope.launch {
                             Toast.makeText(
                                 context,

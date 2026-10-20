@@ -669,7 +669,7 @@ private fun runDesktopApplication(args: Array<String>) = application {
                         onSubscriptionRefreshClick = { url ->
                             dependencies.homeViewModel.refreshSubscription(url) { report ->
                                 reloadLocationsAfterImport {
-                                    if (report.restartsRunningTunnel()) dependencies.homeViewModel.restartVpnIfRunning()
+                                    dependencies.homeViewModel.restartVpnAfterRefresh(report)
                                     scope.launch { updateMessage = report.localizedSingleMessage() }
                                 }
                             }

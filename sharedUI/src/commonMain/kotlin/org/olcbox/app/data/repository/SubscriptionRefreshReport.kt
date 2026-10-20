@@ -98,16 +98,19 @@ data class SubscriptionRefreshReport(
      * rule every screen that refreshes the lists asks, the home screen and the
      * settings screens on Android, iOS and the desktop.
      *
-     * Never after a refusal of the list the selected server came from
-     * ([refusedSelection]): nothing is selected, so a start now would find no
-     * location and take down a session the host still carries, for nothing.
-     * Otherwise when the selected location's own config moved in the refresh
-     * ([selectionMoved]), as the home screen knows; a screen that does not
-     * know passes null and starts the tunnel again after every refresh, as the
-     * settings screens always have.
+     * Never while nothing is selected ([hasSelection], the selection as the
+     * refresh left it): a start would find no location and take down a
+     * session the host still carries, for nothing — on Android the transports
+     * stop and the tunnel holds, on iOS and the desktop the session ends. That
+     * is so after the refusal that withdrew the selection ([refusedSelection])
+     * and after every refresh until the person chooses again, a refresh of
+     * another list included. Otherwise when the selected location's own config
+     * moved in the refresh ([selectionMoved]), as the home screen knows; a
+     * screen that does not know passes null and starts the tunnel again after
+     * every refresh, as the settings screens always have.
      */
-    fun restartsRunningTunnel(selectionMoved: Boolean? = null): Boolean =
-        !refusedSelection && (selectionMoved ?: true)
+    fun restartsRunningTunnel(hasSelection: Boolean, selectionMoved: Boolean? = null): Boolean =
+        hasSelection && !refusedSelection && (selectionMoved ?: true)
 
     /** Message for refreshing one server list. */
     fun singleMessage(): String = when {

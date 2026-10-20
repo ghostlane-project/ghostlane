@@ -21,21 +21,35 @@ class SubscriptionRefreshReportTest {
     // The list the selected server came from refused this device: nothing is
     // selected, and a start would only take down a session the host carries.
     @Test fun aRefusalOfTheSelectedServersListStartsNothingAgain() {
-        assertFalse(selectionRefused.restartsRunningTunnel(selectionMoved = true))
-        assertFalse(selectionRefused.restartsRunningTunnel(selectionMoved = false))
-        assertFalse(selectionRefused.restartsRunningTunnel())
+        assertFalse(selectionRefused.restartsRunningTunnel(hasSelection = false, selectionMoved = true))
+        assertFalse(selectionRefused.restartsRunningTunnel(hasSelection = false, selectionMoved = false))
+        assertFalse(selectionRefused.restartsRunningTunnel(hasSelection = false))
+        // Even if a caller still saw a selection: the report knows it went.
+        assertFalse(selectionRefused.restartsRunningTunnel(hasSelection = true))
     }
 
-    @Test fun aServedRefreshStartsTheTunnelAgainAsBefore() {
+    // The selection a refusal withdrew stays withdrawn through later refreshes,
+    // and a served refresh of another list starts nothing either: the settings
+    // screens, which restart after every refresh, would otherwise end the
+    // session the host still carries, at the first refresh after the refusal.
+    @Test fun nothingIsStartedAgainWhileNothingIsSelected() {
+        assertFalse(served.restartsRunningTunnel(hasSelection = false))
+        // The home screen: no selection before and none after is no move...
+        assertFalse(served.restartsRunningTunnel(hasSelection = false, selectionMoved = false))
+        // ...and a selection that went is not a reason either, with none in its place.
+        assertFalse(served.restartsRunningTunnel(hasSelection = false, selectionMoved = true))
+    }
+
+    @Test fun aServedRefreshOfASelectedServerStartsTheTunnelAgainAsBefore() {
         // The home screen: when the selected location's own config moved, and only then.
-        assertTrue(served.restartsRunningTunnel(selectionMoved = true))
-        assertFalse(served.restartsRunningTunnel(selectionMoved = false))
+        assertTrue(served.restartsRunningTunnel(hasSelection = true, selectionMoved = true))
+        assertFalse(served.restartsRunningTunnel(hasSelection = true, selectionMoved = false))
         // The settings screens, which do not ask what moved: after every refresh.
-        assertTrue(served.restartsRunningTunnel())
+        assertTrue(served.restartsRunningTunnel(hasSelection = true))
         // A refusal of another list is no reason to hold back.
         val anotherRefused = served.copy(failures = listOf(refused()))
-        assertTrue(anotherRefused.restartsRunningTunnel(selectionMoved = true))
-        assertTrue(anotherRefused.restartsRunningTunnel())
+        assertTrue(anotherRefused.restartsRunningTunnel(hasSelection = true, selectionMoved = true))
+        assertTrue(anotherRefused.restartsRunningTunnel(hasSelection = true))
     }
 
     @Test fun aRefusalSaysTheProvidersWordsOrOursForItsKind() {
