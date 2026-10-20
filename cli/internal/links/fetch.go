@@ -112,15 +112,14 @@ func announceText(s string) string {
 }
 
 // oneLine puts s on one line: every control character and every kind of white
-// space becomes one space (leading and trailing ones go), a format character
-// (Cf: the bidirectional overrides and isolates among them, which would turn
-// what follows around on a terminal) is dropped, and what is longer than limit
-// characters is cut.
+// space becomes one space (leading and trailing ones go), a character that sets
+// the direction of what follows (directional) is dropped, and what is longer
+// than limit characters is cut.
 func oneLine(s string, limit int) string {
 	out := make([]rune, 0, min(len(s), limit+1))
 	gap := false
 	for _, r := range s {
-		if unicode.Is(unicode.Cf, r) {
+		if directional(r) {
 			continue
 		}
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
@@ -140,6 +139,22 @@ func oneLine(s string, limit int) string {
 		out = out[:limit]
 	}
 	return strings.TrimRight(string(out), " ")
+}
+
+// directional reports the format characters that change the direction text is
+// drawn in, which would turn what follows them around on a terminal: the
+// embeddings and overrides (U+202A to U+202E), the isolates (U+2066 to U+2069)
+// and the marks (U+200E, U+200F, U+061C), with the byte order mark (U+FEFF).
+// The other format characters stay: Persian writes its words with the
+// zero-width non-joiner (U+200C), and an emoji's parts are joined by U+200D.
+func directional(r rune) bool {
+	switch {
+	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+		return true
+	case r == 0x200E, r == 0x200F, r == 0x061C, r == 0xFEFF:
+		return true
+	}
+	return false
 }
 
 // Fetch asks a list host for its list, naming dev. An answer that refuses the

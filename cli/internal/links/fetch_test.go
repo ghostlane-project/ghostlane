@@ -308,6 +308,28 @@ func TestARefusalIsTold(t *testing.T) {
 	}
 }
 
+// What turns text around on a terminal is dropped; the joiners Persian words
+// and emoji are written with stay, so a provider's sentence reads as it was
+// written.
+func TestOneLineDropsDirectionAndKeepsJoiners(t *testing.T) {
+	persian := "\u0645\u06cc\u200c\u0634\u0648\u062f"      // a word written with a zero-width non-joiner
+	family := "\U0001F468\u200d\U0001F469\u200d\U0001F467" // an emoji joined by zero-width joiners
+	for _, tc := range []struct{ in, want string }{
+		{persian, persian},
+		{family, family},
+		{"\u202e" + persian + "\u202c", persian},
+		{"a\u200eb\u200fc\u061cd\ufeffe\u2066f\u2069", "abcdef"},
+		{"\u202a\u202b\u202d" + family, family},
+	} {
+		if got := oneLine(tc.in, announceMax); got != tc.want {
+			t.Errorf("oneLine(%+q) = %+q, want %+q", tc.in, got, tc.want)
+		}
+	}
+	if got := RefusalText(RefusalLimit, "\u202e"+persian); got != persian {
+		t.Errorf("a Persian sentence lost its joiners or kept its override: %+q", got)
+	}
+}
+
 // Any 2xx can carry a refusal, as the app and the iPhone's tunnel read one; the
 // sentence it carries is cleaned before it is kept, and one that says nothing
 // is none.
