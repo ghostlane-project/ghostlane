@@ -13,19 +13,30 @@ photos or files beyond a server-list file you choose to import.
 ## What the app tells the provider of a server list
 
 When the app refreshes a server list, it tells the list's provider which device
-it is: a random identifier made when the app was installed, the device model,
-and the system's name and version, so the provider can count the devices that
-use one subscription. The identifier is not the device's advertising or hardware
-identifier, it is not linked to a name or an account inside the app (the app has
-none), and it goes with the app when the app is removed. Nothing else about the
-device or its owner is sent. The iOS packet tunnel's room refresh and the Linux
-command-line client send the same.
+it is: a random identifier, the device model, and the system's name and version,
+so the provider can count the devices that use one server list. Nothing else
+about the device or its owner is sent. The iOS packet tunnel's room refresh and
+the Linux command-line client send the same.
+
+The identifier is made the first time the app needs it: at the first refresh of
+a server list, or at the first olcRTC session; the command-line client makes its
+own when it first starts. It is not the device's
+advertising or hardware identifier, and it is not linked to a name or an account
+inside the app (the app has none). On iOS and Android it is kept with the app's
+data and goes with it when the app is removed, though a backup of the device can
+bring it back. On a computer it is a file in the app's data folder, which you can
+delete: `~/Library/Application Support/Olcbox/device_identity` on macOS,
+`%APPDATA%\Olcbox\device_identity` on Windows, `~/.olcbox/device_identity` on
+Linux, and `device-id` in the state directory of the command-line client
+(`/var/lib/ghostlane` unless it is told another). A new identifier is a new
+device to the provider. When the app cannot read the identifier it has, it sends
+none rather than a new one.
 
 What a provider keeps is the provider's to say, and deleting it is asked of the
 provider. ProofKit's platform forgets a device 180 days after its last refresh,
-and every device of a subscription when the provider resets its link; a device
-the provider removed is kept as removed, so that it stays refused, for as long
-as the removal stands.
+and every device on a link when the provider resets that link; a device the
+provider removed is kept as removed, so that it stays refused, for as long as the
+removal stands.
 
 ## What stays on your device
 
@@ -66,8 +77,8 @@ None of this leaves the device unless you export and send it yourself.
   turned into a server-list URL. That request carries the link.
 - **GitHub**, to check for updates on the desktop builds and on the Android build
   published on GitHub. The builds from the App Store and Google Play are updated
-  by their stores and never ask. The request fetches the release list and carries
-  the device identifier described above.
+  by their stores and never ask. The request fetches the release list and names
+  the app's version; it carries no device identifier.
 
 Apart from the device identifier, where this list names it, none of these
 requests carries anything that identifies you or your device.

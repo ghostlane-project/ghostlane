@@ -113,9 +113,9 @@ Your server lists and the app's own log stay on the device and are never sent
 anywhere.
 
 When the app refreshes a server list, it tells the list's provider which device
-it is: a random identifier made when the app was installed, the device model,
-and the system's name and version, so the provider can count the devices that
-use one subscription. Nothing else about the device or its owner is sent.
+it is: a random identifier the app makes the first time it needs one, the device
+model, and the system's name and version, so the provider can count the devices
+that use one server list. Nothing else about the device or its owner is sent.
 
 Besides the server lists you add and the servers in them, the app makes a few
 small checks that carry nothing about you: whether the tunnel works and how fast
@@ -212,14 +212,16 @@ under App Privacy:
 - **Is it linked to the user's identity?** → **No**
 - **Is it used for tracking?** → **No**
 
-The Device ID is a random identifier made when the app was installed. When the
+The Device ID is a random identifier the app makes the first time it needs one:
+at the first refresh of a server list, or at the first olcRTC session. When the
 app refreshes a server list, and when its packet tunnel refreshes an olcRTC room
 list, it tells the list's provider which device it is: that identifier, the
 device model, and the system's name and version, so the provider can count the
-devices that use one subscription. The identifier is not the device's advertising
-or hardware identifier, it is not linked to a name or an account inside the app
-(the app has none), and it goes with the app when the app is removed. Nothing
-else about the device or its owner is sent.
+devices that use one server list. The identifier is not the device's advertising
+or hardware identifier, and it is not linked to a name or an account inside the
+app (the app has none). It is kept with the app's data and goes with it when the
+app is removed, though a backup of the device can bring it back. Nothing else
+about the device or its owner is sent.
 
 This is consistent with `PrivacyInfo.xcprivacy`, which declares that one
 collected data type, no tracking domains, and one required-reason API
@@ -356,11 +358,11 @@ TO SEE THAT PART (two minutes)
 <PASTE A LIVE SERVER-LIST URL HERE>
 
 Traffic is routed through Apple's NEPacketTunnelProvider. When it refreshes a
-server list, the app sends the list's provider a random identifier made when the
-app was installed, with the device model and the system's name and version, so
-the provider can count the devices on one subscription; nothing else is
-collected. The camera is used only to scan a server-list QR code, and only when
-the user taps that button.
+server list, the app sends the list's provider a random identifier the app makes
+the first time it needs one, with the device model and the system's name and
+version, so the provider can count the devices on one server list; nothing else
+is collected. The camera is used only to scan a server-list QR code, and only
+when the user taps that button.
 ```
 
 > **This is the single most likely cause of a rejection.** A reviewer who

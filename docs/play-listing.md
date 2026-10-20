@@ -145,7 +145,7 @@ A tunnel inside a video call. olcRTC, Reality, Hysteria2 and XHTTP in one app.
 > does not), so the protocol names belong here rather than in a keyword field
 > Play does not have.
 
-**Full description** (4000 max) — [3003]
+**Full description** (4000 max) [3012]
 
 ```
 Ghostlane carries your traffic inside a video call.
@@ -203,9 +203,9 @@ Your server lists and the app's own log stay on the device and are never sent
 anywhere.
 
 When the app refreshes a server list, it tells the list's provider which device
-it is: a random identifier made when the app was installed, the device model,
-and the system's name and version, so the provider can count the devices that
-use one subscription. Nothing else about the device or its owner is sent.
+it is: a random identifier the app makes the first time it needs one, the device
+model, and the system's name and version, so the provider can count the devices
+that use one server list. Nothing else about the device or its owner is sent.
 
 Besides the server lists you add and the servers in them, the app makes a few
 small checks that carry nothing about you: whether the tunnel works and how fast
@@ -278,17 +278,19 @@ One data type, **Device or other IDs**:
 - **Collected or shared?** → **Collected**, not shared: it goes to no third party
   beyond the provider of the server list the user chose.
 - **Is this data processed ephemerally?** → **No**: the provider keeps it to count
-  the devices on a subscription.
+  the devices on one server list.
 - **Is this data required, or can users choose whether it is collected?** →
   **Required**: the app has no setting that turns it off.
 - **Why is this user data collected?** → **App functionality**.
 
 When the app refreshes a server list, it tells the list's provider which device
-it is: a random identifier made when the app was installed, the device model,
-and the system's name and version, so the provider can count the devices that
-use one subscription. The identifier is not the device's advertising or hardware
-identifier, it is not linked to a name or an account inside the app (the app has
-none), and it goes with the app when the app is removed. Nothing else about the
+it is: a random identifier the app makes the first time it needs one (the first
+refresh of a server list, or the first olcRTC session), the device model, and
+the system's name and version, so the provider can count the devices that use
+one server list. The identifier is not the device's advertising or hardware
+identifier, and it is not linked to a name or an account inside the app (the app
+has none). It is kept with the app's data and goes with it when the app is
+removed, though a backup of the device can bring it back. Nothing else about the
 device or its owner is sent. An olcRTC server of that list is told the same
 identifier when a session starts. This is consistent with `PrivacyInfo.xcprivacy`,
 with the App Store answers, and with the privacy policy.
@@ -309,10 +311,10 @@ with the App Store answers, and with the privacy policy.
 
 **Data deletion**: the identifier is held by the provider of the list, so a user
 asks that provider to delete it. ProofKit's platform forgets a device 180 days
-after its last refresh, and every device of a subscription when the provider
-resets its link; a device the provider removed is kept as removed, so that it
-stays refused, for as long as the removal stands. Removing the app removes the
-identifier from the device.
+after its last refresh, and every device on a link when the provider resets that
+link; a device the provider removed is kept as removed, so that it stays refused,
+for as long as the removal stands. Removing the app removes the identifier from
+the device, unless a backup of the device brings it back.
 
 ---
 
@@ -382,9 +384,9 @@ stream itself. The engines are sing-box, Xray-core and our own olcRTC engine
 
 **Does your app collect or transmit personal and sensitive user data?** → No
 personal or sensitive data. What it sends about the device is one random
-identifier made when the app was installed, with the device model and the
-system's name and version, to the provider of a server list the user added, so
-the provider can count the devices on one subscription (Data safety above). No
+identifier the app makes the first time it needs one, with the device model and
+the system's name and version, to the provider of a server list the user added,
+so the provider can count the devices on one server list (Data safety above). No
 account, no sign-in, no analytics, no advertising identifier, no crash
 reporting. The tunnel carries the user's traffic to the server they selected and
 nothing is retained. The prominent disclosure is shown anyway, before the first
@@ -442,9 +444,9 @@ The link carries several servers over different protocols; any of them connects.
 Traffic is routed through Android's VpnService.
 
 When it refreshes a server list, the app sends the list's provider a random
-identifier made when the app was installed, with the device model and the
-system's name and version, so the provider can count the devices on one
-subscription; nothing else is collected. There is no account and no sign-in. The
+identifier the app makes the first time it needs one, with the device model and
+the system's name and version, so the provider can count the devices on one
+server list; nothing else is collected. There is no account and no sign-in. The
 camera is used only to scan a QR code, and only when the user taps that button.
 ```
 

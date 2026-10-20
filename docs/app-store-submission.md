@@ -19,7 +19,7 @@ person to attempt a submission does not rediscover the same six things.
   data type: the device id (`NSPrivacyCollectedDataTypeDeviceID`, app
   functionality, not linked, no tracking), the random id the app and its tunnel
   send with each server-list refresh so that a provider can count the devices
-  on a subscription. **It must be a member of the app target** — a file on disk
+  on one server list. **It must be a member of the app target**: a file on disk
   that nothing references is not in the bundle, and until 2026-10-20 it was
   such a file: no build before then carried it. It is one of the app target's
   resources now, and pr-checks' iPhone tunnel extension job fails if it stops

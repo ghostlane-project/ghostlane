@@ -63,7 +63,7 @@ orders the list. Annotated screenshots (captions in Russian):
 
 The app has no account and collects nothing for itself. When it refreshes a
 server list, it tells the list's provider which device it is, so the provider can
-count the devices that use one subscription. See [privacy.md](privacy.md).
+count the devices that use one server list. See [privacy.md](privacy.md).
 
 ## Source
 
