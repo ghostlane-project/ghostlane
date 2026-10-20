@@ -135,6 +135,19 @@ Lists refresh on the interval the provider announces (`profile-update-interval`,
 default 24 h) or on `ghostlane refresh`. A refresh never disconnects by itself;
 a rotated room or key reconnects the running line.
 
+**The device id.** Every list fetch names the machine to the list's host, as
+the app does: `x-hwid` is the content of `device-id` in the state directory (a
+random UUID the daemon makes at its first start; the olcRTC engine keeps its own
+device id in the same file), and `x-device-os` (`Linux`), `x-ver-os` (the
+kernel release) and `x-device-model` (`PC`) say what it is. A provider's device
+limit counts a machine by that id; deleting the file makes the next start a new
+device. A host that refuses the machine, because its link is in use on all the
+devices the provider allows, answers with its sentence and no list:
+`ghostlane status` shows it on the list's line (`ERROR: device refused: …`),
+`ghostlane list` prints it under the table, and the list stays on record with no
+lines until the provider makes room and a refresh finds it served. A tunnel
+that is up stays up.
+
 **Proxy settings.** The proxy's address, port and credentials are the `proxy:`
 block of `/var/lib/ghostlane/config.yaml` (edit as root, then
 `systemctl restart ghostlane`):

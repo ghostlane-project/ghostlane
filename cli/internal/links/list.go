@@ -112,6 +112,20 @@ func tryBase64(s string) (string, bool) {
 
 type UserInfo struct{ Upload, Download, Total, Expire int64 }
 
+// Refusal says how a list host turned this device away. The app reads the same
+// two flags (LocationsDatasource.subscriptionProfile).
+type Refusal string
+
+const (
+	RefusalNone Refusal = ""
+	// RefusalLimit: x-hwid-max-devices-reached. The link is in use on all the
+	// devices its provider allows, or this device was removed from it.
+	RefusalLimit Refusal = "limit"
+	// RefusalNoDevice: x-hwid-not-supported. The host got no device id it can
+	// read.
+	RefusalNoDevice Refusal = "no-device"
+)
+
 type Headers struct {
 	Title               string
 	UpdateIntervalHours int
@@ -119,6 +133,7 @@ type Headers struct {
 	SupportURL          string
 	WebPageURL          string
 	Announce            string
+	Refusal             Refusal `json:",omitempty"`
 }
 
 func ParseHeaders(h http.Header) Headers {
@@ -127,6 +142,12 @@ func ParseHeaders(h http.Header) Headers {
 	out.Announce = maybeBase64(h.Get("Announce"))
 	out.SupportURL = strings.TrimSpace(h.Get("Support-Url"))
 	out.WebPageURL = strings.TrimSpace(h.Get("Profile-Web-Page-Url"))
+	switch {
+	case flagTrue(h, "X-Hwid-Max-Devices-Reached"):
+		out.Refusal = RefusalLimit
+	case flagTrue(h, "X-Hwid-Not-Supported"):
+		out.Refusal = RefusalNoDevice
+	}
 	if n, err := strconv.Atoi(strings.TrimSpace(h.Get("Profile-Update-Interval"))); err == nil && n > 0 {
 		out.UpdateIntervalHours = n
 	}
@@ -152,6 +173,11 @@ func ParseHeaders(h http.Header) Headers {
 		out.UserInfo = info
 	}
 	return out
+}
+
+// flagTrue reads a header the platform sets to true, as the app does: any case.
+func flagTrue(h http.Header, name string) bool {
+	return strings.EqualFold(strings.TrimSpace(h.Get(name)), "true")
 }
 
 func maybeBase64(v string) string {

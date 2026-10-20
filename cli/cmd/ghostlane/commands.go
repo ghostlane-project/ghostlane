@@ -72,7 +72,9 @@ Examples:
 Shows every line of every subscription: its index (for 'connect <index>'),
 country, kind (olcrtc, vless, hysteria2), carrier and label. A line this
 version cannot connect (VLESS over grpc/ws, trojan, shadowsocks, vmess) is
-listed with a note saying why.
+listed with a note saying why. A list whose host refused this device (its link
+is in use on all the devices the provider allows) has no lines, and the
+reason is printed under the table.
 
 Example:
   ghostlane list
@@ -299,7 +301,7 @@ func client(cmd string, args []string, stdout, stderr io.Writer) int {
 	case "status":
 		printStatus(stdout, resp.Status)
 	case "list":
-		printList(stdout, resp.Entries)
+		printList(stdout, resp.Entries, resp.Message)
 	default:
 		if resp.Message != "" {
 			fmt.Fprintln(stdout, resp.Message)
@@ -365,14 +367,19 @@ func printStatus(w io.Writer, st *ipc.Status) {
 	}
 }
 
-func printList(w io.Writer, entries []ipc.EntryView) {
+// printList prints the lines; note is what the daemon says of the lists, such
+// as why one has none.
+func printList(w io.Writer, entries []ipc.EntryView, note string) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "#\tCOUNTRY\tKIND\tCARRIER\tLABEL\tNOTE")
 	for _, e := range entries {
 		fmt.Fprintf(tw, " %d \t%s\t%s\t%s\t%s\t%s\n", e.Index, e.Country, e.Kind, e.Carrier, e.Label, e.Problem)
 	}
 	_ = tw.Flush()
-	if len(entries) == 0 {
+	if len(entries) == 0 && note == "" {
 		fmt.Fprintln(w, "(no lines; ghostlane add <url>)")
+	}
+	if note != "" {
+		fmt.Fprintln(w, note)
 	}
 }

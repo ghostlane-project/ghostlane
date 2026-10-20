@@ -596,7 +596,18 @@ func (d *Daemon) entriesFor(ctx context.Context, subURL string, force bool) ([]l
 }
 
 func (d *Daemon) fetchInto(ctx context.Context, subURL string) (*store.Cache, error) {
-	body, headers, err := d.deps.Fetch(ctx, subURL)
+	body, headers, err := d.deps.Fetch(ctx, subURL, d.device())
+	var refused *links.ErrDeviceRefused
+	if errors.As(err, &refused) {
+		// The host answered, and its answer is about this device: its list is
+		// empty for it. That is no failed fetch, and the lines this device had
+		// must stop working, so they are replaced by a record with none. The
+		// record keeps what the host sent beside the refusal (title, interval,
+		// usage, its sentence) for status, list and add to say why.
+		d.logf("list %s: device refused: %s", store.MaskURL(subURL), links.RefusalText(refused.Kind, refused.Announce))
+		body, err = nil, nil
+		headers.Refusal, headers.Announce = refused.Kind, refused.Announce
+	}
 	d.mu.Lock()
 	if err != nil {
 		d.subErr[subURL] = Scrub(err.Error())
