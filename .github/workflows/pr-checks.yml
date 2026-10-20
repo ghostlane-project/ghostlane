@@ -17,6 +17,10 @@ on:
         description: Compile shared Kotlin for Apple targets without signing or building Go frameworks
         type: boolean
         default: true
+      ios_extension:
+        description: Build the iPhone tunnel extension unsigned and run its Swift tests
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -441,11 +445,14 @@ jobs:
     # Xray, olcRTC) and hev-socks5-tunnel come prebuilt from this repository's
     # releases, fetched by the target's own first build phase. So a Mac builds
     # it with neither Gradle nor a signing identity, and runs the tests of its
-    # Foundation-only parts beside it.
+    # Foundation-only parts beside it. On a change to it, and on request.
     #
     # ai-generated: the whole job.
     needs: scope
-    if: always() && needs.scope.outputs.ios_extension == 'true'
+    if: >-
+      always() &&
+      ((github.event_name == 'workflow_dispatch' && inputs.ios_extension) ||
+       needs.scope.outputs.ios_extension == 'true')
     name: iPhone tunnel extension
     runs-on: macos-latest
     timeout-minutes: 25
@@ -478,15 +485,16 @@ jobs:
               print("::error::PrivacyInfo.xcprivacy is not among the resources of the iosApp target")
               sys.exit(1)
           PY
+      # The target, not its scheme: an extension's scheme builds its host app
+      # too, and the app's first phase runs Gradle.
       - name: Build the extension, unsigned
         run: |
           set -euo pipefail
           xcodebuild \
             -project iosApp/iosApp.xcodeproj \
-            -scheme PacketTunnel \
-            -destination 'generic/platform=iOS' \
+            -target PacketTunnel \
+            -sdk iphoneos \
             -configuration Release \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
