@@ -109,9 +109,9 @@ func TestListSaysWhyItIsEmpty(t *testing.T) {
 func TestStatusShowsARefusedList(t *testing.T) {
 	var out bytes.Buffer
 	printStatus(&out, &ipc.Status{State: "idle", Subscriptions: []ipc.SubscriptionView{
-		{URL: "https://sub.example/sub/a/…", Title: "Acme", IntervalHours: 1, Error: "device refused: This list is at its device limit. Ask your provider."},
+		{URL: "https://sub.example/sub/a/…", Title: "Acme", IntervalHours: 1, Error: "device refused: This list has no place for this device. Ask your provider."},
 	}})
-	if !strings.Contains(out.String(), "ERROR: device refused: This list is at its device limit. Ask your provider.") {
+	if !strings.Contains(out.String(), "ERROR: device refused: This list has no place for this device. Ask your provider.") {
 		t.Fatalf("%s", out.String())
 	}
 }

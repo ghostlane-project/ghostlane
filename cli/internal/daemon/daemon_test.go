@@ -44,11 +44,12 @@ type world struct {
 	fronts     int
 	frontProbe map[string]string // probe listen address → "front:<n>"
 	fetchDelay time.Duration
-	bodies     map[string][]byte       // per-URL bodies; "" = w.body
-	fetchErrs  map[string]error        // per-URL fetch errors
-	devices    []links.Device          // the device each fetch was made as
-	refusal    *links.ErrDeviceRefused // while set, every fetch is refused with it
-	logs       []string                // what the daemon logged
+	bodies     map[string][]byte                  // per-URL bodies; "" = w.body
+	fetchErrs  map[string]error                   // per-URL fetch errors
+	devices    []links.Device                     // the device each fetch was made as
+	refusal    *links.ErrDeviceRefused            // while set, every fetch is refused with it
+	refusals   map[string]*links.ErrDeviceRefused // per-URL refusals
+	logs       []string                           // what the daemon logged
 }
 
 func (w *world) rec(s string) { w.mu.Lock(); w.log = append(w.log, s); w.mu.Unlock() }
@@ -127,7 +128,7 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}, bodies: map[string][]byte{}, fetchErrs: map[string]error{}}
+	w := &world{body: fixture, engineErr: map[string]error{}, deadProbe: map[string]bool{}, frontProbe: map[string]string{}, bodies: map[string][]byte{}, fetchErrs: map[string]error{}, refusals: map[string]*links.ErrDeviceRefused{}}
 	dir := t.TempDir()
 	deps := Deps{
 		ConfigPath: filepath.Join(dir, "config.yaml"), StateDir: dir, SocketPath: filepath.Join(dir, "s.sock"),
@@ -139,6 +140,9 @@ func newWorld(t *testing.T) (*world, *Daemon, string) {
 			}
 			if e, ok := w.fetchErrs[url]; ok {
 				err = e
+			}
+			if r, ok := w.refusals[url]; ok {
+				refusal = r
 			}
 			w.fetches++
 			w.devices = append(w.devices, dev)
@@ -1261,7 +1265,7 @@ func TestDeviceIDIsReusedFromTheEngineFile(t *testing.T) {
 			t.Fatalf("%v %v", info, err)
 		}
 		if raw, _ := os.ReadFile(path); string(raw) != first+"\n" {
-			t.Fatalf("the engine reads the file's first line: %q", raw)
+			t.Fatalf("the file is the id and a newline, as the engine writes it: %q", raw)
 		}
 		if again, err := deviceID(dir); err != nil || again != first {
 			t.Fatalf("a second start must find the same id: %q %v", again, err)
@@ -1477,7 +1481,7 @@ func TestAddingARefusedListKeepsItAndSaysWhy(t *testing.T) {
 // A host that sends no sentence is still understood.
 func TestARefusalWithoutAnAnnounceUsesTheBuiltInSentence(t *testing.T) {
 	for kind, want := range map[links.Refusal]string{
-		links.RefusalLimit:    "device refused: This list is at its device limit. Ask your provider.",
+		links.RefusalLimit:    "device refused: This list has no place for this device. Ask your provider.",
 		links.RefusalNoDevice: "device refused: The provider could not read this device's id. Refresh the list; if it stays so, ask your provider.",
 	} {
 		w, d, _ := newWorld(t)
@@ -1518,5 +1522,212 @@ func TestARefusalLeavesTheRunningLineUp(t *testing.T) {
 	}
 	if st.Subscriptions[0].Error != "device refused: "+limitSentence {
 		t.Fatalf("%+v", st.Subscriptions[0])
+	}
+}
+
+// An id that cannot be had at one fetch is asked for again at the next: a
+// moment's failure at the daemon's start would otherwise leave every fetch
+// without one until a restart. Each reason is logged once, not at every fetch,
+// and no id is made up while there is none.
+func TestADeviceIDThatCouldNotBeHadIsAskedForAgain(t *testing.T) {
+	w, d, dir := newWorld(t)
+	ctx := context.Background()
+	place := filepath.Join(dir, "device-id")
+	idLogs := func() int {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		n := 0
+		for _, l := range w.logs {
+			if strings.Contains(l, "device id:") {
+				n++
+			}
+		}
+		return n
+	}
+	lastDevice := func() links.Device {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.devices[len(w.devices)-1]
+	}
+
+	// a directory where the file should be: the id can be neither read nor made
+	if err := os.Mkdir(place, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if resp := d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL}); !resp.OK {
+		t.Fatalf("%+v", resp)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	if dev := lastDevice(); dev.ID != "" || dev.OS != "Linux" {
+		t.Fatalf("no id to be had, none sent: %+v", dev)
+	}
+	if n := idLogs(); n != 1 {
+		t.Fatalf("one reason, one line: %d, %q", n, w.logs)
+	}
+
+	// another reason (a link that leads to itself) is said once too
+	if err := os.Remove(place); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(place, place); err != nil {
+		t.Fatal(err)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	if dev := lastDevice(); dev.ID != "" {
+		t.Fatalf("no id to be had, none sent: %+v", dev)
+	}
+	if n := idLogs(); n != 2 {
+		t.Fatalf("a new reason, one more line: %d, %q", n, w.logs)
+	}
+
+	// the place is free again: the next fetch makes the id and carries it
+	if err := os.Remove(place); err != nil {
+		t.Fatal(err)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	raw, err := os.ReadFile(place)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(string(raw))
+	if dev := lastDevice(); id == "" || dev.ID != id {
+		t.Fatalf("the fetch after carries the id it made: %+v, file %q", dev, raw)
+	}
+	d.Handle(ctx, ipc.Request{Verb: "refresh"})
+	if dev := lastDevice(); dev.ID != id {
+		t.Fatalf("and keeps it: %+v", dev)
+	}
+	if n := idLogs(); n != 2 {
+		t.Fatalf("an id that is had is not logged as missing: %q", w.logs)
+	}
+}
+
+// connect and refresh name the lists that are empty because their host
+// refused this device: a bare no_match, or "refreshed", leaves the person to
+// guess why nothing can be connected.
+func TestConnectAndRefreshNameTheRefusedLists(t *testing.T) {
+	w, d, _ := newWorld(t)
+	ctx := context.Background()
+	w.refusal = &links.ErrDeviceRefused{Kind: links.RefusalLimit, Announce: limitSentence}
+	d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+	why := "Partner: device refused: " + limitSentence
+
+	resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "DE", Mode: "proxy"})
+	if resp.OK || resp.Error != "no_match" || !strings.HasSuffix(resp.Message, "\n"+why) {
+		t.Fatalf("connect says why nothing matches: %+v", resp)
+	}
+	if resp = d.Handle(ctx, ipc.Request{Verb: "refresh"}); !resp.OK || resp.Message != "refreshed\n"+why {
+		t.Fatalf("refresh names the list its host turned away again: %+v", resp)
+	}
+
+	w.mu.Lock()
+	w.refusal = nil
+	w.mu.Unlock()
+	if resp = d.Handle(ctx, ipc.Request{Verb: "refresh"}); !resp.OK || resp.Message != "refreshed" {
+		t.Fatalf("a served list is not named: %+v", resp)
+	}
+	if resp = d.Handle(ctx, ipc.Request{Verb: "connect", Selector: "XX", Mode: "proxy"}); resp.OK || resp.Error != "no_match" || strings.Contains(resp.Message, "device refused") {
+		t.Fatalf("a selector that matches nothing in a served list: %+v", resp)
+	}
+}
+
+// A line chosen by its index or its label is that line, in its own list. When
+// that list's host turns this device away, the line is gone: the selection
+// must not slide onto what another provider's list now holds at that index or
+// under that label, nor be rewritten to it. The round says why and waits,
+// whether the line ends or the daemon starts again, and the line comes back
+// when its list is served again.
+func TestASelectionStaysInItsListWhileItsHostRefusesTheDevice(t *testing.T) {
+	const urlB = "https://b.example/sub/2/y"
+	vless := func(label string) string {
+		return "vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=s&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12#" + url.PathEscape(label) + "\n"
+	}
+	for _, tc := range []struct{ name, selector string }{
+		{"by index", "3"},
+		{"by label", "🇨🇦 CA · SJ"}, // the third line of the first list, its only line of that name
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, d, dir := newWorld(t)
+			w.bodies[urlB] = []byte(vless("B one") + vless("B two") + vless("B three"))
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { _ = d.Run(ctx); close(done) }()
+			d.Handle(ctx, ipc.Request{Verb: "add", Source: listURL})
+			d.Handle(ctx, ipc.Request{Verb: "add", Source: urlB})
+			if resp := d.Handle(ctx, ipc.Request{Verb: "connect", Selector: tc.selector, Mode: "proxy"}); !resp.OK {
+				t.Fatalf("%+v", resp)
+			}
+			first := waitState(t, d, "up")
+			if first.Line.Label != "🇨🇦 CA · SJ" || first.Line.Carrier != "salutejazz" {
+				t.Fatalf("the first list's third line: %+v", first.Line)
+			}
+			stored := func() store.Selection {
+				t.Helper()
+				cfg, err := store.Load(filepath.Join(dir, "config.yaml"))
+				if err != nil || cfg.Selection == nil {
+					t.Fatalf("%+v %v", cfg, err)
+				}
+				return *cfg.Selection
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for stored().EntryID == "" && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			chosen := stored()
+			if chosen.EntryID != first.Line.ID || chosen.EntrySub != listURL {
+				t.Fatalf("the line and its list are remembered: %+v, line %s", chosen, first.Line.ID)
+			}
+
+			// the first list's host turns the device away; the second list now
+			// holds a line at that index, and one of that name
+			w.mu.Lock()
+			w.refusals[listURL] = &links.ErrDeviceRefused{Kind: links.RefusalLimit, Announce: limitSentence}
+			w.bodies[urlB] = []byte(vless("B one") + vless("B two") + vless("🇨🇦 CA · SJ"))
+			w.mu.Unlock()
+			d.Handle(ctx, ipc.Request{Verb: "refresh"})
+			if st := waitState(t, d, "up"); st.Line.ID != first.Line.ID {
+				t.Fatalf("a refusal cuts nothing that is up: %+v", st.Line)
+			}
+
+			// the line ends: the next round finds its list refused
+			w.mu.Lock()
+			w.engState = "exited"
+			w.mu.Unlock()
+			st := waitState(t, d, "failed")
+			if st.LastError != "device refused: "+limitSentence {
+				t.Fatalf("the round says why it waits: %q", st.LastError)
+			}
+			cancel()
+			<-done
+
+			// the daemon starts again: the same
+			w.mu.Lock()
+			w.engState = ""
+			w.mu.Unlock()
+			d2 := New(d.deps)
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			defer cancel2()
+			go func() { _ = d2.Run(ctx2) }()
+			st = waitState(t, d2, "failed")
+			if st.LastError != "device refused: "+limitSentence {
+				t.Fatalf("after a restart too: %q", st.LastError)
+			}
+			if ev := w.events(); strings.Contains(ev, ":vless") {
+				t.Fatalf("the second list's line came up: %s", ev)
+			}
+			if again := stored(); again != chosen {
+				t.Fatalf("the selection was rewritten: %+v, was %+v", again, chosen)
+			}
+
+			// the host makes room: the same line, and nothing else
+			w.mu.Lock()
+			delete(w.refusals, listURL)
+			w.mu.Unlock()
+			d2.Handle(ctx2, ipc.Request{Verb: "refresh"})
+			if st = waitState(t, d2, "up"); st.Line.ID != first.Line.ID {
+				t.Fatalf("back on its own line: %+v", st.Line)
+			}
+		})
 	}
 }

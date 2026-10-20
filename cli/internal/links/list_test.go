@@ -174,6 +174,25 @@ func TestParseHeaders(t *testing.T) {
 	}
 }
 
+// A title is printed beside a list's every refusal and in status: it reaches
+// the terminal as one clean line, whatever the provider put in it, and its
+// base64 prefix is read in any case, as the app reads it.
+func TestParseHeadersCleansTheTitle(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"Acme\x1b[2J\nVPN", "Acme [2J VPN"},
+		{"\u202eNPV emcA", "NPV emcA"},
+		{"BASE64:" + base64.StdEncoding.EncodeToString([]byte("Acme\tVPN")), "Acme VPN"},
+		{"Base64: " + base64.StdEncoding.EncodeToString([]byte("Acme")) + " ", "Acme"},
+		{strings.Repeat("я", 300), strings.Repeat("я", 200)},
+	} {
+		h := http.Header{}
+		h.Set("Profile-Title", tc.raw)
+		if got := ParseHeaders(h).Title; got != tc.want {
+			t.Errorf("Profile-Title %q: %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // The app reads the same two flags (LocationsDatasource.subscriptionProfile):
 // the CLI and the app never read one answer differently.
 func TestParseHeadersReadsADeviceRefusal(t *testing.T) {

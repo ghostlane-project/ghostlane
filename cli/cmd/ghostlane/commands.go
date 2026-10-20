@@ -72,9 +72,8 @@ Examples:
 Shows every line of every subscription: its index (for 'connect <index>'),
 country, kind (olcrtc, vless, hysteria2), carrier and label. A line this
 version cannot connect (VLESS over grpc/ws, trojan, shadowsocks, vmess) is
-listed with a note saying why. A list whose host refused this device (its link
-is in use on all the devices the provider allows) has no lines, and the
-reason is printed under the table.
+listed with a note saying why. A list whose provider turned this device away
+has no lines, and the reason is printed under the table.
 
 Example:
   ghostlane list
@@ -109,7 +108,10 @@ server never gets the tun.
 
 The selection is remembered: the service reconnects it after a reboot.
 A line that does not answer within a minute, or three failed liveness probes
-in a row, moves the connection to the next line of the selection.
+in a row, moves the connection to the next line of the selection. A line
+chosen by its label or index stays that line, in its own list: while that
+list's provider turns this device away, the connection waits ('status' says
+why) and never moves to another list's line.
 
 Examples:
   ghostlane connect DE --tun
@@ -132,6 +134,7 @@ again) and clears the stored selection, so nothing reconnects at boot.
 
 Re-fetches every subscription now. A refresh never disconnects by itself;
 if the connected room or key was rotated, the daemon reconnects to the new one.
+A list whose provider turned this device away is named with the reason.
 `,
 	"remove": `ghostlane remove <subscription>
 

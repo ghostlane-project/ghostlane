@@ -266,10 +266,14 @@ func TestAnAnswerWithoutARefusalFlagIsAList(t *testing.T) {
 	}
 }
 
+// limitWords are the app's refresh_device_limit_reached: a list at its limit
+// and a device the provider removed get the same flag, and these words fit both.
+const limitWords = "This list has no place for this device. Ask your provider."
+
 // A host that sends no sentence is still understood; one that sends a long or
 // odd one is shown cut to a line, never trusted with the terminal.
 func TestARefusalIsTold(t *testing.T) {
-	if got := RefusalText(RefusalLimit, ""); got != "This list is at its device limit. Ask your provider." {
+	if got := RefusalText(RefusalLimit, ""); got != limitWords {
 		t.Errorf("limit: %q", got)
 	}
 	if got := RefusalText(RefusalNoDevice, "  "); !strings.Contains(got, "could not read this device's id") {
@@ -286,7 +290,60 @@ func TestARefusalIsTold(t *testing.T) {
 	if odd != "line one [2Jline two three" {
 		t.Errorf("control characters become spaces: %q", odd)
 	}
-	if got := RefusalText(RefusalLimit, "\x00\x1b"); got != "This list is at its device limit. Ask your provider." {
+	if got := RefusalText(RefusalLimit, "\x00\x1b"); got != limitWords {
 		t.Errorf("a sentence of nothing printable is none: %q", got)
+	}
+	// A direction override would turn what follows it around on a terminal:
+	// format characters are dropped, not made spaces.
+	if got := RefusalText(RefusalLimit, "Ask \u202eAcme\u202c to free one\u2066.\u2069\ufeff"); got != "Ask Acme to free one." {
+		t.Errorf("format characters are dropped: %q", got)
+	}
+	// What the app shows no words for, the CLI does not either: "0" (a
+	// provider's word for no note), base64 that did not decode, and bytes
+	// that are not UTF-8.
+	for _, none := range []string{"0", " 0 ", "base64:%%% not base64 %%%", "BASE64:%%%", "\xff\xfe Acme", "\u202e"} {
+		if got := RefusalText(RefusalLimit, none); got != limitWords {
+			t.Errorf("RefusalText(%q) = %q, want ours", none, got)
+		}
+	}
+}
+
+// Any 2xx can carry a refusal, as the app and the iPhone's tunnel read one; the
+// sentence it carries is cleaned before it is kept, and one that says nothing
+// is none.
+func TestARefusalOnAny2xxIsARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		announce string
+		want     string
+	}{
+		{http.StatusOK, "0", ""},
+		{http.StatusNonAuthoritativeInfo, "base64:" + base64.StdEncoding.EncodeToString([]byte(refusedSentence)), refusedSentence},
+		{http.StatusAccepted, "base64:@@@", ""},
+		{http.StatusOK, "base64:" + base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe, 'x'}), ""},
+		{http.StatusOK, "Ask \u202eAcme", "Ask Acme"},
+	} {
+		host := newListHost(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("x-hwid-max-devices-reached", "true")
+			w.Header().Set("announce", tc.announce)
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte("vless://00000000-0000-4000-8000-000000000000@127.0.0.1:1?type=tcp&security=none#x\n"))
+		})
+		body, headers, err := Fetch(context.Background(), host.Client(), host.URL+"/sub/a/b", "x", Device{})
+		var refused *ErrDeviceRefused
+		if !errors.As(err, &refused) || len(body) != 0 {
+			t.Fatalf("%d %q: a refusal, no list: %v %q", tc.status, tc.announce, err, body)
+		}
+		if refused.Announce != tc.want || headers.Announce != tc.want {
+			t.Fatalf("%d %q: announce %q / %q, want %q", tc.status, tc.announce, refused.Announce, headers.Announce, tc.want)
+		}
+	}
+	// a list served with another 2xx is what it was before: not a list
+	host := newListHost(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNonAuthoritativeInfo)
+		servedList(w, r)
+	})
+	if _, _, err := Fetch(context.Background(), host.Client(), host.URL+"/sub/a/b", "x", Device{}); err == nil || !strings.Contains(err.Error(), "HTTP 203") {
+		t.Fatalf("a 203 with no refusal: %v", err)
 	}
 }

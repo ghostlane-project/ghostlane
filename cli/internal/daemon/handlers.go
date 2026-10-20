@@ -33,7 +33,8 @@ func (d *Daemon) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return d.remove(req.Subscription)
 	case "refresh":
 		d.refresh(ctx, true)
-		return ipc.Response{OK: true, Message: "refreshed"}
+		// a list its host turned away again is refreshed too, and says so
+		return ipc.Response{OK: true, Message: withRefusals("refreshed", d.refusals(""))}
 	case "connect":
 		return d.connect(ctx, req)
 	case "disconnect":
@@ -133,6 +134,14 @@ func (d *Daemon) refusals(only string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// withRefusals is msg with the refusal lines under it, when there are any.
+func withRefusals(msg, refusals string) string {
+	if refusals == "" {
+		return msg
+	}
+	return msg + "\n" + refusals
 }
 
 func matchesSub(url, needle string) bool {
@@ -307,10 +316,12 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Fail("no_subscription", err.Error())
 	}
 	if _, err := links.Select(flatten(all), req.Selector); err != nil {
+		// A list its host refused has no lines to match: the answer says so.
+		msg := withRefusals(err.Error(), d.refusals(req.Subscription))
 		if errors.Is(err, links.ErrNoMatch) {
-			return ipc.Fail("no_match", err.Error())
+			return ipc.Fail("no_match", msg)
 		}
-		return ipc.Fail("no_subscription", err.Error())
+		return ipc.Fail("no_subscription", msg)
 	}
 	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode, KillSwitch: req.KillSwitch}
 	d.mu.Lock()

@@ -110,10 +110,11 @@ type Daemon struct {
 	ksOn     bool   // the kill switch is in; the own-address rules belong to it, not to the line
 	ksStop   func() // its address watcher
 
-	// deviceOnce makes dev, Deps.Device with this machine's id, once: at Run,
-	// or at the first fetch when a request comes before Run does.
-	deviceOnce sync.Once
-	dev        links.Device
+	// devMu guards devID, this machine's id once it is had (deviceID), and
+	// devErr, the last reason it could not be had, which is logged once.
+	devMu  sync.Mutex
+	devID  string
+	devErr string
 }
 
 // indexed is one entry with the subscription it came from; the daemon numbers
@@ -233,22 +234,27 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) deviceIDPath() string { return deviceIDPath(d.deps.StateDir) }
 
 // device is what a list fetch says about this machine: Deps.Device and the
-// id of deviceID, read once. When there is no id (the file can be neither
-// read nor made) the fetch names the machine without one and the log says so
-// once; the host then tells the person, where an id made up here would be a
-// new device at every start.
+// id of deviceID, kept once it is had. While there is no id (the file can be
+// neither read nor made) each fetch names the machine without one and asks
+// again at the next, and the log says so once for each reason; the host then
+// tells the person, where an id made up here would be a new device at every
+// start.
 func (d *Daemon) device() links.Device {
-	d.deviceOnce.Do(func() {
-		d.dev = d.deps.Device
-		d.dev.ID = ""
+	d.devMu.Lock()
+	defer d.devMu.Unlock()
+	if d.devID == "" {
 		id, err := deviceID(d.deps.StateDir)
-		if err != nil {
-			d.logf("device id: %v; lists are fetched without one", err)
-			return
+		switch {
+		case err == nil:
+			d.devID, d.devErr = id, ""
+		case err.Error() != d.devErr:
+			d.devErr = err.Error()
+			d.logf("device id: %v; lists are fetched without one until it can be read or made", err)
 		}
-		d.dev.ID = id
-	})
-	return d.dev
+	}
+	dev := d.deps.Device
+	dev.ID = d.devID
+	return dev
 }
 
 // deviceIDFile is the file the olcRTC engine keeps its own device id in (the

@@ -9,6 +9,7 @@ import (
 	neturl "net/url"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var errBadURL = errors.New("list: the URL cannot be parsed")
@@ -23,6 +24,8 @@ const (
 	// announceMax is how much of a host's sentence is shown; the app cuts at
 	// 200 characters too.
 	announceMax = 200
+	// titleMax is how much of a list's title is shown.
+	titleMax = 200
 )
 
 // Device is what a list fetch says about this machine, the way Happ and the
@@ -78,25 +81,48 @@ func (e *ErrDeviceRefused) Error() string {
 
 // RefusalText is what to tell the person about a refusal: the host's own
 // sentence, cut to one line of 200 characters, else ours for the kind of
-// refusal. The sentence is text from the network that goes to a terminal and
-// a log, so control characters in it become spaces.
+// refusal (the app's strings, refresh_device_limit_reached and
+// refresh_device_not_supported). The sentence is text from the network that
+// goes to a terminal and a log, so control characters in it become spaces.
+// The limit's words cover a device the provider removed too: the host sends
+// the same flag for both.
 func RefusalText(kind Refusal, announce string) string {
-	if s := oneLine(announce, announceMax); s != "" {
+	if s := announceText(announce); s != "" {
 		return s
 	}
 	if kind == RefusalNoDevice {
 		return "The provider could not read this device's id. Refresh the list; if it stays so, ask your provider."
 	}
-	return "This list is at its device limit. Ask your provider."
+	return "This list has no place for this device. Ask your provider."
+}
+
+// announceText is a refusal's announce as it may be shown: none for "0" (the
+// provider's word for no note), for one whose base64 did not decode (it still
+// carries its prefix, in any case) and for one that is not UTF-8, as the app
+// reads them; else the text on one line of 200 characters.
+func announceText(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "0" || !utf8.ValidString(s) {
+		return ""
+	}
+	if _, encoded := cutBase64Prefix(s); encoded {
+		return ""
+	}
+	return oneLine(s, announceMax)
 }
 
 // oneLine puts s on one line: every control character and every kind of white
-// space becomes one space (leading and trailing ones go), and what is longer
-// than limit characters is cut.
+// space becomes one space (leading and trailing ones go), a format character
+// (Cf: the bidirectional overrides and isolates among them, which would turn
+// what follows around on a terminal) is dropped, and what is longer than limit
+// characters is cut.
 func oneLine(s string, limit int) string {
 	out := make([]rune, 0, min(len(s), limit+1))
 	gap := false
 	for _, r := range s {
+		if unicode.Is(unicode.Cf, r) {
+			continue
+		}
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			gap = len(out) > 0
 			continue
@@ -136,15 +162,19 @@ func Fetch(ctx context.Context, client *http.Client, url, userAgent string, dev 
 		return nil, Headers{}, fmt.Errorf("list: fetch: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, Headers{}, fmt.Errorf("list: HTTP %d", resp.StatusCode)
 	}
 	headers := ParseHeaders(resp.Header)
 	if headers.Refusal != RefusalNone {
-		// Not read as a list, whatever the body is. The sentence is kept to one
-		// line of 200 characters: the headers are stored with the list.
-		headers.Announce = oneLine(headers.Announce, announceMax)
+		// Any 2xx says it, as the app and the iPhone's tunnel read it. Not read
+		// as a list, whatever the body is. The sentence is kept to one line of
+		// 200 characters, or none: the headers are stored with the list.
+		headers.Announce = announceText(headers.Announce)
 		return nil, headers, &ErrDeviceRefused{Kind: headers.Refusal, Announce: headers.Announce}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, Headers{}, fmt.Errorf("list: HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {

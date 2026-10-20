@@ -141,12 +141,19 @@ random UUID the daemon makes at its first start; the olcRTC engine keeps its own
 device id in the same file), and `x-device-os` (`Linux`), `x-ver-os` (the
 kernel release) and `x-device-model` (`PC`) say what it is. A provider's device
 limit counts a machine by that id; deleting the file makes the next start a new
-device. A host that refuses the machine, because its link is in use on all the
-devices the provider allows, answers with its sentence and no list:
-`ghostlane status` shows it on the list's line (`ERROR: device refused: …`),
-`ghostlane list` prints it under the table, and the list stays on record with no
-lines until the provider makes room and a refresh finds it served. A tunnel
-that is up stays up.
+device. An id that cannot be read or made (a full disk, a file in the way) is
+never replaced by one made up for the occasion: the fetch goes out without
+`x-hwid`, the log says why once, and the next fetch asks again. A host that
+turns the machine away (the link is in use on all the devices the provider
+allows, the provider removed this device, or it could not read the id) answers
+with its sentence and no list: `ghostlane status` shows it on the list's line
+(`ERROR: device refused: …`), `ghostlane list` prints it under the table,
+`ghostlane refresh` and a `connect` that matches nothing name the list too, and
+the list stays on record with no lines until the provider makes room and a
+refresh finds it served. A tunnel that is up stays up. A line chosen by its
+label or index stays that line, in its own list: while that list is refused the
+selection waits (`status` says `failed` and why) and never moves to another
+list's line.
 
 **Proxy settings.** The proxy's address, port and credentials are the `proxy:`
 block of `/var/lib/ghostlane/config.yaml` (edit as root, then
