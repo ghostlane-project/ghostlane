@@ -1,0 +1,3 @@
+Server lists
+• The app tells a list's provider which device it is, as other apps do, so a provider's device limit works.
+• A list that turns the device away says why, in place of the servers.

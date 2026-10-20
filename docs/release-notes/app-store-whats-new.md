@@ -19,3 +19,7 @@ olcRTC
 • Rooms on one meeting service hold on mobile data. There its UDP dropped out for seconds at a time, so pages crawled or stopped loading; the app now reaches that service over TCP.
 • Video rooms keep their speed on a network that limits speed by dropping traffic. Such a network used to leave a room at a small part of what it carries.
 • A room starts on a network where one of its service's addresses does not answer.
+
+Server lists
+• The app tells a list's provider which device it is, as other apps do, so a provider's device limit works.
+• A list that turns the device away says why, in place of the servers.
