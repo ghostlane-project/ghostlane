@@ -4,6 +4,9 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// How the extension names itself to the host of a server list: as the app
 /// does, word for word.
@@ -38,6 +41,19 @@ enum DeviceHeaders {
     /// The two flags with which a host turns a device away, in the order the
     /// app reads them.
     static let refusalFlags = ["x-hwid-max-devices-reached", "x-hwid-not-supported"]
+    /// What a list fetch accepts, as the app's does.
+    static let listAccept = "text/plain, text/markdown, application/octet-stream, */*"
+
+    /// RoomKeeper's request for the list at `url`: `Accept`, then every header
+    /// of `headers` (`forListFetch`).
+    static func listRequest(url: URL, headers: [String: String]) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(listAccept, forHTTPHeaderField: "Accept")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        return request
+    }
 
     /// The headers of a list fetch from this device, for the app's `id`.
     static func forListFetch(id: String) -> [String: String] {
@@ -130,6 +146,15 @@ enum DeviceHeaders {
         let reason: String?
     }
 
+    /// The refusal in what a list fetch came back with, or nil. Only an answer
+    /// can be one: no error, and a 2xx. Anything else is a failure, whatever
+    /// its headers say.
+    static func refusal(answer response: URLResponse?, error: Error?) -> Refusal? {
+        guard error == nil, let answer = response as? HTTPURLResponse,
+              (200..<300).contains(answer.statusCode) else { return nil }
+        return refusal(in: answer.allHeaderFields)
+    }
+
     /// The refusal in these response headers, or nil when they carry none.
     /// Names in any case: HTTP/2 writes every name in lower case, HTTP/1.1 as
     /// the host spelled it, and `allHeaderFields` keeps either.
@@ -156,8 +181,11 @@ enum DeviceHeaders {
     /// The `announce` text as one log line may carry it: the text itself or,
     /// behind `base64:`, the text it encodes (the padding optional, as the app
     /// decodes it), every control and line-breaking character dropped, trimmed,
-    /// and cut to 200 characters. nil for none, for `0` (the host's "take it
-    /// down"), and for base64 that does not decode.
+    /// and cut to 200 UTF-16 units, as the app's `take(200)` counts, never
+    /// inside a scalar. Not to 200 characters: a character can hold any number
+    /// of combining marks, and the engine's log is bounded by lines, not bytes.
+    /// nil for none, for `0` (the host's "take it down"), and for base64 that
+    /// does not decode.
     static func reason(_ raw: String?) -> String? {
         guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text != "0" else {
             return nil
@@ -170,8 +198,16 @@ enum DeviceHeaders {
             text = String(decoding: data, as: UTF8.self)
         }
         let unwanted = CharacterSet.controlCharacters.union(.newlines)
-        let kept = String(text.unicodeScalars.filter { !unwanted.contains($0) })
+        let clean = String(text.unicodeScalars.filter { !unwanted.contains($0) })
             .trimmingCharacters(in: .whitespaces)
-        return kept.isEmpty ? nil : String(kept.prefix(reasonMaxChars))
+        guard !clean.isEmpty else { return nil }
+        var kept = String.UnicodeScalarView()
+        var units = 0
+        for scalar in clean.unicodeScalars {
+            units += scalar.utf16.count
+            if units > reasonMaxChars { break }
+            kept.append(scalar)
+        }
+        return String(kept)
     }
 }

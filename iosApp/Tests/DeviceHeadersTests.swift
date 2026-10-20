@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Compiled with the production DeviceHeaders by scripts/test-ios-room-list.sh,
 /// which passes the repository's root: the Swift copy is held to the Kotlin it
@@ -16,6 +19,8 @@ enum DeviceHeadersTests {
     }
 
     static let id = "install-0123456789abcdef0123456789abcdef"
+    static let sentence = "VAYUNET: this link is already in use on its 3 devices. Ask VAYUNET to free one."
+    static let announce = "base64:" + Data(sentence.utf8).base64EncodedString()
 
     static func main() {
         guard CommandLine.arguments.count == 2 else {
@@ -24,7 +29,9 @@ enum DeviceHeadersTests {
         }
         cut()
         headers()
+        requests()
         refusals()
+        answers()
         reasons()
         sameAsTheKotlin(root: CommandLine.arguments[1])
         print("DeviceHeadersTests: all passed")
@@ -49,20 +56,21 @@ enum DeviceHeadersTests {
         check(DeviceHeaders.asciiHeader("e\u{301}x") == "ex", "a combining mark is dropped, its letter kept")
     }
 
+    static let fiveHeaders = DeviceHeaders.forListFetch(
+        id: id,
+        appVersion: "1.0.467",
+        osVersion: OperatingSystemVersion(majorVersion: 18, minorVersion: 0, patchVersion: 1),
+        machine: "iPhone15,2"
+    )
+
     static func headers() {
-        let sent = DeviceHeaders.forListFetch(
-            id: id,
-            appVersion: "1.0.467",
-            osVersion: OperatingSystemVersion(majorVersion: 18, minorVersion: 0, patchVersion: 1),
-            machine: "iPhone15,2"
-        )
-        check(sent == [
+        check(fiveHeaders == [
             "User-Agent": "olcbox/1.0.467",
             "x-hwid": id,
             "x-device-os": "iOS",
             "x-ver-os": "18.0.1",
             "x-device-model": "iPhone15,2",
-        ], "the five headers the app sends: \(sent)")
+        ], "the five headers the app sends: \(fiveHeaders)")
 
         let version = { (major: Int, minor: Int, patch: Int) in
             DeviceHeaders.versionText(OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch))
@@ -104,10 +112,31 @@ enum DeviceHeadersTests {
         check(live["User-Agent"]?.hasPrefix("olcbox") == true, "the app's name")
     }
 
-    static func refusals() {
-        let sentence = "VAYUNET: this link is already in use on its 3 devices. Ask VAYUNET to free one."
-        let announce = "base64:" + Data(sentence.utf8).base64EncodedString()
+    /// The request RoomKeeper sends, built by the function it calls: a real
+    /// URLRequest, read back through Foundation's own lookup.
+    static func requests() {
+        let url = URL(string: "https://sub.example.test/sub/token?format=ghostlane")!
+        let request = DeviceHeaders.listRequest(url: url, headers: fiveHeaders)
+        check(request.url == url, "the list's own address")
+        check((request.httpMethod ?? "GET") == "GET", "a GET")
+        check(request.value(forHTTPHeaderField: "Accept") == DeviceHeaders.listAccept, "Accept as the app's")
+        for (name, value) in fiveHeaders {
+            check(request.value(forHTTPHeaderField: name) == value, "\(name) on the request: \(String(describing: request.value(forHTTPHeaderField: name)))")
+            check(request.value(forHTTPHeaderField: name.uppercased()) == value, "\(name) read in any case")
+        }
+        check(request.value(forHTTPHeaderField: "x-hwid") == id, "the app's id")
+        check(request.value(forHTTPHeaderField: "User-Agent") == "olcbox/1.0.467", "the app's user agent, no browser's")
+        check(request.allHTTPHeaderFields?.count == 6, "Accept and the five, nothing else: \(String(describing: request.allHTTPHeaderFields))")
 
+        // An empty id leaves the header off the request, not empty on it.
+        let noId = DeviceHeaders.listRequest(
+            url: url,
+            headers: DeviceHeaders.forListFetch(id: "", appVersion: "1", osVersion: OperatingSystemVersion(), machine: "m")
+        )
+        check(noId.value(forHTTPHeaderField: "x-hwid") == nil, "no x-hwid at all")
+    }
+
+    static func refusals() {
         // As ProofKit's server writes a refusal: the flags in lower case.
         let full: [AnyHashable: Any] = [
             "x-hwid-active": "true",
@@ -139,6 +168,38 @@ enum DeviceHeadersTests {
         check(DeviceHeaders.refusal(in: ["x-hwid-max-devices-reached": "yes"]) == nil, "only true is true")
     }
 
+    /// What URLSession hands RoomKeeper: a real HTTPURLResponse, its headers
+    /// through `allHeaderFields` (bridged keys), in the call the keeper makes.
+    static func answers() {
+        let url = URL(string: "https://sub.example.test/sub/token")!
+        func answer(_ status: Int, _ fields: [String: String]) -> HTTPURLResponse {
+            HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: fields)!
+        }
+        let refused = answer(200, [
+            "X-HWID-Active": "true",
+            "X-HWID-Max-Devices-Reached": "True",
+            "X-Hwid-Limit": "true",
+            "ANNOUNCE": announce,
+            "Content-Type": "text/plain; charset=utf-8",
+        ])
+        let expected = DeviceHeaders.Refusal(flag: "x-hwid-max-devices-reached", reason: sentence)
+        check(DeviceHeaders.refusal(in: refused.allHeaderFields) == expected,
+              "read from allHeaderFields: \(String(describing: DeviceHeaders.refusal(in: refused.allHeaderFields)))")
+        check(DeviceHeaders.refusal(answer: refused, error: nil) == expected, "the keeper's call reads it too")
+        check(DeviceHeaders.refusal(answer: answer(200, ["x-HWID-not-SUPPORTED": "true"]), error: nil)?.flag == "x-hwid-not-supported",
+              "a name in mixed case")
+
+        // Only an answer is a refusal: anything else takes the failure path.
+        let flagged = ["X-HWID-Max-Devices-Reached": "true", "Announce": announce]
+        check(DeviceHeaders.refusal(answer: answer(403, flagged), error: nil) == nil, "a 4xx is a failure, whatever it says")
+        check(DeviceHeaders.refusal(answer: answer(500, flagged), error: nil) == nil, "a 5xx is a failure")
+        check(DeviceHeaders.refusal(answer: answer(200, flagged), error: NSError(domain: "test", code: 1)) == nil,
+              "an error is a failure")
+        check(DeviceHeaders.refusal(answer: nil, error: nil) == nil, "no response at all")
+        let served = answer(200, ["X-Hwid-Active": "true", "Subscription-Userinfo": "upload=0; download=0; total=0"])
+        check(DeviceHeaders.refusal(answer: served, error: nil) == nil, "a served list is no refusal")
+    }
+
     static func reasons() {
         let encode = { (text: String) in "base64:" + Data(text.utf8).base64EncodedString() }
         check(DeviceHeaders.reason("Plain words") == "Plain words", "plain text is the text")
@@ -155,39 +216,90 @@ enum DeviceHeadersTests {
         // character reaches it.
         check(DeviceHeaders.reason(encode("a\u{7}b\nc\r\u{2028}d\u{202E}e\u{0}f")) == "abcdef", "controls and breaks dropped")
         check(DeviceHeaders.reason(encode("\n\t free one \n")) == "free one", "trimmed after the cleaning")
-        let long = String(repeating: "ж", count: 250)
-        check(DeviceHeaders.reason(encode(long)) == String(repeating: "ж", count: 200), "cut to 200 characters")
         check(DeviceHeaders.reasonMaxChars == 200, "200, as the app keeps an announce")
+
+        // Bounded in UTF-16 units, as the app's take(200) counts, never inside
+        // a scalar: one character of five hundred combining marks is cut too.
+        let long = String(repeating: "ж", count: 250)
+        check(DeviceHeaders.reason(encode(long)) == String(repeating: "ж", count: 200), "cut to 200 units")
+        let marks = DeviceHeaders.reason(encode("e" + String(repeating: "\u{301}", count: 500))) ?? ""
+        check(marks.utf16.count == 200 && marks.unicodeScalars.count == 200, "one huge character is cut: \(marks.utf16.count) units")
+        let faces = DeviceHeaders.reason(encode(String(repeating: "😀", count: 150))) ?? ""
+        check(faces == String(repeating: "😀", count: 100), "a pair of units is kept whole or dropped whole: \(faces.utf16.count) units")
+        let odd = DeviceHeaders.reason(encode("a" + String(repeating: "😀", count: 100))) ?? ""
+        check(odd == "a" + String(repeating: "😀", count: 99), "never half a pair: \(odd.utf16.count) units")
     }
 
     /// What the Swift copies, read from the Kotlin that is the source of it.
+    /// Values, not lines of code: a rename, a moved constant or another
+    /// spelling of the same template still passes; another value does not.
     static func sameAsTheKotlin(root: String) {
-        func source(_ path: String) -> String {
-            let url = URL(fileURLWithPath: root).appendingPathComponent(path)
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        let base = URL(fileURLWithPath: root)
+        func read(_ path: String) -> String {
+            guard let text = try? String(contentsOf: base.appendingPathComponent(path), encoding: .utf8) else {
                 print("FAIL: cannot read \(path) under \(root)")
                 exit(1)
             }
             return text
         }
-        let gradle = source("sharedUI/build.gradle.kts")
-        check(gradle.contains("const val NAME: String = \"\(DeviceHeaders.appName)\""), "the app's name is GeneratedAppInfo.NAME")
-        let appInfo = source("sharedUI/src/commonMain/kotlin/org/olcbox/app/AppInfo.kt")
-        check(appInfo.contains("val userAgent: String = \"${value.name}/${value.version}\""), "the user agent is name/version")
-        let description = source("sharedUI/src/commonMain/kotlin/org/olcbox/app/data/device/DeviceDescription.kt")
-        check(description.contains("DEVICE_HEADER_MAX_CHARS = \(DeviceHeaders.maxChars)"), "the same limit")
-        check(description.contains("value.filter { it in ' '..'~' }.take(DEVICE_HEADER_MAX_CHARS).trim()"), "the same cut, in the same order")
-        let ios = source("sharedUI/src/iosMain/kotlin/org/olcbox/app/data/device/DeviceDescription.ios.kt")
-        check(ios.contains("os = \"iOS\""), "the system's name")
-        check(ios.contains("val version = \"$majorVersion.$minorVersion\"")
-            && ios.contains("if (patchVersion > 0) \"$version.$patchVersion\" else version"), "the version written the same way")
-        check(ios.contains("system.machine.toKString()"), "the model is utsname's machine")
-        let fetch = source("sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt")
-        for name in ["x-hwid", "x-device-os", "x-ver-os", "x-device-model", "announce"] + DeviceHeaders.refusalFlags {
-            check(fetch.contains("\"\(name)\""), "the app names \(name) too")
+        /// Every .kt file of a source set, by its path.
+        func sources(_ set: String) -> [String: String] {
+            let dir = "sharedUI/src/\(set)/kotlin"
+            guard let walk = FileManager.default.enumerator(atPath: base.appendingPathComponent(dir).path) else {
+                print("FAIL: cannot list \(dir) under \(root)")
+                exit(1)
+            }
+            var found: [String: String] = [:]
+            while let path = walk.nextObject() as? String {
+                if path.hasSuffix(".kt") { found[path] = read("\(dir)/\(path)") }
+            }
+            check(!found.isEmpty, "\(dir) holds Kotlin")
+            return found
         }
-        check(fetch.contains("append(HttpHeaders.UserAgent, CurrentAppInfo.userAgent)"), "the app's Identity fetch sends its user agent")
-        let config = source("sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt")
-        check(config.contains("const val ANNOUNCE_MAX_CHARS = \(DeviceHeaders.reasonMaxChars)"), "the same reason length")
+        /// The first capture of `pattern` in `text`.
+        func capture(_ pattern: String, in text: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                  match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text)
+            else { return nil }
+            return String(text[range])
+        }
+        func has(_ pattern: String, in text: String) -> Bool {
+            (try? NSRegularExpression(pattern: pattern))?
+                .firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        }
+
+        let common = sources("commonMain")
+        let all = common.values.joined(separator: "\n")
+
+        // The app's name in its user agent, and the user agent's shape.
+        let name = capture(#"\bNAME\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: read("sharedUI/build.gradle.kts"))
+        check(name == DeviceHeaders.appName, "GeneratedAppInfo.NAME is \(String(describing: name))")
+        let agent = capture(#"\buserAgent\b\s*(?::\s*String)?\s*=\s*"([^"]*)""#, in: all) ?? ""
+        check(has(#"(?i)^\$\{?[\w.]*name\}?/\$\{?[\w.]*version\}?$"#, in: agent), "the user agent is name/version: \(agent)")
+
+        // The cut: its length and its range of characters.
+        let limit = capture(#"\bDEVICE_HEADER_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all)
+        check(limit == String(DeviceHeaders.maxChars), "DEVICE_HEADER_MAX_CHARS is \(String(describing: limit))")
+        check(has(#"' '\s*\.\.\s*'~'"#, in: all), "the cut keeps ' '..'~', printable ASCII")
+        let announceLimit = capture(#"\bANNOUNCE_MAX_CHARS\b\s*(?::\s*Int)?\s*=\s*(\d+)"#, in: all)
+        check(announceLimit == String(DeviceHeaders.reasonMaxChars), "ANNOUNCE_MAX_CHARS is \(String(describing: announceLimit))")
+
+        // The names on the wire.
+        for header in ["x-hwid", "x-device-os", "x-ver-os", "x-device-model", "announce"] + DeviceHeaders.refusalFlags {
+            check(all.contains("\"\(header)\""), "the app names \(header) too")
+        }
+        // The list fetch sends the app's user agent beside the device headers.
+        check(common.values.contains { $0.contains("\"x-device-os\"") && $0.contains("CurrentAppInfo.userAgent") },
+              "the device headers go with CurrentAppInfo.userAgent")
+
+        // iOS's description: the system's name, the version's form, the model.
+        let ios = sources("iosMain").values.filter { has(#"actual\s+fun\s+deviceDescription\b"#, in: $0) }
+        check(ios.count == 1, "one iOS deviceDescription: \(ios.count)")
+        let description = ios.first ?? ""
+        check(capture(#"\bos\s*=\s*"([^"]*)""#, in: description) == "iOS", "the system's name is iOS")
+        check(has(#"\$\{?majorVersion\}?\.\$\{?minorVersion\}?"#, in: description)
+            && has(#"patchVersion\s*>\s*0"#, in: description), "major.minor, and the patch only when it is not 0")
+        check(has(#"\.machine\b"#, in: description), "the model is utsname's machine")
     }
 }

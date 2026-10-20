@@ -75,10 +75,13 @@ origin changes the selection before that restart stops the tunnel.
   cuts them, so a host that holds a list to a number of devices counts the
   refresh as the device the app is. An answer that turns the device away
   (`x-hwid-max-devices-reached` or `x-hwid-not-supported`) is not a list: its
-  placeholder line is never read as a room, the rooms held stay, the reason
-  (`announce`) goes into `olcrtc.log`, and the host is asked again as after a
-  failure. `scripts/test-ios-room-list.sh` tests `DeviceHeaders` too, against
-  the Kotlin it copies. And a watchdog: an engine
+  placeholder line is never read as a room, the rooms held stay, and the reason
+  (`announce`) goes into `olcrtc.log`. Nor is it retried in 30 seconds as a
+  failure is: it holds until the provider frees a place, so the host is asked
+  again at the next five-minute refresh, or when a handover opens a session.
+  `scripts/test-ios-room-list.sh` tests `DeviceHeaders` too, against the Kotlin
+  it copies; CI runs it on a change to the extension and on a change to the
+  shared Kotlin. And a watchdog: an engine
   whose generation ended - every room tried once, none held - is started again
   over the rooms known now, with a 2-20 s backoff, indefinitely, since where the
   list lives behind the tunnel a restart is the only way back to one.

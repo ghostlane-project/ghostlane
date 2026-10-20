@@ -131,12 +131,14 @@ jobs:
             echo 'mac_helper=false' >> "$GITHUB_OUTPUT"
           fi
           # The iPhone's tunnel extension links no Kotlin, so a Mac builds it
-          # without Gradle: when anything under iosApp/ changed (the build reads
-          # the project file whole), the script of its tests, or what it links,
-          # the prebuilt frameworks and their pins. Not on a change to this
-          # file alone, as above. A here-string: a pipe into grep -q can end in
-          # SIGPIPE under pipefail once grep has its match.
-          if grep -qE '^iosApp/|^scripts/test-ios-room-list\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+          # without Gradle, on a change to what that job builds or reads: the
+          # extension and its tests, the project file, the privacy manifest it
+          # checks, the script of its tests, and what it links, the prebuilt
+          # frameworks and their pins. Not on a change to this file alone, as
+          # above; the shared Kotlin its tests read runs them in apple-compile.
+          # A here-string: a pipe into grep -q can end in SIGPIPE under
+          # pipefail once grep has its match.
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-room-list\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -397,6 +399,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Compile existing Apple targets
         run: ./gradlew :sharedUI:compileKotlinIosArm64 :sharedUI:compileKotlinMacosArm64 --stacktrace
+      # The iPhone tunnel extension copies what the shared Kotlin sends with a
+      # list fetch (the user agent's name, the device headers, their cut), and
+      # its tests read that Kotlin: a change here is where the two drift apart.
+      # Run whatever the compilation said; about twenty seconds.
+      - name: The room keeper's tests, against this Kotlin
+        if: ${{ !cancelled() }}
+        run: scripts/test-ios-room-list.sh
 
   mac-helper:
     # The Mac's tunnel helper, built and asked on a Mac: the one part of the
@@ -448,11 +457,14 @@ jobs:
     # Foundation-only parts beside it. On a change to it, and on request.
     #
     # ai-generated: the whole job.
+    # !cancelled() and not always(): a run that a newer push supersedes is
+    # cancelled, and this job goes with it. Either still runs past the skipped
+    # scope job of a dispatched run.
     needs: scope
     if: >-
-      always() &&
       ((github.event_name == 'workflow_dispatch' && inputs.ios_extension) ||
-       needs.scope.outputs.ios_extension == 'true')
+       needs.scope.outputs.ios_extension == 'true') &&
+      !cancelled()
     name: iPhone tunnel extension
     runs-on: macos-latest
     timeout-minutes: 25

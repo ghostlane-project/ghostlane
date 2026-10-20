@@ -216,16 +216,12 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
         lastRefresh = Date()
         fetching = true
         OlcrtcEngine.note("room list refresh (\(reason))")
-        var request = URLRequest(url: url)
-        request.setValue("text/plain, text/markdown, application/octet-stream, */*", forHTTPHeaderField: "Accept")
         // As the app asks for the same list: its id, its user agent and the
         // device headers (DeviceHeaders). A host that holds the list to a
         // number of devices then counts this refresh as the device the app is.
         // Asked as a browser with no id, as it was, it is turned away by a host
         // that admits only an app that names its device.
-        for (name, value) in DeviceHeaders.forListFetch(id: parameters.clientId) {
-            request.setValue(value, forHTTPHeaderField: name)
-        }
+        let request = DeviceHeaders.listRequest(url: url, headers: DeviceHeaders.forListFetch(id: parameters.clientId))
         let task = http.dataTask(with: request) { [weak self] data, response, error in
             self?.queue.async { self?.fetched(data: data, response: response, error: error) }
         }
@@ -235,20 +231,22 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
     private func fetched(data: Data?, response: URLResponse?, error: Error?) {
         fetching = false
         guard running, let parameters else { return }
-        let answer = response as? HTTPURLResponse
-        let status = answer?.statusCode ?? 0
-        let answered = error == nil && (200..<300).contains(status)
         // The host turned this device away: HTTP 200 with a flag, and a body of
         // one placeholder line that names the reason as a server. No list, so
-        // nothing of it is read: the rooms held stay as they are, and the host
-        // is asked again as after a failure - a place may be freed meanwhile.
-        if answered, let answer, let refusal = DeviceHeaders.refusal(in: answer.allHeaderFields) {
+        // nothing of it is read and the rooms held stay as they are. Nor is it
+        // a hiccup to retry in 30 seconds: it holds until the provider frees a
+        // place. The host is asked again at the next periodic refresh, or when
+        // a handover opens a session; a retry left from an earlier failure is
+        // dropped.
+        if let refusal = DeviceHeaders.refusal(answer: response, error: error) {
+            retry?.cancel()
+            retry = nil
             OlcrtcEngine.note("room list refresh refused (\(refusal.flag))\(refusal.reason.map { ": \($0)" } ?? "") - rooms kept")
             NetworkDiagnostics.record("olcrtc rooms refresh refused \(refusal.flag)")
-            scheduleRetry()
             return
         }
-        guard answered, let data, let body = String(data: data, encoding: .utf8) else {
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard error == nil, (200..<300).contains(status), let data, let body = String(data: data, encoding: .utf8) else {
             OlcrtcEngine.note("room list refresh failed (status \(status)\(error.map { ": \($0.localizedDescription)" } ?? ""))")
             NetworkDiagnostics.record("olcrtc rooms refresh failed status=\(status)")
             scheduleRetry()
