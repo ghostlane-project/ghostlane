@@ -16,8 +16,8 @@ Use GitHub's private vulnerability reporting on the repository the flaw is in:
 That channel is private between you and the maintainers, supports attachments,
 and turns into a published advisory with credit once a fix ships.
 
-If you cannot use it, say so in an issue with no technical detail at all, and a
-maintainer will arrange another way to receive the report.
+If you cannot use it, write to <securityghostlane@proton.me>, the security
+contact for Ghostlane and olcRTC.
 
 ## What to include
 
