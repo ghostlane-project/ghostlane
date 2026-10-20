@@ -8,20 +8,39 @@
 		without declaring it comes back as ITMS-91053, by email, after the build
 		has already been processed.
 
-		This app uses exactly one of them — NSUserDefaults, for the SOCKS
-		credentials and the update-check bookkeeping — and collects nothing.
+		This app uses exactly one of them: NSUserDefaults, for the SOCKS
+		credentials and the update-check bookkeeping. What it collects is the
+		one entry under NSPrivacyCollectedDataTypes below.
 	-->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<!--
-		Empty on purpose, and true. Locations, subscriptions and logs stay on the
-		device; the coordinator is asked to resolve a partner link and nothing
-		about the person asking is sent with it.
+		One entry, the device id, and nothing else. With each refresh of a
+		server list - the app's, and the room refresh of its packet tunnel -
+		the provider of that list is sent a random id made when the app was
+		installed, the device model and the version of the system, so that the
+		provider can count the devices on a subscription; the same id opens
+		each olcRTC session with the room's server. Locations, subscriptions
+		and logs stay on the device; the coordinator asked to resolve a partner
+		link is sent nothing about the person asking.
 	-->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>

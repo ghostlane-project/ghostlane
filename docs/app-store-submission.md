@@ -15,10 +15,15 @@ person to attempt a submission does not rediscover the same six things.
 - **`NSCameraUsageDescription`** is present and says what the camera is for: one
   QR code, nothing recorded.
 - **`PrivacyInfo.xcprivacy`** declares the one required-reason API this app uses
-  (`NSUserDefaults`, reason `CA92.1`) and that it collects nothing and tracks
-  nobody. **It must be a member of the app target** — a file on disk that
-  nothing references is not in the bundle. Check it in Xcode's File Inspector
-  before the first upload.
+  (`NSUserDefaults`, reason `CA92.1`), tracks nobody, and declares one collected
+  data type: the device id (`NSPrivacyCollectedDataTypeDeviceID`, app
+  functionality, not linked, no tracking), the random id the app and its tunnel
+  send with each server-list refresh so that a provider can count the devices
+  on a subscription. **It must be a member of the app target** — a file on disk
+  that nothing references is not in the bundle, and until 2026-10-20 it was
+  such a file: no build before then carried it. It is one of the app target's
+  resources now, and pr-checks' iPhone tunnel extension job fails if it stops
+  being one.
 - **Diagnostics are off.** `MemoryWatch.enabled` and olcRTC's verbose engine log
   are both false; each was a switch that earned its place during a specific
   investigation and costs real work in a process with a ~50 MB ceiling.

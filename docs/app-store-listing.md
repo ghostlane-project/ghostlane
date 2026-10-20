@@ -193,15 +193,23 @@ First release.
 
 ## App Privacy answers
 
-Every question, answered "no data collected", because that is what the app
-does. This section is the one Apple checks against behaviour, so it must stay
-true if analytics or crash reporting is ever added.
+This section is the one Apple checks against behaviour, so it must stay true
+whenever what the app sends changes.
 
-- **Do you or your third-party partners collect data from this app?** → **No**
+- **Do you or your third-party partners collect data from this app?** → **Yes**
+- **Identifiers → Device ID**, used for **App Functionality**, **not linked** to
+  the user's identity, **not used for tracking**.
 
-That single answer ends the questionnaire. It is consistent with
-`PrivacyInfo.xcprivacy`, which declares no collected data types, no tracking
-domains, and one required-reason API (`NSUserDefaults`, `CA92.1`).
+That is the random id made at install, which the app and its tunnel send with
+each refresh of a server list (`x-hwid`, beside the device model and the
+system's version) so that the list's provider can count the devices on a
+subscription. It is consistent with `PrivacyInfo.xcprivacy`, which declares that
+one collected data type, no tracking domains, and one required-reason API
+(`NSUserDefaults`, `CA92.1`).
+
+> Until 2026-10-20 the answer here was **No**, and the manifest declared nothing
+> collected — and was in no build. App Store Connect must carry the answer above
+> before a build with the manifest's device id is submitted.
 
 > If a crash reporter or analytics SDK is ever added, both this answer and the
 > privacy manifest have to change in the same commit as the SDK. A mismatch
