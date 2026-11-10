@@ -218,11 +218,20 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # an allow list); vp8channel hands its rate to pace when loss follows the rate (#61); a
 # name's addresses dial staggered (#62); the MAX carrier, which the app does not offer;
 # Telemost and MAX are gated only when named (#66). Same API.
+# b6cb4c417d17 -> 2d4266af3947 (olcrtc#73; the engine's v0.12.0 -> v0.15.0): a VK Calls
+# room is joined more than once - where VK's offer gave one payload type two meanings
+# (pt=102 red in the publish slot, VP9 in a receive slot) the connect failed with "codec
+# already registered for same payload type", every time after a room's first
+# (olcrtc#72); Pion now negotiates a view of the offer with one meaning per payload type
+# and VK is answered from the real one, so nothing on the wire moves, and a room's
+# server needs the fix too (v0.12.1 or later); the desktop's olcrtc logs its version
+# first and answers -version (#68); for servers alone, a key ring reloaded on SIGHUP
+# (#77), an access log (#78) and net.ice_local_ip (#79). Same API.
 # The pin must carry internal/gate. aaffe1e05c3b predates it and the gate refuses
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261019022749-b6cb4c417d17}"
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261109222247-2d4266af3947}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -300,7 +309,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261019022749-b6cb4c417d17}"
 # Same API.
 # 35 -> 36: the engine pin above (b6cb4c417d17, olcrtc#67): ICE-TCP for the
 # client side of an MTS Link room, and #61, #62. Same API.
-CORES_BUILD="${CORES_BUILD:-36}"
+# 36 -> 37: the engine pin above (2d4266af3947, olcrtc#73): a VK Calls room is
+# joined more than once. Same API.
+CORES_BUILD="${CORES_BUILD:-37}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
