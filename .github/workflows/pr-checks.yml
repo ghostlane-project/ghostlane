@@ -115,8 +115,10 @@ jobs:
             echo 'Apple compilation skipped: nothing under the shared Kotlin changed.' >> "$GITHUB_STEP_SUMMARY"
           fi
           # The Linux CLI is its own Go module: built and tested only when it, its
-          # workflow, or the engine pin it must match changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$'; then
+          # workflow, the engine pin it must match, or the sing-box tree it
+          # compiles (the patch, the script that applies it, the Xray servers its
+          # Reality end-to-end dials) changed.
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -330,6 +332,10 @@ jobs:
         with:
           go-version: "1.26.5"
           cache-dependency-path: cli/go.sum
+      # cli/go.mod replaces sing-box with this tree (scripts/patched-singbox.sh):
+      # nothing in the module builds before it is written.
+      - name: The patched sing-box
+        run: make singbox-src
       - name: Vet and lint
         run: |
           go vet -tags with_utls,with_quic ./...
@@ -337,13 +343,26 @@ jobs:
           golangci-lint run ./...
       - name: Unit tests
         run: go test -race -tags with_utls,with_quic ./...
-      - name: Server end-to-ends (an xray server process from the pinned module)
+      # The servers: an xray built from the pinned module, and the official
+      # releases in scripts/xray-servers.txt (checked against the sums there),
+      # each a version whose Reality check a hello has to pass.
+      - name: Server end-to-ends (xray servers: the pinned module, and the releases in scripts/xray-servers.txt)
         run: |
+          set -o pipefail
           make xray-server
-          XRAY_SERVER_BIN="$PWD/dist/xray-server" go test -count=1 -tags with_utls,with_quic -run 'EndToEnd' -v ./internal/engine/xray/ ./internal/engine/singbox/ | tee e2e.log
-          # a skip (no route to the mirrored site) must not read as a pass
-          for t in TestRealityXhttpEndToEnd TestRealityTCPEndToEnd TestHysteria2EndToEnd; do
-            grep -q -- "--- PASS: $t" e2e.log || { echo "::error::$t did not pass (skipped or failed)"; exit 1; }
+          servers="$(bash ../scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          XRAY_SERVER_BIN="$PWD/dist/xray-server" XRAY_SERVERS="$servers" \
+            go test -count=1 -tags with_utls,with_quic -run 'EndToEnd' -v ./internal/engine/xray/ ./internal/engine/singbox/ | tee e2e.log
+          # a skip must not read as a pass, and a parent passes when its
+          # subtests skip: every cell is named
+          required="TestRealityXhttpEndToEnd TestHysteria2EndToEnd"
+          for server in pinned $(sed -n 's/^\([0-9][0-9.]*\) .*/xray-\1/p' ../scripts/xray-servers.txt); do
+            for fp in chrome chrome-wrong-key firefox firefox-wrong-key; do
+              required="$required TestRealityTCPEndToEnd/$server/$fp"
+            done
+          done
+          for t in $required; do
+            grep -q -- "--- PASS: $t " e2e.log || { echo "::error::$t did not pass (skipped or failed)"; exit 1; }
           done
       - name: netns tests (root)
         run: |

@@ -21,6 +21,8 @@ Pods/
 *.gpg
 *yarn.lock
 dist/
+# cli/go.mod replaces sing-box with this tree; `make -C cli singbox-src` writes it
+cli/.sing-box-patched/
 
 # Android build artifacts
 *.apk

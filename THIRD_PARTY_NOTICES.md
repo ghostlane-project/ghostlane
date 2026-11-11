@@ -18,9 +18,14 @@ these carry obligations the MIT licence does not.
 | [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its sing-box rule-sets, bundled unmodified (`files/rules/refilter-*.srs`, pinned in `scripts/rule-sets.lock`). |
 
 Their sources are the upstream repositories above, at the versions pinned in
-`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Nothing in this repository
-modifies sing-box; the one patch carried against Xray-core is in
-`scripts/patches/` and is therefore published, as MPL-2.0 requires.
+`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Two components are modified,
+and both patches are published in `scripts/patches/`, as their licences require:
+sing-box carries `sing-box-reality-hello.patch` (since 2026-11-11: a Reality
+hello keeps its post-quantum key share and announces the version current Xray
+servers accept), applied to the pinned module by `scripts/patched-singbox.sh`
+for every platform's build, so the pinned upstream source plus that patch is
+the source of every sing-box we ship; Xray-core carries
+`xray-core-h2-window.patch`.
 
 ## What ships inside the Linux CLI
 
@@ -34,7 +39,8 @@ modifies sing-box; the one patch carried against Xray-core is in
 | golang.org/x/net, golang.org/x/sys | BSD-3-Clause | SOCKS dialing and the Linux syscall constants. |
 
 Versions are pinned in `cli/go.mod`; a test keeps the engine and sing-box pins
-equal to the app's.
+equal to the app's. sing-box is the patched tree described above: `cli/go.mod`
+replaces the module with it.
 
 ## What this means in practice
 

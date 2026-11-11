@@ -1,0 +1,127 @@
+Ghostlane's one change to sing-box v1.13.14 (patch -p1 in the module's tree;
+scripts/patched-singbox.sh applies it for every build: the CLI, Android, the
+desktops and the iOS Cores).
+
+A Reality line opens on current Xray servers.
+
+1. The hello keeps its X25519MLKEM768 key share. sing-box strips it from every
+   Reality hello (since its commit dbdcce20a8, 2025, no option, no reason
+   given; upstream `testing` still does on 2026-11-11). XTLS/REALITY 8cdf7bf
+   (2026-09-08, in Xray-core from v26.9.8) forwards a hello without one ahead
+   of X25519 to the camouflage target, so the line never opens. Xray-core's
+   own client never strips it.
+2. A fingerprint whose hello has no such share in this uTLS (firefox, safari,
+   ios, edge, 360, qq, android; `random` four times in five) is sent as
+   Chrome's, the only hello here that has it.
+3. The hello announces 26.7.11 instead of 1.8.1. Xray-core v26.7.x servers
+   with no minClientVer configured refuse anything below 26.3.27.
+
+Measured on 2026-11-11 against the official Xray-linux-64 builds, VLESS +
+Reality + Vision: unpatched, the chrome hello opens on v26.4.25 only and is
+refused by v26.7.11 and v26.11.9; patched, chrome, firefox, safari, ios,
+random and randomized open on all three.
+
+diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
+--- a/common/tls/reality_client.go
++++ b/common/tls/reality_client.go
+@@ -30,7 +30,6 @@
+ 	"github.com/sagernet/sing-box/adapter"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/option"
+-	"github.com/sagernet/sing/common"
+ 	"github.com/sagernet/sing/common/debug"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/logger"
+@@ -124,27 +123,25 @@
+ 	uConfig.InsecureSkipVerify = true
+ 	uConfig.SessionTicketsDisabled = true
+ 	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
++	// Ghostlane: the hello keeps its X25519MLKEM768 key share. REALITY servers
++	// since XTLS/REALITY 8cdf7bf (Xray-core v26.9.8) forward a hello without
++	// one ahead of X25519 to their target, so the line never opens; Xray's own
++	// client never strips it. A fingerprint whose hello has no such share in
++	// this uTLS (firefox, safari, ios, edge, 360, qq, android; `random` four
++	// times in five) is sent as Chrome's, the one that has it.
+ 	uConn := utls.UClient(conn, uConfig, e.uClient.id)
+ 	verifier.UConn = uConn
+ 	err := uConn.BuildHandshakeState()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	for _, extension := range uConn.Extensions {
+-		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
+-			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
+-				return curveID != utls.X25519MLKEM768
+-			})
++	if !realityHelloOffersHybridFirst(uConn) {
++		uConn = utls.UClient(conn, uConfig, utls.HelloChrome_Auto)
++		verifier.UConn = uConn
++		err = uConn.BuildHandshakeState()
++		if err != nil {
++			return nil, err
+ 		}
+-		if ks, ok := extension.(*utls.KeyShareExtension); ok {
+-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
+-				return share.Group != utls.X25519MLKEM768
+-			})
+-		}
+-	}
+-	err = uConn.BuildHandshakeState()
+-	if err != nil {
+-		return nil, err
+ 	}
+ 
+ 	if len(uConfig.NextProtos) > 0 {
+@@ -168,9 +165,12 @@
+ 	}
+ 	binary.BigEndian.PutUint64(hello.SessionId, uint64(nowTime.Unix()))
+ 
+-	hello.SessionId[0] = 1
+-	hello.SessionId[1] = 8
+-	hello.SessionId[2] = 1
++	// Ghostlane: the version this client speaks, as Xray-core's client
++	// announces its own. 1.8.1 is below the minClientVer (26.3.27) that
++	// Xray-core v26.7.x servers apply when none is configured.
++	hello.SessionId[0] = RealityAnnouncedVersion[0]
++	hello.SessionId[1] = RealityAnnouncedVersion[1]
++	hello.SessionId[2] = RealityAnnouncedVersion[2]
+ 	binary.BigEndian.PutUint32(hello.SessionId[4:], uint32(time.Now().Unix()))
+ 	copy(hello.SessionId[8:], e.shortID[:])
+ 	if debug.Enabled {
+diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
+--- a/common/tls/reality_ghostlane.go
++++ b/common/tls/reality_ghostlane.go
+@@ -0,0 +1,33 @@
++//go:build with_utls
++
++package tls
++
++import utls "github.com/metacubex/utls"
++
++// RealityAnnouncedVersion is the client version a Reality hello announces in
++// its session id. Ghostlane's patch (scripts/patches/sing-box-reality-hello.patch
++// in ghostlane-project/ghostlane) sets it to the Xray-core version the app
++// ships beside this sing-box; a tree without the patch has no such name, so
++// whatever refers to it does not compile against an unpatched sing-box.
++var RealityAnnouncedVersion = [3]byte{26, 7, 11}
++
++// realityHelloOffersHybridFirst reports whether the built hello carries an
++// X25519MLKEM768 key share ahead of any X25519 share: the order REALITY
++// servers since XTLS/REALITY 8cdf7bf accept. GREASE shares are skipped.
++func realityHelloOffersHybridFirst(uConn *utls.UConn) bool {
++	for _, extension := range uConn.Extensions {
++		keyShares, ok := extension.(*utls.KeyShareExtension)
++		if !ok {
++			continue
++		}
++		for _, share := range keyShares.KeyShares {
++			switch share.Group {
++			case utls.X25519MLKEM768:
++				return true
++			case utls.X25519:
++				return false
++			}
++		}
++	}
++	return false
++}

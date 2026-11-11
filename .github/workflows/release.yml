@@ -348,22 +348,23 @@ jobs:
       # only here: makeExecutable() is a no-op on Windows, so the extension is the
       # only thing that makes the file runnable — DesktopNativeAssets asks for
       # `native/sing-box.exe` on this platform and `native/sing-box` on the others.
+      # sing-box is built, not downloaded: the release archives carry a Reality
+      # hello Xray-core servers refuse from v26.7 on (scripts/patches/
+      # sing-box-reality-hello.patch says how). Same tree on every platform.
+      - name: Build sing-box (the patched tree)
+        shell: bash
+        working-directory: olcbox
+        run: bash scripts/build-singbox.sh desktopApp/src/main/resources/native/sing-box.exe
+
       - name: Bundle sing-box + Xray cores into the app
         shell: pwsh
         working-directory: olcbox
         env:
-          SINGBOX_VERSION: "1.13.14"
           XRAY_VERSION: "25.3.6"
         run: |
           $ErrorActionPreference = "Stop"
           $dest = "desktopApp/src/main/resources/native"
           New-Item -ItemType Directory -Force $dest | Out-Null
-
-          $sb = "https://github.com/SagerNet/sing-box/releases/download/v$env:SINGBOX_VERSION/sing-box-$env:SINGBOX_VERSION-windows-amd64.zip"
-          Invoke-WebRequest -Uri $sb -OutFile sb.zip
-          Remove-Item -Recurse -Force sb-x -ErrorAction SilentlyContinue
-          Expand-Archive sb.zip -DestinationPath sb-x
-          Copy-Item (Get-ChildItem sb-x -Recurse -Filter "sing-box.exe" | Select-Object -First 1).FullName "$dest/sing-box.exe"
 
           $xr = "https://github.com/XTLS/Xray-core/releases/download/v$env:XRAY_VERSION/Xray-windows-64.zip"
           Invoke-WebRequest -Uri $xr -OutFile xray.zip
@@ -545,7 +546,6 @@ jobs:
       - name: Bundle sing-box + Xray cores into the app
         working-directory: olcbox
         env:
-          SINGBOX_VERSION: "1.13.14"
           XRAY_VERSION: "25.3.6"
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
@@ -553,10 +553,11 @@ jobs:
           dest="desktopApp/src/main/resources/native"
           mkdir -p "$dest"
 
-          echo "== sing-box (darwin-${MATRIX_ARCH}) =="
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${MATRIX_ARCH}.tar.gz" -o sb.tgz
-          tar xzf sb.tgz
-          cp "sing-box-${SINGBOX_VERSION}-darwin-${MATRIX_ARCH}/sing-box" "$dest/sing-box"
+          # Built on this runner (its arch) from the patched tree, not
+          # downloaded: the release archives carry a Reality hello Xray-core
+          # servers refuse from v26.7 on (scripts/patches/sing-box-reality-hello.patch).
+          echo "== sing-box (darwin-${MATRIX_ARCH}, the patched tree) =="
+          bash scripts/build-singbox.sh "$dest/sing-box"
 
           echo "== Xray (macos-${MATRIX_ARCH}) =="
           if [ "$MATRIX_ARCH" = "arm64" ]; then xasset="Xray-macos-arm64-v8a.zip"; else xasset="Xray-macos-64.zip"; fi
@@ -735,16 +736,16 @@ jobs:
       - name: Bundle sing-box + Xray cores into the app
         working-directory: olcbox
         env:
-          SINGBOX_VERSION: "1.13.14"
           XRAY_VERSION: "25.3.6"
         run: |
           set -euo pipefail
           dest="desktopApp/src/main/resources/native"
           mkdir -p "$dest"
 
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" -o sb.tgz
-          rm -rf sb-x && mkdir sb-x && tar xzf sb.tgz -C sb-x
-          install -m 0755 "$(find sb-x -type f -name sing-box | head -1)" "$dest/sing-box"
+          # Built from the patched tree, not downloaded: the release archives
+          # carry a Reality hello Xray-core servers refuse from v26.7 on
+          # (scripts/patches/sing-box-reality-hello.patch).
+          bash scripts/build-singbox.sh "$dest/sing-box"
 
           curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -o xray.zip
           rm -rf xr-x && mkdir xr-x && (cd xr-x && unzip -oq ../xray.zip)
@@ -1020,11 +1021,15 @@ jobs:
       # addition is max-page-size. Deviating from those tags silently drops
       # protocols, so they are read from the tree at the pinned tag rather than
       # copied here where they would rot.
+      #
+      # The tree is the pinned module with Ghostlane's Reality hello patch
+      # (scripts/patched-singbox.sh; the patch says why), the tree every
+      # platform builds: unpatched, Reality lines do not open on Xray-core
+      # servers from v26.7 on.
       - name: Build sing-box for Android with 16 KB page alignment
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch "v${SINGBOX_VERSION}" \
-            https://github.com/SagerNet/sing-box.git "${RUNNER_TEMP}/sing-box"
+          bash "${GITHUB_WORKSPACE}/olcbox/scripts/patched-singbox.sh" "${RUNNER_TEMP}/sing-box"
           cd "${RUNNER_TEMP}/sing-box"
 
           TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
