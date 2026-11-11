@@ -40,13 +40,29 @@ class IosLocationsDataSourceImpl(
     private val deviceIdentityPath: String
         get() = appDir.childPath("device_identity")
 
+    /**
+     * None at once when there is no file: a fresh install waits for nothing.
+     *
+     * A file that is there and whose text cannot be read is not none, and is
+     * read again for a while ([readWhenReadable]). iOS keeps the app's files
+     * closed from a restart of the device until it is first unlocked, and may
+     * start the app in that time, before anyone opens it. Taken for none, the
+     * store read as a fresh install's: the intro was shown again and the list
+     * of servers was empty, with the lists still in the file. Only when the
+     * text stays unreadable to the end of that wait is the answer what it was
+     * before, none.
+     *
+     * Text that was read and does not decode is answered as before, with no
+     * waiting: there is nothing in it to wait for.
+     */
     override suspend fun loadLocationBundle(): LocationBundleV4? = withContext(Dispatchers.Default) {
         val file = bundlePath.takeIf { fileExists(it) }
             ?: legacyBundlePath.takeIf { fileExists(it) }
             ?: return@withContext null
 
+        val text = readWhenReadable { readText(file) }
         runCatching {
-            json.decodeFromString(LocationBundleV4.serializer(), readText(file).orEmpty()).normalized()
+            json.decodeFromString(LocationBundleV4.serializer(), text.orEmpty()).normalized()
         }.getOrNull()
     }
 
