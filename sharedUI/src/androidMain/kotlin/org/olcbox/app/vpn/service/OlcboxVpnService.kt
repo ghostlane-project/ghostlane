@@ -189,6 +189,17 @@ class OlcboxVpnService : VpnService() {
     // stops that one.
     private val tun2socksStopRequested = AtomicBoolean(false)
 
+    /**
+     * Whether this service has a native run of its own still to stop: one it
+     * started and has not told to stop. What a stop has left to take down is
+     * asked here and not of [tun2socksThread]. That is the process's run: it
+     * can be one this service told to stop and gave up waiting for, to which
+     * a second stop has nothing more to say, or one the next service started,
+     * which is not this one's to take down.
+     */
+    private val tun2socksToStop: Boolean
+        get() = tun2socksStarted && !tun2socksStopRequested.get()
+
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var connectivityManager: ConnectivityManager
     private var currentNetwork: Network? = null
@@ -1892,7 +1903,7 @@ class OlcboxVpnService : VpnService() {
         val status = OlcboxVpnState.status.value
         if (status is VpnStatus.Disconnected &&
             vpnInterface == null &&
-            tun2socksThread == null &&
+            !tun2socksToStop &&
             socksProxy == null &&
             cleanupJob?.isActive != true
         ) {
@@ -1937,7 +1948,7 @@ class OlcboxVpnService : VpnService() {
                 // down and the status is said again.
                 withTimeoutOrNull(CANCELLED_START_WAIT_MS) { cancelledStart?.join() }
                 if (generation == cleanupGeneration) {
-                    if (vpnInterface != null || tun2socksThread != null) stopVisibleVpnProcesses()
+                    if (vpnInterface != null || tun2socksToStop) stopVisibleVpnProcesses()
                     if (OlcboxVpnState.status.value !is VpnStatus.Disconnected) setStatus(VpnStatus.Disconnected)
                 }
             } finally {

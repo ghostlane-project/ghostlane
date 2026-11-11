@@ -112,4 +112,24 @@ class OlcboxVpnServiceNativeRunTest {
             "tun2socksRun is not the companion's: a run would be forgotten with the service that started it"
         )
     }
+
+    // What a stop still has to take down is asked of the service: a run it
+    // started and has not told to stop. The process's run can be one this
+    // service told to stop and gave up waiting for, or the next service's.
+    // Asked of that, a run that outlived its stop made every later stop of the
+    // same service a whole stop again, and the stop of a destroyed service
+    // said Disconnected over the session of the one after it.
+    @Test
+    fun aStopAsksOnlyForARunOfItsOwnService() {
+        val cleanup = member("cleanup")
+        assertFalse("tun2socksThread" in cleanup, "cleanup asks whether the process has a run")
+        assertFalse("tun2socksRun" in cleanup, "cleanup asks NativeTunnelRun, which is the process's")
+        assertTrue(
+            Regex("""\btun2socksToStop\b""").findAll(cleanup).count() >= 2,
+            "cleanup asks in two places whether this service has a run to stop: before it begins, and after the start it cancelled has ended"
+        )
+        val own = Regex("""\n    private val tun2socksToStop: Boolean\n\s+get\(\) = ([^\n]+)\n""").find(service)?.groupValues?.get(1)
+            ?: fail("the service does not say what a run of its own still to stop is")
+        assertEquals("tun2socksStarted && !tun2socksStopRequested.get()", own)
+    }
 }
