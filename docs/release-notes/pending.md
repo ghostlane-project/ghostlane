@@ -1,0 +1,11 @@
+### Android: the app no longer aborts when its tunnel is stopped and started again
+
+Google Play showed the app closing by itself inside the tun's library, on every version since 1.0.456. Three things led there. The tun's network stack kept its list of connections from one run to the next while it marked all their memory free at each start, so a connection half open at a stop was torn down by the next run through memory that was no longer its own. A stop could leave the tun's thread alive for minutes, when a connection being made at that moment took a new timeout. And the service gave up waiting for that thread after a second, so the next connect started a second tun beside the first. The stack is now set up once for the process, a stop leaves no connection behind and ends every one in progress, and no tun is started while another has not returned. A test runs the tun's library through these stops and restarts on every change to it. The Linux desktop's tun is built from the same sources and takes the same changes. ([#155](https://github.com/ghostlane-project/ghostlane/pull/155))
+
+### Server lists: the list is there at launch, and Connect does not wait for an update
+
+An update of the server lists kept the app's store to itself while it downloaded, 16 to 32 seconds for each list whose address did not answer. Until it ended, the list on screen could stay empty after a launch, a press of Connect on iOS waited, and so did a choice of server or a removed list. An update now downloads first and holds the store only to write what it got: a list removed meanwhile stays removed, a server chosen meanwhile stays chosen, and the tunnel is started again after an update only when the update itself changed the server it runs on. ([#154](https://github.com/ghostlane-project/ghostlane/pull/154))
+
+### iOS: saved lists that cannot be read yet are waited for
+
+A phone that was restarted and not yet unlocked cannot read an app's files, and the system may start the app then. The app took saved lists it could not read for none, which is a fresh install: the intro again and an empty list. It now waits for a file that is there, and makes its store and its screens with the first screen instead of at the start of the process. ([#154](https://github.com/ghostlane-project/ghostlane/pull/154))
