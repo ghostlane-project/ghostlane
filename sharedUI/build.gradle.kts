@@ -4,6 +4,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
@@ -410,6 +411,13 @@ kotlin {
 tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "jvmTest" }.configureEach {
     outputs.dir(layout.buildDirectory.dir("singbox-configs"))
     outputs.dir(layout.buildDirectory.dir("xray-configs"))
+    // OlcboxVpnServiceNativeRunTest reads the Android service's source, which
+    // nothing these tests are compiled from or run with is built from. Named as
+    // an input, a change to that file alone runs them again; otherwise they are
+    // found up to date, or in the build cache, and the change is not read.
+    inputs.file(layout.projectDirectory.file("src/androidMain/kotlin/org/olcbox/app/vpn/service/OlcboxVpnService.kt"))
+        .withPropertyName("androidVpnServiceSource")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     // The tests read the English screen (LocalizationTest switches language itself),
     // so a machine set to another language must not change what they see.
     systemProperty("user.language", "en")
