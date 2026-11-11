@@ -336,8 +336,17 @@ lwip_io_task_entry (void *data)
         struct pbuf *buf;
 
         buf = hev_tunnel_read (tun_fd, mtu, task_io_yielder, NULL);
-        if (!buf)
+        if (!buf) {
+            /*
+             * Nothing was read: there was no buffer for it, or the read
+             * failed. Only a read that would block has waited before it
+             * comes back here. Without giving the turn up, a tun whose reads
+             * keep failing keeps this task running, no other task gets its
+             * turn, and the stop is never read.
+             */
+            hev_task_yield (HEV_TASK_YIELD);
             continue;
+        }
 
         stat_tx_packets++;
         stat_tx_bytes += buf->tot_len;
