@@ -1,7 +1,0 @@
-### olcRTC: a VK Calls room is joined more than once
-
-Some VK Calls rooms could be joined only once. After the first connection to such a room every later one failed at once, a server's restart and the app's connection alike, until the room was made anew; and a tunnel needs two in the room, so such a room could not carry one. VK's server gave one payload type number one codec where a participant sends and another where it receives, and the engine refused that offer with "codec already registered for same payload type". The engine now reads the offer with one meaning for each number and answers VK as before: such a room connects and reconnects, and nothing that VK or the other side of the room sees has changed. The room's server needs the same fix, olcRTC v0.12.1 or later. The other carriers are as they were. Reported and fixed by s0me0ne-25. ([olcrtc#72](https://github.com/ghostlane-project/olcrtc/issues/72), [olcrtc#73](https://github.com/ghostlane-project/olcrtc/pull/73))
-
-### olcRTC: the engine is v0.15.0
-
-The app's engine moves from olcRTC v0.12.0 to [v0.15.0](https://github.com/ghostlane-project/olcrtc/releases/tag/v0.15.0). Besides the VK Calls fix, the engine of the desktop app names its build, by version or by commit, in the first line it logs, so a log in a bug report says which engine wrote it. The rest of what is new is for servers (a key ring reloaded without a restart, an access log, the local address a server gathers ICE on) and changes nothing in the app or on the wire.
