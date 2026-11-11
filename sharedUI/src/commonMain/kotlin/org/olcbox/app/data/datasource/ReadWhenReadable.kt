@@ -31,3 +31,33 @@ internal suspend fun <T : Any> readWhenReadable(
     }
     return null
 }
+
+/**
+ * What a stored file holds, by the three answers a store must keep apart.
+ * [path] is the file that is there, or null when there is none; [read] gives
+ * its text, or null when the text cannot be read; [decode] makes of the text
+ * what was stored, and throws when it is not that.
+ *
+ * No file is none at once, with nothing read and no waiting: a fresh install
+ * waits for nothing.
+ *
+ * A file that is there and whose text cannot be read is not none. It is read
+ * again for a while ([readWhenReadable]), and none is the answer only when
+ * the text stays unreadable to the end of that wait. Taken for none at once,
+ * as the iOS store took it, a phone started before its first unlock read as
+ * a fresh install's.
+ *
+ * Text that was read and does not decode is none with no waiting: there is
+ * nothing in it to wait for.
+ */
+internal suspend fun <T : Any> readStoredFile(
+    path: String?,
+    read: suspend (String) -> String?,
+    decode: (String) -> T,
+    attempts: Int = READ_WHEN_READABLE_ATTEMPTS,
+    pause: suspend () -> Unit = { delay(READ_WHEN_READABLE_PAUSE_MS) }
+): T? {
+    val file = path ?: return null
+    val text = readWhenReadable(attempts, pause) { read(file) } ?: return null
+    return runCatching { decode(text) }.getOrNull()
+}
