@@ -269,9 +269,22 @@ udp_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
 }
 
 static void
-event_task_entry (void *data)
+terminate_sessions (void)
 {
     HevListNode *node;
+
+    node = hev_list_first (&session_set);
+    for (; node; node = hev_list_node_next (node)) {
+        HevSocks5SessionData *sd;
+
+        sd = container_of (node, HevSocks5SessionData, node);
+        hev_socks5_session_terminate (sd->self);
+    }
+}
+
+static void
+event_task_entry (void *data)
+{
     int val;
 
     LOG_D ("socks5 tunnel event task run");
@@ -281,16 +294,32 @@ event_task_entry (void *data)
     hev_task_io_read (event_fds[0], &val, sizeof (val), NULL, NULL);
 
     run = 0;
-    node = hev_list_first (&session_set);
-    for (; node; node = hev_list_node_next (node)) {
-        HevSocks5SessionData *sd;
-
-        sd = container_of (node, HevSocks5SessionData, node);
-        hev_socks5_session_terminate (sd->self);
-    }
+    terminate_sessions ();
 
     hev_task_join (task_lwip_io);
     hev_task_join (task_lwip_timer);
+
+    /*
+     * To terminate a session is to set its timeout to zero and wake it: it
+     * ends at its next wait. One pass does not end them all, because a
+     * session writes its timeout itself, when it starts to connect, when it
+     * starts its handshake and, for UDP, when the handshake is over, and
+     * nothing in a session reads run. A session made in the turn the stop
+     * was read in has not run yet, so it takes the connect timeout after
+     * this task has zeroed it, and one that connects as it is woken goes on
+     * to the handshake's. The scheduler returns only when no task is left,
+     * so the thread that called hev_socks5_tunnel_main stayed for as long as
+     * that session waited, up to the read-write timeout.
+     *
+     * So the pass is repeated until no session is left. No session is made
+     * after run is cleared, and each one writes its timeout at most three
+     * times, so every pass after those finds it at its next wait.
+     */
+    while (hev_list_first (&session_set)) {
+        terminate_sessions ();
+        hev_task_sleep (10);
+    }
+
     hev_task_del_fd (task_event, event_fds[0]);
 }
 
