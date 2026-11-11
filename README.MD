@@ -40,10 +40,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/00-intro.PNG" alt="Intro" width="200">
-  <img src="docs/screenshots/03-connected.PNG" alt="Connected, with session timer and traffic" width="200">
-  <img src="docs/screenshots/05-serverlistnotconnected.PNG" alt="A server list on the board, not connected" width="200">
-  <img src="docs/screenshots/04-settings.PNG" alt="Settings" width="200">
+  <img src="docs/screenshots/01-in-a-room.png" alt="A tunnel inside a video call: a session in a room, its time and its traffic" width="156">
+  <img src="docs/screenshots/02-rooms-and-seats.png" alt="Rooms, and how full they are" width="156">
+  <img src="docs/screenshots/03-what-it-is.png" alt="Carried over WebRTC" width="156">
+  <img src="docs/screenshots/04-how-it-works.png" alt="How the VPN connection works" width="156">
+  <img src="docs/screenshots/05-add-a-list.png" alt="Bring your own server list: scan, paste or import" width="156">
 </p>
 
 <p align="center">

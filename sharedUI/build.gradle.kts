@@ -430,16 +430,23 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "jvmTe
     // font is not a test. With fontconfig shown the app's fonts and no others,
     // every Linux machine measures the same letters. (A Mac has no fontconfig and
     // falls back as a Mac does.)
+    //
+    // A picture made for a person to look at (the store's screenshots) may name
+    // one more directory: a font with emoji in it, which the app's own do not
+    // have and every phone does, so that a flag is a flag on the picture. It is
+    // never set for a run that measures.
     val testFonts = layout.buildDirectory.dir("test-fonts")
     val appFonts = layout.projectDirectory.dir("src/commonMain/composeResources/font")
+    val pictureFonts = providers.environmentVariable("OLCBOX_RENDER_FONTS").orNull?.takeIf { it.isNotBlank() }
     doFirst {
         val dir = testFonts.get().asFile.apply { mkdirs() }
+        val more = pictureFonts?.let { "\n              <dir>$it</dir>" }.orEmpty()
         dir.resolve("fonts.conf").writeText(
             """
             <?xml version="1.0"?>
             <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
             <fontconfig>
-              <dir>${appFonts.asFile.absolutePath}</dir>
+              <dir>${appFonts.asFile.absolutePath}</dir>$more
               <cachedir>${dir.resolve("cache").absolutePath}</cachedir>
             </fontconfig>
             """.trimIndent() + "\n"
