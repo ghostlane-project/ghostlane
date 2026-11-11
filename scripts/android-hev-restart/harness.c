@@ -6,7 +6,8 @@
 // each packet whole stands in for the interface, one end hev's, the other this
 // program's, which writes the packets a phone's apps would and reads what hev
 // answers. The SOCKS server is a listener here that accepts and never says a
-// word, as an engine does that is on its way down.
+// word, as an engine does that is on its way down; in one case it answers and
+// echoes, so that sessions get past their handshake.
 //
 //   harness <case>
 //
@@ -22,8 +23,14 @@
 //                  own. Each becomes a session and the run stops when told to.
 //   first          The handshake cut short was the run's only connection. The
 //                  next run reads a packet. In the field: SIGABRT in tcp_input.
-//   leftover       What a stop leaves on lwIP's lists: nothing, and the app
-//                  whose handshake was cut short is sent a reset.
+//   leftover       What a stop leaves on lwIP's lists and out of its pools:
+//                  nothing, and the app whose handshake was cut short is sent
+//                  a reset.
+//   many-runs      Forty runs, each with a session over TCP, one over UDP and
+//                  a handshake cut short. After every stop nothing is left.
+//   carrying       Five runs whose sessions are past their handshake when the
+//                  stop comes: a connection with data lwIP still waits to
+//                  have acknowledged, and a UDP association in use. The same.
 //   fragment       A stop with the first part of a fragmented packet waiting
 //                  for the rest. The next run is sent the first parts of two
 //                  more packets, and goes on reading the tun.
@@ -54,7 +61,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <lwip/memp.h>
 #include <lwip/priv/tcp_priv.h>
+#include <lwip/udp.h>
 
 #include "hev-main.h"
 #include "olcbox_tun2socks_run.h"
@@ -78,10 +87,13 @@ static int socks_sessions;
 static char config[2048];
 
 // What hev wrote to the tun, by the app's port: the sequence number of the
-// last SYN|ACK, and whether a reset came.
+// last SYN|ACK, whether a reset came, and how much data came over TCP and
+// over UDP.
 static int synack_seen[PORTS];
 static uint32_t synack_seq[PORTS];
 static int reset_seen[PORTS];
+static int tcp_data_seen[PORTS];
+static int udp_data_seen[PORTS];
 
 static void failed(const char *format, ...) {
     va_list args;
@@ -129,6 +141,10 @@ static uint32_t get32(const uint8_t *at) {
     return (uint32_t)at[0] << 24 | (uint32_t)at[1] << 16 | (uint32_t)at[2] << 8 | at[3];
 }
 
+static uint32_t app_seq(int port) {
+    return 1000u * (uint32_t)port;
+}
+
 // One TCP segment with no data, as an app behind the tun sends it: from the
 // tun's own address (OlcboxVpnService.TUN_IPV4_ADDRESS) to a server out there.
 // hev's lwIP is built to check no checksum, so none is written.
@@ -149,6 +165,28 @@ static void app_sends(int port, uint32_t seq, uint32_t ack, uint8_t flags) {
     put16(packet + 34, 65535);
     if (send(tun_apps, packet, sizeof packet, 0) != (ssize_t)sizeof packet) {
         failed("a packet could not be written to the tun: %s", strerror(errno));
+    }
+}
+
+// Four bytes of data on a connection that is open, as its first segment.
+static void app_sends_data(int port) {
+    uint8_t packet[40 + 4] = {0};
+    packet[0] = 0x45;
+    packet[3] = sizeof packet;
+    packet[8] = 64;
+    packet[9] = IPPROTO_TCP;
+    memcpy(packet + 12, (uint8_t[]){10, 0, 88, 88}, 4);
+    memcpy(packet + 16, (uint8_t[]){93, 184, 216, 34}, 4);
+    put16(packet + 20, (uint16_t)port);
+    put16(packet + 22, 443);
+    put32(packet + 24, app_seq(port) + 1);
+    put32(packet + 28, synack_seq[port - FIRST_PORT] + 1);
+    packet[32] = 0x50;
+    packet[33] = FLAG_ACK | 0x08;
+    put16(packet + 34, 65535);
+    memcpy(packet + 40, "ping", 4);
+    if (send(tun_apps, packet, sizeof packet, 0) != (ssize_t)sizeof packet) {
+        failed("a segment could not be written to the tun: %s", strerror(errno));
     }
 }
 
@@ -197,21 +235,24 @@ static void read_tun(int wait_ms) {
         uint8_t packet[2048];
         ssize_t length = recv(tun_apps, packet, sizeof packet, MSG_DONTWAIT);
         if (length <= 0) return;
-        if (length < 40 || packet[0] >> 4 != 4 || packet[9] != IPPROTO_TCP) continue;
-        const uint8_t *tcp = packet + (packet[0] & 15) * 4;
+        if (length < 28 || packet[0] >> 4 != 4) continue;
+        int header = (packet[0] & 15) * 4;
+        const uint8_t *tcp = packet + header;
         int port = (tcp[2] << 8 | tcp[3]) - FIRST_PORT;
         if (port < 0 || port >= PORTS) continue;
+        wait_ms = 0;
+        if (packet[9] == IPPROTO_UDP) {
+            udp_data_seen[port] += (int)length - header - 8;
+            continue;
+        }
+        if (packet[9] != IPPROTO_TCP || length < 40) continue;
         if ((tcp[13] & (FLAG_SYN | FLAG_ACK)) == (FLAG_SYN | FLAG_ACK)) {
             synack_seen[port] = 1;
             synack_seq[port] = get32(tcp + 4);
         }
         if (tcp[13] & FLAG_RST) reset_seen[port] = 1;
-        wait_ms = 0;
+        tcp_data_seen[port] += (int)length - header - (tcp[12] >> 4) * 4;
     }
-}
-
-static uint32_t app_seq(int port) {
-    return 1000u * (uint32_t)port;
 }
 
 static void app_opens(int port) {
@@ -334,14 +375,38 @@ static int returned_within(struct run *run, int ms) {
 }
 
 // What the service's stop is to hev, and what it then waits for.
-static void stop(struct run *run, const char *when) {
+static long long stop_quietly(struct run *run, const char *when) {
     long long asked = now_ms();
     hev_socks5_tunnel_quit();
     if (!returned_within(run, STOP_BOUND_MS)) {
         failed("the native thread had not returned %d ms after the stop (%s)", STOP_BOUND_MS, when);
     }
     if (run->result != 0) failed("the run ended with %d (%s)", run->result, when);
-    printf("stopped in %lld ms (%s)\n", now_ms() - asked, when);
+    return now_ms() - asked;
+}
+
+static void stop(struct run *run, const char *when) {
+    printf("stopped in %lld ms (%s)\n", stop_quietly(run, when), when);
+}
+
+// What a stop has to leave of lwIP: no connection on any of its lists, and
+// every element of every pool back in the pool. lwIP is initialised once for
+// the process, so whatever a run kept would be kept for good.
+static void nothing_is_left(const char *when) {
+    if (tcp_active_pcbs) {
+        failed("%s left a connection in state %s on tcp_active_pcbs", when, tcp_debug_state_str(tcp_active_pcbs->state));
+    }
+    if (tcp_tw_pcbs || tcp_bound_pcbs || tcp_listen_pcbs.pcbs) failed("%s left a TCP listener or a closing connection listed", when);
+    if (udp_pcbs) failed("%s left a UDP flow listed", when);
+    for (int pool = 0; pool < MEMP_MAX; pool++) {
+        const struct memp_desc *desc = memp_pools[pool];
+        int in_pool = 0;
+        for (struct memp *element = *desc->tab; element && in_pool <= desc->num; element = element->next) in_pool++;
+        if (in_pool != desc->num) {
+            failed("%s left pool %d (elements of %d bytes) with %d of its %d elements",
+                   when, pool, desc->size, in_pool > desc->num ? -1 : in_pool, desc->num);
+        }
+    }
 }
 
 // A run with five handshakes begun back to back, four of them finished and
@@ -410,11 +475,31 @@ static void first(void) {
 static void leftover(void) {
     run_that_ends_mid_handshake();
     read_tun(200);
-    if (tcp_active_pcbs) {
-        failed("the stop left a connection in state %s on tcp_active_pcbs", tcp_debug_state_str(tcp_active_pcbs->state));
-    }
-    if (tcp_tw_pcbs) failed("the stop left a connection on tcp_tw_pcbs");
+    nothing_is_left("the stop");
     if (!reset_seen[2]) failed("the app whose handshake the stop cut short was sent no reset");
+}
+
+// lwIP's smallest pool that every run takes from is the listeners', of 16.
+static void many_runs(void) {
+    long long slowest = 0;
+    for (int i = 0; i < 40; i++) {
+        struct run run;
+        int port = FIRST_PORT + 10 * i;
+        start(&run);
+        app_opens(port + 1);
+        app_opens(port + 2);
+        wait_for_synack(port + 1);
+        wait_for_synack(port + 2);
+        app_acknowledges(port + 1);
+        app_sends_datagram(port + 3);
+        wait_for_sessions(socks_sessions + 2);
+        long long took = stop_quietly(&run, "one of forty runs");
+        if (took > slowest) slowest = took;
+        char when[32];
+        snprintf(when, sizeof when, "stop %d of 40", i + 1);
+        nothing_is_left(when);
+    }
+    printf("forty runs, the slowest stop %lld ms\n", slowest);
 }
 
 // lwIP keeps one packet under reassembly (MEMP_NUM_REASSDATA), in a pool of
@@ -461,6 +546,104 @@ static void early_exit(void) {
     app_opens(FIRST_PORT + 102);
     wait_for_synack(FIRST_PORT + 102);
     stop(&run, "the run after one that ended before it began");
+}
+
+// A SOCKS server that answers: no login, CONNECT and UDP ASSOCIATE, and
+// whatever comes over either is sent back. One thread a connection, each for
+// as long as hev keeps its end open.
+static void *socks_peer(void *arg) {
+    int peer = (int)(intptr_t)arg;
+    uint8_t bytes[2048];
+    size_t address = 0;
+    if (recv(peer, bytes, 3, MSG_WAITALL) != 3 || send(peer, "\x05\x00", 2, MSG_NOSIGNAL) != 2) goto done;
+    if (recv(peer, bytes, 4, MSG_WAITALL) != 4) goto done;
+    int command = bytes[1];
+    if (bytes[3] == 1) address = 4 + 2;
+    if (bytes[3] == 4) address = 16 + 2;
+    if (bytes[3] == 3 && recv(peer, bytes, 1, MSG_WAITALL) == 1) address = bytes[0] + 2u;
+    if (address == 0 || recv(peer, bytes, address, MSG_WAITALL) != (ssize_t)address) goto done;
+
+    if (command == 1) {
+        static const uint8_t connected[10] = {5, 0, 0, 1};
+        if (send(peer, connected, sizeof connected, MSG_NOSIGNAL) != (ssize_t)sizeof connected) goto done;
+        for (;;) {
+            ssize_t length = recv(peer, bytes, sizeof bytes, 0);
+            if (length <= 0 || send(peer, bytes, (size_t)length, MSG_NOSIGNAL) != length) break;
+        }
+    } else if (command == 3) {
+        struct sockaddr_in at = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+        socklen_t size = sizeof at;
+        int relay = socket(AF_INET, SOCK_DGRAM, 0);
+        if (relay < 0 || bind(relay, (struct sockaddr *)&at, sizeof at) != 0 ||
+            getsockname(relay, (struct sockaddr *)&at, &size) != 0) {
+            goto done;
+        }
+        uint8_t associated[10] = {5, 0, 0, 1, 127, 0, 0, 1};
+        memcpy(associated + 8, &at.sin_port, 2);
+        if (send(peer, associated, sizeof associated, MSG_NOSIGNAL) != (ssize_t)sizeof associated) goto done;
+        for (;;) {
+            struct pollfd both[2] = {{peer, POLLIN, 0}, {relay, POLLIN, 0}};
+            if (poll(both, 2, -1) <= 0) break;
+            // The association lasts as long as the connection that asked for it.
+            if (both[0].revents && recv(peer, bytes, sizeof bytes, 0) <= 0) break;
+            if (both[1].revents) {
+                struct sockaddr_in from;
+                socklen_t from_size = sizeof from;
+                ssize_t length = recvfrom(relay, bytes, sizeof bytes, 0, (struct sockaddr *)&from, &from_size);
+                if (length > 0) sendto(relay, bytes, (size_t)length, 0, (struct sockaddr *)&from, from_size);
+            }
+        }
+        close(relay);
+    }
+done:
+    close(peer);
+    return NULL;
+}
+
+static void *socks_answers(void *arg) {
+    (void)arg;
+    for (;;) {
+        int peer = accept(socks_listener, NULL, NULL);
+        pthread_t thread;
+        if (peer < 0) continue;
+        if (pthread_create(&thread, NULL, socks_peer, (void *)(intptr_t)peer) != 0) failed("no thread for a SOCKS peer");
+        pthread_detach(thread);
+    }
+    return NULL;
+}
+
+// What most of a phone's sessions are when a stop comes: past the handshake.
+// The echo of the connection's data is never acknowledged, so lwIP still holds
+// it, with the session's own buffer under it, when the session is ended.
+static void carrying(void) {
+    pthread_t answers;
+    if (pthread_create(&answers, NULL, socks_answers, NULL) != 0) failed("no thread for the SOCKS server");
+
+    for (int i = 0; i < 5; i++) {
+        struct run run;
+        int port = FIRST_PORT + 10 * i;
+        start(&run);
+        app_opens(port + 1);
+        app_opens(port + 2);
+        wait_for_synack(port + 1);
+        wait_for_synack(port + 2);
+        app_acknowledges(port + 1);
+        app_sends_data(port + 1);
+        app_sends_datagram(port + 3);
+        long long until = now_ms() + STEP_BOUND_MS;
+        while (tcp_data_seen[port + 1 - FIRST_PORT] < 4 || udp_data_seen[port + 3 - FIRST_PORT] < 4) {
+            if (now_ms() > until) {
+                failed("run %d: %d bytes came back over TCP and %d over UDP in %d ms", i + 1,
+                       tcp_data_seen[port + 1 - FIRST_PORT], udp_data_seen[port + 3 - FIRST_PORT], STEP_BOUND_MS);
+            }
+            read_tun(20);
+        }
+        long long took = stop_quietly(&run, "sessions that carry data");
+        char when[32];
+        snprintf(when, sizeof when, "stop %d of 5", i + 1);
+        nothing_is_left(when);
+        printf("run %d: data both ways over TCP and UDP, stopped in %lld ms, nothing left\n", i + 1, took);
+    }
 }
 
 static atomic_int hold_wanted;
@@ -586,6 +769,8 @@ int main(int argc, char **argv) {
         {"reuse", reuse},
         {"first", first},
         {"leftover", leftover},
+        {"many-runs", many_runs},
+        {"carrying", carrying},
         {"fragment", fragment},
         {"early-exit", early_exit},
         {"fresh-session", fresh_session},
@@ -614,6 +799,6 @@ int main(int argc, char **argv) {
         printf("ok: %s\n", cases[i].name);
         return 0;
     }
-    fprintf(stderr, "harness restart | reuse | first | leftover | fragment | early-exit | fresh-session | dead-tun | second-start\n");
+    fprintf(stderr, "harness restart | reuse | first | leftover | many-runs | carrying | fragment | early-exit | fresh-session | dead-tun | second-start\n");
     return 2;
 }

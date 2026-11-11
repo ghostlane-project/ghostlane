@@ -24,7 +24,7 @@ trap 'rm -rf "$work"' EXIT
 
 cases=("$@")
 if [ "${#cases[@]}" -eq 0 ]; then
-  cases=(restart reuse first leftover fragment early-exit fresh-session dead-tun second-start)
+  cases=(restart reuse first leftover many-runs carrying fragment early-exit fresh-session dead-tun second-start)
 fi
 
 # What the wrapper answers a start beside a run with is a number the service
