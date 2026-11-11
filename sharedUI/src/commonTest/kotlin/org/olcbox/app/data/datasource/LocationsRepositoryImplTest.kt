@@ -30,6 +30,7 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.LocationMetadata
 import org.olcbox.app.data.model.RefusedList
+import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.data.model.SubscriptionMetadata
 import org.olcbox.app.data.model.SubscriptionSettings
@@ -1737,6 +1738,38 @@ class LocationsRepositoryImplTest {
         assertEquals(42L, stored.vpnDisclosureAcceptedAt)
         assertTrue(stored.routing.verboseDebugLogs)
         assertNotNull(stored.activeLocationId, "the imported list's server is selected, as into any empty store")
+    }
+
+    // The same way in, with nothing in the store but what it knows of the
+    // device: a first list added once the intro is over, or the first after
+    // the last was removed. v1.0.467 kept the store's subscription settings
+    // through that import and nothing else, so the list arrived and the store
+    // forgot that the intro had been seen, that the VPN disclosure had been
+    // accepted, and the routing choice: the intro was shown again at the next
+    // start. Only the locations and the selection are the import's.
+    @Test
+    fun anImportIntoAStoreWithNoLocationsKeepsTheIntroSeenTheDisclosureAndTheRouting() = runTest {
+        val routing = RoutingSettings(mode = RoutingMode.BypassRussia, killSwitch = true)
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                routing = routing,
+                vpnDisclosureAcceptedAt = 42L,
+                onboardingSeenAt = 43L
+            )
+        )
+        val repo = repoRespondingWith(source, MockEngine { respond(listBody) })
+
+        assertTrue(repo.importText("https://example.test/alpha"))
+
+        val stored = source.stored!!
+        assertEquals(listOf("https://example.test/alpha"), stored.locations.map { it.subscriptionUrl })
+        assertNotNull(stored.activeLocationId)
+        // One comparison, so that a failure names all three at once.
+        assertEquals(
+            listOf(43L, 42L, routing),
+            listOf(stored.onboardingSeenAt, stored.vpnDisclosureAcceptedAt, stored.routing),
+            "the intro seen, the disclosure accepted and the routing choice, after the import"
+        )
     }
 
     @Test
