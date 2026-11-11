@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/links"
 )
@@ -91,7 +92,7 @@ func upstreamOutbound(u Upstream) (map[string]any, error) {
 		// security=none is VLESS in the clear: a tls block there is a handshake
 		// the server answers with a reset.
 		if !v.Plain {
-			tls := map[string]any{"enabled": true, "server_name": v.SNI, "utls": map[string]any{"enabled": true, "fingerprint": v.Fingerprint}}
+			tls := map[string]any{"enabled": true, "server_name": v.SNI, "utls": map[string]any{"enabled": true, "fingerprint": singBoxFingerprint(v.Fingerprint)}}
 			switch {
 			case v.PublicKey != "":
 				tls["reality"] = map[string]any{"enabled": true, "public_key": v.PublicKey, "short_id": v.ShortID}
@@ -100,8 +101,8 @@ func upstreamOutbound(u Upstream) (map[string]any, error) {
 			}
 			out["tls"] = tls
 		}
-		if v.Flow != "" {
-			out["flow"] = v.Flow
+		if flow := singBoxFlow(v.Flow); flow != "" {
+			out["flow"] = flow
 		}
 		return out, nil
 	case u.Hy2 != nil:
@@ -196,4 +197,58 @@ func BuildConfig(p FrontParams) ([]byte, error) {
 		},
 	}
 	return json.Marshal(cfg)
+}
+
+// singBoxFingerprints are the uTLS names sing-box knows (common/tls/utls_client.go).
+var singBoxFingerprints = map[string]bool{
+	"chrome": true, "firefox": true, "edge": true, "safari": true, "360": true, "qq": true, "ios": true,
+	"android": true, "random": true, "randomized": true,
+	"chrome_psk": true, "chrome_psk_shuffle": true, "chrome_padding_psk_shuffle": true, "chrome_pq": true, "chrome_pq_psk": true,
+}
+
+// singBoxFingerprint is a link's fp as sing-box names it, the same rule as the
+// app's SingBoxConfig.singBoxFingerprint. sing-box refuses a name it does not
+// know, and that stops the whole configuration; links carry Xray's names too
+// (hellochrome_133, randomizednoalpn, unsafe, Chrome). Each becomes the
+// nearest name sing-box has, and one with none becomes chrome, the default.
+func singBoxFingerprint(fp string) string {
+	name := strings.ToLower(strings.TrimSpace(fp))
+	switch {
+	case name == "":
+		return "chrome"
+	case singBoxFingerprints[name]:
+		return name
+	case strings.HasPrefix(name, "chrome"), strings.HasPrefix(name, "hellochrome"):
+		return "chrome"
+	case strings.HasPrefix(name, "hellofirefox"):
+		return "firefox"
+	case strings.HasPrefix(name, "hellosafari"):
+		return "safari"
+	case strings.HasPrefix(name, "helloios"):
+		return "ios"
+	case strings.HasPrefix(name, "helloedge"):
+		return "edge"
+	case strings.HasPrefix(name, "hello360"):
+		return "360"
+	case strings.HasPrefix(name, "helloqq"):
+		return "qq"
+	case strings.HasPrefix(name, "helloandroid"):
+		return "android"
+	case strings.HasPrefix(name, "randomized"):
+		return "randomized"
+	}
+	return "chrome"
+}
+
+// singBoxFlow is a link's flow as sing-box takes it: it knows one flow,
+// xtls-rprx-vision, and refuses any other name. Xray's xtls-rprx-vision-udp443
+// is that same Vision (in Xray it also lets UDP to port 443 through), so it is
+// written as Vision; any other name stays, for sing-box to refuse by name.
+func singBoxFlow(flow string) string {
+	written := strings.TrimSpace(flow)
+	switch strings.ToLower(written) {
+	case "xtls-rprx-vision", "xtls-rprx-vision-udp443":
+		return "xtls-rprx-vision"
+	}
+	return written
 }

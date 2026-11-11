@@ -992,6 +992,56 @@ object SingBoxConfig {
     }
 
     /** [spec]'s outbound on its own, tagged [tag]: what a router that runs sing-box is given (see [RouterExport]). */
+    /**
+     * A link's `fp` as sing-box names it. sing-box knows chrome, firefox, edge,
+     * safari, 360, qq, ios, android, random and randomized (and a few chrome_*
+     * aliases), in lower case, and refuses anything else, which stops the whole
+     * configuration, not just the line. Links carry Xray's names too:
+     * `hellochrome_133`, `hellofirefox_148`, `randomizednoalpn`, `unsafe`, or
+     * `Chrome`. Each is read as the nearest name sing-box has, and a name with
+     * none as chrome, what a link without `fp` gets. Xray's own configs keep
+     * the link's name: Xray knows them.
+     */
+    internal fun singBoxFingerprint(fp: String?): String {
+        val name = fp?.trim()?.lowercase().orEmpty()
+        return when {
+            name.isEmpty() -> "chrome"
+            name in SINGBOX_FINGERPRINTS -> name
+            name.startsWith("chrome") || name.startsWith("hellochrome") -> "chrome"
+            name.startsWith("hellofirefox") -> "firefox"
+            name.startsWith("hellosafari") -> "safari"
+            name.startsWith("helloios") -> "ios"
+            name.startsWith("helloedge") -> "edge"
+            name.startsWith("hello360") -> "360"
+            name.startsWith("helloqq") -> "qq"
+            name.startsWith("helloandroid") -> "android"
+            name.startsWith("randomized") -> "randomized"
+            else -> "chrome"
+        }
+    }
+
+    private val SINGBOX_FINGERPRINTS = setOf(
+        "chrome", "firefox", "edge", "safari", "360", "qq", "ios", "android", "random", "randomized",
+        "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk",
+    )
+
+    /**
+     * A link's `flow` as sing-box takes it. sing-box's VLESS knows one flow,
+     * xtls-rprx-vision, and refuses any other name, which stops the whole
+     * configuration. Xray's xtls-rprx-vision-udp443 is that same Vision, which
+     * in Xray also lets UDP to port 443 through; the server sees Vision either
+     * way, so it is written as Vision. Any other name stays as the link has it
+     * and sing-box says it does not know it.
+     */
+    internal fun singBoxFlow(flow: String?): String? {
+        val written = flow?.trim().orEmpty()
+        return when (written.lowercase()) {
+            "" -> null
+            "xtls-rprx-vision", "xtls-rprx-vision-udp443" -> "xtls-rprx-vision"
+            else -> written
+        }
+    }
+
     internal fun outbound(spec: OutboundSpec, tag: String): JsonObject {
         val built = buildJsonArray { addOutbound(spec) }.single().jsonObject
         return JsonObject(built + ("tag" to JsonPrimitive(tag)))
@@ -1003,14 +1053,14 @@ object SingBoxConfig {
                 put("type", "vless"); put("tag", "out")
                 put("server", spec.host); put("server_port", spec.port)
                 put("uuid", spec.uuid); put("packet_encoding", "xudp")
-                if (spec.flow != null) put("flow", spec.flow)
+                singBoxFlow(spec.flow)?.let { put("flow", it) }
                 putTransport(spec.transport)
                 // `security=none` is VLESS in the clear, and a `tls` block there is
                 // a handshake the server answers with a reset.
                 if (!spec.plain) putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
                     if (spec.insecure && spec.publicKey.isBlank()) put("insecure", true)
-                    putJsonObject("utls") { put("enabled", true); put("fingerprint", spec.fingerprint) }
+                    putJsonObject("utls") { put("enabled", true); put("fingerprint", singBoxFingerprint(spec.fingerprint)) }
                     // Same rule as XrayConfig: a link without a public key is
                     // VLESS over ordinary TLS, and `TransportKind.Tls` exists to
                     // name exactly that case. A reality block with an empty key
@@ -1083,7 +1133,7 @@ object SingBoxConfig {
             if (tls.insecure) put("insecure", true)
             if (tls.alpn.isNotEmpty()) putJsonArray("alpn") { tls.alpn.forEach { add(it) } }
             tls.fingerprint?.let { fp ->
-                putJsonObject("utls") { put("enabled", true); put("fingerprint", fp) }
+                putJsonObject("utls") { put("enabled", true); put("fingerprint", singBoxFingerprint(fp)) }
             }
         }
     }
