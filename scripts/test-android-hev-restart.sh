@@ -11,6 +11,12 @@
 # in a temporary directory and nothing is written to the checkout.
 set -euo pipefail
 
+# hev reads a Linux tun as bare packets, which is what the socketpair gives it.
+if [ "$(uname -s)" != Linux ]; then
+  echo "scripts/test-android-hev-restart.sh runs on Linux only"
+  exit 2
+fi
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 jni="$root/androidApp/src/main/jni"
 work="$(mktemp -d)"
@@ -40,7 +46,9 @@ if ! make -C "$work/hev" -j2 static REV_ID=test > "$work/build.log" 2>&1; then
 fi
 
 hev="$work/hev"
-"${CC:-cc}" -O1 -g -Wall -Wextra -Werror -pthread \
+# Warnings are shown and not fatal: the runner's compiler is not the one this
+# was written with, and the harness is a test, not what ships.
+"${CC:-cc}" -O1 -g -Wall -Wextra -pthread \
   -I"$jni" \
   -I"$hev/src" \
   -I"$hev/third-part/lwip/src/include" \

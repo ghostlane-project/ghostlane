@@ -53,6 +53,7 @@ jobs:
       cli: ${{ steps.paths.outputs.cli }}
       mac_helper: ${{ steps.paths.outputs.mac_helper }}
       ios_extension: ${{ steps.paths.outputs.ios_extension }}
+      android_tun2socks: ${{ steps.paths.outputs.android_tun2socks }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -101,6 +102,7 @@ jobs:
             echo 'cli=true' >> "$GITHUB_OUTPUT"
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
+            echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -144,9 +146,23 @@ jobs:
           else
             echo 'ios_extension=false' >> "$GITHUB_OUTPUT"
           fi
+          # The Android tun's native code is compiled by every run and was run
+          # by none: hev-socks5-tunnel with its lwIP, and the wrapper the
+          # service calls. A step of the Gradle job runs it on the runner, on a
+          # change to it, to its test, to the number the service reads from
+          # it, or to this file.
+          if grep -qE '^androidApp/src/main/jni/|^scripts/test-android-hev-restart\.sh$|^scripts/android-hev-restart/|^sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun\.kt$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+            echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'android_tun2socks=false' >> "$GITHUB_OUTPUT"
+          fi
 
   checks:
-    if: github.event_name != 'workflow_dispatch'
+    # After scope for the one step below that asks it what changed. Not held
+    # to its success: !cancelled() runs the checks whatever became of scope,
+    # and that step is then skipped.
+    needs: scope
+    if: github.event_name != 'workflow_dispatch' && !cancelled()
     name: Gradle checks
     runs-on: ubuntu-latest
 
@@ -235,6 +251,15 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug --stacktrace
+
+      # hev-socks5-tunnel as the app vendors it, built for the runner with its
+      # own Makefile and run through what a stop and a restart in one process
+      # have to survive (scripts/android-hev-restart/harness.c). The runner's
+      # cc and make, no device, about half a minute. Run whatever Gradle said.
+      - name: The Android tun's hev, stopped and started again in one process
+        if: ${{ !cancelled() && needs.scope.outputs.android_tun2socks == 'true' }}
+        working-directory: olcbox
+        run: scripts/test-android-hev-restart.sh
 
       # Instrumented tests still exercise resource loading on a device, while
       # this cheap archive check protects every normal PR build as well.
