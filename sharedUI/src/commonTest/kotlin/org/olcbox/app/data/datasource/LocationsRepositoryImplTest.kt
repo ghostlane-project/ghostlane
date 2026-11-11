@@ -2581,6 +2581,127 @@ class LocationsRepositoryImplTest {
         assertEquals(listOf(2, 0), reports.map { it.updatedCount })
     }
 
+    // ---- what a refresh says it did to the selection ------------------------
+    // The home screen starts a running tunnel again after a refresh only when
+    // the refresh changed the server the tunnel runs on. It used to find that
+    // out by itself: the selected server's config before the refresh against
+    // the one after. With the store open while a refresh downloads, a server
+    // picked meanwhile stood between the two and was taken for the refresh's
+    // doing: the pick had started the tunnel again on that server, and the
+    // refresh's return, up to half a minute later, started it once more. The
+    // refresh says it now, of the bundle its merge read and the one it stored,
+    // with the store's lock held from the one to the other.
+
+    private val twoServers = "olcrtc://telemost?vp8channel@11111#deadbeefdeadbeef\$DE\n" +
+        "olcrtc://telemost?vp8channel@22222#deadbeefdeadbeef\$NL"
+
+    /** A store that holds the list at [url] as [twoServers], with its first server selected. */
+    private suspend fun sourceWithTwoServers(url: String): FakeLocationsDataSource {
+        val source = FakeLocationsDataSource()
+        assertTrue(repoRespondingWith(source, MockEngine { respond(twoServers) }).importText(url))
+        assertEquals(2, source.stored!!.locations.size, "the fixture must offer a choice")
+        assertEquals(source.stored!!.locations.first().storageId, source.stored!!.activeLocationId)
+        return source
+    }
+
+    @Test
+    fun aServerChosenWhileTheDownloadIsInFlightIsNoChangeOfTheRefreshs() = runTest {
+        val url = "https://example.test/sub/two"
+        val source = sourceWithTwoServers(url)
+        val second = source.stored!!.locations.last().storageId
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine {
+            host.asked.complete(Unit)
+            host.answer.await()
+            respond(twoServers)
+        })
+        val refresh = async { repo.refreshSubscription(url) }
+        try {
+            host.asked.await()
+            duringTheDownload("a choice of server") { repo.setActiveLocationId(second) }
+        } finally {
+            host.answer.complete(Unit)
+        }
+        val report = refresh.await()
+
+        assertEquals(1, report.updatedCount)
+        assertEquals(second, source.stored!!.activeLocationId)
+        assertFalse(report.selectionChanged, "the server picked during the download was taken for the refresh's change")
+    }
+
+    // The same pick, and the list's host gives nothing in the end: the refresh
+    // stores nothing, so it changed nothing, whatever was picked meanwhile.
+    @Test
+    fun aRefreshThatStoresNothingChangedNoSelection() = runTest {
+        val url = "https://example.test/sub/two"
+        val source = sourceWithTwoServers(url)
+        val second = source.stored!!.locations.last().storageId
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine {
+            host.asked.complete(Unit)
+            host.answer.await()
+            respond("boom", HttpStatusCode.InternalServerError)
+        })
+        val refresh = async { repo.refreshSubscription(url) }
+        try {
+            host.asked.await()
+            duringTheDownload("a choice of server") { repo.setActiveLocationId(second) }
+        } finally {
+            host.answer.complete(Unit)
+        }
+        val report = refresh.await()
+
+        assertEquals(SubscriptionRefreshError.ServerError, report.failures.single().error)
+        assertEquals(second, source.stored!!.activeLocationId)
+        assertFalse(report.selectionChanged, "a refresh that stored nothing said it changed the selection")
+    }
+
+    // The selected server comes back as the same line, by its room and its key,
+    // and so keeps its place and its id. A refresh that brings it back as it
+    // was changed nothing a tunnel is built from; one that brings it back with
+    // anything else of its config changed did, with the selection where it was.
+    @Test
+    fun aRefreshThatBringsTheSelectedServerBackChangedSaysSo() = runTest {
+        val url = "https://example.test/sub/two"
+        val source = sourceWithTwoServers(url)
+        val selected = source.stored!!.activeLocationId
+        var body = twoServers
+        val repo = repoRespondingWith(source, MockEngine { respond(body) })
+
+        val unchanged = repo.refreshSubscription(url)
+
+        assertEquals(1, unchanged.updatedCount)
+        assertFalse(unchanged.selectionChanged, "a list answered as it was changed the selected server")
+
+        body = twoServers.replace("\$DE", "\$Germany")
+        val changed = repo.refreshSubscription(url)
+
+        assertEquals(1, changed.updatedCount)
+        assertEquals(selected, source.stored!!.activeLocationId, "the selection stayed on its line")
+        assertEquals("Germany", source.stored!!.locations.first { it.storageId == selected }.location.name)
+        assertTrue(changed.selectionChanged, "the selected server came back changed, and the refresh did not say so")
+    }
+
+    // The selected server is gone from its list. The selection moves to the
+    // list's first server, and that is the refresh's change: the tunnel that
+    // ran on the server that went is the one to start again.
+    @Test
+    fun aRefreshThatMovesTheSelectionOffAServerThatIsGoneSaysSo() = runTest {
+        val url = "https://example.test/sub/two"
+        val source = sourceWithTwoServers(url)
+        val (first, gone) = source.stored!!.locations.map { it.storageId }
+        var body = twoServers
+        val repo = repoRespondingWith(source, MockEngine { respond(body) })
+        repo.setActiveLocationId(gone)
+
+        body = twoServers.substringBefore("\n")
+        val report = repo.refreshSubscription(url)
+
+        assertEquals(listOf(first), source.stored!!.locations.map { it.storageId })
+        assertEquals(first, source.stored!!.activeLocationId)
+        assertTrue(report.selectionChanged, "the selection moved off a server that went, and the refresh did not say so")
+    }
+
     private class FakeLocationsDataSource(
         var stored: LocationBundleV4? = null,
         private val legacy: List<Pair<String, String>> = emptyList(),

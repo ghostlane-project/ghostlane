@@ -675,9 +675,10 @@ class HomeScreenViewModel(
      * the refresh calls for it, by the one rule
      * ([SubscriptionRefreshReport.restartsRunningTunnel]) and the selection as
      * the refresh left it, which this model has read by the time a refresh
-     * hands its report on. [selectionMoved] as the home screen knows it; the
-     * settings screens do not say. [restartVpnIfRunning] asks the store again
-     * before it starts anything.
+     * hands its report on. [selectionMoved] is what the refresh says of itself
+     * ([SubscriptionRefreshReport.selectionChanged]), which the home screen
+     * passes; the settings screens do not say. [restartVpnIfRunning] asks the
+     * store again before it starts anything.
      */
     fun restartVpnAfterRefresh(report: SubscriptionRefreshReport, selectionMoved: Boolean? = null) {
         val hasSelection = _state.value.selectedLocation != null

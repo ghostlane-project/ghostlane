@@ -646,20 +646,31 @@ class LocationsRepositoryImpl(
             return SubscriptionRefreshReport(updatedCount = 0, failures = failures)
         }
 
-        saveBundleUnlocked(
-            bundle.copy(
-                activeLocationId = activeAfter,
-                locations = refreshedLocations,
-                refusedLists = refusedLists,
-                selectionWithdrawn = bundle.selectionWithdrawn || refusedSelection
-            )
-        )
+        // As it is stored: the selection is settled only there, the first
+        // server standing in where none was chosen and none was withdrawn.
+        val merged = bundle.copy(
+            activeLocationId = activeAfter,
+            locations = refreshedLocations,
+            refusedLists = refusedLists,
+            selectionWithdrawn = bundle.selectionWithdrawn || refusedSelection
+        ).normalized()
+        saveBundleUnlocked(merged)
         return SubscriptionRefreshReport(
             updatedCount = successfulRefreshes,
             failures = failures,
-            refusedSelection = refusedSelection
+            refusedSelection = refusedSelection,
+            // What this refresh did to the selection, asked of the bundle it
+            // read and the one it stored, with the lock held from the one to
+            // the other. A screen cannot tell: a server picked during the
+            // download is in the bundle read here, and is not this refresh's
+            // change.
+            selectionChanged = merged.selectedConfig() != bundle.selectedConfig()
         )
     }
+
+    /** The config of the server selected in this bundle, which a tunnel started now is built from; none when nothing is selected. */
+    private fun LocationBundleV4.selectedConfig(): LocationConfig? =
+        locations.firstOrNull { it.storageId == activeLocationId }?.location
 
     override suspend fun refreshDueSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy?

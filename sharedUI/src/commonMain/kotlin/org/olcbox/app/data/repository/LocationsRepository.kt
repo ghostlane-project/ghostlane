@@ -43,7 +43,9 @@ interface LocationsRepository {
      * meanwhile, and the answers are merged into what is stored when they
      * arrive. A list removed meanwhile stays removed, a server chosen
      * meanwhile stays chosen when it came through, and a list added meanwhile
-     * is left as it is.
+     * is left as it is. What the refresh itself did to the selection is in
+     * its report ([SubscriptionRefreshReport.selectionChanged]): a look at
+     * the selection before and after would take a pick made meanwhile for it.
      */
     suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy? = null
