@@ -1,2 +1,0 @@
-olcRTC
-• Some rooms on one meeting service could be joined only once: every connection after the first failed until the room was made anew. The app now connects to such a room, and comes back to it after a drop. The room's server needs the same fix.
