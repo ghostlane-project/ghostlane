@@ -8,7 +8,9 @@
 # key and the two sources snippets go to the repo root. Runs natively where
 # reprepro and createrepo_c exist (the release runner), else in containers
 # (debian:bookworm, rockylinux:9) with the same code, re-invoking itself with
-# --inner. reprepro (5.3 everywhere) serves the newest version of a package,
+# --inner; REPOS_IN_CONTAINERS=1 builds in the containers whatever this machine
+# has (the PR check proves that path: a release takes it when its runner's
+# package archive does not answer). reprepro (5.3 everywhere) serves the newest version of a package,
 # so the apt repository is rebuilt from scratch each time (no database to
 # carry, no orphaned pool files); the rpm repository keeps the newest
 # RPM_VERSIONS_KEPT versions (packages are ~25 MB each and GitHub Pages is
@@ -105,15 +107,16 @@ DIST=$(cd "$1" && pwd); REPO="$2"; KEY=$(cd "$(dirname "$3")" && pwd)/$(basename
 mkdir -p "$REPO"; REPO=$(cd "$REPO" && pwd)
 
 run_in() { # <image> <packages> <which>
+  # the tools' set-up is quiet when it works and shown when it does not
   docker run --rm -v "$DIST:/dist:ro" -v "$REPO:/repo" -v "$KEY:/key.asc:ro" -v "$here/build-repos.sh:/build-repos.sh:ro" "$1" \
-    sh -c "{ $2; } >/dev/null 2>&1 && sh /build-repos.sh --inner $3 /dist /repo /key.asc $VERSION"
+    sh -c "{ $2; } >/tmp/setup.log 2>&1 || { cat /tmp/setup.log >&2; echo 'build-repos.sh: the tools did not install in $1' >&2; exit 1; }; sh /build-repos.sh --inner $3 /dist /repo /key.asc $VERSION"
 }
-if command -v reprepro >/dev/null 2>&1; then
+if [ -z "${REPOS_IN_CONTAINERS:-}" ] && command -v reprepro >/dev/null 2>&1; then
   sh "$0" --inner apt "$DIST" "$REPO" "$KEY" "$VERSION"
 else
   run_in debian:bookworm "apt-get update && apt-get install -y --no-install-recommends reprepro gnupg" apt
 fi
-if command -v createrepo_c >/dev/null 2>&1 && command -v rpmsign >/dev/null 2>&1; then
+if [ -z "${REPOS_IN_CONTAINERS:-}" ] && command -v createrepo_c >/dev/null 2>&1 && command -v rpmsign >/dev/null 2>&1; then
   sh "$0" --inner rpm "$DIST" "$REPO" "$KEY" "$VERSION"
 else
   run_in rockylinux:9 "dnf install -y createrepo_c rpm-sign gnupg2" rpm

@@ -1982,6 +1982,7 @@ jobs:
   # be enabled once (source: gh-pages, root) — see docs/cli.md.
   publish-cli-repo:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [plan, release_version, build-cli, publish-nightly]
     if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
     permissions:
@@ -2020,8 +2021,8 @@ jobs:
       - name: Build the repositories
         run: |
           set -euo pipefail
-          sudo apt-get update >/dev/null
-          sudo apt-get install -y --no-install-recommends reprepro createrepo-c rpm gnupg >/dev/null
+          # natively when the runner's archive answers, in containers when not
+          sh src/cli/packaging/repo/install-tools.sh
           umask 077
           printf '%s\n' "${CLI_REPO_GPG_KEY}" > "$RUNNER_TEMP/repo-key.asc"
           sh src/cli/packaging/repo/build-repos.sh dist pages "$RUNNER_TEMP/repo-key.asc" "${OLCBOX_VERSION}"
