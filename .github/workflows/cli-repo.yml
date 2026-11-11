@@ -1,0 +1,170 @@
+name: CLI repositories
+
+# The apt and dnf repositories on GitHub Pages, published by hand for a version
+# that is already released.
+#
+# The release publishes them itself (release.yml, publish-cli-repo). A re-run
+# of that job runs the workflow file of the release's own commit, so when it
+# failed for a reason a later commit fixes, a re-run fails the same way; this
+# workflow is how that version's packages reach the repositories then. The
+# packages are the release's own assets, checked against its signed
+# SHA256SUMS, and the result is checked against the public key users hold
+# before the branch is replaced.
+#
+# It shares publish-cli-repo's concurrency group: the two never write
+# gh-pages at once.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to publish, e.g. 1.0.471 (the tag is v1.0.471)"
+        required: true
+        type: string
+      republish:
+        description: "Publish it again though the repositories already serve this version (its rpm files are signed anew: same names, other bytes)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish the repositories
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: cli-repo-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      OLCBOX_VERSION: ${{ inputs.version }}
+      REPUBLISH: ${{ inputs.republish }}
+      CLI_REPO_GPG_KEY: ${{ secrets.CLI_REPO_GPG_KEY }}
+    steps:
+      - name: The version reads as one, and the repository key is set
+        run: |
+          # the whole value, not one line of it
+          [[ "${OLCBOX_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must read like 1.0.471 (no v, no suffix)"; exit 1; }
+          [ -n "${CLI_REPO_GPG_KEY}" ] || { echo "::error::CLI_REPO_GPG_KEY is not set; the apt/dnf repositories are signed or not published"; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          path: src
+      # No "start the branch" here, unlike the release: a checkout that failed
+      # must not end in a branch rebuilt from nothing (the dnf repository would
+      # lose the previous version).
+      - name: Checkout gh-pages
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: pages
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+      # The repositories only move forward. An older version served again brings
+      # back nobody who installed the newer one (neither apt nor dnf steps down
+      # by itself), and build-repos.sh could not do it whole: apt is rebuilt
+      # from the one version, dnf keeps its newest two whatever was asked.
+      - name: The repositories do not already serve this version or a newer one
+        run: |
+          set -euo pipefail
+          pool=pages/apt/pool/main/g/ghostlane-cli
+          served=""
+          if [ -d "$pool" ]; then
+            served=$(ls "$pool" | sed -n 's/^ghostlane-cli_\([0-9][0-9.]*\)-[0-9]*_amd64\.deb$/\1/p' | sort -V | tail -n 1)
+          fi
+          echo "served now: ${served:-nothing}; asked: ${OLCBOX_VERSION}"
+          [ -n "$served" ] || exit 0
+          newest=$(printf '%s\n%s\n' "$served" "${OLCBOX_VERSION}" | sort -V | tail -n 1)
+          if [ "$newest" != "${OLCBOX_VERSION}" ]; then
+            echo "::error::the apt repository serves ${served}, newer than ${OLCBOX_VERSION}; these repositories only move forward (a step back is a release with a higher version)"
+            exit 1
+          fi
+          # A published rpm keeps its bytes: the build copies the release's
+          # unsigned file over it and signs again, and a signature carries its
+          # time, so a dnf client holding the earlier metadata fails the
+          # checksum until it refreshes.
+          if [ "$served" = "${OLCBOX_VERSION}" ] && [ "${REPUBLISH}" != "true" ] \
+            && [ -f "pages/rpm/ghostlane-cli-${OLCBOX_VERSION}-linux-amd64.rpm" ] \
+            && [ -f "pages/rpm/ghostlane-cli-${OLCBOX_VERSION}-linux-arm64.rpm" ] \
+            && [ -f "pages/rpm/ghostlane-cli-${OLCBOX_VERSION}-linux-arm7.rpm" ]; then
+            echo "::error::the repositories already serve ${OLCBOX_VERSION}: nothing to publish (republish says you mean it; its rpm files are then signed anew)"
+            exit 1
+          fi
+      - name: Packages from the release, checked against its signed SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sums="ghostlane-cli-${OLCBOX_VERSION}-SHA256SUMS"
+          mkdir dist
+          # The six packages by name, not by pattern: build-repos.sh takes every
+          # package in dist, so nothing the signed sums do not name may be there.
+          want=()
+          for arch in amd64 arm64 arm7; do
+            for kind in deb rpm; do
+              want+=(--pattern "ghostlane-cli-${OLCBOX_VERSION}-linux-${arch}.${kind}")
+            done
+          done
+          gh release download "v${OLCBOX_VERSION}" --repo "${GITHUB_REPOSITORY}" --dir dist \
+            "${want[@]}" --pattern "$sums" --pattern "$sums.sig"
+          openssl pkeyutl -verify -pubin -inkey src/cli/packaging/cli-release.pub.pem -rawin \
+            -in "dist/$sums" -sigfile "dist/$sums.sig" >/dev/null \
+            || { echo "::error::the signature of $sums does not verify against cli-release.pub.pem"; exit 1; }
+          cd dist
+          for arch in amd64 arm64 arm7; do
+            for kind in deb rpm; do
+              file="ghostlane-cli-${OLCBOX_VERSION}-linux-${arch}.${kind}"
+              [ -f "$file" ] || { echo "::error::the release has no $file"; exit 1; }
+              # the whole line, as it is written: this file, with this sum
+              grep -qxF "$(sha256sum "$file" | cut -d' ' -f1)  $file" "$sums" \
+                || { echo "::error::$file is not in $sums with the sum it has"; exit 1; }
+            done
+          done
+          rm -f "$sums" "$sums.sig"
+          [ "$(ls -A | wc -l)" -eq 6 ] || { echo "::error::dist holds a file the signed sums did not vouch for"; ls -A; exit 1; }
+          ls -la
+      - name: Build the repositories
+        run: |
+          set -euo pipefail
+          sh src/cli/packaging/repo/install-tools.sh
+          umask 077
+          # the key leaves the runner's disk with this step, however it ends
+          trap 'rm -f "$RUNNER_TEMP/repo-key.asc"' EXIT
+          printf '%s\n' "${CLI_REPO_GPG_KEY}" > "$RUNNER_TEMP/repo-key.asc"
+          sh src/cli/packaging/repo/build-repos.sh dist pages "$RUNNER_TEMP/repo-key.asc" "${OLCBOX_VERSION}"
+          du -sh pages/apt pages/rpm
+      # The key users hold is the committed public half: what was just signed
+      # with the secret must verify against it, and must name this version.
+      - name: What was built verifies against the published key and serves the version
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/verify-gnupg"
+          mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          gpg --batch --quiet --import src/cli/packaging/repo/ghostlane-repo.gpg.asc
+          gpg --batch --verify pages/apt/dists/stable/InRelease
+          gpg --batch --verify pages/apt/dists/stable/Release.gpg pages/apt/dists/stable/Release
+          gpg --batch --verify pages/rpm/repodata/repomd.xml.asc pages/rpm/repodata/repomd.xml
+          cmp src/cli/packaging/repo/ghostlane-repo.gpg.asc pages/ghostlane-repo.gpg.asc
+          for arch in amd64 arm64 armhf; do
+            grep -q "^Version: ${OLCBOX_VERSION}-" "pages/apt/dists/stable/main/binary-${arch}/Packages" \
+              || { echo "::error::the apt repository has no ${OLCBOX_VERSION} for ${arch}"; exit 1; }
+          done
+          for arch in amd64 arm64 arm7; do
+            [ -f "pages/rpm/ghostlane-cli-${OLCBOX_VERSION}-linux-${arch}.rpm" ] \
+              || { echo "::error::the dnf repository has no ${OLCBOX_VERSION} for ${arch}"; exit 1; }
+          done
+          ls pages/apt/pool/main/g/ghostlane-cli pages/rpm
+      # One commit, the current tree: packages are ~25 MB each, so a branch with
+      # history would grow the repository by ~150 MB per release for ever.
+      - name: Push gh-pages (one commit, no history)
+        run: |
+          set -euo pipefail
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan gh-pages-next
+          git add -A
+          git commit -q -m "cli repositories: ${OLCBOX_VERSION}"
+          git push -q --force origin HEAD:gh-pages
