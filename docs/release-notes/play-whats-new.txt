@@ -1,3 +1,0 @@
-• The app no longer closes by itself when the tunnel is stopped and started again: a reconnect, or Stop and then Connect.
-• At launch the server list is on screen at once, and a choice of server does not wait, while a list is updated from an address that is slow to answer.
-• Some olcRTC rooms on one meeting service could be joined only once. The app now connects to such a room again. The room's server needs the same fix.
