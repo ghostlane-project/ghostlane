@@ -1,0 +1,56 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Ghostlane
+Label: Ghostlane CLI
+Codename: stable
+Date: Wed, 11 Nov 2026 22:12:18 UTC
+Architectures: amd64 arm64 armhf
+Components: main
+Description: Ghostlane CLI for Linux
+MD5Sum:
+ a3c99d0c51c732080193baff14607c9f 708 main/binary-amd64/Packages
+ 025a7cc7c71ab85917a88ccb2c7b3e6d 485 main/binary-amd64/Packages.gz
+ c817077a1d334cc22aee7edf415ddc4c 112 main/binary-amd64/Release
+ 1fdce5ff67f812e914f6244ef3132c72 708 main/binary-arm64/Packages
+ 2007f6db567d0d5aff07562b8dd826c0 484 main/binary-arm64/Packages.gz
+ fd3d6d9a9e6d06f747aec13eaa541398 112 main/binary-arm64/Release
+ c8b0b28d8dcdc2167352a9285f10a068 708 main/binary-armhf/Packages
+ 3709bb64731ca33e433c4b9d7e53c096 484 main/binary-armhf/Packages.gz
+ 02eea80f1e46ce9f1f3533d573371a1c 112 main/binary-armhf/Release
+SHA1:
+ 125f640431d4a407ad102cd2ac850263fc6e1c9e 708 main/binary-amd64/Packages
+ f0a3413a68598702f873d2399059f377a18ffe17 485 main/binary-amd64/Packages.gz
+ c2fdecb3eda310a373aa198aa30a0d5bb0825302 112 main/binary-amd64/Release
+ 2dbe65a1d6c18e70154665f8eb67f3c45285bcb3 708 main/binary-arm64/Packages
+ 942168df1be99a7d6a0370844640d801fe47dda3 484 main/binary-arm64/Packages.gz
+ 7ab0809669dcd950d4191f25d98e9a2393d81ef8 112 main/binary-arm64/Release
+ 99ec42dfd884bed1a8521a21f2d72046fdea3c6e 708 main/binary-armhf/Packages
+ 6dec132f87034074d6307cd964b143c7ecc439b9 484 main/binary-armhf/Packages.gz
+ 2c7c72420fbcbc09ba9c104bd42d63118562ab4e 112 main/binary-armhf/Release
+SHA256:
+ 6c8d64897be1c0e028a1beb3be1342d317e631e4453beeef923a93028ce176da 708 main/binary-amd64/Packages
+ ee6ba97928c1aa58ae424c681178bb68fa2c2a04606ee411d7fe5bbf130b60e4 485 main/binary-amd64/Packages.gz
+ 80a7771c7ec5c1e04b77ff8f589d427d0436fbb19e6d795e19f7454d7d0b3f94 112 main/binary-amd64/Release
+ 373b3fa7a812ee7eeec8ba6c731bebb50227bdf4a7d821ead6248f3d0ba430c1 708 main/binary-arm64/Packages
+ 4604bfc7fbed1ec1cf0c7ac74981a2469ed4b58ca60a05da606e3a3793155e71 484 main/binary-arm64/Packages.gz
+ 9773590aae000ffb2047ca3ed9be67cbf1ca064735909eb9d25ee9f5799e3431 112 main/binary-arm64/Release
+ 6de0cc08c1d4d569c7d560e4d15d3313c032d614855c9f45927ca715321be94c 708 main/binary-armhf/Packages
+ 1c399ba9279b42541b88a13acf9001e16c41f19d90b8c6551e8a6df5f1d3885c 484 main/binary-armhf/Packages.gz
+ 4de73d1d667d79747e5344001e6bedc9cd443a661a30cdb5afd89dc8bbfcb6d3 112 main/binary-armhf/Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEhiwYKTQ3OSgDrb9H4WhgJ39RpN4FAmr06EIACgkQ4WhgJ39R
+pN4uKBAA2W8nJfGEWormqCCH8gtoN2RyeVv0DDyEBryPDSVN1iIqmHbrT4BpdU6l
+jPN5eHrCbrGs+Z9RqLQvs+GScyiGS5iwxxmaA2O/zGze2GS0MI7ZxTgxw5jeUd6d
+prv4I/Ih4jhsz5eJFVkdUQc2BG8pBJFNtruWoNhMwhCrROOCkdn8o9LK4IZxkvbs
+BZEbu8U2chRvHUSOACSlsgxmpQ8JxfJjyhxzXkYZqo0GsJ+TtfuXPlj23XKcjuPy
+5NBIBrx3Kxdkbn3JCe7WIFsmkmA3VminF/VciWzFv2joupDXjjSxL1HwIdYLW4Uk
+HpD3wrne7CjYxHk0N1MbCvAJmHBJTTtKvV7hrsnxfyVMWvRRUxkv96y164duHqZP
+2brZ/TzDq9oCua93ngzbO2aa5ZGpB8e0YUNrJO8haNkf5LpM7eZIKpnUcLgFWI21
+1SY8YhexVTsLciMKcXY9AY17YoLGprbMm/6t8ixC8PIziqJQl7gZ+3r28nkLFGs1
+viEiSS8EhcXLWNZM75ANOP49Gq1IbSxYjZ4tMyYfDjv7v3yLB87VyphY7kCPOgQF
+trBS9jpolXxEWData8K4ylQo6PSeDWsuIKcmKdA+Yi5Vd7MEj135to8XKx6M4OQN
+/2oqKWGqi2Zyh/JxRJMWlpgzZXkvFMqu3TD3sU5hfrqV+lrreSY=
+=toH8
+-----END PGP SIGNATURE-----

@@ -1,0 +1,5 @@
+Component: main
+Origin: Ghostlane
+Label: Ghostlane CLI
+Architecture: amd64
+Description: Ghostlane CLI for Linux

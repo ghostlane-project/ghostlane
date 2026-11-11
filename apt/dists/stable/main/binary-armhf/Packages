@@ -1,0 +1,17 @@
+Package: ghostlane-cli
+Version: 1.0.472-1
+Architecture: armhf
+Maintainer: Ghostlane contributors <ghostlane-project@users.noreply.github.com>
+Installed-Size: 64357
+Homepage: https://github.com/ghostlane-project/ghostlane
+Priority: optional
+Section: net
+Filename: pool/main/g/ghostlane-cli/ghostlane-cli_1.0.472-1_armhf.deb
+Size: 24034120
+SHA256: ed6ff9a206c987b01139f47aec89acc9db2cf9b55ec74f538e482f5a2037d43a
+SHA1: 0179173a75c57e280a412ecc1e621ce8d2c4c3c5
+MD5sum: 0df7bbaa781442b35d8b87e843af1d03
+Description: Ghostlane tunnel for Linux servers and boxes.
+ Joins olcRTC rooms (a tunnel inside a video call) with carrier failover and
+ routes the machine through a tun, or serves a local SOCKS5/HTTP proxy.
+
