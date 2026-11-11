@@ -35,6 +35,18 @@ interface LocationsRepository {
      * be asked again once the provider has made room.
      */
     suspend fun importReport(text: String, subscriptionProxy: SubscriptionFetchProxy? = null): ImportReport
+
+    /**
+     * Asks every list's host for the list again. One refresh runs at a time,
+     * this one, [refreshSubscription] or [refreshDueSubscriptions], and none
+     * of them keeps the store while it downloads: reads and writes go on
+     * meanwhile, and the answers are merged into what is stored when they
+     * arrive. A list removed meanwhile stays removed, a server chosen
+     * meanwhile stays chosen when it came through, and a list added meanwhile
+     * is left as it is. What the refresh itself did to the selection is in
+     * its report ([SubscriptionRefreshReport.selectionChanged]): a look at
+     * the selection before and after would take a pick made meanwhile for it.
+     */
     suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy? = null
     ): SubscriptionRefreshReport
@@ -70,11 +82,13 @@ interface LocationsRepository {
 
     /**
      * [getActiveLocationId] read past the store's lock, as the Android service
-     * reads its bundle: a refresh holds that lock for as long as it downloads,
-     * and a restart of a running tunnel must not wait for a download. The file
-     * is replaced in one step, so what is read is the old selection or the new.
-     * A store with no locations is asked through the lock (older versions kept
-     * theirs elsewhere).
+     * reads its bundle, so that a restart of a running tunnel waits for
+     * nothing else that is being done with the store. A refresh used to hold
+     * that lock for as long as it downloaded; it holds it now only to read
+     * what to ask and to merge the answers, and this read stays past it all
+     * the same. The file is replaced in one step, so what is read is the old
+     * selection or the new. A store with no locations is asked through the
+     * lock (older versions kept theirs elsewhere).
      */
     suspend fun peekActiveLocationId(): String?
     suspend fun setActiveLocationId(storageId: String?)

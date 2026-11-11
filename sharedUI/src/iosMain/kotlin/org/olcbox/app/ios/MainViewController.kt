@@ -77,11 +77,38 @@ class IosAppSession internal constructor(
     olcRtcBridge: IosOlcRtcBridge,
     packetTunnelBridge: IosPacketTunnelBridge
 ) {
-    private val dependencies = IosAppDependencies(platformBridge, olcRtcBridge, packetTunnelBridge)
+    /**
+     * The store, the tunnel's manager and the screens' models: made when the
+     * first screen is, or with the first link the system hands over, and not
+     * with the session.
+     *
+     * The session is made in the SwiftUI App's init, and the system may run
+     * that on a phone not unlocked since its restart, to have the app ready
+     * before anyone opens it. The app's files cannot be read then. The home
+     * screen's model reads the intro seen, the accepted disclosure, the
+     * subscription settings and the routing once, as it is made, and nothing
+     * reads them again: made with the session, it could keep a fresh
+     * install's answers for as long as the app ran, show the intro again,
+     * and write its defaults over the stored settings at the next change of
+     * one. A screen is made, and a link arrives, only once the person has
+     * opened the app, which is after the unlock.
+     *
+     * The store's own wait for a file that cannot be read yet
+     * ([IosLocationsDataSourceImpl.loadLocationBundle]) stays, for a read
+     * that comes too early all the same.
+     */
+    private val builtDependencies = lazy {
+        IosAppDependencies(platformBridge, olcRtcBridge, packetTunnelBridge)
+    }
+    private val dependencies by builtDependencies
 
     fun createViewController(): UIViewController {
+        // Asked for here and not in the composition below: the first asking
+        // is what makes the models, and they are not made while a screen is
+        // being composed.
+        val built = dependencies
         return ComposeUIViewController {
-            IosApp(platformBridge, dependencies)
+            IosApp(platformBridge, built)
         }
     }
 
@@ -125,7 +152,8 @@ class IosAppSession internal constructor(
     }
 
     fun close() {
-        dependencies.close()
+        // Nothing was made when no screen ever was, and closing does not make it.
+        if (builtDependencies.isInitialized()) dependencies.close()
     }
 }
 

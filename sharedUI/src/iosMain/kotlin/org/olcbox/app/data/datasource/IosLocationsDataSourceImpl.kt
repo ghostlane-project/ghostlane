@@ -40,14 +40,31 @@ class IosLocationsDataSourceImpl(
     private val deviceIdentityPath: String
         get() = appDir.childPath("device_identity")
 
+    /**
+     * The stored bundle, by the three answers [readStoredFile] keeps apart.
+     * They are decided there, in the shared code, where tests hold them; what
+     * is said here is which file is there, how its text is read and how it is
+     * decoded.
+     *
+     * None at once when there is no file: a fresh install waits for nothing.
+     *
+     * A file that is there and whose text cannot be read is not none, and is
+     * read again for a while. iOS keeps the app's files closed from a restart
+     * of the device until it is first unlocked, and may start the app in that
+     * time, before anyone opens it. Taken for none, the store read as a fresh
+     * install's: the intro was shown again and the list of servers was empty,
+     * with the lists still in the file. Only when the text stays unreadable
+     * to the end of that wait is the answer what it was before, none.
+     *
+     * Text that was read and does not decode is answered as before, with no
+     * waiting: there is nothing in it to wait for.
+     */
     override suspend fun loadLocationBundle(): LocationBundleV4? = withContext(Dispatchers.Default) {
-        val file = bundlePath.takeIf { fileExists(it) }
-            ?: legacyBundlePath.takeIf { fileExists(it) }
-            ?: return@withContext null
-
-        runCatching {
-            json.decodeFromString(LocationBundleV4.serializer(), readText(file).orEmpty()).normalized()
-        }.getOrNull()
+        readStoredFile(
+            path = bundlePath.takeIf { fileExists(it) } ?: legacyBundlePath.takeIf { fileExists(it) },
+            read = { path -> readText(path) },
+            decode = { text -> json.decodeFromString(LocationBundleV4.serializer(), text).normalized() }
+        )
     }
 
     override suspend fun saveLocationBundle(bundle: LocationBundleV4): Unit = withContext(Dispatchers.Default) {

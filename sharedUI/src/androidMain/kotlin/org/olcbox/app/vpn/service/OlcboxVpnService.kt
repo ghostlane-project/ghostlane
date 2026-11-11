@@ -654,11 +654,13 @@ class OlcboxVpnService : VpnService() {
     }
 
     /**
-     * What is stored, read past the repository's lock. The app holds that lock
-     * for as long as a list refresh downloads, and a reconnect must not wait for
-     * a download. The file is replaced in one step, so what is read here is a
-     * whole bundle, the old one or the new. A store with no locations goes
-     * through the repository, which knows where older versions kept theirs.
+     * What is stored, read past the repository's lock, so that a reconnect
+     * waits for nothing the app is doing with the store. A list refresh used to
+     * hold that lock for as long as it downloaded; it downloads outside it now,
+     * and this read stays as it is. The file is replaced in one step, so what
+     * is read here is a whole bundle, the old one or the new. A store with no
+     * locations goes through the repository, which knows where older versions
+     * kept theirs.
      */
     private suspend fun storedBundle(): LocationBundleV4 =
         locationsStore.loadLocationBundle()?.takeIf { it.locations.isNotEmpty() } ?: repository.getBundle()

@@ -586,8 +586,10 @@ class HomeScreenModelImportLinkTest {
         } finally { vm.viewModelScope.cancel() }
     }
 
-    // A refresh holds the store's lock while it downloads. A restart reads the
-    // selection past that lock and starts at once, not when the download ends.
+    // A restart reads the selection past the store's lock and starts at once,
+    // not when a refresh's download ends. The refresh held that lock while it
+    // downloaded when this was written; it does not now, and the restart still
+    // waits for nothing.
     @Test fun aRestartWaitsForNoRefreshDownload() = runTest {
         val downloading = CompletableDeferred<Unit>()
         val answer = CompletableDeferred<Unit>()
@@ -610,7 +612,7 @@ class HomeScreenModelImportLinkTest {
         try {
             withContext(Dispatchers.Default) { withTimeout(10_000) { vm.subscriptionSettingsLoaded.first { it } } }
             // The tunnel comes up: the model asks for every list through it,
-            // and that download hangs with the store's lock held.
+            // and that download hangs.
             vpn.status.value = VpnStatus.Connected
             withContext(Dispatchers.Default) { withTimeout(10_000) { downloading.await() } }
 

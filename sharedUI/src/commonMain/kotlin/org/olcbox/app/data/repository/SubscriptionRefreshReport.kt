@@ -94,7 +94,23 @@ data class SubscriptionRefreshReport(
      * have carried the session onto a server nobody chose. See
      * [restartsRunningTunnel].
      */
-    val refusedSelection: Boolean = false
+    val refusedSelection: Boolean = false,
+    /**
+     * Whether this refresh changed what is selected: the selected server's
+     * config as the refresh stored it against the one selected in the store
+     * when the answers were merged into it, both read with the store's lock
+     * held. So when the selected server came back with its config changed,
+     * when it was gone from its list and the selection moved to another, and
+     * when a refusal of its list left nothing selected. False for a refresh
+     * that stored nothing.
+     *
+     * It is the refresh that says it and not a screen, because a refresh does
+     * not keep the store while it downloads: a server picked meanwhile is
+     * between a screen's look before the refresh and its look after, and is
+     * not the refresh's doing. Whoever picked it starts the tunnel again for
+     * it. See [restartsRunningTunnel].
+     */
+    val selectionChanged: Boolean = false
 ) {
     val hasFailures: Boolean get() = failures.isNotEmpty()
 
@@ -110,9 +126,10 @@ data class SubscriptionRefreshReport(
      * is so after the refusal that withdrew the selection ([refusedSelection])
      * and after every refresh until the person chooses again, a refresh of
      * another list included. Otherwise when the selected location's own config
-     * moved in the refresh ([selectionMoved]), as the home screen knows; a
-     * screen that does not know passes null and starts the tunnel again after
-     * every refresh, as the settings screens always have.
+     * moved in the refresh ([selectionMoved]): the home screen passes what the
+     * refresh says of itself ([selectionChanged]); a screen that does not ask
+     * passes null and starts the tunnel again after every refresh, as the
+     * settings screens always have.
      */
     fun restartsRunningTunnel(hasSelection: Boolean, selectionMoved: Boolean? = null): Boolean =
         hasSelection && !refusedSelection && (selectionMoved ?: true)

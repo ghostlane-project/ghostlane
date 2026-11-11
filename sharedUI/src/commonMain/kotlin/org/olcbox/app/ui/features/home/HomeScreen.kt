@@ -55,7 +55,6 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.olcbox.app.admin.AdminState
-import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.SubscriptionRefreshReport
 import org.olcbox.app.net.TransportKind
 import org.olcbox.app.net.transportKind
@@ -276,36 +275,36 @@ fun HomeScreen(
     }
 
     /**
-     * The config the tunnel is currently built from, or null when nothing is running.
+     * Restarts only if the refresh changed the config the running tunnel is
+     * built from, by the rule every screen that refreshes asks
+     * ([SubscriptionRefreshReport.restartsRunningTunnel]). A refresh that
+     * changed nothing about the active location has no reason to tear its
+     * tunnel down. Refresh used to restart unconditionally, so pressing the
+     * arrow on one server list dropped a connection running on another: the
+     * user pressed "update the list" and got their traffic cut.
      *
-     * Captured before a refresh and compared after, because a refresh that changed
-     * nothing about the active location has no reason to tear its tunnel down. Refresh
-     * used to restart unconditionally, so pressing the arrow on one server list
-     * dropped a connection running on another — the user pressed "update the list" and
-     * got their traffic cut.
+     * Whether it changed is the refresh's own answer
+     * ([SubscriptionRefreshReport.selectionChanged]). This screen used to
+     * work it out, from the selected config as it was before the refresh and
+     * as it is after. A refresh no longer keeps the store while it downloads,
+     * so a server picked meanwhile stood between the two: the pick had started
+     * the tunnel again on that server, and the refresh's return, up to half a
+     * minute later, started it once more, for a change that was not its own.
      */
-    fun activeLocationConfig(): LocationConfig? =
-        locations.firstOrNull { it.storageId == locationViewModel.selectedLocationId }?.config
-
-    /**
-     * Restarts only if the running tunnel's own config actually moved, by the
-     * rule every screen that refreshes asks ([SubscriptionRefreshReport.restartsRunningTunnel]).
-     */
-    fun restartIfActiveChanged(before: LocationConfig?, report: SubscriptionRefreshReport) {
+    fun restartIfRefreshChangedSelection(report: SubscriptionRefreshReport) {
         // Vanished counts too: the location the tunnel runs on being gone is exactly
-        // when a restart is right, and comparing to null covers it, once another
-        // is selected. With nothing selected (a refusal took the server away) the
+        // when a restart is right, and the refresh says so, once another is
+        // selected. With nothing selected (a refusal took the server away) the
         // rule starts nothing, whatever moved.
-        viewModel.restartVpnAfterRefresh(report, selectionMoved = activeLocationConfig() != before)
+        viewModel.restartVpnAfterRefresh(report, selectionMoved = report.selectionChanged)
     }
 
     fun refreshSubscriptions() {
         isRefreshingSubscriptions = true
-        val activeBefore = activeLocationConfig()
         viewModel.refreshSubscriptions { report ->
             locationViewModel.loadLocations {
                 isRefreshingSubscriptions = false
-                restartIfActiveChanged(activeBefore, report)
+                restartIfRefreshChangedSelection(report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedBulkMessage()) }
             }
         }
@@ -313,11 +312,10 @@ fun HomeScreen(
 
     fun refreshSubscription(url: String) {
         refreshingSubscriptionUrl = url
-        val activeBefore = activeLocationConfig()
         viewModel.refreshSubscription(url) { report ->
             locationViewModel.loadLocations {
                 refreshingSubscriptionUrl = null
-                restartIfActiveChanged(activeBefore, report)
+                restartIfRefreshChangedSelection(report)
                 scope.launch { snackbarHostState.showSnackbar(report.localizedSingleMessage()) }
             }
         }
