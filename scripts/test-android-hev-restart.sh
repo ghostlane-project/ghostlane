@@ -21,6 +21,16 @@ if [ "${#cases[@]}" -eq 0 ]; then
   cases=(restart reuse first leftover fragment early-exit fresh-session dead-tun second-start)
 fi
 
+# What the wrapper answers a start beside a run with is a number the service
+# reads by name. Two files say it, and they have to say the same one.
+native_code="$(sed -n 's/^#define OLCBOX_TUN2SOCKS_RUN_IN_PROGRESS (\(-[0-9][0-9]*\))$/\1/p' "$jni/olcbox_tun2socks_run.h")"
+kotlin_code="$(sed -n 's/^ *const val RUN_IN_PROGRESS = \(-[0-9][0-9]*\)$/\1/p' \
+  "$root/sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun.kt")"
+if [ -z "$native_code" ] || [ "$native_code" != "$kotlin_code" ]; then
+  echo "A run in progress is '$native_code' in olcbox_tun2socks_run.h and '$kotlin_code' in NativeTunnelRun.kt"
+  exit 1
+fi
+
 cp -R "$jni/hev-socks5-tunnel" "$work/hev"
 # REV_ID: the copy is no git checkout, and the Makefile would ask git for one.
 if ! make -C "$work/hev" -j2 static REV_ID=test > "$work/build.log" 2>&1; then
@@ -59,4 +69,4 @@ if [ "${#failed[@]}" -gt 0 ]; then
   printf '\nFAILED: %s\n' "${failed[*]}"
   exit 1
 fi
-printf '\nAll %d cases passed.\n' "${#cases[@]}"
+printf '\nPassed: %s\n' "${cases[*]}"
