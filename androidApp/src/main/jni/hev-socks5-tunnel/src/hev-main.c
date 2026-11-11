@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
+#include <pthread.h>
 
 #include <lwip/init.h>
 
@@ -25,6 +26,8 @@
 #include "hev-socks5-tunnel.h"
 
 #include "hev-main.h"
+
+static pthread_once_t lwip_once = PTHREAD_ONCE_INIT;
 
 static int
 hev_socks5_tunnel_main_inner (int tun_fd)
@@ -69,7 +72,25 @@ hev_socks5_tunnel_main_inner (int tun_fd)
     if (res < 0)
         return -4;
 
-    lwip_init ();
+    /*
+     * lwIP keeps its state in the process, not in a run: its lists of
+     * connections and its memory pools are statics that outlive
+     * hev_socks5_tunnel_fini. lwip_init links every pool element as free
+     * again (memp_init) and leaves the lists as they are. Called for every
+     * run, it left whatever an earlier run still had on a list pointing into
+     * memory the pools were about to hand out a second time: a handshake that
+     * a stop cut short was given up by the slow timer through segments that
+     * had been linked as free (LWIP_ASSERT "pbuf_free: p->ref > 0"), or had
+     * its slot handed to a new connection while it was still on the list.
+     * So lwIP is initialised once per process, and the pools and the lists
+     * stay in step from one run to the next.
+     *
+     * Upstream has since given lwIP an end of its own, lwip_fini and tcp_fini
+     * (heiher/lwip 4b3ee51 and 150d2b1, called from here as of
+     * heiher/hev-socks5-tunnel 0ce6bcf). That arrives with the next sync of
+     * these vendored sources and takes the place of this.
+     */
+    pthread_once (&lwip_once, lwip_init);
 
     res = hev_socks5_tunnel_init (tun_fd);
     if (res < 0)

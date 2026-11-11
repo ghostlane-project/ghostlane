@@ -507,9 +507,12 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Main checks | `./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug` |
 | JVM tests | `./gradlew :sharedUI:jvmTest` |
 | Run the emitted configs past sing-box itself | `scripts/check-singbox-configs.sh` |
+| Stop and restart the Android tun's native code in one process (Linux) | `scripts/test-android-hev-restart.sh` |
 
 The main checks are what PR checks run, in that order; `check-singbox-configs.sh`
-follows them there, starting the shapes rather than only checking them.
+follows them there, starting the shapes rather than only checking them, and
+`test-android-hev-restart.sh` runs after the main checks when the Android tun's
+native code changed.
 
 ### Build Outputs
 

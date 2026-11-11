@@ -5,7 +5,7 @@ include $(ROOT_PATH)/hev-socks5-tunnel/Android.mk
 include $(CLEAR_VARS)
 LOCAL_PATH := $(ROOT_PATH)
 LOCAL_MODULE := olcbox_tun2socks
-LOCAL_SRC_FILES := olcbox_tun2socks_jni.c
+LOCAL_SRC_FILES := olcbox_tun2socks_jni.c olcbox_tun2socks_run.c
 LOCAL_C_INCLUDES := $(ROOT_PATH)/hev-socks5-tunnel/src
 LOCAL_SHARED_LIBRARIES := hev-socks5-tunnel
 LOCAL_LDLIBS := -llog

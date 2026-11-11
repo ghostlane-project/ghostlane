@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "hev-main.h"
+#include "olcbox_tun2socks_run.h"
 
 JNIEXPORT jint JNICALL
 Java_org_olcbox_app_vpn_service_OlcboxVpnService_startTun2socksNative(
@@ -14,9 +15,8 @@ Java_org_olcbox_app_vpn_service_OlcboxVpnService_startTun2socksNative(
         return -1;
     }
 
-    int result = hev_socks5_tunnel_main_from_file(path, tun_fd);
+    int result = olcbox_tun2socks_run(path, tun_fd);
     (*env)->ReleaseStringUTFChars(env, config_path, path);
-    close(tun_fd);
     return result;
 }
 

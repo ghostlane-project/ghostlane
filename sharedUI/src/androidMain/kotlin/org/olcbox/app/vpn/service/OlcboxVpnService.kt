@@ -99,6 +99,7 @@ import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
+import org.olcbox.app.vpn.NativeTunnelRun
 import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.SessionPort
 import org.olcbox.app.vpn.SystemVpnMode
@@ -171,7 +172,15 @@ class OlcboxVpnService : VpnService() {
     private var lastJitsiStopCompletedAtMs = 0L
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var tun2socksThread: Thread? = null
+
+    /**
+     * The thread of the native tunnel run in progress, null when there is
+     * none. It is the process's and not this instance's: hev and its lwIP are
+     * one per process, and a run can outlive the service that started it. See
+     * [NativeTunnelRun].
+     */
+    private val tun2socksThread: Thread?
+        get() = tun2socksRun.inProgress()
     @Volatile
     private var tun2socksStarted = false
     // Atomic, not volatile: stop is asked for from the main thread, the startup
@@ -179,6 +188,17 @@ class OlcboxVpnService : VpnService() {
     // second call after hev has gone waits for the next hev to start, and then
     // stops that one.
     private val tun2socksStopRequested = AtomicBoolean(false)
+
+    /**
+     * Whether this service has a native run of its own still to stop: one it
+     * started and has not told to stop. What a stop has left to take down is
+     * asked here and not of [tun2socksThread]. That is the process's run: it
+     * can be one this service told to stop and gave up waiting for, to which
+     * a second stop has nothing more to say, or one the next service started,
+     * which is not this one's to take down.
+     */
+    private val tun2socksToStop: Boolean
+        get() = tun2socksStarted && !tun2socksStopRequested.get()
 
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var connectivityManager: ConnectivityManager
@@ -1514,15 +1534,36 @@ class OlcboxVpnService : VpnService() {
                 return false
             }
 
+            // hev is one instance per process. A run that has not returned is
+            // still that instance, whichever service started it and however
+            // long ago it was told to stop, and a second one entered beside
+            // it aborts the app inside lwIP ("netif already added"). Asked
+            // before the descriptor is duplicated: a start that is refused
+            // has nothing to close.
+            if (!tun2socksRun.mayStart()) {
+                addLog("tun2socks did not start: the previous run has not ended")
+                if (reportError) {
+                    setStatus(VpnStatus.Error("The previous tunnel has not stopped yet"))
+                    updateNotification("Tunnel failed")
+                }
+                return false
+            }
+
             val nativeFd = ParcelFileDescriptor.dup(pfd.fileDescriptor).detachFd()
             val configFile = writeTun2socksConfig()
             bridgeTarget = currentBridgeTarget()
             tun2socksStarted = true
             tun2socksStopRequested.set(false)
-            tun2socksThread = thread(name = "OlcboxTun2Socks", isDaemon = true) {
+            val run = thread(name = "OlcboxTun2Socks", isDaemon = true) {
                 try {
                     val result = startTun2socksNative(configFile.absolutePath, nativeFd)
-                    if (OlcboxVpnState.status.value !is VpnStatus.Stopping && result != 0) {
+                    if (result == NativeTunnelRun.RUN_IN_PROGRESS) {
+                        // The native side holds the same line as the check
+                        // above, by a flag of its own: hev was not entered and
+                        // the descriptor is closed. A run is still in
+                        // progress; no tunnel broke.
+                        addLog("tun2socks did not start: a native run is still in progress")
+                    } else if (OlcboxVpnState.status.value !is VpnStatus.Stopping && result != 0) {
                         addLog("tun2socks exited with code $result")
                     } else {
                         addLog("tun2socks stopped")
@@ -1535,6 +1576,7 @@ class OlcboxVpnService : VpnService() {
                     tun2socksStarted = false
                 }
             }
+            tun2socksRun.started(run)
             true
         } catch (e: Exception) {
             addLog("tun2socks start failed: ${e.message}")
@@ -1717,9 +1759,9 @@ class OlcboxVpnService : VpnService() {
     private suspend fun stopBridge(): Boolean {
         val running = tun2socksThread ?: return true
         stopTun2socks()
-        if (!waitForTun2socksStopped(running, TUN2SOCKS_RESTART_WAIT_MS)) return false
-        if (tun2socksThread == running) tun2socksThread = null
-        return true
+        val ended = waitForTun2socksStopped(running, TUN2SOCKS_RESTART_WAIT_MS)
+        tun2socksRun.waited(running, ended)
+        return ended
     }
 
     /**
@@ -1863,7 +1905,7 @@ class OlcboxVpnService : VpnService() {
         val status = OlcboxVpnState.status.value
         if (status is VpnStatus.Disconnected &&
             vpnInterface == null &&
-            tun2socksThread == null &&
+            !tun2socksToStop &&
             socksProxy == null &&
             cleanupJob?.isActive != true
         ) {
@@ -1908,7 +1950,7 @@ class OlcboxVpnService : VpnService() {
                 // down and the status is said again.
                 withTimeoutOrNull(CANCELLED_START_WAIT_MS) { cancelledStart?.join() }
                 if (generation == cleanupGeneration) {
-                    if (vpnInterface != null || tun2socksThread != null) stopVisibleVpnProcesses()
+                    if (vpnInterface != null || tun2socksToStop) stopVisibleVpnProcesses()
                     if (OlcboxVpnState.status.value !is VpnStatus.Disconnected) setStatus(VpnStatus.Disconnected)
                 }
             } finally {
@@ -1923,10 +1965,9 @@ class OlcboxVpnService : VpnService() {
         stopTun2socks()
         cleanupVpnInterface()
         tunThread?.interrupt()
-        waitForTun2socksStopped(tunThread)
-        if (tun2socksThread == tunThread) {
-            tun2socksThread = null
-        }
+        // Forgotten only when the wait saw it end. A run that outlives the wait
+        // is still the process's one run, and the next start has to find it.
+        tun2socksRun.waited(tunThread, ended = waitForTun2socksStopped(tunThread))
         unbindProcessFromNetwork()
     }
 
@@ -1960,12 +2001,10 @@ class OlcboxVpnService : VpnService() {
         stopTun2socks()
         if (closeTun) cleanupVpnInterface()
         tunThread?.interrupt()
-        if (closeTun) {
-            waitForTun2socksStopped(tunThread)
-        }
-        if (tun2socksThread == tunThread) {
-            tun2socksThread = null
-        }
+        // As in stopVisibleVpnProcesses. Where nothing waits, nothing saw the
+        // run end unless it already had.
+        val ended = if (closeTun) waitForTun2socksStopped(tunThread) else tunThread?.isAlive != true
+        tun2socksRun.waited(tunThread, ended)
         if (waitForSocksPort) {
             if (stopMobileBeforeTun) {
                 waitForSocksPortReleased()
@@ -2758,6 +2797,14 @@ class OlcboxVpnService : VpnService() {
     }
 
     companion object {
+        /**
+         * The native tunnel run of this process. Here and not in the service:
+         * a run that has not returned when its service is destroyed is found
+         * by the next instance, which would otherwise start a second hev
+         * beside it.
+         */
+        private val tun2socksRun = NativeTunnelRun()
+
         @Volatile
         private var nativeLibrariesLoaded = false
         private var nativeLibrariesLoadError: Throwable? = null

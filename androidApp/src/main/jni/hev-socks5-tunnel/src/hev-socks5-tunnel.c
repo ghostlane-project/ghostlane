@@ -269,9 +269,22 @@ udp_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
 }
 
 static void
-event_task_entry (void *data)
+terminate_sessions (void)
 {
     HevListNode *node;
+
+    node = hev_list_first (&session_set);
+    for (; node; node = hev_list_node_next (node)) {
+        HevSocks5SessionData *sd;
+
+        sd = container_of (node, HevSocks5SessionData, node);
+        hev_socks5_session_terminate (sd->self);
+    }
+}
+
+static void
+event_task_entry (void *data)
+{
     int val;
 
     LOG_D ("socks5 tunnel event task run");
@@ -281,16 +294,32 @@ event_task_entry (void *data)
     hev_task_io_read (event_fds[0], &val, sizeof (val), NULL, NULL);
 
     run = 0;
-    node = hev_list_first (&session_set);
-    for (; node; node = hev_list_node_next (node)) {
-        HevSocks5SessionData *sd;
-
-        sd = container_of (node, HevSocks5SessionData, node);
-        hev_socks5_session_terminate (sd->self);
-    }
+    terminate_sessions ();
 
     hev_task_join (task_lwip_io);
     hev_task_join (task_lwip_timer);
+
+    /*
+     * To terminate a session is to set its timeout to zero and wake it: it
+     * ends at its next wait. One pass does not end them all, because a
+     * session writes its timeout itself, when it starts to connect, when it
+     * starts its handshake and, for UDP, when the handshake is over, and
+     * nothing in a session reads run. A session made in the turn the stop
+     * was read in has not run yet, so it takes the connect timeout after
+     * this task has zeroed it, and one that connects as it is woken goes on
+     * to the handshake's. The scheduler returns only when no task is left,
+     * so the thread that called hev_socks5_tunnel_main stayed for as long as
+     * that session waited, up to the read-write timeout.
+     *
+     * So the pass is repeated until no session is left. No session is made
+     * after run is cleared, and each one writes its timeout at most three
+     * times, so every pass after those finds it at its next wait.
+     */
+    while (hev_list_first (&session_set)) {
+        terminate_sessions ();
+        hev_task_sleep (10);
+    }
+
     hev_task_del_fd (task_event, event_fds[0]);
 }
 
@@ -307,8 +336,17 @@ lwip_io_task_entry (void *data)
         struct pbuf *buf;
 
         buf = hev_tunnel_read (tun_fd, mtu, task_io_yielder, NULL);
-        if (!buf)
+        if (!buf) {
+            /*
+             * Nothing was read: there was no buffer for it, or the read
+             * failed. Only a read that would block has waited before it
+             * comes back here. Without giving the turn up, a tun whose reads
+             * keep failing keeps this task running, no other task gets its
+             * turn, and the stop is never read.
+             */
+            hev_task_yield (HEV_TASK_YIELD);
             continue;
+        }
 
         stat_tx_packets++;
         stat_tx_bytes += buf->tot_len;
@@ -477,8 +515,34 @@ gateway_init (void)
 static void
 gateway_fini (void)
 {
-    udp_remove (udp);
-    tcp_close (tcp);
+    /*
+     * The pointers are cleared with what they pointed at. A later run that
+     * fails before its own gateway_init ends here as well, and would hand
+     * the pools the previous run's listeners a second time.
+     */
+    if (udp) {
+        udp_remove (udp);
+        udp = NULL;
+    }
+    if (tcp) {
+        tcp_close (tcp);
+        tcp = NULL;
+    }
+
+    /*
+     * Every session has ended by now and has aborted its own connection.
+     * What is still listed is lwIP's alone: a handshake that never had its
+     * last ACK stays on the active list in SYN_RCVD, and neither tcp_close
+     * of the listener nor netif_remove takes it off. Left there, it goes
+     * into the next run of this process, bound to a netif that is no longer
+     * added, for that run's timers to give up. It is aborted here, while the
+     * netif still carries the reset to the app that was waiting for it.
+     */
+    while (tcp_active_pcbs)
+        tcp_abort (tcp_active_pcbs);
+    while (tcp_tw_pcbs)
+        tcp_abort (tcp_tw_pcbs);
+
     netif_remove (&netif);
 }
 
