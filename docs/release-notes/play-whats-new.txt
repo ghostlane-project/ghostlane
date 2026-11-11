@@ -1,0 +1,2 @@
+• VLESS Reality servers on new Xray versions refused the app's connection, while olcRTC worked. The app now connects to them, and to older servers as before.
+• A server link that names its fingerprint or flow as Xray does (for example hellochrome_133) no longer stops the connection.
