@@ -477,8 +477,34 @@ gateway_init (void)
 static void
 gateway_fini (void)
 {
-    udp_remove (udp);
-    tcp_close (tcp);
+    /*
+     * The pointers are cleared with what they pointed at. A later run that
+     * fails before its own gateway_init ends here as well, and would hand
+     * the pools the previous run's listeners a second time.
+     */
+    if (udp) {
+        udp_remove (udp);
+        udp = NULL;
+    }
+    if (tcp) {
+        tcp_close (tcp);
+        tcp = NULL;
+    }
+
+    /*
+     * Every session has ended by now and has aborted its own connection.
+     * What is still listed is lwIP's alone: a handshake that never had its
+     * last ACK stays on the active list in SYN_RCVD, and neither tcp_close
+     * of the listener nor netif_remove takes it off. Left there, it goes
+     * into the next run of this process, bound to a netif that is no longer
+     * added, for that run's timers to give up. It is aborted here, while the
+     * netif still carries the reset to the app that was waiting for it.
+     */
+    while (tcp_active_pcbs)
+        tcp_abort (tcp_active_pcbs);
+    while (tcp_tw_pcbs)
+        tcp_abort (tcp_tw_pcbs);
+
     netif_remove (&netif);
 }
 
