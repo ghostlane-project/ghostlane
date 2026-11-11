@@ -700,8 +700,9 @@ class HomeScreenViewModel(
      * The store is asked and not this model's [HomeScreenState.selectedLocation]:
      * a pick writes the store and then calls here before the model has read it.
      * It is asked past its lock ([LocationsRepository.peekActiveLocationId]): a
-     * refresh holds that lock while it downloads, and a restart waits for no
-     * download. And the status is asked again once the answer is in: a
+     * restart waits for nothing else that is being done with the store, a
+     * refresh least of all (it used to hold that lock while it downloaded, and
+     * does not now). And the status is asked again once the answer is in: a
      * Disconnect pressed meanwhile stands, and is not undone by a start.
      */
     fun restartVpnIfRunning() {

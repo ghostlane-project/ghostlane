@@ -3273,10 +3273,12 @@ class DesktopVpnManager private constructor(
      * the list and the line last known good, read at once so that they are one
      * state. Null when it cannot be read within [STORE_WAIT_MS].
      *
-     * The repository keeps its lock for as long as a list refresh downloads,
-     * and with the line down that download may be waiting on the very tunnel
-     * the line is there to carry. The line's own retry does not wait with it:
-     * no answer is no look this time, and the next failed attempt asks again.
+     * The read goes through the repository's lock, and the line's own retry
+     * does not wait there: no answer is no look this time, and the next failed
+     * attempt asks again. A list refresh used to keep that lock for as long as
+     * it downloaded, and with the line down that download may be waiting on
+     * the very tunnel the line is there to carry; it downloads outside the
+     * lock now, and the limit stays for whatever else holds it.
      */
     private suspend fun storedBundle(): LocationBundleV4? = try {
         withTimeoutOrNull(STORE_WAIT_MS) { locationsRepository.getBundle() }
@@ -3969,7 +3971,8 @@ class DesktopVpnManager private constructor(
         /**
          * How long a session whose line is down waits for the store before it
          * goes back to retrying the line. Reading it takes milliseconds; what
-         * it waits for is the repository's lock, held through a download.
+         * it waits for is the repository's lock, which a list refresh used to
+         * hold through its download and holds now only to read and to write.
          */
         const val STORE_WAIT_MS = 3_000L
         /**

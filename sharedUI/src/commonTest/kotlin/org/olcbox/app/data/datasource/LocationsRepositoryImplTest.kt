@@ -9,7 +9,17 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.olcbox.app.CurrentAppInfo
 import org.olcbox.app.crypt.CryptCodec
 import org.olcbox.app.data.device.DeviceDescription
@@ -2331,6 +2341,211 @@ class LocationsRepositoryImplTest {
             "every carrier's line survives the refresh, each once"
         )
         assertEquals(stored.size, stored.map { it.storageId }.toSet().size, "no two lines share an id")
+    }
+
+    // ---- a refresh downloads outside the store's lock ----------------------
+    // A refresh used to keep the store's lock for as long as it downloaded: 16
+    // to 32 seconds a list when its host did not answer. The board's read, the
+    // Connect press on iOS and every write waited behind it, and a cold start
+    // showed the board's empty card for as long. It takes the lock now to read
+    // what to ask, lets it go, and takes it again to merge the answers into
+    // what is stored by then.
+
+    /**
+     * A list's host that takes a request and keeps its answer until told to
+     * give it: [asked] completes once the request is in, [answer] lets it go.
+     */
+    private class HeldHost {
+        val asked = CompletableDeferred<Unit>()
+        val answer = CompletableDeferred<Unit>()
+    }
+
+    /**
+     * [block] run on the test's own scheduler with no time passing, as far as
+     * it goes by itself. With a download held it has to finish all the same:
+     * what waits for the download is still waiting here, and fails the test
+     * instead of hanging it.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun <T> TestScope.duringTheDownload(what: String, block: suspend () -> T): T {
+        val done = async { block() }
+        runCurrent()
+        assertTrue(done.isCompleted, "$what waited for the list's download")
+        return done.await()
+    }
+
+    @Test
+    fun theStoreIsReadAndWrittenWhileARefreshDownloads() = runTest {
+        val url = "https://example.test/alpha"
+        val source = subSource("a1", subEntry("a1", url), subEntry("a2", url))
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine {
+            host.asked.complete(Unit)
+            host.answer.await()
+            respond(listBody)
+        })
+        val refresh = async { repo.refreshSubscription(url) }
+        try {
+            host.asked.await()
+
+            val bundle = duringTheDownload("a read of the store") { repo.getBundle() }
+            assertEquals(listOf("a1", "a2"), bundle.locations.map { it.storageId })
+            val selected = duringTheDownload("a read of the selected server") { repo.getActiveLocation() }
+            assertEquals("a1", selected?.storageId)
+            duringTheDownload("a choice of server") { repo.setActiveLocationId("a2") }
+            assertEquals("a2", source.stored!!.activeLocationId)
+            assertFalse(refresh.isCompleted, "the download had ended")
+        } finally {
+            host.answer.complete(Unit)
+        }
+        assertEquals(1, refresh.await().updatedCount)
+    }
+
+    // The person removed the list while its host was being asked. The answer
+    // is merged into the store as it is when the answer arrives: it finds no
+    // list to update, brings none back, and that is no failure to report.
+    @Test
+    fun aListRemovedWhileItsDownloadIsInFlightStaysRemoved() = runTest {
+        val alpha = "https://example.test/alpha"
+        val beta = "https://example.test/beta"
+        val source = subSource("a1", subEntry("a1", alpha), subEntry("b1", beta))
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.encodedPath == "/alpha") {
+                host.asked.complete(Unit)
+                host.answer.await()
+                respond(listBody)
+            } else {
+                respond("olcrtc://wbstream?vp8channel@room-beta-new#${"d".repeat(64)}${'$'}Beta")
+            }
+        })
+        val refresh = async { repo.refreshSubscriptions() }
+        try {
+            host.asked.await()
+            assertEquals(1, duringTheDownload("the removal of a list") { repo.deleteSubscription(alpha) })
+        } finally {
+            host.answer.complete(Unit)
+        }
+        val report = refresh.await()
+
+        assertEquals(1, report.updatedCount, "only the list that is still there was updated")
+        assertFalse(report.hasFailures, "a list removed meanwhile is no failure")
+        assertEquals(listOf(beta), source.stored!!.locations.map { it.subscriptionUrl }, "the removed list came back")
+        assertEquals("room-beta-new", source.stored!!.locations.single().location.id)
+    }
+
+    // A server picked while the list's host was being asked is the selection
+    // the answer is merged into. Its server came through the refresh, so it
+    // stays chosen: the selection read before the download is not put back.
+    @Test
+    fun aServerChosenWhileTheDownloadIsInFlightStaysChosen() = runTest {
+        val url = "https://example.test/sub/two"
+        val body = "olcrtc://telemost?vp8channel@11111#deadbeefdeadbeef\$DE\n" +
+            "olcrtc://telemost?vp8channel@22222#deadbeefdeadbeef\$NL"
+        val source = FakeLocationsDataSource()
+        assertTrue(repoRespondingWith(source, MockEngine { respond(body) }).importText(url))
+        val (first, second) = source.stored!!.locations.map { it.storageId }
+        assertEquals(first, source.stored!!.activeLocationId)
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine {
+            host.asked.complete(Unit)
+            host.answer.await()
+            respond(body)
+        })
+        val refresh = async { repo.refreshSubscription(url) }
+        try {
+            host.asked.await()
+            duringTheDownload("a choice of server") { repo.setActiveLocationId(second) }
+        } finally {
+            host.answer.complete(Unit)
+        }
+
+        assertEquals(1, refresh.await().updatedCount)
+        assertEquals(listOf(first, second), source.stored!!.locations.map { it.storageId })
+        assertEquals(second, source.stored!!.activeLocationId, "the refresh put back the selection it had read")
+    }
+
+    // A list added while another list's host was being asked is no part of
+    // that refresh, a refresh of every list included: it is there afterwards
+    // exactly as its import stored it.
+    @Test
+    fun aListImportedWhileAnotherIsDownloadingIsKept() = runTest {
+        val alpha = "https://example.test/alpha"
+        val beta = "https://example.test/beta"
+        val source = subscribedSource(alpha)
+        val host = HeldHost()
+        val repo = repoRespondingWith(source, MockEngine { request ->
+            if (request.url.encodedPath == "/alpha") {
+                host.asked.complete(Unit)
+                host.answer.await()
+                respond(listBody)
+            } else {
+                respond(
+                    "olcrtc://wbstream?vp8channel@room-beta#${"d".repeat(64)}${'$'}Beta\n" +
+                        "olcrtc://wbstream?vp8channel@room-beta-2#${"d".repeat(64)}${'$'}Beta 2"
+                )
+            }
+        })
+        val refresh = async { repo.refreshSubscriptions() }
+        var imported = emptyList<LocationEntry>()
+        try {
+            host.asked.await()
+            // The import asks a host of its own, which answers on a thread of
+            // its own: waited for in real time, with a limit, so that an import
+            // held back by the other list's download fails here.
+            val added = withContext(Dispatchers.Default) { withTimeoutOrNull(10_000) { repo.importText(beta) } }
+            assertNotNull(added, "the import of another list waited for the list's download")
+            assertTrue(added)
+            imported = source.stored!!.locations.filter { it.subscriptionUrl == beta }
+            assertEquals(listOf("room-beta", "room-beta-2"), imported.map { it.location.id })
+            assertFalse(refresh.isCompleted, "the download had ended")
+        } finally {
+            host.answer.complete(Unit)
+        }
+
+        assertEquals(1, refresh.await().updatedCount)
+        val stored = source.stored!!.locations
+        assertEquals(imported, stored.filter { it.subscriptionUrl == beta }, "the list imported meanwhile was touched")
+        assertEquals("room-alpha-new", stored.single { it.subscriptionUrl == alpha }.location.id)
+    }
+
+    // Two refreshes of what is due, started together, as the app coming to the
+    // front and its tunnel coming up start them. The second waits for the
+    // first, downloads and all, and then finds nothing due: each list's host
+    // is asked once, not once by each.
+    @Test
+    fun twoDueRefreshesStartedTogetherAskEachListsHostOnce() = runTest {
+        val alpha = "https://example.test/alpha"
+        val beta = "https://example.test/beta"
+        val source = subSource("a1", subEntry("a1", alpha), subEntry("b1", beta))
+        val host = HeldHost()
+        val asked = MutableStateFlow(emptyList<String>())
+        val repo = LocationsRepositoryImpl(
+            dataSource = source,
+            httpClient = HttpClient(MockEngine { request ->
+                asked.update { it + request.url.encodedPath }
+                if (request.url.encodedPath == "/alpha") {
+                    host.asked.complete(Unit)
+                    host.answer.await()
+                    respond(listBody)
+                } else {
+                    respond("olcrtc://wbstream?vp8channel@room-beta-new#${"d".repeat(64)}${'$'}Beta")
+                }
+            }),
+            deviceIdentityProvider = StaticIdentityProvider("hwid-test"),
+            nowEpochMs = { 1_000L }
+        )
+        val first = async { repo.refreshDueSubscriptions() }
+        val second = async { repo.refreshDueSubscriptions() }
+        try {
+            host.asked.await()
+        } finally {
+            host.answer.complete(Unit)
+        }
+        val reports = listOf(first.await(), second.await())
+
+        assertEquals(listOf("/alpha", "/beta"), asked.value, "a list's host was asked by both refreshes")
+        assertEquals(listOf(2, 0), reports.map { it.updatedCount })
     }
 
     private class FakeLocationsDataSource(

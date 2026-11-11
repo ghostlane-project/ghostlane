@@ -164,6 +164,30 @@ class LocationsRepositoryImpl(
         data class Refused(val source: ImportSource, val originLink: String?) : Resolution
     }
 
+    /**
+     * A list a refresh asks, with what its download needs from the bundle the
+     * refresh was planned on: nothing else of that bundle is kept past the
+     * download.
+     */
+    private data class RefreshTarget(
+        val url: String,
+        val previousInterval: Int?,
+        /** The provider's spare address, asked when the list's own gives nothing. */
+        val fallbackUrl: String?
+    )
+
+    /**
+     * What asking a list's host came to. [resolved] is none when neither the
+     * list's address nor its spare gave anything to import, and [lastFailure]
+     * is then the reason, when one was reported.
+     */
+    private data class RefreshAnswer(
+        val url: String,
+        val resolved: Resolution?,
+        val lastFailure: SubscriptionRefreshFailure?,
+        val answeredAtEpochMs: Long
+    )
+
     private data class ParsedOlcRtcUri(
         val location: LocationConfig,
         val mimo: String? = null,
@@ -181,7 +205,20 @@ class LocationsRepositoryImpl(
         Compatibility
     }
 
+    /**
+     * Every read and every write of the stored bundle, one at a time. Held for
+     * the read or the write alone: nothing that asks a host runs under it. An
+     * import resolves its link first, and a refresh downloads between its plan
+     * and its merge.
+     */
     private val mutationMutex = Mutex()
+
+    /**
+     * One refresh at a time, from its plan to its merge. Always taken before
+     * [mutationMutex] and never while that one is held, so the two cannot
+     * wait for each other.
+     */
+    private val refreshMutex = Mutex()
     private val _changes = MutableStateFlow(0L)
     override val changes: StateFlow<Long> = _changes.asStateFlow()
 
@@ -286,12 +323,7 @@ class LocationsRepositoryImpl(
     override suspend fun refreshSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy?
     ): SubscriptionRefreshReport {
-        return mutationMutex.withLock {
-            refreshSubscriptionsUnlocked(
-                onlyUrls = null,
-                subscriptionProxy = subscriptionProxy
-            )
-        }
+        return refresh(subscriptionProxy) { bundle -> refreshTargets(bundle, onlyUrls = null) }
     }
 
     override suspend fun refreshSubscription(
@@ -300,21 +332,46 @@ class LocationsRepositoryImpl(
     ): SubscriptionRefreshReport {
         val normalizedUrl = subscriptionUrl.trim()
         if (normalizedUrl.isBlank()) return SubscriptionRefreshReport.EMPTY
-        return mutationMutex.withLock {
-            refreshSubscriptionsUnlocked(
-                onlyUrls = setOf(normalizedUrl),
-                subscriptionProxy = subscriptionProxy
-            )
+        return refresh(subscriptionProxy) { bundle -> refreshTargets(bundle, onlyUrls = setOf(normalizedUrl)) }
+    }
+
+    /**
+     * One refresh, in three steps. With the store's lock held it reads what is
+     * stored, and [plan] says which lists to ask. The lock is let go, and each
+     * list's host is asked in turn. With the answers in, the lock is taken
+     * again and they are merged into the bundle as it is stored by then
+     * ([mergeRefreshAnswersUnlocked]).
+     *
+     * The whole refresh used to run under the store's lock, its downloads
+     * included: 16 to 32 seconds a list when the list's host did not answer.
+     * The board's read, the Connect press on iOS and every write waited behind
+     * it, and a cold start showed the board's empty card for as long.
+     *
+     * [refreshMutex] keeps refreshes one after another, so two started
+     * together do not ask every host twice: the second plans once the first
+     * has merged, and asks only what is still to be asked.
+     */
+    private suspend fun refresh(
+        subscriptionProxy: SubscriptionFetchProxy?,
+        plan: (LocationBundleV4) -> List<RefreshTarget>
+    ): SubscriptionRefreshReport = refreshMutex.withLock {
+        val targets = mutationMutex.withLock { plan(getBundleUnlocked()) }
+        if (targets.isEmpty()) {
+            SubscriptionRefreshReport.EMPTY
+        } else {
+            val answers = targets.map { target -> askListHost(target, subscriptionProxy) }
+            mutationMutex.withLock { mergeRefreshAnswersUnlocked(answers) }
         }
     }
 
-    private suspend fun refreshSubscriptionsUnlocked(
-        onlyUrls: Set<String>?,
-        subscriptionProxy: SubscriptionFetchProxy?
-    ): SubscriptionRefreshReport {
-        val bundle = getBundleUnlocked()
-        if (bundle.locations.isEmpty() && bundle.refusedLists.isEmpty()) return SubscriptionRefreshReport.EMPTY
-
+    /**
+     * The lists of [bundle] by their address, those with servers and those
+     * their host refused: every one of them, or those of [onlyUrls].
+     */
+    private fun listsByUrl(
+        bundle: LocationBundleV4,
+        onlyUrls: Set<String>?
+    ): Pair<Map<String, List<LocationEntry>>, Map<String, RefusedList>> {
         val groupedByUrl = bundle.locations
             .mapNotNull { entry -> entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }?.let { it to entry } }
             .groupBy({ it.first }, { it.second })
@@ -324,13 +381,97 @@ class LocationsRepositoryImpl(
         val refusedByUrl = bundle.refusedLists
             .associateBy { it.subscriptionUrl.trim() }
             .filterKeys { url -> url.isNotBlank() && url !in groupedByUrl && (onlyUrls == null || url in onlyUrls) }
+        return groupedByUrl to refusedByUrl
+    }
+
+    /**
+     * The lists a refresh asks, in the order it asks them: every list of
+     * [bundle], or those of [onlyUrls], each with what its download needs from
+     * the bundle.
+     */
+    private fun refreshTargets(bundle: LocationBundleV4, onlyUrls: Set<String>?): List<RefreshTarget> {
+        val (groupedByUrl, refusedByUrl) = listsByUrl(bundle, onlyUrls)
+        return (groupedByUrl.keys + refusedByUrl.keys).map { url ->
+            val previousEntries = groupedByUrl[url].orEmpty()
+            val previousRefusal = refusedByUrl[url]
+            RefreshTarget(
+                url = url,
+                previousInterval = previousEntries.subscriptionUpdateIntervalHours()
+                    ?: previousRefusal?.subscription?.updateIntervalHours,
+                // The provider's own spare, arranged in an earlier answer, when the
+                // list's address does not answer now: a blocked domain is the usual
+                // reason. The list stays filed under its own address; only `new-url`
+                // or `new-domain` moves it.
+                fallbackUrl = (
+                    previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
+                        ?: previousRefusal?.subscription?.fallbackUrl
+                    )
+                    ?.takeIf { it != url }
+            )
+        }
+    }
+
+    /**
+     * Asks [target]'s host for its list: at the list's address and, when that
+     * gives nothing, at the provider's spare. The store's lock is not held
+     * here, however long the host takes.
+     */
+    private suspend fun askListHost(
+        target: RefreshTarget,
+        subscriptionProxy: SubscriptionFetchProxy?
+    ): RefreshAnswer {
+        // Keep the last reported reason: it belongs to the attempt that
+        // ultimately failed (Identity is retried in Compatibility mode).
+        var lastFailure: SubscriptionRefreshFailure? = null
+        val recordFailure: SubscriptionFailureSink = { error, status ->
+            lastFailure = SubscriptionRefreshFailure(target.url, error, status)
+        }
+        val resolved = resolveParsedImport(
+            text = target.url,
+            fallbackSubscriptionInterval = target.previousInterval,
+            subscriptionProxy = subscriptionProxy,
+            onFailure = recordFailure
+        ) ?: target.fallbackUrl?.let { spare ->
+            resolveParsedImport(
+                text = spare,
+                fallbackSubscriptionInterval = target.previousInterval,
+                subscriptionProxy = subscriptionProxy,
+                onFailure = recordFailure
+            )
+        }
+        return RefreshAnswer(
+            url = target.url,
+            resolved = resolved,
+            lastFailure = lastFailure,
+            answeredAtEpochMs = nowEpochMs()
+        )
+    }
+
+    /**
+     * Puts [answers] into the store, with its lock held. The bundle is read
+     * again here, and is the one the answers are merged into: whatever was
+     * done to the store while the hosts were being asked stands. The servers a
+     * list held, its refusal, the link it arrived as and the selection are
+     * those stored now, not those the refresh was planned on.
+     *
+     * A list that was asked and is in the store no more, neither with servers
+     * nor as a refused list, was removed meanwhile: its answer is dropped, the
+     * list is not added again, and no failure is reported for it. Every list
+     * that was not asked, one added meanwhile included, stays as it is.
+     */
+    private suspend fun mergeRefreshAnswersUnlocked(
+        answers: List<RefreshAnswer>
+    ): SubscriptionRefreshReport {
+        val bundle = getBundleUnlocked()
+        val answersByUrl = answers.associateBy { it.url }
+        val (groupedByUrl, refusedByUrl) = listsByUrl(bundle, onlyUrls = answersByUrl.keys)
         if (groupedByUrl.isEmpty() && refusedByUrl.isEmpty()) return SubscriptionRefreshReport.EMPTY
 
         val targetUrls = groupedByUrl.keys + refusedByUrl.keys
         val refreshedLocations = bundle.locations
             .filter { entry ->
                 val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }
-                url == null || (onlyUrls != null && url !in targetUrls)
+                url == null || url !in targetUrls
             }
             .toMutableList()
         // The refused lists not asked now stay as they are; each one asked is
@@ -355,6 +496,7 @@ class LocationsRepositoryImpl(
         }
 
         targetUrls.forEach { url ->
+            val answer = answersByUrl.getValue(url)
             val previousEntries = groupedByUrl[url].orEmpty()
             val previousRefusal = refusedByUrl[url]
             val previousInterval = previousEntries.subscriptionUpdateIntervalHours()
@@ -371,37 +513,10 @@ class LocationsRepositoryImpl(
                 previousRefusal?.let { refusedLists += it }
             }
 
-            // Keep the last reported reason: it belongs to the attempt that
-            // ultimately failed (Identity is retried in Compatibility mode).
-            var lastFailure: SubscriptionRefreshFailure? = null
-            val recordFailure: SubscriptionFailureSink = { error, status ->
-                lastFailure = SubscriptionRefreshFailure(url, error, status)
-            }
-            // The provider's own spare, arranged in an earlier answer, when the
-            // list's address does not answer now: a blocked domain is the usual
-            // reason. The list stays filed under its own address; only `new-url`
-            // or `new-domain` moves it.
-            val fallbackUrl = (
-                previousEntries.firstNotNullOfOrNull { it.metadata?.subscription?.fallbackUrl }
-                    ?: previousRefusal?.subscription?.fallbackUrl
-                )
-                ?.takeIf { it != url }
-            val resolved = resolveParsedImport(
-                text = url,
-                fallbackSubscriptionInterval = previousInterval,
-                subscriptionProxy = subscriptionProxy,
-                onFailure = recordFailure
-            ) ?: fallbackUrl?.let { spare ->
-                resolveParsedImport(
-                    text = spare,
-                    fallbackSubscriptionInterval = previousInterval,
-                    subscriptionProxy = subscriptionProxy,
-                    onFailure = recordFailure
-                )
-            } ?: run {
+            val resolved = answer.resolved ?: run {
                 keepAsItWas()
                 // Downloaded fine but nothing importable ⇒ Empty.
-                failures += lastFailure
+                failures += answer.lastFailure
                     ?: SubscriptionRefreshFailure(url, SubscriptionRefreshError.Empty)
                 return@forEach
             }
@@ -417,7 +532,8 @@ class LocationsRepositoryImpl(
                         listUrl = resolved.source.profile?.movedTo ?: url,
                         originLink = previousOriginLink,
                         previous = previousEntries.firstNotNullOfOrNull { it.metadata?.subscription }
-                            ?: previousRefusal?.subscription
+                            ?: previousRefusal?.subscription,
+                        answeredAtEpochMs = answer.answeredAtEpochMs
                     )
                     refusedLists += refused
                     refusals += 1
@@ -455,7 +571,7 @@ class LocationsRepositoryImpl(
             val updateInterval = source.updateIntervalHours
                 ?: previousInterval
                 ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
-            val refreshTimestamp = nowEpochMs()
+            val refreshTimestamp = answer.answeredAtEpochMs
             val refreshed = served.parsed.bundle.locations
             if (refreshed.isEmpty()) {
                 keepAsItWas()
@@ -548,10 +664,9 @@ class LocationsRepositoryImpl(
     override suspend fun refreshDueSubscriptions(
         subscriptionProxy: SubscriptionFetchProxy?
     ): SubscriptionRefreshReport {
-        return mutationMutex.withLock {
-            val bundle = getBundleUnlocked()
+        return refresh(subscriptionProxy) { bundle ->
             val settings = bundle.settings.normalized()
-            if (!settings.autoUpdate) return@withLock SubscriptionRefreshReport.EMPTY
+            if (!settings.autoUpdate) return@refresh emptyList()
             val now = nowEpochMs()
             // A list its host refused is due like any other, by what the host
             // said in its refusal and when that was: the provider may have made
@@ -573,14 +688,7 @@ class LocationsRepositoryImpl(
                 }
                 .toSet()
 
-            if (dueUrls.isEmpty()) {
-                SubscriptionRefreshReport.EMPTY
-            } else {
-                refreshSubscriptionsUnlocked(
-                    onlyUrls = dueUrls,
-                    subscriptionProxy = subscriptionProxy
-                )
-            }
+            refreshTargets(bundle, onlyUrls = dueUrls)
         }
     }
 
@@ -886,13 +994,17 @@ class LocationsRepositoryImpl(
      * What is kept of a list its host refused: its address, the link it arrived
      * as, and what the host said about it over what was known of it before.
      * The sentence is the refusal's own, or none: a note the provider left on
-     * the list earlier is not why it is empty now.
+     * the list earlier is not why it is empty now. Its last refresh is when the
+     * answer arrived ([answeredAtEpochMs]): now for an import, which stores it
+     * at once, and the end of its download for a refresh, which stores it with
+     * the other lists' answers.
      */
     private fun refusedListOf(
         source: ImportSource,
         listUrl: String,
         originLink: String?,
-        previous: SubscriptionMetadata?
+        previous: SubscriptionMetadata?,
+        answeredAtEpochMs: Long = nowEpochMs()
     ): RefusedList {
         val subscription = previous.withProfile(source.profile) ?: SubscriptionMetadata()
         return RefusedList(
@@ -903,7 +1015,7 @@ class LocationsRepositoryImpl(
                 updateIntervalHours = source.updateIntervalHours
                     ?: previous?.updateIntervalHours
                     ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS,
-                lastRefreshAtEpochMs = nowEpochMs()
+                lastRefreshAtEpochMs = answeredAtEpochMs
             ),
             refusal = source.profile?.deviceRefusal ?: DeviceRefusal.LimitReached
         ).normalized()
