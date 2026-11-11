@@ -18,8 +18,13 @@ import kotlinx.serialization.json.putJsonObject
  * CI with `xray test` against the real binary.
  */
 object XrayConfig {
-    /** Pinned Xray-core release whose config schema this builder targets. */
-    const val XRAY_VERSION = "25.3.6"
+    /**
+     * Pinned Xray-core release whose config schema this builder targets: the
+     * one every platform runs (release.yml builds it for Android and bundles it
+     * on the desktops; iOS links it through libXray v1.260711.0). 25.3.6 until
+     * 2026-11: its Reality hello is refused by Xray servers from v26.7 on.
+     */
+    const val XRAY_VERSION = "26.7.11"
     /**
      * Kept off the PAC port 10809.
      *

@@ -65,10 +65,10 @@ class RouterExportDumpTest {
             assertNotNull(xrayText, name)
             val xray = Json.parseToJsonElement(xrayText).jsonObject
             assertEquals(RouterExport.TAG, xray["tag"]!!.jsonPrimitive.content, name)
-            // CI checks build/xray-configs with the Xray the app ships (release.yml's
-            // XRAY_VERSION, 25.3.6), which predates Xray's native Hysteria2 (26.3). That one
-            // is for a router's Xray: it goes where CI does not look, and was checked by
-            // hand with 26.4.25 (the shape is ProofKit's own client profile's).
+            // A router export that needs Xray's native Hysteria2 (26.3) goes to its own
+            // directory. CI checks both with the Xray the app ships (release.yml's
+            // XRAY_VERSION, 26.7.11 since 2026-11; 25.3.6 before, which could not read
+            // it, so it was checked by hand with 26.4.25).
             val xrayDir = if (RouterExport.xrayMinimumVersion(spec) != null) "build/xray-configs-26" else "build/xray-configs"
             write(xrayDir, "router-$name", buildJsonObject {
                 putJsonObject("log") { put("loglevel", "warning") }

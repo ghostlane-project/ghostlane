@@ -173,7 +173,7 @@ jobs:
       # The release the app pins (SingBoxConfig.SINGBOX_VERSION); every config
       # the builders emit is checked against this exact binary below.
       SINGBOX_VERSION: "1.13.14"
-      XRAY_VERSION: "25.3.6"
+      XRAY_VERSION: "26.7.11"
       # crypt1/admin secrets (baked into GeneratedAppInfo). Absent on fork PRs ⇒
       # features compile but stay disabled; jvmTest uses its own explicit key.
       OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
@@ -308,6 +308,7 @@ jobs:
           name: core-checks
           path: |
             olcbox/sharedUI/build/xray-configs/
+            olcbox/sharedUI/build/xray-configs-26/
             olcbox/sharedUI/build/reports/tests/jvmTest/
 
   # The release gate's scripts decide what a release may ship and scrub what a

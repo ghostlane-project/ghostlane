@@ -360,7 +360,7 @@ jobs:
         shell: pwsh
         working-directory: olcbox
         env:
-          XRAY_VERSION: "25.3.6"
+          XRAY_VERSION: "26.7.11"
         run: |
           $ErrorActionPreference = "Stop"
           $dest = "desktopApp/src/main/resources/native"
@@ -546,7 +546,7 @@ jobs:
       - name: Bundle sing-box + Xray cores into the app
         working-directory: olcbox
         env:
-          XRAY_VERSION: "25.3.6"
+          XRAY_VERSION: "26.7.11"
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
@@ -736,7 +736,7 @@ jobs:
       - name: Bundle sing-box + Xray cores into the app
         working-directory: olcbox
         env:
-          XRAY_VERSION: "25.3.6"
+          XRAY_VERSION: "26.7.11"
         run: |
           set -euo pipefail
           dest="desktopApp/src/main/resources/native"
@@ -873,7 +873,7 @@ jobs:
       # Same pins as the desktop job and singbox-verify.yml. All three have to
       # move together: a config this app writes is validated against one schema.
       SINGBOX_VERSION: "1.13.14"
-      XRAY_VERSION: "25.3.6"
+      XRAY_VERSION: "26.7.11"
       ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
       ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
       ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
@@ -1070,6 +1070,10 @@ jobs:
       # arm32: without an NDK there is nothing to link it with. The toolchain is
       # already here for gomobile and for sing-box, so the same shape serves both
       # cores and there is one way this job builds a core rather than two.
+      #
+      # -checklinkname=0 is XTLS's own flag for Android: from 26.x a dependency
+      # (wlynxg/anet) links to net.zoneCache, and the linker refuses that
+      # without it ("invalid reference to net.zoneCache", measured 2026-11-11).
       - name: Build Xray for Android with 16 KB page alignment
         run: |
           set -euo pipefail
@@ -1084,7 +1088,7 @@ jobs:
             CGO_ENABLED=1 GOOS=android GOARCH="$1" GOARM=7 \
             CC="${NDK_BIN}/$2-clang" CXX="${NDK_BIN}/$2-clang++" \
             go build -v -trimpath -buildvcs=false -o "${OUT}/$3/libxraycore.so" \
-              -ldflags "-X github.com/xtls/xray-core/core.build=v${XRAY_VERSION} -s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384" \
+              -ldflags "-X github.com/xtls/xray-core/core.build=v${XRAY_VERSION} -s -w -buildid= -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" \
               ./main
           }
 
