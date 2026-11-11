@@ -15,6 +15,10 @@ How it is written, because two rejections were about this text:
 
 ---
 
+Servers
+• VLESS Reality servers running a new Xray version refused the app's connection. The app now connects to them, and to older servers as before.
+• A server link that names its fingerprint or flow as Xray does no longer stops the connection.
+
 Server lists
 • At launch the server list is on screen at once, and Connect does not wait, while a list is updated from an address that is slow to answer or does not answer.
 • The app waits for its saved lists and settings when they cannot be read yet, as on a phone just restarted, instead of starting as if newly installed.
