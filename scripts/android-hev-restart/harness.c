@@ -33,6 +33,9 @@
 //   fresh-session  A stop that arrives with a connection whose session has not
 //                  run yet. The native thread still returns at once.
 //   dead-tun       A stop after the tun's reads began to fail. The same.
+//   second-start   A start while a run is in progress, through the function
+//                  the JNI entry calls (olcbox_tun2socks_run.c). It is refused
+//                  and the run goes on. In the field: SIGABRT in netif_add.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -54,6 +57,7 @@
 #include <lwip/priv/tcp_priv.h>
 
 #include "hev-main.h"
+#include "olcbox_tun2socks_run.h"
 
 // How long a stopped run may take to return. With nothing wrong it is a few
 // milliseconds; the service waits one second before it gives up on the thread.
@@ -521,6 +525,58 @@ static void dead_tun(void) {
     stop(&run, "a tun whose reads fail");
 }
 
+// A run as the service starts one: through the wrapper, with the
+// configuration in a file and a descriptor that is the run's to close.
+static char config_path[512];
+
+static void *wrapped_run_entry(void *arg) {
+    struct run *run = arg;
+    run->result = olcbox_tun2socks_run(config_path, dup(tun_hev));
+    atomic_store(&run->returned, 1);
+    return NULL;
+}
+
+static void start_wrapped(struct run *run) {
+    atomic_store(&run->returned, 0);
+    if (pthread_create(&run->thread, NULL, wrapped_run_entry, run) != 0) failed("no thread for a run");
+}
+
+static void second_start(void) {
+    const char *dir = getenv("TMPDIR");
+    snprintf(config_path, sizeof config_path, "%s/hev-restart-XXXXXX", dir && dir[0] ? dir : "/tmp");
+    int file = mkstemp(config_path);
+    if (file < 0 || write(file, config, strlen(config)) != (ssize_t)strlen(config)) {
+        failed("the configuration could not be written to %s: %s", config_path, strerror(errno));
+    }
+    close(file);
+
+    struct run run;
+    start_wrapped(&run);
+    app_opens(FIRST_PORT + 1);
+    wait_for_synack(FIRST_PORT + 1);
+
+    // What a second native thread does when the service has forgotten the
+    // first: the same call, with a descriptor of its own.
+    int handed = dup(tun_hev);
+    int result = olcbox_tun2socks_run(config_path, handed);
+    if (result != OLCBOX_TUN2SOCKS_RUN_IN_PROGRESS) {
+        failed("a start beside a run in progress returned %d, not %d", result, OLCBOX_TUN2SOCKS_RUN_IN_PROGRESS);
+    }
+    if (fcntl(handed, F_GETFD) != -1) failed("the start that was refused left its descriptor open");
+
+    // The run in progress was not touched: it still carries a connection.
+    app_acknowledges(FIRST_PORT + 1);
+    wait_for_sessions(1);
+    stop(&run, "the run a second start was refused beside");
+
+    // And once it has returned, a start is a start again.
+    start_wrapped(&run);
+    app_opens(FIRST_PORT + 101);
+    wait_for_synack(FIRST_PORT + 101);
+    stop(&run, "the run started after it");
+    unlink(config_path);
+}
+
 int main(int argc, char **argv) {
     static const struct {
         const char *name;
@@ -534,6 +590,7 @@ int main(int argc, char **argv) {
         {"early-exit", early_exit},
         {"fresh-session", fresh_session},
         {"dead-tun", dead_tun},
+        {"second-start", second_start},
     };
     int tun[2];
 
@@ -557,6 +614,6 @@ int main(int argc, char **argv) {
         printf("ok: %s\n", cases[i].name);
         return 0;
     }
-    fprintf(stderr, "harness restart | reuse | first | leftover | fragment | early-exit | fresh-session | dead-tun\n");
+    fprintf(stderr, "harness restart | reuse | first | leftover | fragment | early-exit | fresh-session | dead-tun | second-start\n");
     return 2;
 }

@@ -18,7 +18,7 @@ trap 'rm -rf "$work"' EXIT
 
 cases=("$@")
 if [ "${#cases[@]}" -eq 0 ]; then
-  cases=(restart reuse first leftover fragment early-exit fresh-session dead-tun)
+  cases=(restart reuse first leftover fragment early-exit fresh-session dead-tun second-start)
 fi
 
 cp -R "$jni/hev-socks5-tunnel" "$work/hev"
@@ -31,11 +31,13 @@ fi
 
 hev="$work/hev"
 "${CC:-cc}" -O1 -g -Wall -Wextra -Werror -pthread \
+  -I"$jni" \
   -I"$hev/src" \
   -I"$hev/third-part/lwip/src/include" \
   -I"$hev/third-part/lwip/src/ports/include" \
   -o "$work/harness" \
   "$root/scripts/android-hev-restart/harness.c" \
+  "$jni/olcbox_tun2socks_run.c" \
   "$hev/bin/libhev-socks5-tunnel.a" \
   "$hev/third-part/lwip/bin/liblwip.a" \
   "$hev/third-part/hev-task-system/bin/libhev-task-system.a" \
@@ -45,7 +47,7 @@ failed=()
 for name in "${cases[@]}"; do
   printf '== %s\n' "$name"
   # hev logs to stderr; what a case found is on standard output.
-  if "$work/harness" "$name" 2>&1; then
+  if TMPDIR="$work" "$work/harness" "$name" 2>&1; then
     :
   else
     printf 'exit status %d\n' "$?"
