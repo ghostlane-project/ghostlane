@@ -669,7 +669,10 @@ jobs:
           rm -f "$key"
           echo "$out"
 
-          sub_id="$(printf '%s\n' "$out" | awk '/id: /{print $2; exit}')"
+          # awk reads to the end: an awk that exits at the first id leaves
+          # printf writing into a closed pipe, and under pipefail that
+          # SIGPIPE failed the step after Apple had the upload (1.0.472).
+          sub_id="$(printf '%s\n' "$out" | awk '/id: / && !found {print $2; found = 1}')"
           test -n "$sub_id" || { echo "no submission id came back"; exit 1; }
           echo "$sub_id" > dist/notary-submission-id.txt
           echo "id=$sub_id" >> "$GITHUB_OUTPUT"
