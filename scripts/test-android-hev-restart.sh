@@ -38,8 +38,13 @@ if [ -z "$native_code" ] || [ "$native_code" != "$kotlin_code" ]; then
 fi
 
 cp -R "$jni/hev-socks5-tunnel" "$work/hev"
+# The copy takes with it whatever a build in the checkout left behind: bin/ and
+# build/, which the vendored .gitignore files keep out of git status. In a copy
+# an object is no older than its source, so make would compile nothing and the
+# cases would run the objects of that earlier build, whatever the sources say
+# now. The copy is cleaned first.
 # REV_ID: the copy is no git checkout, and the Makefile would ask git for one.
-if ! make -C "$work/hev" -j2 static REV_ID=test > "$work/build.log" 2>&1; then
+if ! { make -C "$work/hev" clean REV_ID=test && make -C "$work/hev" -j2 static REV_ID=test; } > "$work/build.log" 2>&1; then
   cat "$work/build.log"
   echo "hev-socks5-tunnel did not build"
   exit 1
