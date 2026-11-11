@@ -347,7 +347,7 @@ jobs:
       # The servers: an xray built from the pinned module, and the official
       # releases in scripts/xray-servers.txt (checked against the sums there),
       # each a version whose Reality check a hello has to pass.
-      - name: Server end-to-ends (xray servers: the pinned module, and the releases in scripts/xray-servers.txt)
+      - name: Server end-to-ends against the pinned xray module and the releases in scripts/xray-servers.txt
         run: |
           set -o pipefail
           make xray-server
