@@ -156,6 +156,25 @@ chmod -R u+w "${xray_src}"
 patch -p1 -d "${xray_src}" --forward --silent < "${SCRIPT_DIR}/patches/xray-core-h2-window.patch"
 grep -q "func newH2Transport" "${xray_src}/transport/internet/splithttp/dialer.go"
 go mod edit -replace "github.com/xtls/xray-core=${xray_src}"
+
+# sing-box the same way, from the tree every platform builds: the pinned module
+# with scripts/patches/sing-box-reality-hello.patch (patched-singbox.sh checks
+# the module's hash and the patch). Unpatched, a Reality hello is refused by
+# Xray-core servers from v26.7 on. reality_patch.go below names what only the
+# patched tree has, so a build that lost this replace does not compile.
+singbox_src="${work}/sing-box"
+bash "${SCRIPT_DIR}/patched-singbox.sh" "${singbox_src}"
+go mod edit -replace "github.com/sagernet/sing-box=${singbox_src}"
+cat > reality_patch.go <<'GOEOF'
+//go:build with_utls
+
+package cores
+
+import sbtls "github.com/sagernet/sing-box/common/tls"
+
+// The patched sing-box only (scripts/patches/sing-box-reality-hello.patch).
+var _ = sbtls.RealityAnnouncedVersion
+GOEOF
 # gobind looks for the bind package through the module being built, so it has
 # to be a dependency rather than merely installed.
 go get "github.com/sagernet/gomobile/bind@${GOMOBILE_VERSION}"
@@ -188,6 +207,12 @@ xray_dir="$(go list -m -f '{{if .Replace}}{{.Replace.Path}}{{end}}' github.com/x
 if [ "${xray_dir}" != "${xray_src}" ]; then
   echo "xray-core resolved to '${xray_dir}', not the patched clone at ${xray_src}."
   echo "Refusing to build: the xhttp h2 windows would be unbounded again."
+  exit 1
+fi
+singbox_dir="$(go list -m -f '{{if .Replace}}{{.Replace.Path}}{{end}}' github.com/sagernet/sing-box)"
+if [ "${singbox_dir}" != "${singbox_src}" ]; then
+  echo "sing-box resolved to '${singbox_dir}', not the patched tree at ${singbox_src}."
+  echo "Refusing to build: Reality lines would not open on current Xray servers."
   exit 1
 fi
 

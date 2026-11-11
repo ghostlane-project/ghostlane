@@ -558,10 +558,12 @@ tunnel simply does not appear, and nothing anywhere says why.
   permissions Play refuses.
 - Android release builds require `keystore.properties` in the repository root.
 - sing-box and Xray are **not** produced by `buildDesktopNativeAssets`. The
-  release workflow downloads the pinned versions — sing-box 1.13.14, Xray
-  25.3.6 — into `desktopApp/src/main/resources/native/` before packaging, so a
-  locally packaged build starts olcRTC locations and fails on the rest until
-  those two binaries are put there by hand.
+  release workflow puts the pinned versions into
+  `desktopApp/src/main/resources/native/` before packaging: sing-box 1.13.14
+  built with the Reality hello patch (`scripts/build-singbox.sh <dest>`, which
+  works on a desktop with Go), Xray 26.7.11 downloaded. A locally packaged
+  build starts olcRTC locations and fails on the rest until those two binaries
+  are put there.
 - The release workflow signs and notarises every macOS build, published or not:
   `SMAppService` refuses to register the tunnel daemon from an un-notarised
   bundle. A local `packageReleaseDmg` is neither unless `MACOS_SIGN_IDENTITY`

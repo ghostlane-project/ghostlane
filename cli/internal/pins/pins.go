@@ -14,6 +14,9 @@ type Pins struct {
 	Engine  string // pseudo-version of the olcrtc engine
 	SingBox string // e.g. "1.13.14" from the repo, "v1.13.14" from go.mod
 	Xray    string // xray-core module version (go.mod only)
+	// SingBoxPatched: from the repo, the version scripts/patched-singbox.sh
+	// patches (cores-pins.sh); from go.mod, the tree sing-box is replaced with.
+	SingBoxPatched string
 }
 
 var (
@@ -22,6 +25,8 @@ var (
 	replaceRe     = regexp.MustCompile(`(?m)^replace github\.com/openlibrecommunity/olcrtc => github\.com/ghostlane-project/olcrtc (\S+)`)
 	singboxModRe  = regexp.MustCompile(`(?m)^\s*github\.com/sagernet/sing-box (\S+)`)
 	xrayModRe     = regexp.MustCompile(`(?m)^\s*github\.com/xtls/xray-core (\S+)`)
+	singboxPinsRe = regexp.MustCompile(`(?m)^SINGBOX_VERSION="\$\{SINGBOX_VERSION:-([^}]+)\}"`)
+	singboxTreeRe = regexp.MustCompile(`(?m)^replace github\.com/sagernet/sing-box => (\S+)\s*$`)
 )
 
 var errPinsNotFound = errors.New("pins: version markers not found")
@@ -37,10 +42,11 @@ func FromRepo(root string) (Pins, error) {
 	}
 	m := enginePinRe.FindSubmatch(pinsSh)
 	s := singboxRepoRe.FindSubmatch(release)
-	if m == nil || s == nil {
+	c := singboxPinsRe.FindSubmatch(pinsSh)
+	if m == nil || s == nil || c == nil {
 		return Pins{}, errPinsNotFound
 	}
-	return Pins{Engine: string(m[1]), SingBox: string(s[1])}, nil
+	return Pins{Engine: string(m[1]), SingBox: string(s[1]), SingBoxPatched: string(c[1])}, nil
 }
 
 func FromGoMod(path string) (Pins, error) {
@@ -54,5 +60,9 @@ func FromGoMod(path string) (Pins, error) {
 	if r == nil || s == nil || x == nil {
 		return Pins{}, errPinsNotFound
 	}
-	return Pins{Engine: strings.TrimSpace(string(r[1])), SingBox: strings.TrimSpace(string(s[1])), Xray: strings.TrimSpace(string(x[1]))}, nil
+	pins := Pins{Engine: strings.TrimSpace(string(r[1])), SingBox: strings.TrimSpace(string(s[1])), Xray: strings.TrimSpace(string(x[1]))}
+	if tree := singboxTreeRe.FindSubmatch(b); tree != nil {
+		pins.SingBoxPatched = string(tree[1])
+	}
+	return pins, nil
 }

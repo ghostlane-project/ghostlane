@@ -1,0 +1,14 @@
+# Official Xray-core server builds the CLI's Reality end-to-end dials
+# (scripts/fetch-xray-servers.sh; cli/internal/engine/singbox/xray_e2e_test.go):
+# <version> <sha256 of Xray-linux-64.zip, as the release's .dgst gives it>.
+#
+# One per line of behaviour a Reality client meets out there:
+#   26.4.25  the platform's own exits; REALITY of 2026-03, no version floor
+#   26.7.11  minClientVer 26.3.27 when the server sets none (a hello announcing
+#            sing-box's 1.8.1 is refused)
+#   26.11.9  XTLS/REALITY 8cdf7bf: no X25519MLKEM768 share ahead of X25519,
+#            no line (from v26.9.8)
+# A new Xray release that changes what a hello must carry goes here.
+26.4.25 a4ec9c037933b6730fb29e4f7a6674647f40b0b9f40870411071dd6382ea87a8
+26.7.11 aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e
+26.11.9 b651f7e1d9966ee2c1b1ee1bf8b52c72771824d3065dce96bbc8bcc19ed95f82

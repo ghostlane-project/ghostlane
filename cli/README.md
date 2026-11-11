@@ -32,3 +32,8 @@ Not yet: VLESS over grpc/ws, trojan, shadowsocks, vmess.
 Built from `cli/` in this repository (`make build`; Go 1.26). Licence:
 GPL-3.0-or-later — this binary links [sing-box](https://github.com/SagerNet/sing-box);
 the Ghostlane app itself stays MIT. See `COPYRIGHT` and `../THIRD_PARTY_NOTICES.md`.
+The sing-box it links is the pinned release with one published patch
+(`../scripts/patches/sing-box-reality-hello.patch`): `go.mod` replaces the
+module with the tree `make singbox-src` writes, which every `make` target
+writes first; run it once before a plain `go build`, `go test` or an editor's
+Go tools.

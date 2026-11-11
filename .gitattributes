@@ -1,0 +1,6 @@
+# Read by bash and patch on every runner, Windows included, where a checkout
+# would otherwise turn their line ends into CRLF: a sourced pin would carry a
+# carriage return, and a patch would no longer match the tree it patches.
+scripts/*.sh text eol=lf
+scripts/patches/*.patch -text
+scripts/xray-servers.txt text eol=lf

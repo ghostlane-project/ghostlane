@@ -10,12 +10,22 @@ CRYPT_KEY_V1 ?=
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.enginePin=$(ENGINE_PIN) -X main.singboxPin=$(SINGBOX_PIN) -X main.xrayPin=$(XRAY_PIN) -X main.cryptKeyV1=$(CRYPT_KEY_V1)
 export CGO_ENABLED = 0
 
+# sing-box is compiled from a patched copy (go.mod's replace): every target that
+# builds anything in this module needs it. Rewritten when the patch, the script
+# or the pins change.
+SINGBOX_SRC := .sing-box-patched
+$(SINGBOX_SRC)/.ghostlane-patched: ../scripts/patches/sing-box-reality-hello.patch ../scripts/patched-singbox.sh ../scripts/cores-pins.sh
+	bash ../scripts/patched-singbox.sh $(SINGBOX_SRC)
+	touch $@
+.PHONY: singbox-src
+singbox-src: $(SINGBOX_SRC)/.ghostlane-patched
+
 .PHONY: build test vet lint
-build:
+build: singbox-src
 	$(GO) build -trimpath -tags $(TAGS) -ldflags '$(LDFLAGS)' -o dist/ghostlane ./cmd/ghostlane
-test:
+test: singbox-src
 	$(GO) test -tags $(TAGS) ./...
-vet:
+vet: singbox-src
 	$(GO) vet -tags $(TAGS) ./...
 
 ARCHES  := amd64 arm64 arm7
@@ -23,7 +33,7 @@ FORMATS := deb rpm apk archlinux
 NFPM    ?= nfpm
 
 .PHONY: build-all package tarballs sums dist docker-stage docker-image clean
-build-all:
+build-all: singbox-src
 	@for a in $(ARCHES); do \
 	  goarch=$$a; goarm=; if [ "$$a" = arm7 ]; then goarch=arm; goarm=7; fi; \
 	  echo "== $$a"; \
@@ -64,7 +74,7 @@ docker-image: docker-stage
 	docker buildx build --load -t ghostlane-cli:dev -f packaging/docker/Dockerfile .
 
 clean:
-	rm -rf dist
+	rm -rf dist $(SINGBOX_SRC)
 
 .PHONY: sign
 sign:
@@ -76,5 +86,5 @@ sign:
 # An xray binary at the pinned module version, for the Reality end-to-end test
 # (XRAY_SERVER_BIN): the server side must be its own process.
 .PHONY: xray-server
-xray-server:
+xray-server: singbox-src
 	$(GO) build -trimpath -o dist/xray-server github.com/xtls/xray-core/main

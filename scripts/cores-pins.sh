@@ -35,6 +35,12 @@
 # release_version job fails when the copy and this line disagree.
 GO_VERSION="${GO_VERSION:-1.26.5}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.14}"
+# The module's hash (go.sum's h1) at that version. sing-box is compiled from a
+# patched copy of it (scripts/patched-singbox.sh, the Reality hello patch in
+# scripts/patches/), and cli/go.mod replaces the module with that copy, so no
+# go.sum holds this hash any more; the script checks the download against it.
+# A new SINGBOX_VERSION needs its hash here and the patch re-cut against it.
+SINGBOX_MODULE_SUM="${SINGBOX_MODULE_SUM:-h1:p9/eqwilCgzyR/DpKM8hq7ppvzPIq1QMLgZWT3Cbg10=}"
 LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # Branch `proofkit` of the fork, re-laid on upstream master 189d16c. The lineage
 # before it, `proofkit-udp-spike` (archived), was the only one carrying a UDP
@@ -311,7 +317,11 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261109222247-2d4266af3947}"
 # client side of an MTS Link room, and #61, #62. Same API.
 # 36 -> 37: the engine pin above (2d4266af3947, olcrtc#73): a VK Calls room is
 # joined more than once. Same API.
-CORES_BUILD="${CORES_BUILD:-37}"
+# 37 -> 38: sing-box from the patched copy (scripts/patches/
+# sing-box-reality-hello.patch): a Reality hello keeps its X25519MLKEM768 key
+# share and announces 26.7.11, so Reality lines open on Xray-core >= v26.7.
+# Same API.
+CORES_BUILD="${CORES_BUILD:-38}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.

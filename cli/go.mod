@@ -4,6 +4,12 @@ go 1.26.3
 
 replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olcrtc v0.0.0-20261109222247-2d4266af3947
 
+// sing-box v1.13.14 with scripts/patches/sing-box-reality-hello.patch, the tree
+// every Ghostlane build compiles: `make singbox-src` writes it
+// (scripts/patched-singbox.sh, which checks the module against the hash in
+// scripts/cores-pins.sh). The require below keeps naming the upstream version.
+replace github.com/sagernet/sing-box => ./.sing-box-patched
+
 require (
 	github.com/openlibrecommunity/olcrtc v0.0.0-20261109222247-2d4266af3947
 	github.com/sagernet/sing v0.8.11
@@ -11,6 +17,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
 	github.com/xtls/xray-core v1.260327.1-0.20260711155151-50231eaff98c // the iOS Cores' version (libxray v1.260711.0)
+	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -217,7 +224,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/mobile v0.0.0-20260520154334-0e4426e1883d // indirect
 	golang.org/x/mod v0.41.0 // indirect

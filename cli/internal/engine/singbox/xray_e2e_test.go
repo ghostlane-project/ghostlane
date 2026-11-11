@@ -1,7 +1,19 @@
-// These end-to-ends run an xray process as the server (XRAY_SERVER_BIN, built
-// by `make xray-server` from the pinned module — what ProofKit origins run)
-// and our sing-box front as the client: the vless-reality and hysteria2
-// outbound shapes are proven against a real server, not only parsed.
+// These end-to-ends run an xray process as the server and our sing-box front
+// as the client: the vless-reality and hysteria2 outbound shapes are proven
+// against a real server, not only parsed.
+//
+// The servers: XRAY_SERVER_BIN, built by `make xray-server` from the pinned
+// module, and every official release named in XRAY_SERVERS
+// ("<version>=<path> ...", fetched and checked by scripts/fetch-xray-servers.sh):
+// the versions servers out there run, which is what a Reality hello has to get
+// past.
+//
+// What is fetched is http://203.0.113.10/, never the page's own loopback
+// address: the front sends private destinations straight out (config.go), so
+// a test fetching 127.0.0.1 passed whether or not the tunnel opened, and did
+// for months. The server's freedom outbound redirects that address to the
+// page. Each Reality cell also runs with a wrong public key, which must not
+// reach the page: a pass that cannot fail proves nothing.
 package singbox
 
 import (
@@ -27,6 +39,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,8 +51,13 @@ import (
 )
 
 const (
-	realityDest = "yandex.ru"
-	e2eUUID     = "9f4b2c3a-1111-4222-8333-444455556666"
+	// realitySNI is the name the hello asks for; the camouflage target is a
+	// local TLS 1.3 server (realityTarget), so nothing leaves the machine.
+	realitySNI = "reality.e2e.test"
+	e2eUUID    = "9f4b2c3a-1111-4222-8333-444455556666"
+	// throughTunnel is a TEST-NET-3 address: public to the front's rules, so
+	// the request takes the tunnel; the server redirects it to the page.
+	throughTunnel = "http://203.0.113.10/"
 )
 
 type syncBuffer struct {
@@ -59,19 +77,41 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-func xrayServer(t *testing.T, cfg map[string]any, port int) *syncBuffer {
+type xrayBin struct{ name, path string }
+
+// pinnedXray is the xray of the pinned module only: an `xray` on PATH is
+// whatever the box runs.
+func pinnedXray(t *testing.T) xrayBin {
 	t.Helper()
-	// the xray of the pinned module only: an `xray` on PATH is whatever the box runs
 	bin := os.Getenv("XRAY_SERVER_BIN")
 	if bin == "" {
 		t.Skip("set XRAY_SERVER_BIN (make xray-server) for the server end-to-ends")
 	}
+	return xrayBin{"pinned", bin}
+}
+
+// realityServers: the pinned build and every release in XRAY_SERVERS.
+func realityServers(t *testing.T) []xrayBin {
+	t.Helper()
+	bins := []xrayBin{pinnedXray(t)}
+	for _, entry := range strings.Fields(os.Getenv("XRAY_SERVERS")) {
+		version, path, ok := strings.Cut(entry, "=")
+		if !ok || version == "" || path == "" {
+			t.Fatalf("XRAY_SERVERS: %q is not <version>=<path>", entry)
+		}
+		bins = append(bins, xrayBin{"xray-" + version, path})
+	}
+	return bins
+}
+
+func xrayServer(t *testing.T, bin xrayBin, cfg map[string]any, port int) *syncBuffer {
+	t.Helper()
 	raw, _ := json.Marshal(cfg)
 	path := filepath.Join(t.TempDir(), "server.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "run", "-c", path)
+	cmd := exec.Command(bin.path, "run", "-c", path)
 	logs := &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
@@ -90,20 +130,48 @@ func xrayServer(t *testing.T, cfg map[string]any, port int) *syncBuffer {
 			return logs
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the xray server did not listen:\n%s", logs.String())
+			t.Fatalf("the %s xray server did not listen:\n%s", bin.name, logs.String())
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// freedomAllowingLoopback: Xray 26 blackholes private targets behind a
-// vless/hysteria inbound by default; the tests' target is on loopback.
-func freedomAllowingLoopback() map[string]any {
+// freedomToPage sends whatever the tunnel asks for to the page. Xray blocks
+// private targets behind a vless or hysteria inbound by default, and the page
+// is on loopback: `finalRules` allows it from v26.7 on, `ipsBlocked: []` up to
+// v26.4 (each version ignores the other's key, with a warning at most).
+func freedomToPage(page *httptest.Server) map[string]any {
 	return map[string]any{"tag": "direct", "protocol": "freedom",
-		"settings": map[string]any{"finalRules": []map[string]any{{"action": "allow", "ip": []string{"127.0.0.0/8"}}}}}
+		"settings": map[string]any{
+			"redirect":   strings.TrimPrefix(page.URL, "http://"),
+			"ipsBlocked": []string{},
+			"finalRules": []map[string]any{{"action": "allow", "ip": []string{"127.0.0.0/8"}}},
+		}}
 }
 
-func fetchThroughFront(t *testing.T, p FrontParams, url string) string {
+func page(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// realityTarget is the site a Reality server mirrors, as a real one would
+// answer: TLS 1.3 with h2 offered and a certificate larger than the server's
+// own. Current REALITY pads its records to the target's, and a target whose
+// encrypted extensions are shorter than the server's (no ALPN) fails every
+// handshake, which is the target's fault, not the client's.
+func realityTarget(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "camouflage") }))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv.Listener.Addr().String()
+}
+
+// fetchThroughFront returns the body, or the error when nothing came back.
+func fetchThroughFront(t *testing.T, p FrontParams, url string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -114,48 +182,68 @@ func fetchThroughFront(t *testing.T, p FrontParams, url string) string {
 	defer func() { _ = f.Close() }()
 	d, _ := proxy.SOCKS5("tcp", p.ProxyListen+":"+strconv.Itoa(p.ProxyPort), nil, proxy.Direct)
 	cd, _ := d.(proxy.ContextDialer)
-	hc := &http.Client{Transport: &http.Transport{DialContext: cd.DialContext}, Timeout: 20 * time.Second}
+	hc := &http.Client{Transport: &http.Transport{DialContext: cd.DialContext}, Timeout: 15 * time.Second}
 	resp, err := hc.Get(url)
 	if err != nil {
-		t.Fatalf("through the front and the server: %v", err)
+		return "", err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	return string(body)
+	body, err := io.ReadAll(resp.Body)
+	return string(body), err
 }
 
-func TestRealityTCPEndToEnd(t *testing.T) {
-	if c, err := net.DialTimeout("tcp", realityDest+":443", 3*time.Second); err != nil {
-		t.Skipf("no route to %s: %v", realityDest, err)
-	} else {
-		c.Close()
-	}
+func realityKey(t *testing.T) (privB64, pubB64 string) {
+	t.Helper()
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privB64 := base64.RawURLEncoding.EncodeToString(priv.Bytes())
-	pubB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey().Bytes())
-	serverPort, _ := olcrtc.FreePort()
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "through reality tcp") }))
-	defer target.Close()
-	logs := xrayServer(t, map[string]any{
-		"log": map[string]any{"loglevel": "warning"},
-		"inbounds": []map[string]any{{
-			"tag": "in", "listen": "127.0.0.1", "port": serverPort, "protocol": "vless",
-			"settings": map[string]any{"clients": []map[string]any{{"id": e2eUUID, "flow": "xtls-rprx-vision"}}, "decryption": "none"},
-			"streamSettings": map[string]any{"network": "tcp", "security": "reality",
-				"realitySettings": map[string]any{"dest": realityDest + ":443", "serverNames": []string{realityDest}, "privateKey": privB64, "shortIds": []string{"0123"}}},
-		}},
-		"outbounds": []map[string]any{freedomAllowingLoopback()},
-	}, serverPort)
-	port, _ := olcrtc.FreePort()
-	p := base(ModeProxy)
-	p.ProxyPort, p.ProbeListen = port, ""
-	p.Upstream = Upstream{Vless: &links.VlessLine{UUID: e2eUUID, Host: "127.0.0.1", Port: serverPort, SNI: realityDest, PublicKey: pubB64, ShortID: "0123",
-		Fingerprint: "chrome", Flow: "xtls-rprx-vision", Transport: links.Transport{Kind: "tcp"}}}
-	if got := fetchThroughFront(t, p, target.URL+"/"); got != "through reality tcp" {
-		t.Fatalf("%q\nserver log:\n%s", got, logs.String())
+	return base64.RawURLEncoding.EncodeToString(priv.Bytes()), base64.RawURLEncoding.EncodeToString(priv.PublicKey().Bytes())
+}
+
+// TestRealityTCPEndToEnd: VLESS + Reality + Vision through the front, against
+// each server. chrome is the app's default; firefox's hello in this uTLS has
+// no X25519MLKEM768 share, so it is the case the patch sends as Chrome's.
+func TestRealityTCPEndToEnd(t *testing.T) {
+	const want = "through reality tcp"
+	target := realityTarget(t)
+	pg := page(t, want)
+	for _, server := range realityServers(t) {
+		t.Run(server.name, func(t *testing.T) {
+			privB64, pubB64 := realityKey(t)
+			serverPort, _ := olcrtc.FreePort()
+			logs := xrayServer(t, server, map[string]any{
+				"log": map[string]any{"loglevel": "warning"},
+				"inbounds": []map[string]any{{
+					"tag": "in", "listen": "127.0.0.1", "port": serverPort, "protocol": "vless",
+					"settings": map[string]any{"clients": []map[string]any{{"id": e2eUUID, "flow": "xtls-rprx-vision"}}, "decryption": "none"},
+					"streamSettings": map[string]any{"network": "tcp", "security": "reality",
+						"realitySettings": map[string]any{"dest": target, "serverNames": []string{realitySNI}, "privateKey": privB64, "shortIds": []string{"0123"}}},
+				}},
+				"outbounds": []map[string]any{freedomToPage(pg)},
+			}, serverPort)
+			_, wrongPub := realityKey(t)
+			for _, fp := range []string{"chrome", "firefox"} {
+				line := func(pub string) FrontParams {
+					port, _ := olcrtc.FreePort()
+					p := base(ModeProxy)
+					p.ProxyPort, p.ProbeListen = port, ""
+					p.Upstream = Upstream{Vless: &links.VlessLine{UUID: e2eUUID, Host: "127.0.0.1", Port: serverPort, SNI: realitySNI, PublicKey: pub, ShortID: "0123",
+						Fingerprint: fp, Flow: "xtls-rprx-vision", Transport: links.Transport{Kind: "tcp"}}}
+					return p
+				}
+				t.Run(fp, func(t *testing.T) {
+					if got, err := fetchThroughFront(t, line(pubB64), throughTunnel); got != want {
+						t.Fatalf("%q, %v\nserver log:\n%s", got, err, logs.String())
+					}
+				})
+				t.Run(fp+"-wrong-key", func(t *testing.T) {
+					if got, _ := fetchThroughFront(t, line(wrongPub), throughTunnel); got == want {
+						t.Fatalf("a wrong public key reached the page: the request did not need the tunnel")
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -179,30 +267,41 @@ func selfSignedCert(t *testing.T) (certPEM, keyPEM string, sha string) {
 }
 
 func TestHysteria2EndToEnd(t *testing.T) {
+	const want = "through hysteria2"
+	server := pinnedXray(t)
 	certPEM, keyPEM, pin := selfSignedCert(t)
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "cert.pem"), []byte(certPEM), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "key.pem"), []byte(keyPEM), 0o600)
 	serverPort, _ := olcrtc.FreePort()
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "through hysteria2") }))
-	defer target.Close()
-	logs := xrayServer(t, map[string]any{
+	pg := page(t, want)
+	logs := xrayServer(t, server, map[string]any{
 		"_udp": true,
 		"log":  map[string]any{"loglevel": "warning"},
 		"inbounds": []map[string]any{{
 			"tag": "in", "listen": "127.0.0.1", "port": serverPort, "protocol": "hysteria",
 			"settings": map[string]any{"version": 2, "auth": "e2e-password"},
+			// Salamander is a finalmask in Xray 26.7 (transport_finalmask.go);
+			// under hysteriaSettings it was ignored, which the old fetch of a
+			// loopback page never noticed.
 			"streamSettings": map[string]any{"network": "hysteria", "security": "tls",
-				"hysteriaSettings": map[string]any{"version": 2, "auth": "e2e-password", "obfs": map[string]any{"type": "salamander", "password": "salt"}},
+				"hysteriaSettings": map[string]any{"version": 2, "auth": "e2e-password"},
+				"finalmask":        map[string]any{"udp": []map[string]any{{"type": "salamander", "settings": map[string]any{"password": "salt"}}}},
 				"tlsSettings":      map[string]any{"certificates": []map[string]any{{"certificateFile": filepath.Join(dir, "cert.pem"), "keyFile": filepath.Join(dir, "key.pem")}}}},
 		}},
-		"outbounds": []map[string]any{freedomAllowingLoopback()},
+		"outbounds": []map[string]any{freedomToPage(pg)},
 	}, serverPort)
-	port, _ := olcrtc.FreePort()
-	p := base(ModeProxy)
-	p.ProxyPort, p.ProbeListen = port, ""
-	p.Upstream = Upstream{Hy2: &links.Hy2Line{Password: "e2e-password", Host: "127.0.0.1", Port: serverPort, SNI: "hy2.example", ObfsPassword: "salt", PinSHA256: pin}}
-	if got := fetchThroughFront(t, p, target.URL+"/"); got != "through hysteria2" {
-		t.Fatalf("%q\nserver log:\n%s", got, logs.String())
+	line := func(password string) FrontParams {
+		port, _ := olcrtc.FreePort()
+		p := base(ModeProxy)
+		p.ProxyPort, p.ProbeListen = port, ""
+		p.Upstream = Upstream{Hy2: &links.Hy2Line{Password: password, Host: "127.0.0.1", Port: serverPort, SNI: "hy2.example", ObfsPassword: "salt", PinSHA256: pin}}
+		return p
+	}
+	if got, err := fetchThroughFront(t, line("e2e-password"), throughTunnel); got != want {
+		t.Fatalf("%q, %v\nserver log:\n%s", got, err, logs.String())
+	}
+	if got, _ := fetchThroughFront(t, line("not-the-password"), throughTunnel); got == want {
+		t.Fatalf("a wrong password reached the page: the request did not need the tunnel")
 	}
 }
