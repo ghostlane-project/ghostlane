@@ -398,106 +398,110 @@ phone-width list. Claiming a device the layout was not designed for is how an
 app gets rejected for something nobody intended to ship.
 
 Required size: **6.9" iPhone — 1320 × 2868**. Apple derives every smaller size
-itself.
+itself. The 6.3" slot, if it is filled, takes 1206 × 2622; the set is drawn at
+both.
 
-### What the Simulator cannot make
+### The set is drawn, not shot
 
-**Network Extension does not exist in the Simulator.** Not "does not work
-well" — the framework is absent, `saveToPreferences` fails, and the app now
-says so plainly instead of reporting "no VPN configuration", which reads as
-something missing that could be supplied.
-
-So anything showing a live tunnel — `01-olcrtc-connected`, and the system
-permission prompt if it is ever shot — needs a real device. The rest, including
-`02-rooms-occupancy`, is Simulator work: occupancy is fetched over the network
-and does not need the tunnel up to be shown.
-
-The device has to be the right size: App Store Connect accepts **1320 × 2868**
-(iPhone 16/17 Pro Max) or **1290 × 2796** (iPhone 14/15 Pro Max, or a Plus) for
-this slot. A 6.1" phone produces 1179 × 2556, which is not accepted and cannot
-honestly be scaled into one that is.
-
-If no Pro Max is to hand, the options are borrowing one, or shipping the four
-the Simulator can produce — Apple requires a minimum of one screenshot, not
-six. Four honest screenshots beat six with two upscaled ones.
-
-### Capturing
-
-From a simulator, for everything except the connected screen:
+Since 2026-11-11 the pictures in `docs/screenshots/` are made by the app's own
+code, the way the header and the search picture are: each screen is drawn by
+its own composables at the pixels it has on the picture, and set as a card on
+the app's ground under a short caption.
 
 ```bash
-xcrun simctl list devices available | grep "Pro Max"     # pick the 6.9" one
-xcrun simctl boot "iPhone 17 Pro Max"
-open -a Simulator
-# …drive the app to the state you want, then, per screen:
-xcrun simctl io booted screenshot screenshots/02-rooms-occupancy.png
+OLCBOX_RENDER_DIR=/tmp/shots OLCBOX_RENDER_FONTS=/path/to/a/directory/with/an/emoji/font \
+  ./gradlew :sharedUI:jvmTest --rerun --no-configuration-cache --tests '*StoreScreenshotsRenderTest*'
 ```
 
-Then, before uploading anything:
+(`sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/render/StoreScreenshotsRenderTest.kt`;
+`--no-configuration-cache` for the reason given under the creative assets.)
 
-```bash
-bash scripts/check-screenshots.sh screenshots/
-```
+Why not captures. The six they replaced were shot on a phone in September:
+every one carried the `◀ TestFlight` link iOS puts in the status bar of an app
+opened from TestFlight, one a version line three months old, and two the name
+of a meeting service. A drawn set has none of the three, and is drawn again
+when the board changes instead of waiting for somebody with the right phone.
 
-It checks the three things App Store Connect refuses a set for and only tells
-you about afterwards: a size off by a pixel, an alpha channel an editor left
-behind, and a file that is a JPEG wearing a `.png`. It validates and never
-resizes — a screenshot scaled to fit is a screenshot of the wrong thing.
+What a drawn picture is not, said here so that nobody takes it for a capture:
 
-> It needs `sips` and so **runs on macOS only**. On a Linux box the same three
-> checks read out of the PNG header directly — magic bytes, the `IHDR` width and
-> height, and colour type 2 for truecolour without alpha.
+- **No status bar and no home indicator.** The clock and the battery are the
+  phone's, and nothing is on these pictures that the app does not draw.
+- **The flags and the bolt are another font's.** An iPhone draws them with
+  Apple's emoji; the test draws them with the font in `OLCBOX_RENDER_FONTS`
+  (the set in the repository: Noto Color Emoji, OFL). Without that variable
+  they are empty boxes, and such a set is not one to upload.
+- **The state is made up**, within what the app can show: a session of
+  6:51:24, a list of twelve rooms, their seats.
 
-### The set, strongest first
+If a capture is wanted after all, it needs a 6.9" phone (Network Extension
+does not exist in the Simulator, so a live tunnel cannot be shot there), the
+app opened from the Home Screen and not from TestFlight, and
+`bash scripts/check-screenshots.sh <dir>` before the upload (macOS; on Linux
+the same three checks read out of the PNG header: magic bytes, the `IHDR`
+width and height, and colour type 2 for truecolour without alpha).
 
-These are the files in `docs/screenshots/`. Keep them in step with the app: the
-repository is linked from the listing as OPEN SOURCE, so a reviewer who follows
-that link should meet the same app.
+### The set, in order
 
 **Order matters more than it looks.** The set uploaded on 2026-08-08 opened on
-`01-empty` — a blank screen reading "Import a server list to start". That is the
-first thing review saw of the app, and it is indistinguishable from every other
-empty client in the category; it is part of what earned 4.3(a). Slot 1 and slot 2
-are the only two most people ever look at, so they have to carry the thing no
+an empty screen reading "Import a server list to start". That is the first
+thing review saw of the app, and it is indistinguishable from every other
+empty client in the category; it is part of what earned 4.3(a). Slot 1 and
+slot 2 are the only two most people ever look at, so they carry the thing no
 other app has.
 
-The set as shot on 2026-08-14, all four at 1320 × 2868, on a real device:
+1. `01-in-a-room` — *A tunnel inside a video call* (the listing's subtitle):
+   the board in a session, `IN A ROOM · OLCRTC`, the timer, the traffic, the
+   rooms under it.
+2. `02-rooms-and-seats` — *Rooms, and how full they are*: the rooms with their
+   seats, and `TAKE A SEAT IN …`. No other client has this, because no other
+   client connects to something with rooms.
+3. `03-what-it-is` — *Carried over WebRTC*: the first page of the introduction,
+   under its own title.
+4. `04-how-it-works` — *How the VPN connection works*: the sheet asked once
+   before the first connection, under its own title.
+5. `05-add-a-list` — *Bring your own server list*: scan, paste or import. Last
+   on purpose: the sheet's own line is "From a provider's list", the words the
+   third 3.1.1 round quoted.
 
-1. `01-olcrtc-connected` — **connected over olcRTC**: `RELAY ACTIVE · OLCRTC`,
-   session timer, traffic counters, "Traffic exits via US", and the protocol chips
-   with `OLCRTC 16` selected. The one frame that carries the whole argument.
-2. `02-rooms-occupancy` — **the rooms, and how full they are**: `US · olcRTC`,
-   `Telemost · VP8`, `1 / 8` with the bar part-filled. No other client has this,
-   because no other client connects to something with rooms.
-3. `03-settings` — **settings**, so it is clear the app is configurable rather
-   than a black box.
-4. `04-addconnection` — **adding a connection**: scan, paste, or import.
+Deliberately not in the set:
 
-Apple requires a minimum of one screenshot, so four is a set. Two files that were
-in the 2026-08-08 upload are deliberately gone:
+- **The empty board.** An empty state is not a feature and was the worst
+  possible first frame.
+- **Server lists.** Drawn off an iPhone it shows the Smart connect switch, which
+  the iPhone build does not have.
+- **The introduction's third page.** It says "nothing collected", and the App
+  Privacy answer has been "Yes, Device ID" since 2026-10-20.
 
-- `01-empty` — an empty state is not a feature and was the worst possible first
-  frame; opening on it is part of what earned 4.3(a).
-- `02-vpnpopup` — it photographed `VpnDisclosureScreen`, not the system prompt,
-  and that screen said "**Android** will ask you" on an iPhone and used the word
-  "subscription" five times. Both fixed in the source on 2026-08-14. If it is
-  re-shot, read it first: it is the one screen whose text nobody checked against
-  either the 3.1.1 rename or the platform it renders on.
+### What the set is held to
 
-Nothing in the set may show a purchase, a price, or a way to get one — that is
-the reading that cost two rejections under 3.1.1. See
-`docs/app-review-3.1.1-reply.md`.
+- **Nothing may show a purchase, a price, or a way to get one** — that is the
+  reading that cost two rejections under 3.1.1. See
+  `docs/app-review-3.1.1-reply.md`. No allowance bar, no "plan", no
+  "subscription".
+- **The demo list only**: one list, named "Demo list", a room a country. No
+  list of somebody else's, no real provider's server names or quota, no
+  "Encrypted list" for a heading (the heading in review's own 3.1.1 capture)
+  and no host name for one.
+- **No admin tools.** A picture showing the per-location configurator or
+  "create custom location" invites questions about what else is hidden.
+- **No meeting service is named** (owner, 2026-11-11). The rooms are named by
+  country alone. The app itself names the service in two places, and both are
+  kept out of the frame rather than painted over: the card of the room in use
+  ("a … media session"), so that room is the eleventh of the list, under the
+  fold; and the second line of the status strip while idle, so the two idle
+  pictures show the screen from under its head, drawn larger.
+- **Latency as an iPhone has it**: only the room in use is timed, and only
+  while connected. A figure on every room is a picture of another platform.
+- **Captions are drawn by the test, in the listing's words or the app's own.**
+  Never a price or the word "free" (of anything: the second caption was
+  "their free seats" for an hour), "subscription", "plan", "provider", a claim
+  nobody can check, another platform, a meeting service. No device frame and
+  no painted status bar. This replaces the earlier rule against any words
+  over a screenshot: its reason was that words date badly and do not survive
+  a redesign, and a caption that the test draws is redrawn with the app.
 
-### Two things to get right before pressing the shutter
-
-- **Build with the admin gate on.** A screenshot showing the per-location
-  configurator or "create custom location" invites questions about what else is
-  hidden, and shows an operator's addresses to anyone who zooms in.
-- **Use the demo server list**, the same one that goes in the review notes. A
-  real one puts a real provider's server names and quota in a public listing.
-
-No device frames and no marketing text over the top. Apple allows both; both
-date badly, and neither survives the next redesign.
+The same five files are on the repository's front page (`README.MD`) and, cut
+to Play's shape by `scripts/play-assets.py`, in `docs/play/screenshots/`.
 
 ---
 

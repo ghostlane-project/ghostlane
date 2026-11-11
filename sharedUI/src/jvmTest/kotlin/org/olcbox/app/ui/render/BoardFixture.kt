@@ -215,17 +215,37 @@ internal object BoardFixture {
         val refused: List<RefusedList> = emptyList()
     )
 
+    /**
+     * What a picture for the store draws in place of the fixture's own lists:
+     * its rows and their seats, and a session that is in use at its newest end.
+     *
+     * With it the latency is an iPhone's (`IosVpnManager.canPing`): no room is
+     * measured while idle, since timing a room means joining it, and only the
+     * room in use while connected. No key is revoked and nothing has failed: a
+     * shop window is not where the app's hard days are shown.
+     */
+    class Shop(
+        val rows: (now: Long) -> List<LocationItem>,
+        val seats: Map<String, OlcrtcSlots>,
+        val traffic: () -> ThroughputWindow,
+        /** The delay of the room in use, in milliseconds. */
+        val delayMs: Int = 128
+    )
+
     @Composable
     fun Home(
         scene: Scene,
         onFold: (String) -> Unit = {},
         onPin: (String) -> Unit = {},
-        onSelect: (String) -> Unit = {}
+        onSelect: (String) -> Unit = {},
+        shop: Shop? = null
     ) {
         val now = remember { nowMillis() }
-        val locations = remember { if (scene.empty) emptyList() else locations(now) }
+        val locations = remember { if (scene.empty) emptyList() else shop?.rows?.invoke(now) ?: locations(now) }
         val pings: Map<String, Int?> = remember {
-            if (!scene.measured) {
+            if (shop != null) {
+                if (scene.connected) mapOf(scene.selectedId to shop.delayMs) else emptyMap()
+            } else if (!scene.measured) {
                 emptyMap()
             } else {
                 locations.mapIndexed { index, item ->
@@ -237,7 +257,7 @@ internal object BoardFixture {
                 }.toMap()
             }
         }
-        val pingsState: PingsState = if (scene.measured) PingsState.Success(pings) else PingsState.Idle
+        val pingsState: PingsState = if (scene.measured && (shop == null || scene.connected)) PingsState.Success(pings) else PingsState.Idle
         val lowestUrls = if (scene.lowest) setOf(OURS) else emptySet()
         val model = remember {
             val pinned = scene.pinned.mapNotNull { id -> locations.firstOrNull { it.storageId == id }?.pin() }
@@ -251,7 +271,9 @@ internal object BoardFixture {
             ) { pings[it] }
         }
         val slots: Map<String, OlcrtcSlots> = remember {
-            if (!scene.seats) {
+            if (shop != null) {
+                shop.seats
+            } else if (!scene.seats) {
                 emptyMap()
             } else {
                 locations.filter { it.config?.kind == LocationKind.Olcrtc }.mapIndexed { index, item ->
@@ -274,7 +296,7 @@ internal object BoardFixture {
         }
 
         // A session that has only been asked for has moved nothing yet.
-        val traffic = remember { if (scene.connecting) ThroughputWindow() else session() }
+        val traffic = remember { if (scene.connecting) ThroughputWindow() else shop?.traffic?.invoke() ?: session() }
 
         val selected = locations.firstOrNull { it.storageId == scene.selectedId }
         val selectedConfig = selected?.config
@@ -340,7 +362,7 @@ internal object BoardFixture {
                 pingsStale = scene.stalePings,
                 olcrtcSlots = slots,
                 occupancyHistory = history,
-                revokedKeys = setOf(REVOKED),
+                revokedKeys = if (shop != null) emptySet() else setOf(REVOKED),
                 transportFilter = null,
                 isRefreshingSubscriptions = false,
                 refreshingSubscriptionUrl = null,
@@ -375,7 +397,7 @@ internal object BoardFixture {
                 onOpenUrl = {},
                 onAddLocationClick = {},
                 onGetSubscriptionClick = {},
-                canPing = { it.kind == LocationKind.Olcrtc }
+                canPing = { if (shop != null) scene.connected && it == selectedConfig else it.kind == LocationKind.Olcrtc }
             ),
             scrollState = rememberScrollState(initial = with(LocalDensity.current) { scene.scrolledBy.dp.roundToPx() }),
             snackbarHostState = remember { SnackbarHostState() }

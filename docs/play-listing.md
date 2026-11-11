@@ -256,13 +256,13 @@ feature graphic from this document with the release's service account.
 |---|---|---|
 | App icon | `icon-512.png` | 512 × 512 PNG, ≤ 1 MB. `androidApp/src/main/res/playstore_icon.png` flattened over the app background `#07080D` — the source has an alpha channel, and Play paints transparency black under its own mask |
 | Feature graphic | `feature-graphic.png` | 1024 × 500, mandatory. Drawn from the app's own tokens and bundled fonts (Space Grotesk, IBM Plex); content inside a 72 px margin because some placements crop the edges. Regenerate with `scripts/play-assets.py` if the copy changes |
-| Phone screenshots | `screenshots/0[0-5]-*.png` | 2–8 files, 320–3840 px on a side, **longest side at most twice the shortest**. The App Store set (`docs/screenshots/`, 1320 × 2868, 2.17:1) is refused by the uploader; these are the same captures with the iOS status bar (top 168 px) and home indicator (bottom 68 px) cropped off → 1320 × 2632, 1.99:1 |
+| Phone screenshots | `screenshots/0[1-5]-*.png` | 2–8 files, 320–3840 px on a side, **longest side at most twice the shortest**. The App Store set (`docs/screenshots/`, 1320 × 2868, 2.17:1) is refused by the uploader; these are the same five pictures with 100 px off the top and 136 px off the bottom → 1320 × 2632, 1.99:1. The set is drawn by `StoreScreenshotsRenderTest` (see `docs/app-store-listing.md`, *Screenshots*), so there is no status bar to cut off: the cut keeps the words clear of the top edge and lets the card run off the bottom one |
 
-> The captures are from an iPhone. The UI is the same Compose code on both
-> platforms, but an Android capture (`adb exec-out screencap -p > x.png`) is
-> better when a device is at hand; keep the same six states. Upload order:
-> `03-connected`, `05-serverlistnotconnected`, `04-settings`, `02-vpnpopup` (the
-> disclosure — review wants to see it), `01-empty`, `00-intro`.
+> The pictures are drawn by the app's own code and show no platform's status
+> bar, so the same set serves both stores. Upload them in their order,
+> `01-in-a-room` first; the disclosure (`04-how-it-works`) is in the set
+> because review wants to see it. The pictures in the console are replaced by
+> hand: `scripts/play-listing.py` does not upload screenshots.
 
 ---
 

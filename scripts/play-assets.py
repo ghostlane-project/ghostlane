@@ -95,13 +95,17 @@ for i, (name, taken, mine) in enumerate(rooms):
 img.save(OUT + '/feature-graphic.png', optimize=True)
 
 # ---------- screenshots: 1320x2868 (App Store) -> 1320x2632, ratio 1.99 ----------
+# The set is drawn (StoreScreenshotsRenderTest), so there is no status bar and no
+# home indicator to cut off, as there was on a capture. The 236 px Play does not
+# take come off so that the words keep their distance from the top edge and the
+# card runs off the bottom one.
 SS = FORK + '/docs/screenshots'
 for name in sorted(os.listdir(SS)):
     if not name.lower().endswith('.png'):
         continue
     im = Image.open(os.path.join(SS, name)).convert('RGB')
     w, h = im.size
-    out = im.crop((0, 168, w, h - 68))
+    out = im.crop((0, 100, w, h - 136))
     out.save(os.path.join(OUT, 'screenshots', name.lower()), optimize=True)
     print(name.lower(), out.size, 'ratio %.3f' % (out.size[1] / out.size[0]))
 
