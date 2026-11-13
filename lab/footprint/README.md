@@ -49,7 +49,7 @@ newest release against the pin), and on Linux `hev.versions.txt` and
 | the app | `assembleGithubDebug` with `-Polcbox.android.abiFilters=x86_64` | `androidApp/build.gradle.kts` |
 | server | Xray 26.4.25, the version `scripts/xray-servers.txt` names for the platform's exits | `xray-assets.txt` (sha256 checked) |
 | xray-rust (exec) | [aimalygin/xray-rust](https://github.com/aimalygin/xray-rust) cloned at the release tag, checked against the pinned commit; `cargo +<toolchain> build --locked --release -p xray-cli` with the toolchain its `rust-toolchain.toml` names and the workspace's `[profile.release]` (codegen-units 1, thin LTO, panic unwind, symbols stripped) (`rust-core-build.sh`) | the project's README "Quick start" (`cargo build --locked -p xray-cli`) with `--release`; its mobile scripts build `xray-ffi` with the same profile |
-| hev-socks5-tunnel | a recursive clone checked out at `scripts/hev-pins.sh`'s `HEV_COMMIT` with its submodules, then `make clean exec` (`hev-build.sh`) | the checkout of `.github/workflows/hev-tunnel.yml` and the build of `desktopApp/build.gradle.kts` `buildHevSocks5TunnelLinux` |
+| hev-socks5-tunnel | a recursive clone checked out at `scripts/hev-pins.sh`'s `HEV_COMMIT` with its submodules, then `make clean exec` (`hev-build.sh`) | the iPhone's pin and the checkout of `.github/workflows/hev-tunnel.yml`, built with the make target of `desktopApp/build.gradle.kts` `buildHevSocks5TunnelLinux` (the desktop app and Android run it on their own patched copy, `androidApp/src/main/jni/hev-socks5-tunnel`, 2.14.4, which the lab does not build) |
 
 The Go pins come from `scripts/cores-pins.sh`; each job fails first if the
 workflow's copies disagree with it or with `release.yml`. hev's pin is read
@@ -101,6 +101,11 @@ download 500 MB; pause 2 s; upload 100 MB; sample 5 s idle; then the burst: 32
 downloads of 4 MB at once, pause 2 s, 32 uploads of 2 MB at once, 3 s tail,
 each transfer on a connection of its own (`loadgen burst`); stop. Samples every
 0.2 s on the desktops, every 0.5 s on the emulator.
+
+A desktop job runs, in order: the Go rows and the tun rows, the idle harness,
+the olcRTC soaks, the xray-rust rows, the ClientHellos. One time budget covers
+them all, so a new core that stalls can only push its own rows and the
+ClientHellos into "skipped: out of time budget", never a Go figure.
 
 The burst is there because one transfer never shows what each connection
 costs a core (goroutines, their stacks, per-connection buffers), and that is

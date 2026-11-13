@@ -749,8 +749,14 @@ def find_pid_by_argv(exe_name, needle, seconds=8):
     return None
 
 
-def link_exists(name):
-    return Path("/sys/class/net/%s" % name).exists()
+def link_up(name):
+    """The interface exists and is administratively up (IFF_UP). hev creates
+    its tun, then sets the MTU and address, then brings it up; a route into a
+    tun that is not up yet is refused ("Device for nexthop is not up")."""
+    try:
+        return int(Path("/sys/class/net/%s/flags" % name).read_text().strip(), 16) & 0x1 == 0x1
+    except (OSError, ValueError):
+        return False
 
 
 def xray_server(priv, cert, key):
@@ -1149,10 +1155,10 @@ def run_desktop_spec(spec, ctx):
                 raise LabError("hev did not start:\n" + tail(rundir / "hev.log"))
             front.pid = real
             deadline = time.time() + 10
-            while not link_exists(TUN_HEV) and time.time() < deadline and front.alive():
+            while not link_up(TUN_HEV) and time.time() < deadline and front.alive():
                 time.sleep(0.1)
-            if not link_exists(TUN_HEV):
-                raise LabError("hev opened no %s:\n%s" % (TUN_HEV, tail(rundir / "hev.log")))
+            if not link_up(TUN_HEV):
+                raise LabError("hev did not bring up %s:\n%s" % (TUN_HEV, tail(rundir / "hev.log")))
             row["version"] += ", " + ctx.get("hev_version", "hev-socks5-tunnel")
         t_ready = time.time()
         row["extra"]["start_to_ready_s"] = rnd(t_ready - t_launch, 2)
@@ -1201,6 +1207,8 @@ def run_desktop_spec(spec, ctx):
     if front is not None and rows:
         # Each process on its own; the headline columns are their sum.
         ex = row["extra"]
+        # Bytes as transfer_figures counts them: a failed transfer moved none.
+        moved = ((down.get("bytes") if down.get("ok") else 0) or 0) + ((up.get("bytes") if up.get("ok") else 0) or 0)
         for who, label in (("front", "hev"), ("core", "harness")):
             ex["%s_rss_idle_mb" % label] = mb(median_in(rows, "rss_" + who, *idle_win))
             ex["%s_rss_steady_mb" % label] = mb(median_mid(rows, "rss_" + who, *wins[0]))
@@ -1208,7 +1216,6 @@ def run_desktop_spec(spec, ctx):
             ex["%s_rss_burst_peak_mb" % label] = mb(max_of(rows, "rss_" + who, *bwin))
             cd = delta(rows, "cpu_" + who, *wins[0])
             cu = delta(rows, "cpu_" + who, *wins[1])
-            moved = (down.get("bytes") or 0) + (up.get("bytes") or 0)
             ex["%s_cpu_s_per_gb" % label] = rnd(cpu_per_gb(cd + cu, moved), 2) if None not in (cd, cu) and moved else None
         notes.append("hev's own peak is its VmHWM; the summed peak is the largest summed sample (two "
                      "processes' high-water marks do not add)")
@@ -1680,8 +1687,10 @@ def cmd_desktop(a):
         hev_spec = Spec(kind="harness-hev", core=HEV_CORE, harness_core="singbox", mode="ios",
                         settings="ios-limits", scenario="hev tun, vless-reality-vision", socks=None,
                         config=singbox_reality(loop, servers.pub),
-                        notes=[ios_note, "hev-socks5-tunnel at scripts/hev-pins.sh's commit, built as the desktop app "
-                               "builds it on Linux (make clean exec), run as root with HevTunnel.swift's configuration "
+                        notes=[ios_note, "hev-socks5-tunnel at scripts/hev-pins.sh's commit, the iPhone's pin (the "
+                               "desktop app and Android build their own patched copy, androidApp/src/main/jni/"
+                               "hev-socks5-tunnel, 2.14.4), built with the desktop's Linux make target (make clean "
+                               "exec, -O3 as the iPhone's make static), run as root with HevTunnel.swift's configuration "
                                "(MTU 9000, task stack 24576, tcp buffer 4096, 768 sessions) plus a tun name and "
                                "address; sing-box on SOCKS with vless-reality.json behind it, the harness in -mode ios; "
                                "the kernel routes 203.0.113.0/24 into hev's tun; on a phone hev is a thread of the "
@@ -1750,16 +1759,14 @@ def cmd_desktop(a):
                     scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt, xrs_check=xrs_bin,
                     aux_checks=aux, extra={"xray_rust_build": xrs_info},
                     notes=prof_notes + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
-        if xrs_bin.exists():
-            specs += xrs_specs
-        else:
+        if not xrs_bin.exists():
             reason = "xray-rust was not built (xray-rust-build.log in this artifact): " + \
                 tail(out / "xray-rust-build.log", 8).replace("\n", " | ")
             missing += [(s, reason) for s in xrs_specs]
-    try:
-        for spec, reason in missing:
-            add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, reason))
-        for spec in specs:
+            xrs_specs = []
+
+    def run_specs(batch):
+        for spec in batch:
             if not budget.allows(90):
                 add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, "skipped: out of time budget"))
                 continue
@@ -1773,6 +1780,14 @@ def cmd_desktop(a):
             except Exception as e:
                 traceback.print_exc()
                 add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, e))
+
+    # Order: the Go rows (and the tun rows), the idle harness and the olcRTC
+    # soaks, then xray-rust, then the ClientHellos. A new core that stalls
+    # spends the budget after every Go figure is in, never before.
+    try:
+        for spec, reason in missing:
+            add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, reason))
+        run_specs(specs)
         for mode in ("ios", "plain"):
             if not budget.allows(30):
                 break
@@ -1794,6 +1809,7 @@ def cmd_desktop(a):
                     except Exception as e:
                         traceback.print_exc()
                         add(failed_row(a.platform, "olcrtc engine (loopback soak)", transport, settings, e))
+        run_specs(xrs_specs)
         # The ClientHello each core sends on the three TCP lines, through a
         # relay on PORT_TAP in front of the server port. Hysteria2's hello is
         # inside a QUIC Initial under Salamander, which this relay cannot read.

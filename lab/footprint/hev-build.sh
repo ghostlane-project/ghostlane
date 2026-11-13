@@ -6,8 +6,12 @@
 # 941c7581, tag 2.17.1 plus three commits; src/hev-config-const.h says
 # 2.17.1), checked out the way .github/workflows/hev-tunnel.yml checks it out
 # (a recursive clone, then the commit with its submodules), and built with the
-# recipe the desktop app uses on Linux (desktopApp/build.gradle.kts
-# buildHevSocks5TunnelLinux: `make clean exec` in the source tree).
+# make target the desktop app uses on Linux (desktopApp/build.gradle.kts
+# buildHevSocks5TunnelLinux: `make clean exec` in the source tree). The
+# desktop app and Android run that target on a tree of their own,
+# androidApp/src/main/jni/hev-socks5-tunnel (2.14.4 with the app's fixes);
+# the lab builds the iPhone's pin, because the row stands for the iPhone's
+# shape (HevTunnel.swift's configuration).
 #
 # The iPhone links the same tree as a static library (scripts/build-hev-ios.sh:
 # `make static` with Apple's clang, -O3 from the Makefile either way) and runs
