@@ -1,0 +1,9 @@
+# Xray-core release archives the lab runs, with the sha256 their .dgst files
+# publish (SHA2-256). The linux-64 lines match scripts/xray-servers.txt.
+#   26.4.25: the server, "the platform's own exits" (scripts/xray-servers.txt)
+#   26.7.11: the desktop app's client (release.yml XRAY_VERSION)
+# version  asset                      sha256
+26.4.25  Xray-linux-64.zip            a4ec9c037933b6730fb29e4f7a6674647f40b0b9f40870411071dd6382ea87a8
+26.4.25  Xray-macos-arm64-v8a.zip     b9d5df9f37e482f17289b105341218aaa614363a29ebb2b6054805e5396d50fe
+26.7.11  Xray-linux-64.zip            aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e
+26.7.11  Xray-macos-arm64-v8a.zip     61f8f74d099098af710fa43613d9934d97b901dee909801d34f496cd463956d1

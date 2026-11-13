@@ -1,0 +1,383 @@
+name: Lab - core footprint
+
+# A measurement, not a check: what the Go cores the app ships cost in memory,
+# throughput and CPU, measured on GitHub's runners against servers each job
+# starts on the runner itself. lab/footprint/README.md says what is measured,
+# how, and how to read the tables and lab-footprint-* artifacts.
+#
+# Runs on a push to lab/core-footprint and nothing else: never on main, never
+# on a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
+# has no filter, starts on the same push; its scope job decides what it runs.)
+on:
+  push:
+    branches:
+      - lab/core-footprint
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-core-footprint
+  cancel-in-progress: true
+
+env:
+  # Copies of scripts/cores-pins.sh and release.yml; the first step of each
+  # job fails when they disagree with the tree.
+  GO_VERSION: "1.26.5"
+  SINGBOX_VERSION: "1.13.14"
+  XRAY_VERSION: "26.7.11"
+  ANDROID_NDK_VERSION: "28.2.13676358"
+
+jobs:
+  desktop:
+    name: Cores on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            xray_asset: Xray-linux-64.zip
+            lab_flags: --tun
+          # Apple silicon: the nearest a runner gets to an iPhone's arm64
+          # (darwin, not ios: see the README).
+          - os: macos-latest
+            platform: macos-arm64
+            xray_asset: Xray-macos-arm64-v8a.zip
+            lab_flags: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        timeout-minutes: 3
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        timeout-minutes: 5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Pins and paths
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          want_go="${GO_VERSION}" want_sb="${SINGBOX_VERSION}"
+          ( unset GO_VERSION SINGBOX_VERSION; . scripts/cores-pins.sh
+            [ "${GO_VERSION}" = "${want_go}" ] && [ "${SINGBOX_VERSION}" = "${want_sb}" ] ) \
+            || { echo "::error::scripts/cores-pins.sh moved; update this workflow's env" >&2; exit 1; }
+          grep -q "XRAY_VERSION: \"${XRAY_VERSION}\"" .github/workflows/release.yml \
+            || { echo "::error::release.yml's XRAY_VERSION moved; update this workflow's env" >&2; exit 1; }
+          go version
+          {
+            echo "BIN=${RUNNER_TEMP}/lab-bin"
+            echo "OUT=${RUNNER_TEMP}/lab-out"
+            echo "ENGINE=${RUNNER_TEMP}/olcrtc"
+          } >> "$GITHUB_ENV"
+          echo "cores: $(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)"
+          uname -a
+
+      - name: Build loadgen (the lab's traffic tool, standard library only)
+        timeout-minutes: 5
+        working-directory: lab/footprint/loadgen
+        run: |
+          set -euo pipefail
+          mkdir -p "$BIN" "$OUT"
+          CGO_ENABLED=0 go build -trimpath -o "$BIN/loadgen" .
+
+      - name: Fetch Xray 26.4.25 (the server) and 26.7.11 (the desktop app's client)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sum() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+          grep -v '^#' lab/footprint/xray-assets.txt | while read -r ver asset want; do
+            [ "${asset}" = "${{ matrix.xray_asset }}" ] || continue
+            curl -fsSL --retry 3 -o "${RUNNER_TEMP}/xray-${ver}.zip" \
+              "https://github.com/XTLS/Xray-core/releases/download/v${ver}/${asset}"
+            got="$(sum "${RUNNER_TEMP}/xray-${ver}.zip")"
+            [ "${got}" = "${want}" ] || { echo "::error::Xray ${ver} ${asset}: sha256 ${got}, pinned ${want}" >&2; exit 1; }
+            mkdir -p "$BIN/xray-${ver}"
+            unzip -o -q "${RUNNER_TEMP}/xray-${ver}.zip" -d "$BIN/xray-${ver}"
+            chmod +x "$BIN/xray-${ver}/xray"
+            "$BIN/xray-${ver}/xray" version | head -n 1
+          done
+          test -x "$BIN/xray-26.4.25/xray" && test -x "$BIN/xray-26.7.11/xray"
+
+      - name: Build sing-box (scripts/build-singbox.sh, the desktop recipe)
+        timeout-minutes: 15
+        run: bash scripts/build-singbox.sh "$BIN/sing-box" && "$BIN/sing-box" version
+
+      - name: Build the cores harness (scripts/build-cores-ios.sh's module, tags and flags)
+        timeout-minutes: 20
+        run: bash lab/footprint/harness/build.sh "$BIN"
+
+      - name: Check out and build the olcRTC engine at the pin
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          bash lab/footprint/engine-src.sh "$ENGINE"
+          bash lab/footprint/engine-build.sh "$ENGINE" "$BIN"
+
+      - name: Measure
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          if [ -n "${{ matrix.lab_flags }}" ]; then sudo -n true; fi
+          python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
+            --engine-src "$ENGINE" --budget-min 24 ${{ matrix.lab_flags }}
+
+      - name: Table
+        if: always()
+        timeout-minutes: 2
+        run: |
+          cp "$BIN/harness.versions.txt" "$OUT/" 2>/dev/null || true
+          python3 lab/footprint/lab.py table "$OUT"
+
+      - name: Upload results
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-footprint-${{ matrix.platform }}
+          path: ${{ env.OUT }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  android:
+    name: Android emulator (x86_64, API 30)
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        timeout-minutes: 3
+
+      - name: Pins and paths
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          for pin in "XRAY_VERSION: \"${XRAY_VERSION}\"" "ANDROID_NDK_VERSION: \"${ANDROID_NDK_VERSION}\"" \
+                     "SINGBOX_VERSION: \"${SINGBOX_VERSION}\""; do
+            grep -q "${pin}" .github/workflows/release.yml \
+              || { echo "::error::release.yml no longer says ${pin}; update this workflow's env" >&2; exit 1; }
+          done
+          {
+            echo "BIN=${RUNNER_TEMP}/lab-bin"
+            echo "DEVBIN=${RUNNER_TEMP}/lab-device-bin"
+            echo "OUT=${RUNNER_TEMP}/lab-out"
+            echo "ENGINE=${RUNNER_TEMP}/olcrtc"
+            echo "APK=${RUNNER_TEMP}/ghostlane-debug-x86_64.apk"
+          } >> "$GITHUB_ENV"
+
+      - name: Enable KVM
+        timeout-minutes: 2
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        timeout-minutes: 5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        timeout-minutes: 5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        timeout-minutes: 5
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages (release.yml's list)
+        timeout-minutes: 10
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        timeout-minutes: 5
+
+      - name: Check out the olcRTC engine at the pin (OLCRTC_REPO)
+        timeout-minutes: 5
+        run: bash lab/footprint/engine-src.sh "$ENGINE"
+
+      - name: Install and initialize gomobile (as release.yml)
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          cd "$ENGINE"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          "$(go env GOPATH)/bin/gomobile" init
+
+      # release.yml build-android's two core steps, x86_64 only.
+      - name: Build sing-box for Android x86_64 (release.yml recipe)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/scripts/patched-singbox.sh" "${RUNNER_TEMP}/sing-box"
+          cd "${RUNNER_TEMP}/sing-box"
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          LDFLAGS_SHARED="$(cat release/LDFLAGS)"
+          NDK_BIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          OUT_LIBS="${GITHUB_WORKSPACE}/androidApp/jniLibs/x86_64"
+          mkdir -p "${OUT_LIBS}"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 GOARM=7 \
+          CC="${NDK_BIN}/x86_64-linux-android23-clang" CXX="${NDK_BIN}/x86_64-linux-android23-clang++" \
+          go build -trimpath -o "${OUT_LIBS}/libsingboxcore.so" -tags "${TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION}' ${LDFLAGS_SHARED} -s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384" \
+            ./cmd/sing-box
+
+      - name: Build Xray for Android x86_64 (release.yml recipe)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch "v${XRAY_VERSION}" https://github.com/XTLS/Xray-core.git "${RUNNER_TEMP}/xray"
+          cd "${RUNNER_TEMP}/xray"
+          NDK_BIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          OUT_LIBS="${GITHUB_WORKSPACE}/androidApp/jniLibs/x86_64"
+          mkdir -p "${OUT_LIBS}"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 GOARM=7 \
+          CC="${NDK_BIN}/x86_64-linux-android23-clang" CXX="${NDK_BIN}/x86_64-linux-android23-clang++" \
+          go build -trimpath -buildvcs=false -o "${OUT_LIBS}/libxraycore.so" \
+            -ldflags "-X github.com/xtls/xray-core/core.build=v${XRAY_VERSION} -s -w -buildid= -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" \
+            ./main
+
+      - name: Build loadgen (static linux/amd64, runs on the runner and under adb shell)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$BIN" "$DEVBIN" "$OUT"
+          (cd lab/footprint/loadgen && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$BIN/loadgen" .)
+          cp "$BIN/loadgen" "$DEVBIN/loadgen"
+          cp androidApp/jniLibs/x86_64/libsingboxcore.so androidApp/jniLibs/x86_64/libxraycore.so "$DEVBIN/"
+          ls -l "$BIN" "$DEVBIN"
+
+      - name: Fetch Xray 26.4.25 (the server)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          want="$(awk '$1=="26.4.25" && $2=="Xray-linux-64.zip" {print $3}' lab/footprint/xray-assets.txt)"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/xray-server.zip" \
+            "https://github.com/XTLS/Xray-core/releases/download/v26.4.25/Xray-linux-64.zip"
+          got="$(sha256sum "${RUNNER_TEMP}/xray-server.zip" | cut -d' ' -f1)"
+          [ "${got}" = "${want}" ] || { echo "::error::Xray 26.4.25: sha256 ${got}, pinned ${want}" >&2; exit 1; }
+          mkdir -p "$BIN/xray-26.4.25"
+          unzip -o -q "${RUNNER_TEMP}/xray-server.zip" -d "$BIN/xray-26.4.25"
+          chmod +x "$BIN/xray-26.4.25/xray"
+
+      - name: Build the debug APK, x86_64 only
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="$ENGINE"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew -Polcbox.android.abiFilters=x86_64 :androidApp:assembleGithubDebug --stacktrace
+          apk="$(find androidApp/build/outputs/apk/github/debug -maxdepth 1 -name '*.apk' | sort | head -n 1)"
+          [ -n "${apk}" ] || { echo "::error::no debug APK" >&2; exit 1; }
+          cp "${apk}" "$APK"
+          unzip -l "$APK" | grep 'lib/x86_64/' || true
+          # The emulator wants the memory more than an idle daemon does.
+          ./gradlew --stop
+
+      # The action runs each line of `script` in its own `sh -c`: one line.
+      - name: Measure on the emulator
+        timeout-minutes: 35
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          cores: 3
+          disk-size: 6000M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          disable-animations: true
+          script: python3 lab/footprint/lab.py android --bin "$BIN" --device-bin "$DEVBIN" --apk "$APK" --out "$OUT" --budget-min 24
+
+      - name: Table
+        if: always()
+        timeout-minutes: 2
+        run: python3 lab/footprint/lab.py table "$OUT"
+
+      - name: Upload results
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-footprint-android
+          path: ${{ env.OUT }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  shapes:
+    name: The lab's client shapes against the app's config builders
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        timeout-minutes: 3
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        timeout-minutes: 5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        timeout-minutes: 5
+
+      - name: Dump the configs the app writes
+        timeout-minutes: 25
+        run: ./gradlew :sharedUI:jvmTest --tests org.olcbox.app.net.XrayConfigDumpTest --tests org.olcbox.app.net.SingBoxConfigDumpTest --stacktrace
+
+      - name: Compare with lab/footprint/shapes and the reference configs
+        timeout-minutes: 2
+        run: python3 lab/footprint/lab.py shapes-check
+
+  summary:
+    name: All results
+    needs: [desktop, android, shapes]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        timeout-minutes: 3
+
+      - name: Download results
+        uses: actions/download-artifact@v8
+        timeout-minutes: 5
+        with:
+          pattern: lab-footprint-*
+          path: all
+
+      - name: One table
+        timeout-minutes: 2
+        run: python3 lab/footprint/lab.py table all --json-out all/results-all.json
+
+      - name: Upload the merged results
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-footprint-all
+          path: all/results-all.json
+          retention-days: 14
+          if-no-files-found: warn
