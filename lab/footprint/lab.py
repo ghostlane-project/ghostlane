@@ -29,8 +29,10 @@ cpu_s_per_gb, notes, extra. README.md says what each figure is.
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -91,15 +93,26 @@ HY2_AUTH = "lab-hy2-auth"
 HY2_OBFS = "lab-hy2-obfs"
 THROUGH = "203.0.113.10"
 TUN_NAME = "pklab0"
+# hev's own tun in the hev row (Linux, root). The MTU is the extension's:
+# PacketTunnelProvider hands HevTunnel.start LibboxPlatform.Tun.mtu, 9000
+# (iosApp/PacketTunnel/LibboxBridge.swift). On a phone the tun comes with its
+# address; a process that opens its own needs one, so it gets one.
+TUN_HEV = "pklab1"
+HEV_TUN_IPV4 = "172.19.0.5"
+HEV_MTU = 9000
+HEV_CORE = "hev + cores harness: sing-box"
+# The ClientHello tap: a relay on this port in front of a server port.
+PORT_TAP = 20550
 
 PKG = "org.proofkit.app"
 ACTIVITY = PKG + "/org.olcbox.app.AppActivity"
 RECEIVER = PKG + "/org.olcbox.app.DebugVpnControlReceiver"
 DEV_DIR = "/data/local/tmp/lab"
 
-# The Go runtime reads these at start; a runner that happens to set one would
-# change every figure without saying so.
-SANITIZED = ("GOGC", "GOMEMLIMIT", "GODEBUG", "GOMAXPROCS")
+# The Go runtime, and Tokio for xray-rust, read these at start; a runner that
+# happens to set one would change every figure without saying so. (XRAY_* goes
+# too, which takes xray-rust's XRAY_TUN_PROFILE with it unless a row sets it.)
+SANITIZED = ("GOGC", "GOMEMLIMIT", "GODEBUG", "GOMAXPROCS", "TOKIO_WORKER_THREADS", "RUST_MIN_STACK")
 
 
 class LabError(Exception):
@@ -500,7 +513,7 @@ def expect(cond, what):
         raise LabError("the app's config shape changed: " + what)
 
 
-def singbox_reality(server, pub):
+def singbox_reality(server, pub, port=PORT_REALITY):
     """sharedUI reference-configs/vless-reality.json (SingBoxConfig.build of a
     Reality line, which SingBoxConfigDumpTest holds equal to it), with the
     lab's address and keys."""
@@ -509,7 +522,7 @@ def singbox_reality(server, pub):
     expect(out["type"] == "vless" and out.get("flow") == "xtls-rprx-vision", "vless-reality outbound")
     expect(out["tls"]["utls"]["fingerprint"] == "chrome" and out["tls"]["reality"]["enabled"], "vless-reality tls")
     expect(c["inbounds"][0]["type"] == "socks" and c["inbounds"][0]["listen_port"] == PORT_SOCKS, "socks inbound")
-    out.update(server=server, server_port=PORT_REALITY, uuid=UUID)
+    out.update(server=server, server_port=port, uuid=UUID)
     out["tls"]["server_name"] = SNI_REALITY
     out["tls"]["reality"].update(public_key=pub, short_id=SHORT_ID)
     return c
@@ -544,7 +557,7 @@ def singbox_ios_tun_reality(server, pub):
     return c
 
 
-def singbox_webtunnel(server):
+def singbox_webtunnel(server, port=PORT_WEBTUNNEL):
     """A WebTunnel line (VLESS, security=tls, type=httpupgrade, fp=chrome:
     proofkit-dvpn/docs/system/webtunnel.md) as the app writes it. No reference
     config is committed for this shape, so it is vless-reality.json changed
@@ -561,13 +574,13 @@ def singbox_webtunnel(server):
     expect(c["inbounds"][0]["type"] == "socks" and c["inbounds"][0]["listen_port"] == PORT_SOCKS, "socks inbound")
     out.pop("flow", None)
     out["tls"].pop("reality", None)
-    out.update(server=server, server_port=PORT_WEBTUNNEL, uuid=UUID)
+    out.update(server=server, server_port=port, uuid=UUID)
     out["tls"].update(server_name=SNI_WEBTUNNEL, insecure=True)
     out["transport"] = {"type": "httpupgrade", "path": WEBTUNNEL_PATH, "host": SNI_WEBTUNNEL}
     return c
 
 
-def xray_xhttp(server, pub, answers_dns):
+def xray_xhttp(server, pub, answers_dns, port=PORT_XHTTP):
     """XrayConfig.buildXhttp as XrayConfigDumpTest writes it (shapes/, checked
     against a fresh dump by `lab.py shapes-check`), with the lab's address,
     keys, name and path. answers_dns is the iPhone's shape behind hev."""
@@ -576,13 +589,168 @@ def xray_xhttp(server, pub, answers_dns):
     expect(out["protocol"] == "vless" and out["streamSettings"]["network"] == "xhttp", "xhttp outbound")
     expect(c["inbounds"][0]["port"] == PORT_SOCKS, "socks inbound")
     vnext = out["settings"]["vnext"][0]
-    vnext.update(address=server, port=PORT_XHTTP)
+    vnext.update(address=server, port=port)
     vnext["users"][0]["id"] = UUID
     ss = out["streamSettings"]
     ss["realitySettings"].update(serverName=SNI_XHTTP, publicKey=pub, shortId=SHORT_ID)
     ss["xhttpSettings"].update(path=XHTTP_PATH, host=SNI_XHTTP)
     expect(ss["xhttpSettings"]["mode"] == "packet-up", "xhttp mode")
     return c
+
+
+# ---------------------------------------------------------------- xray-rust
+#
+# xray-rust reads Xray-style JSON, a documented subset of it
+# (docs/config-compatibility.md at the tag). Its configs here are the app's
+# shapes written in that form: the XHTTP line is the app's own Xray shape,
+# unchanged; the three lines the app gives sing-box are translated field by
+# field from the sing-box reference configs. Each builder returns the config
+# and the notes that say where it differs from the app's.
+
+
+def cert_sha256(pem_path):
+    """SHA-256 of a PEM certificate's DER, the form pinnedPeerCertSha256 takes."""
+    text = Path(pem_path).read_text()
+    m = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", text, re.S)
+    if not m:
+        raise LabError("no certificate in %s" % pem_path)
+    return hashlib.sha256(base64.b64decode("".join(m.group(1).split()))).hexdigest()
+
+
+def xrs_config(outbound):
+    """The app's own Xray SOCKS inbound (shapes/vless-xhttp.json) and one outbound."""
+    inbound = load_json(SHAPES / "vless-xhttp.json")["inbounds"][0]
+    expect(inbound["protocol"] == "socks" and inbound["port"] == PORT_SOCKS, "xray socks inbound")
+    return {"log": {"loglevel": "warning"}, "inbounds": [inbound], "outbounds": [outbound]}
+
+
+def xrs_reality(server, pub, port=PORT_REALITY):
+    ref = load_json(REFS / "vless-reality.json")["outbounds"][0]
+    expect(ref["type"] == "vless" and ref.get("flow") == "xtls-rprx-vision", "vless-reality outbound")
+    expect(ref["tls"]["utls"]["enabled"] and ref["tls"]["reality"]["enabled"], "vless-reality tls")
+    fp = ref["tls"]["utls"]["fingerprint"]
+    out = {"tag": "out", "protocol": "vless",
+           "settings": {"vnext": [{"address": server, "port": port,
+                                   "users": [{"id": UUID, "encryption": "none", "flow": ref["flow"]}]}]},
+           "streamSettings": {"network": "tcp", "security": "reality",
+                              "realitySettings": {"serverName": SNI_REALITY, "fingerprint": fp,
+                                                  "publicKey": pub, "shortId": SHORT_ID}}}
+    return xrs_config(out), [
+        "vless-reality.json written as Xray JSON: flow %s, fingerprint %s, the Reality keys; sing-box's "
+        "packet_encoding xudp has no outbound field there (xray-rust frames VLESS UDP itself) and the lab "
+        "moves no UDP" % (ref["flow"], fp)]
+
+
+def xrs_xhttp(server, pub, port=PORT_XHTTP):
+    return xray_xhttp(server, pub, answers_dns=False, port=port), [
+        "the app's own Xray shape (shapes/vless-xhttp.json, what the xray (exec) row runs), unchanged: "
+        "packet-up over Reality H2, fingerprint chrome, scMaxEachPostBytes 200000"]
+
+
+def xrs_hy2(server, pin, port=PORT_HY2):
+    ref = load_json(REFS / "hysteria2.json")["outbounds"][0]
+    expect(ref["type"] == "hysteria2" and ref["obfs"]["type"] == "salamander", "hysteria2 outbound")
+    expect(ref["tls"].get("insecure") is True, "hysteria2 insecure")
+    expect(not any(k in ref for k in ("up_mbps", "down_mbps")), "hysteria2 bandwidth")
+    out = {"tag": "out", "protocol": "hysteria",
+           "settings": {"version": 2, "address": server, "port": port},
+           "streamSettings": {"network": "hysteria", "security": "tls",
+                              "tlsSettings": {"serverName": SNI_HY2, "alpn": ["h3"], "pinnedPeerCertSha256": pin},
+                              "hysteriaSettings": {"version": 2, "auth": HY2_AUTH},
+                              "finalmask": {"udp": [{"type": "salamander", "settings": {"password": HY2_OBFS}}]}}}
+    return xrs_config(out), [
+        "hysteria2.json written as Xray JSON (version 2, auth, Salamander under finalmask.udp, alpn h3); "
+        "its insecure:true becomes pinnedPeerCertSha256 of the lab's certificate, because xray-rust refuses "
+        "allowInsecure:true (the exits' lines publish a pin, which sing-box cannot use); no bandwidth "
+        "in either; xray-rust has no ChromeParrot QUIC hello (its parser warns)"]
+
+
+def xrs_webtunnel(server, pin, port=PORT_WEBTUNNEL):
+    sb = singbox_webtunnel(server, port)["outbounds"][0]
+    expect(sb["transport"]["type"] == "httpupgrade" and "flow" not in sb, "webtunnel outbound")
+    expect("alpn" not in sb["tls"], "webtunnel alpn")
+    out = {"tag": "out", "protocol": "vless",
+           "settings": {"vnext": [{"address": server, "port": port,
+                                   "users": [{"id": UUID, "encryption": "none"}]}]},
+           "streamSettings": {"network": "httpupgrade", "security": "tls",
+                              "tlsSettings": {"serverName": sb["tls"]["server_name"],
+                                              "fingerprint": sb["tls"]["utls"]["fingerprint"],
+                                              "pinnedPeerCertSha256": pin},
+                              "httpupgradeSettings": {"path": sb["transport"]["path"],
+                                                      "host": sb["transport"]["host"]}}}
+    return xrs_config(out), [
+        "the sing-box WebTunnel shape (singbox_webtunnel) written as Xray JSON: no flow, TLS with fingerprint "
+        "chrome, httpupgrade path and host, no alpn written (the app writes none, so the chrome profile's "
+        "ALPN goes out); insecure becomes pinnedPeerCertSha256 of the lab's certificate"]
+
+
+def xrs_check(xrs, cfg_path, report_path):
+    """`xray-rust config check --json`: the linked parser, no core started.
+    Returns (valid, notes, report)."""
+    try:
+        cp = subprocess.run([str(xrs), "config", "check", "-config", str(cfg_path), "--json"],
+                            capture_output=True, text=True, timeout=60, env=clean_env())
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, ["xray-rust config check did not run: %s" % e], {}
+    Path(report_path).write_text((cp.stdout or "") + (cp.stderr or ""))
+    try:
+        report = json.loads(cp.stdout)
+    except ValueError:
+        return False, ["xray-rust config check said: %s" % (cp.stdout + cp.stderr).strip()[-400:]], {}
+    notes = []
+    for d in report.get("diagnostics") or []:
+        notes.append("xray-rust config check %s at %s: %s" % (
+            d.get("severity", "?"), d.get("path", "$"), str(d.get("message", d))[:300]))
+    return bool(report.get("valid")), notes, report
+
+
+# ---------------------------------------------------------------- hev
+
+# HevTunnel.configuration (iosApp/PacketTunnel/HevTunnel.swift), the lines it
+# writes after `misc:`. hev_config refuses to run when the Swift no longer
+# writes one of them.
+HEV_MISC = ("task-stack-size: 24576", "tcp-buffer-size: 4096", "max-session-count: 768", "connect-timeout: 5000",
+            "read-write-timeout: 60000", "udp-read-write-timeout: 30000", "log-file: stderr", "log-level: warn")
+
+
+def hev_config(port):
+    """The iPhone's hev configuration for a SOCKS without login (Xray's),
+    plus the two lines a process that opens its own tun needs and the
+    extension's handed-in descriptor makes unnecessary: the interface's name
+    and address."""
+    swift = (REPO / "iosApp" / "PacketTunnel" / "HevTunnel.swift").read_text()
+    for line in HEV_MISC + ("address: 127.0.0.1", "udp: 'udp'"):
+        expect('"  %s"' % line in swift, "HevTunnel.swift no longer writes %r" % line)
+    expect('"  mtu: \\(mtu)"' in swift and '"  port: \\(socks.port)"' in swift, "HevTunnel.swift mtu and port lines")
+    bridge = (REPO / "iosApp" / "PacketTunnel" / "LibboxBridge.swift").read_text()
+    expect(re.search(r"static let mtu = %d\b" % HEV_MTU, bridge) is not None, "LibboxPlatform.Tun.mtu")
+    return ("tunnel:\n  name: %s\n  mtu: %d\n  ipv4: %s\n"
+            "socks5:\n  port: %d\n  address: 127.0.0.1\n  udp: 'udp'\n"
+            "misc:\n%s") % (TUN_HEV, HEV_MTU, HEV_TUN_IPV4, port, "".join("  %s\n" % m for m in HEV_MISC))
+
+
+def find_pid_by_argv(exe_name, needle, seconds=8):
+    """The pid of a process whose argv[0] ends in exe_name and whose argv
+    holds needle: the real process behind `sudo` (which keeps a monitor
+    process of its own between them when use_pty is set)."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit() or int(entry) <= 1:
+                continue
+            try:
+                argv = Path("/proc/%s/cmdline" % entry).read_bytes().split(b"\0")
+            except OSError:
+                continue
+            if argv and argv[0].decode(errors="replace").endswith(exe_name) and \
+                    needle.encode() in argv[1:]:
+                return int(entry)
+        time.sleep(0.1)
+    return None
+
+
+def link_exists(name):
+    return Path("/sys/class/net/%s" % name).exists()
 
 
 def xray_server(priv, cert, key):
@@ -885,7 +1053,7 @@ def harness_figures(row, h, t_ready, idle_win, down_win):
 
 class Spec:
     def __init__(self, **kw):
-        self.kind = kw["kind"]              # exec | harness | harness-tun
+        self.kind = kw["kind"]              # exec | harness | harness-tun | harness-hev
         self.core = kw["core"]
         self.scenario = kw["scenario"]
         self.settings = kw["settings"]
@@ -897,7 +1065,21 @@ class Spec:
         self.version = kw.get("version", "unknown")
         self.notes = list(kw.get("notes", []))
         self.needs_webtunnel = kw.get("needs_webtunnel", False)
+        self.env = kw.get("env")            # added to the scrubbed environment
+        self.xrs_check = kw.get("xrs_check")  # xray-rust binary: `config check` the config first
+        self.aux_checks = kw.get("aux_checks", {})  # name -> config, `config check`ed only
+        self.extra = dict(kw.get("extra", {}))
         self.slug = re.sub(r"[^a-z0-9]+", "-", ("%s %s %s" % (self.core, self.scenario, self.settings)).lower()).strip("-")
+
+
+def pair_reader(reader, core_pid, front_pid):
+    """One sample of two processes taken together: the sum, and each."""
+    def read():
+        a, b = reader.read(core_pid), reader.read(front_pid)
+        return {"rss": a["rss"] + b["rss"], "cpu": a["cpu"] + b["cpu"],
+                "rss_core": a["rss"], "rss_front": b["rss"], "cpu_core": a["cpu"], "cpu_front": b["cpu"],
+                "hwm_core": a.get("hwm"), "hwm_front": b.get("hwm")}
+    return read
 
 
 def run_desktop_spec(spec, ctx):
@@ -906,14 +1088,30 @@ def run_desktop_spec(spec, ctx):
     reader, host, platform = ctx["reader"], ctx["host"], ctx["platform"]
     notes = list(spec.notes)
     metric = "resident size (VmRSS)" if isinstance(reader, LinuxReader) else "resident size (ri_resident_size)"
+    if spec.kind == "harness-hev":
+        metric = "resident size (VmRSS), hev + the harness summed"
     row = base_row(platform, spec.core, spec.version, spec.scenario, spec.settings, metric)
-    if spec.socks and not wait_port_free(PORT_SOCKS):
+    row["extra"].update(spec.extra)
+    if (spec.socks or spec.kind == "harness-hev") and not wait_port_free(PORT_SOCKS):
         raise LabError("port %d is still taken by the previous run" % PORT_SOCKS)
     cfg_path = None
     if spec.config is not None:
         cfg_path = rundir / "config.json"
         write_json(cfg_path, spec.config)
+    if spec.xrs_check:
+        for name, aux in spec.aux_checks.items():
+            aux_path = rundir / ("aux-%s.json" % re.sub(r"[^a-z0-9]+", "-", name.lower()))
+            write_json(aux_path, aux)
+            ok, aux_notes, _ = xrs_check(spec.xrs_check, aux_path, rundir / ("aux-check-%s.json" % aux_path.stem))
+            row["extra"].setdefault("config_check_other_shapes", {})[name] = {"accepted": ok, "diagnostics": aux_notes}
+        ok, check_notes, report = xrs_check(spec.xrs_check, cfg_path, rundir / "config-check.json")
+        row["extra"]["xray_rust_core_version"] = report.get("core_version")
+        notes += check_notes
+        if not ok:
+            raise LabError("xray-rust refused the config (%s): %s" % (
+                rundir / "config-check.json", "; ".join(check_notes) or "no diagnostics"))
     sudo = spec.kind == "harness-tun"
+    tun_dev = {"harness-tun": TUN_NAME, "harness-hev": TUN_HEV}.get(spec.kind)
     if spec.kind == "exec":
         argv = [a if a != "{config}" else str(cfg_path) for a in spec.argv]
     else:
@@ -922,7 +1120,8 @@ def run_desktop_spec(spec, ctx):
         if cfg_path:
             argv += ["-config", cfg_path]
     t_launch = time.time()
-    proc = Proc(argv, rundir / "core.log", cwd=rundir, env=clean_env(), sudo=sudo)
+    proc = Proc(argv, rundir / "core.log", cwd=rundir, env=clean_env(spec.env), sudo=sudo)
+    front = None
     rows, final = [], {}
     down = up = {"ok": False, "error": "not run"}
     idle_win = (None, None)
@@ -938,18 +1137,38 @@ def run_desktop_spec(spec, ctx):
             proc.pid = int(ready["pid"])
             row["version"] = ", ".join("%s %s" % kv for kv in sorted(ready.get("versions", {}).items()))
             row["extra"]["ready"] = {k: ready.get(k) for k in ("limit_in_force", "gc_percent", "footprint_bytes")}
+        if spec.kind == "harness-hev":
+            # hev in front of the harness's SOCKS, as root: it opens its own tun.
+            hev_cfg = rundir / "hev.yml"
+            hev_cfg.write_text(hev_config(PORT_SOCKS))
+            if not wait_port(PORT_SOCKS, 20, proc):
+                raise LabError("the harness's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+            front = Proc([ctx["hev"], hev_cfg], rundir / "hev.log", cwd=rundir, env=clean_env(), sudo=True)
+            real = find_pid_by_argv(Path(ctx["hev"]).name, str(hev_cfg))
+            if real is None:
+                raise LabError("hev did not start:\n" + tail(rundir / "hev.log"))
+            front.pid = real
+            deadline = time.time() + 10
+            while not link_exists(TUN_HEV) and time.time() < deadline and front.alive():
+                time.sleep(0.1)
+            if not link_exists(TUN_HEV):
+                raise LabError("hev opened no %s:\n%s" % (TUN_HEV, tail(rundir / "hev.log")))
+            row["version"] += ", " + ctx.get("hev_version", "hev-socks5-tunnel")
         t_ready = time.time()
         row["extra"]["start_to_ready_s"] = rnd(t_ready - t_launch, 2)
-        if sudo:
+        if tun_dev:
             r = subprocess.run(["sudo", "-n", "ip", "route", "replace", THROUGH.rsplit(".", 1)[0] + ".0/24",
-                                "dev", TUN_NAME], capture_output=True, text=True)
+                                "dev", tun_dev], capture_output=True, text=True)
             if r.returncode != 0:
-                raise LabError("route into %s: %s" % (TUN_NAME, r.stderr.strip()))
+                raise LabError("route into %s: %s" % (tun_dev, r.stderr.strip()))
         probe = host.probe(spec.socks, 40)
         if not probe.get("ok"):
-            raise LabError("no byte crossed the core in 40 s (%s):\n%s" % (probe.get("error"), tail(rundir / "core.log")))
+            raise LabError("no byte crossed the core in 40 s (%s):\n%s%s" % (
+                probe.get("error"), tail(rundir / "core.log"),
+                ("\nhev:\n" + tail(rundir / "hev.log")) if front else ""))
         row["extra"]["first_bytes_s"] = rnd(time.time() - t_ready, 2)
-        sampler = Sampler(lambda: reader.read(proc.pid), PERIOD_S)
+        read = pair_reader(reader, proc.pid, front.pid) if front else (lambda: reader.read(proc.pid))
+        sampler = Sampler(read, PERIOD_S)
         sampler.start()
         t0 = time.time()
         time.sleep(IDLE_SETTLE_S)
@@ -965,7 +1184,7 @@ def run_desktop_spec(spec, ctx):
         t_idle_end = time.time()
         bdown, bup, bwin = run_burst(host, spec.socks)
         try:
-            final = reader.read(proc.pid)
+            final = read()
         except Exception:
             final = {}
         rows = sampler.halt()
@@ -976,7 +1195,23 @@ def run_desktop_spec(spec, ctx):
     finally:
         if sampler is not None and sampler.is_alive():
             sampler.halt()
+        if front is not None:
+            front.stop()
         proc.stop()
+    if front is not None and rows:
+        # Each process on its own; the headline columns are their sum.
+        ex = row["extra"]
+        for who, label in (("front", "hev"), ("core", "harness")):
+            ex["%s_rss_idle_mb" % label] = mb(median_in(rows, "rss_" + who, *idle_win))
+            ex["%s_rss_steady_mb" % label] = mb(median_mid(rows, "rss_" + who, *wins[0]))
+            ex["%s_rss_peak_mb" % label] = mb(max(final.get("hwm_" + who) or 0, max_of(rows, "rss_" + who) or 0) or None)
+            ex["%s_rss_burst_peak_mb" % label] = mb(max_of(rows, "rss_" + who, *bwin))
+            cd = delta(rows, "cpu_" + who, *wins[0])
+            cu = delta(rows, "cpu_" + who, *wins[1])
+            moved = (down.get("bytes") or 0) + (up.get("bytes") or 0)
+            ex["%s_cpu_s_per_gb" % label] = rnd(cpu_per_gb(cd + cu, moved), 2) if None not in (cd, cu) and moved else None
+        notes.append("hev's own peak is its VmHWM; the summed peak is the largest summed sample (two "
+                     "processes' high-water marks do not add)")
     row["idle_rss_mb"] = mb(median_in(rows, "rss", *idle_win))
     row["steady_rss_mb"] = mb(median_mid(rows, "rss", *wins[0]))
     sampled_peak = max_of(rows, "rss")
@@ -1127,6 +1362,229 @@ def run_soak(transport, settings, ctx):
     return row
 
 
+# ---------------------------------------------------------------- ClientHello
+
+
+class HelloTap(threading.Thread):
+    """A loopback relay in front of a server port that keeps the client's
+    first flight of the first connection: what the server is shown. The bytes
+    pass unchanged both ways."""
+
+    def __init__(self, listen_port, upstream_port):
+        super().__init__(daemon=True)
+        self.upstream = upstream_port
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", listen_port))
+        self.sock.listen(64)
+        self.sock.settimeout(0.5)
+        self.first = None
+        self._halt = threading.Event()
+        self.conns = []
+
+    def run(self):
+        while not self._halt.is_set():
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                continue
+            try:
+                u = socket.create_connection(("127.0.0.1", self.upstream), timeout=5)
+            except OSError:
+                c.close()
+                continue
+            u.settimeout(None)
+            self.conns += [c, u]
+            keep = self.first is None
+            if keep:
+                self.first = b""
+            threading.Thread(target=self._pump, args=(c, u, keep), daemon=True).start()
+            threading.Thread(target=self._pump, args=(u, c, False), daemon=True).start()
+
+    def _pump(self, src, dst, keep):
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                if keep and len(self.first) < 32768:
+                    self.first += data
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for s in (src, dst):
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def halt(self):
+        self._halt.set()
+        self.join(5)
+        for s in self.conns + [self.sock]:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def is_grease(v):
+    return (v & 0x0f0f) == 0x0a0a and (v >> 8) == (v & 0xff)
+
+
+EXT_NAMES = {0: "server_name", 5: "status_request", 10: "supported_groups", 11: "ec_point_formats",
+             13: "signature_algorithms", 16: "alpn", 18: "sct", 21: "padding", 23: "extended_master_secret",
+             27: "compress_certificate", 28: "record_size_limit", 34: "delegated_credentials", 35: "session_ticket",
+             41: "pre_shared_key", 43: "supported_versions", 45: "psk_key_exchange_modes", 51: "key_share",
+             17513: "application_settings_old", 17613: "application_settings", 65037: "encrypted_client_hello",
+             65281: "renegotiation_info"}
+GROUP_NAMES = {0x001d: "x25519", 0x0017: "secp256r1", 0x0018: "secp384r1", 0x0019: "secp521r1",
+               0x11ec: "X25519MLKEM768", 0x6399: "X25519Kyber768Draft00", 0x0100: "ffdhe2048", 0x0101: "ffdhe3072"}
+
+
+def parse_client_hello(buf):
+    """The first ClientHello in a client's first flight: its shape, JA3 and
+    JA4. GREASE values are kept in the ordered lists as "GREASE" and left out
+    of the fingerprints, as JA3 and JA4 define them."""
+    hs, i = b"", 0
+    rec_len = None
+    while i + 5 <= len(buf) and buf[i] == 0x16:
+        n = struct.unpack(">H", buf[i + 3:i + 5])[0]
+        rec_len = n if rec_len is None else rec_len
+        hs += buf[i + 5:i + 5 + n]
+        i += 5 + n
+        if len(hs) >= 4 and len(hs) >= 4 + int.from_bytes(hs[1:4], "big"):
+            break
+    if len(hs) < 4 or hs[0] != 1:
+        return {"error": "no TLS ClientHello in the first %d bytes (starts %s)" % (len(buf), buf[:8].hex())}
+    body = hs[4:4 + int.from_bytes(hs[1:4], "big")]
+    p = 0
+
+    def take(n):
+        nonlocal p
+        v = body[p:p + n]
+        p += n
+        return v
+
+    legacy = take(2).hex()
+    take(32)
+    sid_len = take(1)[0]
+    take(sid_len)
+    cs = take(int.from_bytes(take(2), "big"))
+    ciphers = [int.from_bytes(cs[j:j + 2], "big") for j in range(0, len(cs), 2)]
+    take(take(1)[0])
+    ext_end = p + 2 + int.from_bytes(body[p:p + 2], "big")
+    p += 2
+    exts, info = [], {}
+    while p + 4 <= ext_end:
+        et, el = struct.unpack(">HH", body[p:p + 4])
+        data = body[p + 4:p + 4 + el]
+        p += 4 + el
+        exts.append((et, el, data))
+    sigs, groups, shares, alpn, versions, sni = [], [], [], [], [], None
+    for et, el, data in exts:
+        if et == 0 and len(data) > 5:
+            sni = data[5:5 + int.from_bytes(data[3:5], "big")].decode(errors="replace")
+        elif et == 10:
+            groups = [int.from_bytes(data[j:j + 2], "big") for j in range(2, 2 + int.from_bytes(data[:2], "big"), 2)]
+        elif et == 13:
+            sigs = [int.from_bytes(data[j:j + 2], "big") for j in range(2, 2 + int.from_bytes(data[:2], "big"), 2)]
+        elif et == 16:
+            q = 2
+            while q < len(data):
+                n = data[q]
+                alpn.append(data[q + 1:q + 1 + n].decode(errors="replace"))
+                q += 1 + n
+        elif et == 43:
+            versions = [int.from_bytes(data[j:j + 2], "big") for j in range(1, 1 + data[0], 2)]
+        elif et == 51:
+            q = 2
+            while q + 4 <= len(data):
+                g, n = struct.unpack(">HH", data[q:q + 4])
+                shares.append((g, n))
+                q += 4 + n
+        elif et == 21:
+            info["padding_bytes"] = el
+        elif et == 65037:
+            info["ech_bytes"] = el
+
+    def name(v, names):
+        return "GREASE" if is_grease(v) else names.get(v, "0x%04x" % v)
+
+    clean_c = [c for c in ciphers if not is_grease(c)]
+    clean_e = [e for e, _, _ in exts if not is_grease(e)]
+    clean_v = [v for v in versions if not is_grease(v)]
+    top = max(clean_v) if clean_v else int(legacy, 16)
+    ver = {0x0304: "13", 0x0303: "12", 0x0302: "11", 0x0301: "10"}.get(top, "00")
+    first = alpn[0] if alpn else ""
+    a_alpn = (first[0] + first[-1]) if first else "00"
+    ja4_a = "t%s%s%02d%02d%s" % (ver, "d" if sni is not None else "i", min(len(clean_c), 99), min(len(clean_e), 99), a_alpn)
+    ja4_b = hashlib.sha256(",".join(sorted("%04x" % c for c in clean_c)).encode()).hexdigest()[:12]
+    c_exts = ",".join(sorted("%04x" % e for e in clean_e if e not in (0, 16)))
+    c_sigs = ",".join("%04x" % s for s in sigs if not is_grease(s))
+    ja4_c = hashlib.sha256((c_exts + ("_" + c_sigs if c_sigs else "")).encode()).hexdigest()[:12]
+    ec_formats = []
+    for et, _, data in exts:
+        if et == 11 and data:
+            ec_formats = list(data[1:1 + data[0]])
+    ja3 = "%d,%s,%s,%s,%s" % (int(legacy, 16), "-".join(str(c) for c in clean_c), "-".join(str(e) for e in clean_e),
+                              "-".join(str(g) for g in groups if not is_grease(g)), "-".join(str(f) for f in ec_formats))
+    info.update({
+        "ja4": "%s_%s_%s" % (ja4_a, ja4_b, ja4_c),
+        "ja3_md5": hashlib.md5(ja3.encode()).hexdigest(),
+        "first_record_bytes": rec_len,
+        "client_hello_bytes": len(body) + 4,
+        "legacy_version": legacy,
+        "session_id_bytes": sid_len,
+        "sni": sni,
+        "alpn": alpn,
+        "supported_versions": [name(v, {0x0304: "TLS1.3", 0x0303: "TLS1.2"}) for v in versions],
+        "cipher_suites": [name(c, {}) for c in ciphers],
+        "extensions": ["%s(%d)" % (name(e, EXT_NAMES), n) for e, n, _ in exts],
+        "supported_groups": [name(g, GROUP_NAMES) for g in groups],
+        "key_shares": ["%s:%d" % (name(g, GROUP_NAMES), n) for g, n in shares],
+        "signature_algorithms": ["%04x" % s for s in sigs],
+        "grease": any(is_grease(v) for v in ciphers + [e for e, _, _ in exts] + groups),
+    })
+    return info
+
+
+def run_hello(core, line, config, argv, env, upstream, ctx):
+    """One short start of a core whose line points at the tap instead of the
+    server: one 1000-byte fetch, then the first flight is parsed."""
+    rundir = ctx["out"] / "runs" / ("hello-" + re.sub(r"[^a-z0-9]+", "-", ("%s %s" % (core, line)).lower()).strip("-"))
+    rundir.mkdir(parents=True, exist_ok=True)
+    row = base_row(ctx["platform"], core, "", "client hello: " + line, "", "")
+    if not wait_port_free(PORT_SOCKS):
+        raise LabError("port %d is still taken by the previous run" % PORT_SOCKS)
+    cfg = rundir / "config.json"
+    write_json(cfg, config)
+    tap = HelloTap(PORT_TAP, upstream)
+    tap.start()
+    proc = None
+    try:
+        proc = Proc([a if a != "{config}" else str(cfg) for a in argv], rundir / "core.log", cwd=rundir,
+                    env=clean_env(env))
+        if not wait_port(PORT_SOCKS, 20, proc):
+            raise LabError("the core's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        probe = ctx["host"].probe("127.0.0.1:%d" % PORT_SOCKS, 20)
+        row["extra"]["fetch_through_tap_ok"] = bool(probe.get("ok"))
+    finally:
+        if proc is not None:
+            proc.stop()
+        tap.halt()
+    first = tap.first or b""
+    (rundir / "first-flight.bin").write_bytes(first)
+    if not first:
+        raise LabError("the core sent nothing to the server port:\n" + tail(rundir / "core.log"))
+    hello = parse_client_hello(first)
+    row["extra"].update(hello)
+    row["notes"] = hello.get("error") or ("the first flight of the first connection, as the server's port saw it; "
+                                          "first-flight.bin beside the config")
+    return row
+
+
 def size_row(platform, name, path, what):
     row = base_row(platform, name, "", "binary size", "", "")
     try:
@@ -1170,6 +1628,7 @@ def cmd_desktop(a):
     sb_version = first_line([singbox, "version"])
     xr_version = first_line([xray_client, "version"])
     loop = "127.0.0.1"
+    missing = []  # (spec, why): rows that fail by name without a run
     ios_note = ("-mode ios: LibboxSetMemoryLimit(true) (GC 10, 45 MiB set explicitly), then for Xray the h2 windows "
                 "and libXray's InitForceFree (GC 10, 30 MiB, FreeOSMemory every 1 s), then MobileSetMemoryLimit "
                 "40 MiB, and MemoryWatch's release above 36 MiB")
@@ -1214,7 +1673,92 @@ def cmd_desktop(a):
                           notes=[ios_note, "ios-tun-reality.json with auto_route off; root via sudo; the kernel routes "
                                  "203.0.113.0/24 into the tun, the way NEPacketTunnelFlow hands packets to libbox",
                                  srv_note]))
+        # The same line with hev owning the tun and sing-box on SOCKS behind
+        # it: the shape the iPhone already uses for XHTTP and olcRTC, and the
+        # one Android uses for every sing-box line.
+        hev_bin = b / "hev-socks5-tunnel"
+        hev_spec = Spec(kind="harness-hev", core=HEV_CORE, harness_core="singbox", mode="ios",
+                        settings="ios-limits", scenario="hev tun, vless-reality-vision", socks=None,
+                        config=singbox_reality(loop, servers.pub),
+                        notes=[ios_note, "hev-socks5-tunnel at scripts/hev-pins.sh's commit, built as the desktop app "
+                               "builds it on Linux (make clean exec), run as root with HevTunnel.swift's configuration "
+                               "(MTU 9000, task stack 24576, tcp buffer 4096, 768 sessions) plus a tun name and "
+                               "address; sing-box on SOCKS with vless-reality.json behind it, the harness in -mode ios; "
+                               "the kernel routes 203.0.113.0/24 into hev's tun; on a phone hev is a thread of the "
+                               "extension, here a process of its own, so the two are sampled together and summed",
+                               srv_note])
+        if hev_bin.exists():
+            ctx["hev"] = hev_bin
+            try:
+                ctx["hev_version"] = (b / "hev.versions.txt").read_text().splitlines()[0]
+            except (OSError, IndexError):
+                ctx["hev_version"] = "hev-socks5-tunnel (version file missing)"
+            specs.append(hev_spec)
+        else:
+            missing.append((hev_spec, "hev-socks5-tunnel was not built (hev-build.log in this artifact): %s missing; %s"
+                            % (hev_bin, tail(out / "hev-build.log", 8).replace("\n", " | ") or "no build log")))
+
+    # xray-rust: one binary, two runtime profiles, the four lines.
+    xrs_dir = Path(a.xray_rust).resolve() if a.xray_rust else None
+    xrs_specs, xrs_bin, xrs_version, xrs_core = [], None, "", ""
+    if xrs_dir is not None:
+        xrs_bin = xrs_dir / "xray-rust"
+        try:
+            xrs_info = load_json(xrs_dir / "xray-rust.build.json")
+        except (OSError, ValueError):
+            xrs_info = {}
+        xrs_tag = xrs_info.get("tag") or os.environ.get("XRAY_RUST_TAG", "unknown")
+        xrs_core = "xray-rust %s (exec)" % xrs_tag
+        xrs_version = "xray-rust %s %s, %s, cargo --release [%s]" % (
+            xrs_tag, (xrs_info.get("commit") or os.environ.get("XRAY_RUST_COMMIT", "?"))[:12],
+            xrs_info.get("rustc", "rustc ?"), xrs_info.get("profile_release", "?"))
+        here_run = os.environ.get("GITHUB_RUN_ID", "local")
+        build_note = ("built in this run in %s s" % xrs_info.get("build_seconds")
+                      if str(xrs_info.get("built_by_run")) == here_run else
+                      "binary restored from the actions cache: built by run %s from the same tag, commit, toolchain "
+                      "and build script" % xrs_info.get("built_by_run"))
+        hy2_pin = cert_sha256(servers.dir / "hy2.crt")
+        try:
+            wt_pin = cert_sha256(servers.dir / "webtunnel.crt")
+        except (OSError, LabError):
+            wt_pin = "0" * 64
+        workers = max(2, min(6, os.cpu_count() or 2))
+        profiles = (
+            ("cli defaults", None,
+             ["xray-rust's CLI as it starts: 2 Tokio workers (crates/xray-cli/src/main.rs), runtime profile Default, "
+              "which on a desktop target is the Standard transport memory class (H2 stream windows a fixed 4 MiB)"]),
+            ("mobile profile", {"XRAY_TUN_PROFILE": "mobile", "TOKIO_WORKER_THREADS": str(workers)},
+             ["the library's profile on a phone: XRAY_TUN_PROFILE=mobile (TunRuntimeProfile::Mobile, which the "
+              "Android VpnService adapter passes and which iOS's Default resolves to: the Constrained transport "
+              "memory class, XHTTP H2 stream windows opening at 1 MiB and growing for a reader that keeps up, "
+              "DNS 16 operations), and %d Tokio workers, as xray-ffi sizes its runtime here (available "
+              "parallelism clamped to 2..6; a 6-core phone gets 6)" % workers]),
+        )
+        lines = (
+            ("vless-reality-vision", xrs_reality(loop, servers.pub), False),
+            ("hysteria2-salamander", xrs_hy2(loop, hy2_pin), False),
+            ("vless-xhttp-reality packet-up", xrs_xhttp(loop, servers.pub), False),
+            (WEBTUNNEL, xrs_webtunnel(loop, wt_pin), True),
+        )
+        for prof, env, prof_notes in profiles:
+            for scenario, (cfg, cfg_notes), wt in lines:
+                aux = {}
+                if prof == "cli defaults" and scenario.startswith("vless-xhttp"):
+                    aux = {"the iPhone's answers-dns XHTTP shape": xray_xhttp(loop, servers.pub, answers_dns=True)}
+                xrs_specs.append(Spec(
+                    kind="exec", core=xrs_core, argv=[xrs_bin, "run", "-config", "{config}"], settings=prof, env=env,
+                    scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt, xrs_check=xrs_bin,
+                    aux_checks=aux, extra={"xray_rust_build": xrs_info},
+                    notes=prof_notes + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
+        if xrs_bin.exists():
+            specs += xrs_specs
+        else:
+            reason = "xray-rust was not built (xray-rust-build.log in this artifact): " + \
+                tail(out / "xray-rust-build.log", 8).replace("\n", " | ")
+            missing += [(s, reason) for s in xrs_specs]
     try:
+        for spec, reason in missing:
+            add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, reason))
         for spec in specs:
             if not budget.allows(90):
                 add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, "skipped: out of time budget"))
@@ -1250,6 +1794,34 @@ def cmd_desktop(a):
                     except Exception as e:
                         traceback.print_exc()
                         add(failed_row(a.platform, "olcrtc engine (loopback soak)", transport, settings, e))
+        # The ClientHello each core sends on the three TCP lines, through a
+        # relay on PORT_TAP in front of the server port. Hysteria2's hello is
+        # inside a QUIC Initial under Salamander, which this relay cannot read.
+        sb_argv, xr_argv = [singbox, "run", "-c", "{config}"], [xray_client, "run", "-c", "{config}"]
+        hellos = []
+        if xrs_bin is not None and xrs_bin.exists():
+            xa = [xrs_bin, "run", "-config", "{config}"]
+            hellos += [(xrs_core, xrs_version, "vless-reality-vision", lambda p: xrs_reality(loop, servers.pub, p)[0], xa, PORT_REALITY),
+                       (xrs_core, xrs_version, "vless-xhttp-reality packet-up", lambda p: xrs_xhttp(loop, servers.pub, p)[0], xa, PORT_XHTTP),
+                       (xrs_core, xrs_version, WEBTUNNEL, lambda p: xrs_webtunnel(loop, wt_pin, p)[0], xa, PORT_WEBTUNNEL)]
+        hellos += [("sing-box (exec)", sb_version, "vless-reality-vision", lambda p: singbox_reality(loop, servers.pub, p), sb_argv, PORT_REALITY),
+                   ("xray (exec)", xr_version, "vless-xhttp-reality packet-up", lambda p: xray_xhttp(loop, servers.pub, False, p), xr_argv, PORT_XHTTP),
+                   ("sing-box (exec)", sb_version, WEBTUNNEL, lambda p: singbox_webtunnel(loop, p), sb_argv, PORT_WEBTUNNEL)]
+        for core, version, line, build, argv, upstream in hellos:
+            if not budget.allows(30):
+                add(failed_row(a.platform, core, "client hello: " + line, "", "skipped: out of time budget"))
+                continue
+            if upstream == PORT_WEBTUNNEL and servers.wt_error:
+                add(failed_row(a.platform, core, "client hello: " + line, "", "the WebTunnel server: " + servers.wt_error))
+                continue
+            log("hello:", core, "|", line)
+            try:
+                row = run_hello(core, line, build(PORT_TAP), argv, None, upstream, ctx)
+                row["version"] = version
+                add(row)
+            except Exception as e:
+                traceback.print_exc()
+                add(failed_row(a.platform, core, "client hello: " + line, "", e))
     finally:
         servers.stop()
     for name, path, what in (
@@ -1259,6 +1831,14 @@ def cmd_desktop(a):
                                              "a stand-in for one slice of Cores.xcframework, not its size"),
             ("olcrtc (desktop)", b / "olcrtc", "desktopApp registerOlcRtcBuildTask recipe")):
         add(size_row(a.platform, name, path, what))
+    if xrs_bin is not None:
+        add(size_row(a.platform, xrs_core.replace(" (exec)", ""), xrs_bin,
+                     "the xray-rust CLI (xray-cli), cargo --release with the workspace's [profile.release]; an app "
+                     "links the xray-ffi static library instead, whose size this is not"))
+    if a.tun:
+        add(size_row(a.platform, "hev-socks5-tunnel", b / "hev-socks5-tunnel",
+                     "make clean exec at scripts/hev-pins.sh's commit (-O3, stripped); the iPhone links the same "
+                     "tree as a static library"))
     write_json(results_path, results)
     print_table(results)
     return 0
@@ -1713,27 +2293,46 @@ def app_run(adb, host, platform, app_version, key, link, core_lib, scenario, srv
 # ---------------------------------------------------------------- table
 
 
-COLUMNS = [("platform", 22), ("core", 30), ("scenario", 30), ("settings", 11), ("idle", 6), ("steady", 6),
-           ("peak", 6), ("go s-r", 6), ("down", 7), ("up", 7), ("cpu/GB", 6), ("burst", 6), ("b-gor", 6)]
+COLUMNS = [("platform", 22), ("core", 32), ("scenario", 30), ("settings", 14), ("idle", 6), ("steady", 6),
+           ("peak", 6), ("go s-r", 6), ("down", 7), ("up", 7), ("cpu/GB", 6), ("burst", 6), ("b-gor", 6),
+           ("fp-pk", 6)]
+
+
+def is_hello(r):
+    return str(r.get("scenario", "")).startswith("client hello")
+
+
+def footprint_cell(r):
+    """macOS phys_footprint, idle / steady / peak / burst peak: what iOS holds
+    against the extension's limit. Empty elsewhere."""
+    e = r.get("extra", {})
+    keys = ("idle_phys_footprint_mb", "steady_phys_footprint_mb", "peak_phys_footprint_mb",
+            "burst_peak_phys_footprint_mb")
+    if not any(e.get(k) is not None for k in keys):
+        return ""
+    return " / ".join("-" if e.get(k) is None else str(e.get(k)) for k in keys)
 
 
 def cells(r):
     def f(v):
         return "-" if v is None else str(v)
     if r.get("scenario") == "binary size":
-        return [r["platform"], r["core"], "size %s MB" % f(r.get("extra", {}).get("mb"))] + [""] * 10
+        return [r["platform"], r["core"], "size %s MB" % f(r.get("extra", {}).get("mb"))] + [""] * 11
+    if is_hello(r):
+        return [r["platform"], r["core"], r["scenario"], f(r.get("extra", {}).get("ja4"))] + [""] * 10
     return [r.get("platform", ""), r.get("core", ""), r.get("scenario", ""), r.get("settings", ""),
             f(r.get("idle_rss_mb")), f(r.get("steady_rss_mb")), f(r.get("peak_rss_mb")),
             f(r.get("go_sys_minus_released_mb")), f(r.get("mbps_down")), f(r.get("mbps_up")),
             f(r.get("cpu_s_per_gb")), f(r.get("extra", {}).get("burst_peak_mb")),
-            f(r.get("extra", {}).get("burst_go_goroutines_peak"))]
+            f(r.get("extra", {}).get("burst_go_goroutines_peak")),
+            f(r.get("extra", {}).get("peak_phys_footprint_mb"))]
 
 
 def print_table(rows, header=True):
     if header:
         print("memory in MiB (idle / steady under load / peak; go s-r = Go sys minus released, peak), "
               "throughput in Mbit/s, CPU in s per GB moved; burst = peak memory while %d transfers ran at once, "
-              "b-gor = the harness's goroutines then" % BURST_FLOWS)
+              "b-gor = the harness's goroutines then; fp-pk = macOS lifetime peak phys_footprint" % BURST_FLOWS)
         print("  ".join(name.ljust(w) for name, w in COLUMNS))
     for r in rows:
         c = cells(r)
@@ -1744,18 +2343,32 @@ def print_table(rows, header=True):
 
 def markdown(rows):
     head = ["platform", "core", "scenario", "settings", "metric", "idle MiB", "steady MiB", "peak MiB",
-            "Go sys-rel MiB", "down Mbit/s", "up Mbit/s", "CPU s/GB", "burst peak MiB", "burst goroutines"]
+            "Go sys-rel MiB", "down Mbit/s", "up Mbit/s", "CPU s/GB", "burst peak MiB", "burst goroutines",
+            "macOS phys_footprint idle / steady / peak / burst MiB"]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for r in rows:
-        if r.get("scenario") == "binary size":
+        if r.get("scenario") == "binary size" or is_hello(r):
             continue
         c = cells(r)
-        lines.append("| " + " | ".join([c[0], c[1], c[2], c[3], r.get("memory_metric", "")] + c[4:]).replace("\n", " ") + " |")
+        lines.append("| " + " | ".join([c[0], c[1], c[2], c[3], r.get("memory_metric", "")] + c[4:13] +
+                                       [footprint_cell(r)]).replace("\n", " ") + " |")
     sizes = [r for r in rows if r.get("scenario") == "binary size"]
     if sizes:
         lines += ["", "| platform | binary | MB | what |", "|---|---|---|---|"]
         for r in sizes:
             lines.append("| %s | %s | %s | %s |" % (r["platform"], r["core"], r.get("extra", {}).get("mb"), r.get("notes", "")))
+    hellos = [r for r in rows if is_hello(r) and r.get("extra", {}).get("ja4")]
+    if hellos:
+        lines += ["", "ClientHello as the server's port saw it (first connection; JA4 sorts away Chrome's "
+                      "extension shuffle):", "",
+                  "| platform | core | line | JA4 | key shares | ALPN | hello bytes | ECH GREASE | extensions |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for r in hellos:
+            e = r["extra"]
+            lines.append("| %s | %s | %s | `%s` | %s | %s | %s | %s | %d |" % (
+                r["platform"], r["core"], r["scenario"].replace("client hello: ", ""), e.get("ja4"),
+                ", ".join(e.get("key_shares") or []), ", ".join(e.get("alpn") or []) or "none",
+                e.get("client_hello_bytes"), "yes" if e.get("ech_bytes") else "no", len(e.get("extensions") or [])))
     failed = [r for r in rows if str(r.get("notes", "")).startswith(("FAILED", "skipped"))]
     if failed:
         lines += ["", "Not measured:", ""]
@@ -1833,7 +2446,10 @@ def main(argv=None):
     d.add_argument("--out", required=True)
     d.add_argument("--platform", required=True)
     d.add_argument("--engine-src")
-    d.add_argument("--tun", action="store_true", help="also the gVisor tun run (Linux, passwordless sudo)")
+    d.add_argument("--tun", action="store_true",
+                   help="also the gVisor tun run and the hev run, with BIN/hev-socks5-tunnel (Linux, passwordless sudo)")
+    d.add_argument("--xray-rust", help="a directory with xray-rust and xray-rust.build.json (rust-core-build.sh); "
+                                       "its rows fail by name when the binary is missing")
     d.add_argument("--budget-min", type=float, default=24)
     n = sub.add_parser("android")
     n.add_argument("--bin", required=True, help="runner binaries: loadgen, xray-26.4.25/xray")

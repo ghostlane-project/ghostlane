@@ -3,28 +3,40 @@
 What the Go cores the app ships cost: memory, throughput and CPU, measured on
 GitHub's runners. sing-box, Xray and the olcRTC engine are built exactly as the
 app builds them, and each runs against servers the job starts on the same
-runner. Nothing gates on this; it is a measurement for planning.
+runner. Beside them, in the same table, a Rust core (xray-rust) on the same
+lines, and on Linux sing-box behind hev-socks5-tunnel, for planning a possible
+rewrite of the network cores against the iPhone extension's ceiling of about
+50 MB. Nothing gates on this; it is a measurement for planning.
 
 ## Running it
 
 Push the branch `lab/core-footprint`. `.github/workflows/lab-footprint.yml` runs
 on a push to that branch and on nothing else (not main, not a pull request, no
-schedule), and it reads no secret. A run takes about 40 minutes. PR Checks
-also starts on the same push, because its `push:` trigger has no branch filter.
+schedule), and it reads no secret. A run takes about 40 minutes; the desktop
+jobs take about 35 when they build xray-rust and about 20 when the actions
+cache already holds it (keyed by its tag, commit, toolchain and build script).
+PR Checks also starts on the same push, because its `push:` trigger has no
+branch filter.
 
 Each job prints a compact table in its log and uploads its results:
 
 | artifact | job |
 |---|---|
-| `lab-footprint-linux-x86_64` | ubuntu-latest (x86_64), with the gVisor tun run |
+| `lab-footprint-linux-x86_64` | ubuntu-latest (x86_64), with the gVisor tun run and the hev run |
 | `lab-footprint-macos-arm64` | macos-latest (Apple silicon), the stand-in for an iPhone |
 | `lab-footprint-android` | ubuntu-latest with KVM, an x86_64 Android 11 (API 30) emulator |
 | `lab-footprint-all` | every `results.json` merged; the run's summary page has the same table |
 
 Each artifact holds `results.json` (one object per core and scenario), `runs/`
-(per run: the config, the core's log, the harness's runtime samples),
-`servers/` (the server's config and logs) and `harness.versions.txt` (what the
-module resolution chose).
+(per run: the config, the core's log, the harness's runtime samples, and for
+xray-rust its `config check --json` report; `runs/hello-*/first-flight.bin` is
+the bytes a core sent first), `servers/` (the server's config and logs) and
+`harness.versions.txt` (what the module resolution chose). The desktop
+artifacts also hold `xray-rust.build.json` (repo, tag, commit, rustc, the
+release profile, build seconds, bytes, the run that built it),
+`xray-rust-build.log` when this run built it, `xray-rust-latest.txt` (the
+newest release against the pin), and on Linux `hev.versions.txt` and
+`hev-build.log`.
 
 ## What is built, and how
 
@@ -36,9 +48,17 @@ module resolution chose).
 | olcRTC | `cmd/olcrtc` as the desktop app builds it, and the engine's `internal/e2e` package as a test binary with `-tags olcrtc_lean` | `desktopApp/build.gradle.kts`, `sharedUI/olcrtc-bin/build.gradle.kts` |
 | the app | `assembleGithubDebug` with `-Polcbox.android.abiFilters=x86_64` | `androidApp/build.gradle.kts` |
 | server | Xray 26.4.25, the version `scripts/xray-servers.txt` names for the platform's exits | `xray-assets.txt` (sha256 checked) |
+| xray-rust (exec) | [aimalygin/xray-rust](https://github.com/aimalygin/xray-rust) cloned at the release tag, checked against the pinned commit; `cargo +<toolchain> build --locked --release -p xray-cli` with the toolchain its `rust-toolchain.toml` names and the workspace's `[profile.release]` (codegen-units 1, thin LTO, panic unwind, symbols stripped) (`rust-core-build.sh`) | the project's README "Quick start" (`cargo build --locked -p xray-cli`) with `--release`; its mobile scripts build `xray-ffi` with the same profile |
+| hev-socks5-tunnel | a recursive clone checked out at `scripts/hev-pins.sh`'s `HEV_COMMIT` with its submodules, then `make clean exec` (`hev-build.sh`) | the checkout of `.github/workflows/hev-tunnel.yml` and the build of `desktopApp/build.gradle.kts` `buildHevSocks5TunnelLinux` |
 
-All pins come from `scripts/cores-pins.sh`; each job fails first if the
-workflow's copies disagree with it or with `release.yml`.
+The Go pins come from `scripts/cores-pins.sh`; each job fails first if the
+workflow's copies disagree with it or with `release.yml`. hev's pin is read
+from `scripts/hev-pins.sh`. xray-rust's three pins (`XRAY_RUST_TAG`,
+`XRAY_RUST_COMMIT`, `XRAY_RUST_TOOLCHAIN`) live in the desktop job's `env`:
+v0.9.0, the newest release when they were set (read through the GitHub API),
+at 30928ad5, toolchain 1.96.0. The build refuses a checkout that disagrees
+with any of them, and a step of the job prints a notice when a newer release
+is out; moving the pin is a change to the workflow.
 
 ## A run
 
@@ -62,6 +82,19 @@ config: its client is `vless-reality.json` changed only where
 Reality block, the httpupgrade transport), plus `insecure` for the lab's
 self-signed certificate (`lab.py` `singbox_webtunnel`). On Android the app
 builds its own WebTunnel config from the link.
+
+xray-rust reads Xray-style JSON (a documented subset: `docs/config-compatibility.md`
+at the tag). Its client configs are the same lines in that form, with the
+app's Xray SOCKS inbound (`shapes/vless-xhttp.json`): the XHTTP line is the
+app's Xray shape unchanged, and the Reality Vision, Hysteria2 and WebTunnel
+lines are translated field by field from the sing-box configs above
+(`lab.py` `xrs_*`, each refusing to build when its source config moved). Where
+the translation cannot be exact the row's notes say so: `insecure` becomes
+`pinnedPeerCertSha256` of the lab's certificate (xray-rust refuses
+`allowInsecure`), sing-box's `packet_encoding` has no field there, and there is
+no ChromeParrot QUIC hello. Before each run, `xray-rust config check --json`
+reads the config; a refusal fails the row by name, and its warnings go into the
+notes.
 
 Per run: start the core; wait until 1000 bytes cross it; sample for 6 s idle;
 download 500 MB; pause 2 s; upload 100 MB; sample 5 s idle; then the burst: 32
@@ -93,7 +126,33 @@ Rows:
   debug app itself: a line imported through `ghostlane://add?url=`, the VPN
   started with the debug-only `DEBUG_START_VPN` broadcast, traffic from the
   shell through the app's tun.
-- **binary size** rows for every binary measured and every `.so` in the APK.
+- **hev + cores harness: sing-box** (Linux, root via sudo): the same Reality
+  line with hev-socks5-tunnel owning the tun and the harness (`ios-limits`) on
+  SOCKS behind it, the shape the iPhone already uses for XHTTP and olcRTC.
+  hev runs with `HevTunnel.swift`'s configuration (MTU 9000, task stack 24576,
+  TCP buffer 4096, 768 sessions; `lab.py` `hev_config` refuses to run when the
+  Swift writes something else) plus a tun name and address. Its memory columns
+  are hev and the harness summed; `extra.hev_*` and `extra.harness_*` hold each
+  process alone; the Go runtime columns are the harness's.
+- **xray-rust vX.Y.Z (exec)** (desktops): the four lines through the CLI,
+  under two settings. `cli defaults` is the binary as it starts (2 Tokio
+  workers, runtime profile Default, which on a desktop target is the
+  Standard transport memory class). `mobile profile` is what the library runs
+  with on a phone: `XRAY_TUN_PROFILE=mobile` (the Constrained memory class) and
+  the Tokio workers `xray-ffi` would size on this runner (available
+  parallelism clamped to 2..6). The `version` column names the tag, the commit,
+  rustc and the release profile. The project documents no separate library
+  or iOS cargo profile, so there is no second build.
+- **client hello: <line>** (desktops): the first bytes a core sends on a TCP
+  line, read by a relay in front of the server port: xray-rust on Reality,
+  XHTTP and WebTunnel; sing-box (exec) on Reality and WebTunnel; xray (exec) on
+  XHTTP. The ClientHello table gives JA4, the key shares, ALPN, the hello's
+  size, whether an ECH GREASE extension went out and the extension count;
+  `extra` has JA3, the full lists and whether a fetch through the relay
+  completed. Hysteria2's hello travels in a QUIC Initial under Salamander and
+  is not read.
+- **binary size** rows for every binary measured (xray-rust and hev
+  included) and every `.so` in the APK.
 
 ## Reading the figures
 
@@ -106,7 +165,8 @@ Rows:
 | `go_sys_minus_released_mb` | harness rows only: the Go runtime's `memory/classes/total` minus `heap/released` at its peak; the extension's trace calls it `sys - rel`. `extra` has its idle and steady values and the heap |
 | `mbps_down`, `mbps_up` | 10^6 bits per second over the whole transfer, first byte included |
 | `cpu_s_per_gb` | CPU seconds (user + system) of the measured process(es) during both transfers, per 10^9 bytes moved |
-| `extra` | macOS `phys_footprint` (idle, steady, lifetime peak), PSS, per-direction CPU, Go GC cycles, the limit and GC percent in force, MemoryWatch releases |
+| `extra` | macOS `phys_footprint` (idle, steady, lifetime peak), PSS, per-direction CPU, Go GC cycles, the limit and GC percent in force, MemoryWatch releases; for xray-rust the build record and the core version `config check` reported; for the hev row each process alone |
+| `fp-pk` / `macOS phys_footprint` | macOS only: the table's `fp-pk` is the lifetime peak `phys_footprint`, and the summary's column gives idle / steady / peak / burst; the figure jetsam holds an iPhone extension to, so the headline on macOS |
 | `extra.burst_*` | the burst: peak memory over it (`burst_peak_mb`, same metric as the row; macOS `burst_peak_phys_footprint_mb`), aggregate Mbit/s each way, transfers that finished whole, CPU s per GB; harness rows also the Go runtime's peak goroutines, `sys - rel` and heap over it. The table's `burst` and `b-gor` columns are `burst_peak_mb` and `burst_go_goroutines_peak` |
 | `notes` | how the row deviates from the app; `FAILED:` or `skipped:` when a run did not happen, with the reason |
 
@@ -130,8 +190,17 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
   different allocator and libraries; `phys_footprint` here is a process's on a
   desktop. The iOS-only code paths are reproduced by hand, not compiled.
 - The harness drives sing-box through its box API, as `sing-box run` does, not
-  through libbox's command server, and there is no hev-socks5-tunnel; a gVisor
-  tun runs only in the Linux tun row.
+  through libbox's command server; a tun (gVisor's, or hev's) runs only in the
+  two Linux tun rows.
+- hev is a process of its own here, sampled beside the harness and summed; on
+  the iPhone it is a thread of the extension, so the extension pays one
+  process's overhead where the lab counts two.
+- xray-rust runs as its CLI binary, not as the `xray-ffi` static library an app
+  would link, and without a tun of its own; its size row is the CLI's. Its
+  TLS lines pin the lab's certificate rather than skip verification, and its
+  Hysteria2 has no ChromeParrot QUIC hello. xray-rust follows newer Xray
+  semantics than the 26.4.25 servers; a line that cannot work against them
+  fails by name with its log in `runs/`.
 - Loopback is not a network. Throughput is bounded by CPU, and the server, the
   page, the client and the core share the runner's cores.
 - The olcRTC soak needs no meeting service, so there is no SFU, no TURN and no
@@ -144,10 +213,11 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
 - One run per cell. Run the workflow again for a second sample.
 - No olcRTC line through the cores harness or the Android app: those need a
   meeting service. The soak is the only olcRTC row, and it holds two peers.
-- No hev-socks5-tunnel in front of the harness (the iPhone's XHTTP and olcRTC
-  shape), no sing-box front behind Xray (Android's XHTTP under Rules; the app's
-  default routing is Global, `RoutingSettings.kt`), no desktop JVM, no macOS
-  tunnel daemon, no CLI.
+- hev runs only in front of sing-box's Reality line on Linux, not in front
+  of libXray (the iPhone's XHTTP) and not on macOS (no root tun there). No
+  sing-box front behind Xray (Android's XHTTP under Rules; the app's default
+  routing is Global, `RoutingSettings.kt`), no desktop JVM, no macOS tunnel
+  daemon, no CLI.
 
 ## Files
 
@@ -160,3 +230,5 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
   runner and under `adb shell`).
 - `shapes/`: the XHTTP client shapes; `xray-assets.txt`: the Xray archives
   and their sha256; `engine-src.sh`, `engine-build.sh`: the engine at the pin.
+- `rust-core-build.sh`: xray-rust at the workflow's pins; `hev-build.sh`:
+  hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit.

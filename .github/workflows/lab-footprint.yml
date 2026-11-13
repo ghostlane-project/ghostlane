@@ -5,6 +5,11 @@ name: Lab - core footprint
 # starts on the runner itself. lab/footprint/README.md says what is measured,
 # how, and how to read the tables and lab-footprint-* artifacts.
 #
+# Beside the Go rows, the desktop jobs measure a Rust core, xray-rust, built
+# from GitHub at a pinned release (lab/footprint/rust-core-build.sh), and on
+# Linux sing-box behind hev-socks5-tunnel at the app's pin
+# (lab/footprint/hev-build.sh), on the same runner against the same servers.
+#
 # Runs on a push to lab/core-footprint and nothing else: never on main, never
 # on a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
 # has no filter, starts on the same push; its scope job decides what it runs.)
@@ -32,7 +37,17 @@ jobs:
   desktop:
     name: Cores on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # About 35 minutes when xray-rust is built, about 20 when the cache has it.
+    timeout-minutes: 75
+    env:
+      # xray-rust (https://github.com/aimalygin/xray-rust): its newest release
+      # when the lab was extended (GET /repos/aimalygin/xray-rust/releases/latest,
+      # published 2026-11-03), the commit the tag names, and the channel its
+      # rust-toolchain.toml asks for. rust-core-build.sh refuses a checkout that
+      # disagrees with any of the three.
+      XRAY_RUST_TAG: "v0.9.0"
+      XRAY_RUST_COMMIT: "30928ad51b4a434546cf143f8e385a8746523172"
+      XRAY_RUST_TOOLCHAIN: "1.96.0"
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +89,7 @@ jobs:
             echo "BIN=${RUNNER_TEMP}/lab-bin"
             echo "OUT=${RUNNER_TEMP}/lab-out"
             echo "ENGINE=${RUNNER_TEMP}/olcrtc"
+            echo "XRS=${RUNNER_TEMP}/xray-rust"
           } >> "$GITHUB_ENV"
           echo "cores: $(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)"
           uname -a
@@ -119,19 +135,79 @@ jobs:
           bash lab/footprint/engine-src.sh "$ENGINE"
           bash lab/footprint/engine-build.sh "$ENGINE" "$BIN"
 
-      - name: Measure
+      # Informational: the build follows the pin above, never this answer. An
+      # unauthenticated read (no token), so a rate limit only loses the notice.
+      - name: Newest xray-rust release against the pin
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          curl -fsS --retry 2 -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/aimalygin/xray-rust/releases/latest -o "${RUNNER_TEMP}/xrs-latest.json"
+          latest="$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["tag_name"], d["published_at"])' "${RUNNER_TEMP}/xrs-latest.json")"
+          echo "newest release: ${latest}; pinned: ${XRAY_RUST_TAG} ${XRAY_RUST_COMMIT}" | tee "$OUT/xray-rust-latest.txt"
+          [ "${latest%% *}" = "${XRAY_RUST_TAG}" ] \
+            || echo "::notice::xray-rust ${latest%% *} is out; this run builds the pinned ${XRAY_RUST_TAG}"
+
+      # The cache holds the finished binary and its build record, keyed by
+      # everything that decides them; a hit skips the build, and the rows say
+      # which run built it.
+      - name: Restore xray-rust from the cache
+        id: xrs-cache
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust
+          key: xray-rust-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+
+      # A failed or timed-out build fails only the xray-rust rows, by name,
+      # with the tail of xray-rust-build.log; the Go rows still run.
+      - name: Build xray-rust at the pinned release (cargo --release, the project's toolchain)
+        id: xrs-build
+        if: steps.xrs-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          XRS_BUILD_LOG="$OUT/xray-rust-build.log" bash lab/footprint/rust-core-build.sh "$XRS"
+
+      - name: Save xray-rust to the cache
+        if: steps.xrs-build.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust
+          key: ${{ steps.xrs-cache.outputs.cache-primary-key }}
+
+      # The hev row needs root and a tun, so it runs where --tun runs. A failed
+      # build fails only that row, with the tail of hev-build.log.
+      - name: Build hev-socks5-tunnel at scripts/hev-pins.sh's commit (make clean exec, the desktop recipe)
+        if: contains(matrix.lab_flags, '--tun')
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          bash lab/footprint/hev-build.sh "$BIN" 2>&1 | tee "$OUT/hev-build.log"
+
+      - name: Measure
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           if [ -n "${{ matrix.lab_flags }}" ]; then sudo -n true; fi
           python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
-            --engine-src "$ENGINE" --budget-min 24 ${{ matrix.lab_flags }}
+            --engine-src "$ENGINE" --xray-rust "$XRS" --budget-min 34 ${{ matrix.lab_flags }}
 
       - name: Table
         if: always()
         timeout-minutes: 2
         run: |
-          cp "$BIN/harness.versions.txt" "$OUT/" 2>/dev/null || true
+          for f in "$BIN/harness.versions.txt" "$BIN/hev.versions.txt" "$XRS/xray-rust.build.json"; do
+            [ -f "$f" ] && cp "$f" "$OUT/"
+          done
           python3 lab/footprint/lab.py table "$OUT"
 
       - name: Upload results
