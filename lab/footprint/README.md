@@ -44,7 +44,9 @@ workflow's copies disagree with it or with `release.yml`.
 
 The server is one Xray 26.4.25 with three inbounds on loopback: VLESS Reality
 Vision, VLESS XHTTP Reality and Hysteria2 with Salamander, shaped as the exits
-shape them. Its one outbound redirects every destination to a local page
+shape them. A second Xray 26.4.25 process holds WebTunnel's inbound (VLESS over
+httpupgrade, with the TLS an exit's nginx ends ended by Xray itself), so a field
+that version refuses fails only the WebTunnel rows. Its one outbound redirects every destination to a local page
 (`loadgen serve`). Reality mirrors a local TLS 1.3 site (`loadgen tlsdest`).
 Clients fetch `http://203.0.113.10/` (TEST-NET-3): nothing answers that address
 but the server's redirect, so a byte that arrives crossed the core and the
@@ -54,23 +56,39 @@ Client configs are the app's own: the committed reference configs that
 `SingBoxConfigDumpTest` holds equal to `SingBoxConfig.build`, and for Xray the
 XHTTP shapes `XrayConfigDumpTest` writes (copied into `shapes/`; the `shapes` job
 dumps them again and fails on any difference). Only addresses, ports, keys,
-names and the XHTTP path are replaced.
+names and the XHTTP path are replaced. WebTunnel has no committed reference
+config: its client is `vless-reality.json` changed only where
+`SingBoxConfig.kt` writes a TLS httpupgrade line differently (no flow, no
+Reality block, the httpupgrade transport), plus `insecure` for the lab's
+self-signed certificate (`lab.py` `singbox_webtunnel`). On Android the app
+builds its own WebTunnel config from the link.
 
 Per run: start the core; wait until 1000 bytes cross it; sample for 6 s idle;
-download 500 MB; pause 2 s; upload 100 MB; sample 5 s idle; stop. Samples every
+download 500 MB; pause 2 s; upload 100 MB; sample 5 s idle; then the burst: 32
+downloads of 4 MB at once, pause 2 s, 32 uploads of 2 MB at once, 3 s tail,
+each transfer on a connection of its own (`loadgen burst`); stop. Samples every
 0.2 s on the desktops, every 0.5 s on the emulator.
+
+The burst is there because one transfer never shows what each connection
+costs a core (goroutines, their stacks, per-connection buffers), and that is
+what killed the iPhone extension: it died with 23 connections at once and 1117
+to 1510 goroutines under a speed test.
 
 Rows:
 
-- **cores harness** (desktops): Reality and Hysteria2 through sing-box, XHTTP
-  through libXray, each with `ios-limits` and with `go-defaults`; the harness
-  with no core started; on Linux, Reality through sing-box's gVisor tun
-  (`ios-tun-reality.json`, root via sudo).
+- **cores harness** (desktops): Reality, Hysteria2 and WebTunnel through
+  sing-box, XHTTP through libXray, each with `ios-limits` and with
+  `go-defaults`; the harness with no core started; on Linux, Reality through
+  sing-box's gVisor tun (`ios-tun-reality.json`, root via sudo).
 - **sing-box (exec)**, **xray (exec)**: the binaries the desktop app and the
   Android app run as child processes, Go defaults.
 - **olcrtc engine (loopback soak)**: the engine's `TestLocalThroughputSoak`,
-  vp8channel and datachannel, each with `GOGC=10 GOMEMLIMIT=40MiB` and with
-  defaults, 30 s each.
+  vp8channel and datachannel, 30 s each. `ios-limits` is `GOGC=10
+  GOMEMLIMIT=40MiB` plus the phones' constrained buffer profile, the one
+  `mobile.New()` turns on (`engine-build.sh` adds a test file to the checkout
+  that turns it on when `OLCRTC_LAB_CONSTRAINED=1`; `extra.constrained_buffers`
+  says whether the log confirmed it). `go-defaults` keeps the server-sized
+  buffers, which is how the desktop app's `olcrtc` binary runs.
 - **Android**: the x86_64 cores from the APK build under `adb shell`; then the
   debug app itself: a line imported through `ghostlane://add?url=`, the VPN
   started with the debug-only `DEBUG_START_VPN` broadcast, traffic from the
@@ -89,6 +107,7 @@ Rows:
 | `mbps_down`, `mbps_up` | 10^6 bits per second over the whole transfer, first byte included |
 | `cpu_s_per_gb` | CPU seconds (user + system) of the measured process(es) during both transfers, per 10^9 bytes moved |
 | `extra` | macOS `phys_footprint` (idle, steady, lifetime peak), PSS, per-direction CPU, Go GC cycles, the limit and GC percent in force, MemoryWatch releases |
+| `extra.burst_*` | the burst: peak memory over it (`burst_peak_mb`, same metric as the row; macOS `burst_peak_phys_footprint_mb`), aggregate Mbit/s each way, transfers that finished whole, CPU s per GB; harness rows also the Go runtime's peak goroutines, `sys - rel` and heap over it. The table's `burst` and `b-gor` columns are `burst_peak_mb` and `burst_go_goroutines_peak` |
 | `notes` | how the row deviates from the app; `FAILED:` or `skipped:` when a run did not happen, with the reason |
 
 Memory is MiB (2^20). The macOS CPU times are checked against `ps` each run,
@@ -123,6 +142,12 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
   a radio; the APK is a debug build (not minified).
 - Client inbounds carry no SOCKS login; the app's Android configs carry one.
 - One run per cell. Run the workflow again for a second sample.
+- No olcRTC line through the cores harness or the Android app: those need a
+  meeting service. The soak is the only olcRTC row, and it holds two peers.
+- No hev-socks5-tunnel in front of the harness (the iPhone's XHTTP and olcRTC
+  shape), no sing-box front behind Xray (Android's XHTTP under Rules; the app's
+  default routing is Global, `RoutingSettings.kt`), no desktop JVM, no macOS
+  tunnel daemon, no CLI.
 
 ## Files
 

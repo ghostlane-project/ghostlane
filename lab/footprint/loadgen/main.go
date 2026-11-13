@@ -6,6 +6,7 @@
 //	loadgen tlsdest    -listen 127.0.0.1:18443        a TLS 1.3 + h2 site for Reality to mirror
 //	loadgen get        -url U [-socks A] [-expect N]  download, prints one JSON line
 //	loadgen put        -url U [-socks A] -bytes N     upload, prints one JSON line
+//	loadgen burst      -op get|put -n K -each N ...   K transfers at once, one connection each
 //	loadgen x25519                                   a Reality key pair, as JSON
 //	loadgen selfsigned -cert F -key F -name N        a certificate for the Hysteria2 server
 //
@@ -56,6 +57,8 @@ func main() {
 		os.Exit(transfer("get", os.Args[2:]))
 	case "put":
 		os.Exit(transfer("put", os.Args[2:]))
+	case "burst":
+		os.Exit(burst(os.Args[2:]))
 	case "x25519":
 		err = x25519()
 	case "selfsigned":
@@ -171,6 +174,105 @@ type result struct {
 	End     int64   `json:"end_ms"`
 	OK      bool    `json:"ok"`
 	Error   string  `json:"error,omitempty"`
+	// burst only: transfers started and transfers that finished whole.
+	Flows   int `json:"flows,omitempty"`
+	OKFlows int `json:"ok_flows,omitempty"`
+}
+
+// burst starts -n transfers at the same moment, each on a connection of its
+// own (keep-alives off, so each is its own SOCKS CONNECT and its own
+// connection through the core and the server), the way a speed test or a
+// page load opens many. A single transfer never shows what each connection
+// costs a core: its goroutines, stacks and buffers. Bytes, Seconds and Mbps
+// are the aggregate; TTFB is the slowest first byte; OK only when every
+// transfer finished whole.
+func burst(args []string) int {
+	fs := flag.NewFlagSet("burst", flag.ExitOnError)
+	op := fs.String("op", "get", "get | put")
+	target := fs.String("url", "", "get: a /bytes?n= URL; put: the /sink URL")
+	socks := fs.String("socks", "", "SOCKS5 server to go through (host:port); empty dials directly")
+	user := fs.String("user", "", "SOCKS5 user, when the core asks for one")
+	pass := fs.String("pass", "", "SOCKS5 password")
+	flows := fs.Int("n", 32, "transfers at once")
+	each := fs.Int64("each", 4_000_000, "bytes per transfer: get expects this body, put sends this many")
+	timeout := fs.Duration("timeout", 2*time.Minute, "give up after this long")
+	_ = fs.Parse(args)
+
+	res := result{Op: "burst-" + *op, URL: *target, Via: "direct", Flows: *flows}
+	if (*op != "get" && *op != "put") || *flows < 1 || *each < 0 || *target == "" {
+		res.Error = "burst: -op get|put, -n >= 1, -each >= 0 and -url are required"
+		out, _ := json.Marshal(res)
+		fmt.Println(string(out))
+		return 2
+	}
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	tr := &http.Transport{
+		Proxy:              nil,
+		DisableCompression: true,
+		DisableKeepAlives:  true,
+		DialContext:        dialer.DialContext,
+	}
+	if *socks != "" {
+		res.Via = "socks5://" + *socks
+		tr.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+			return socksDial(ctx, *socks, *user, *pass, addr)
+		}
+	}
+	client := &http.Client{Transport: tr, Timeout: *timeout}
+
+	parts := make([]result, *flows)
+	errs := make([]error, *flows)
+	start := make(chan struct{})
+	done := make(chan int, *flows)
+	for i := 0; i < *flows; i++ {
+		go func(i int) {
+			<-start
+			begin := time.Now()
+			if *op == "get" {
+				errs[i] = doGet(client, *target, &parts[i], begin)
+				if errs[i] == nil && parts[i].Bytes != *each {
+					errs[i] = fmt.Errorf("got %d bytes, expected %d", parts[i].Bytes, *each)
+				}
+			} else {
+				errs[i] = doPut(client, *target, *each, &parts[i], begin)
+			}
+			done <- i
+		}(i)
+	}
+	begin := time.Now()
+	res.Start = begin.UnixMilli()
+	close(start)
+	for i := 0; i < *flows; i++ {
+		<-done
+	}
+	end := time.Now()
+	res.End = end.UnixMilli()
+	res.Seconds = end.Sub(begin).Seconds()
+	for i := range parts {
+		res.Bytes += parts[i].Bytes
+		if parts[i].TTFB > res.TTFB {
+			res.TTFB = parts[i].TTFB
+		}
+		if errs[i] == nil {
+			res.OKFlows++
+		} else if res.Error == "" {
+			res.Error = fmt.Sprintf("transfer %d: %v", i, errs[i])
+		}
+	}
+	if res.Seconds > 0 {
+		res.Mbps = float64(res.Bytes) * 8 / res.Seconds / 1e6
+	}
+	res.OK = res.OKFlows == *flows
+	if !res.OK && res.Error != "" {
+		res.Error = fmt.Sprintf("%d of %d transfers failed; first: %s", *flows-res.OKFlows, *flows, res.Error)
+	}
+	tr.CloseIdleConnections()
+	out, _ := json.Marshal(res)
+	fmt.Println(string(out))
+	if !res.OK {
+		return 1
+	}
+	return 0
 }
 
 func transfer(op string, args []string) int {

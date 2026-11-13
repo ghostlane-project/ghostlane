@@ -62,6 +62,14 @@ IDLE_AFTER_S = 5.0
 PERIOD_S = 0.2
 DEVICE_PERIOD_S = 0.5
 SOAK_S = 30
+# The burst after the single transfers: BURST_FLOWS transfers at once, one
+# connection each, as a speed test opens them (the iPhone extension's deaths
+# came with 23 connections at once and 1117 to 1510 goroutines; notes
+# project_olcrtc_connect_ack_timeouts, project_ookla_two_engines_2026_09_13).
+BURST_FLOWS = 32
+BURST_EACH_DOWN = 4_000_000
+BURST_EACH_UP = 2_000_000
+BURST_TAIL_S = 3.0
 
 PORT_SOCKS = 10810
 PORT_PAGE = 18080
@@ -69,11 +77,15 @@ PORT_DEST = 18443
 PORT_REALITY = 20443
 PORT_XHTTP = 20444
 PORT_HY2 = 20445
+PORT_WEBTUNNEL = 20446
 UUID = "9f4b2c3a-1111-4222-8333-444455556666"
 SHORT_ID = "0123abcd"
 SNI_REALITY = "reality.lab.test"
 SNI_XHTTP = "xhttp.lab.test"
 SNI_HY2 = "hy2.lab.test"
+SNI_WEBTUNNEL = "webtunnel.lab.test"
+WEBTUNNEL_PATH = "/wt"
+WEBTUNNEL = "webtunnel (vless tls httpupgrade)"
 XHTTP_PATH = "/lab"
 HY2_AUTH = "lab-hy2-auth"
 HY2_OBFS = "lab-hy2-obfs"
@@ -532,6 +544,29 @@ def singbox_ios_tun_reality(server, pub):
     return c
 
 
+def singbox_webtunnel(server):
+    """A WebTunnel line (VLESS, security=tls, type=httpupgrade, fp=chrome:
+    proofkit-dvpn/docs/system/webtunnel.md) as the app writes it. No reference
+    config is committed for this shape, so it is vless-reality.json changed
+    only where SingBoxConfig.kt addOutbound and putTransport write a TLS
+    httpupgrade line differently: no flow (LinkParser keeps flow on TCP only),
+    no reality block, the httpupgrade transport with path and host; uTLS
+    chrome and xudp stay; alpn is not written (LinkParser leaves it unread for
+    VLESS). insecure: the lab's server has a self-signed certificate, the
+    exits a Let's Encrypt one."""
+    c = load_json(REFS / "vless-reality.json")
+    out = c["outbounds"][0]
+    expect(out["type"] == "vless" and out.get("packet_encoding") == "xudp", "vless outbound")
+    expect(out["tls"]["utls"]["fingerprint"] == "chrome", "vless utls")
+    expect(c["inbounds"][0]["type"] == "socks" and c["inbounds"][0]["listen_port"] == PORT_SOCKS, "socks inbound")
+    out.pop("flow", None)
+    out["tls"].pop("reality", None)
+    out.update(server=server, server_port=PORT_WEBTUNNEL, uuid=UUID)
+    out["tls"].update(server_name=SNI_WEBTUNNEL, insecure=True)
+    out["transport"] = {"type": "httpupgrade", "path": WEBTUNNEL_PATH, "host": SNI_WEBTUNNEL}
+    return c
+
+
 def xray_xhttp(server, pub, answers_dns):
     """XrayConfig.buildXhttp as XrayConfigDumpTest writes it (shapes/, checked
     against a fresh dump by `lab.py shapes-check`), with the lab's address,
@@ -582,11 +617,33 @@ def xray_server(priv, cert, key):
                                 "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60},
                                 "finalmask": {"udp": [{"type": "salamander", "settings": {"password": HY2_OBFS}}]}}},
         ],
-        "outbounds": [
-            {"tag": "page", "protocol": "freedom",
-             "settings": {"redirect": "127.0.0.1:%d" % PORT_PAGE, "ipsBlocked": [],
-                          "finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}},
+        "outbounds": [page_outbound()],
+    }
+
+
+def page_outbound():
+    return {"tag": "page", "protocol": "freedom",
+            "settings": {"redirect": "127.0.0.1:%d" % PORT_PAGE, "ipsBlocked": [],
+                         "finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}
+
+
+def xray_webtunnel_server(cert, key):
+    """WebTunnel's server side: VLESS over httpupgrade on a path, as the exits'
+    `vless-webtunnel-in` (proofkit-dvpn/agent/src/xray_config.rs:981-996), with
+    the TLS that nginx ends on an exit ended here by Xray itself, offering
+    http/1.1 only. Its own process, so a field this Xray refuses fails only
+    the WebTunnel rows."""
+    return {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {"tag": "webtunnel", "listen": "127.0.0.1", "port": PORT_WEBTUNNEL, "protocol": "vless",
+             "settings": {"clients": [{"id": UUID, "email": "lab-webtunnel"}], "decryption": "none"},
+             "streamSettings": {"network": "httpupgrade", "security": "tls",
+                                "tlsSettings": {"alpn": ["http/1.1"],
+                                                "certificates": [{"certificateFile": str(cert), "keyFile": str(key)}]},
+                                "httpupgradeSettings": {"path": WEBTUNNEL_PATH}}},
         ],
+        "outbounds": [page_outbound()],
     }
 
 
@@ -600,6 +657,9 @@ def links_for_app(server, pub):
                % (HY2_AUTH, server, PORT_HY2, SNI_HY2, HY2_OBFS),
         "xhttp": "vless://%s@%s:%d?type=xhttp&security=reality&encryption=none&pbk=%s&sid=%s&fp=chrome&sni=%s&path=%s&host=%s&mode=packet-up#lab-xhttp"
                  % (UUID, server, PORT_XHTTP, pub, SHORT_ID, SNI_XHTTP, q(XHTTP_PATH, safe=""), SNI_XHTTP),
+        # webtunnel.md's line, plus insecure=1 for the lab's self-signed certificate.
+        "webtunnel": "vless://%s@%s:%d?type=httpupgrade&security=tls&encryption=none&fp=chrome&sni=%s&host=%s&path=%s&alpn=h2%%2Chttp%%2F1.1&insecure=1#lab-webtunnel"
+                     % (UUID, server, PORT_WEBTUNNEL, SNI_WEBTUNNEL, SNI_WEBTUNNEL, q(WEBTUNNEL_PATH, safe="")),
     }
 
 
@@ -614,6 +674,7 @@ class Servers:
         self.xray = xray_server_bin
         self.procs = []
         self.priv = self.pub = None
+        self.wt_error = "not started"
 
     def start(self):
         keys = json.loads(subprocess.run([str(self.loadgen), "x25519"], capture_output=True, text=True,
@@ -640,6 +701,27 @@ class Servers:
                 raise LabError("port %d did not open:\n%s" % (port, tail(proc.log_path)))
         self.version = first_line([self.xray, "version"])
         log("servers up:", self.version)
+        self.start_webtunnel()
+
+    def start_webtunnel(self):
+        try:
+            cert, key = self.dir / "webtunnel.crt", self.dir / "webtunnel.key"
+            subprocess.run([str(self.loadgen), "selfsigned", "-cert", str(cert), "-key", str(key),
+                            "-name", SNI_WEBTUNNEL], check=True, timeout=30)
+            config = self.dir / "xray-webtunnel.json"
+            write_json(config, xray_webtunnel_server(cert, key))
+            test = subprocess.run([str(self.xray), "run", "-test", "-c", str(config)], capture_output=True,
+                                  text=True, timeout=60, env=clean_env())
+            if test.returncode != 0:
+                raise LabError("the WebTunnel server config does not load: " + (test.stdout + test.stderr)[-600:])
+            proc = Proc([self.xray, "run", "-c", config], self.dir / "xray-webtunnel.log", cwd=self.dir, env=clean_env())
+            self.procs.append(proc)
+            if not wait_port(PORT_WEBTUNNEL, 20, proc):
+                raise LabError("port %d did not open: %s" % (PORT_WEBTUNNEL, tail(proc.log_path)))
+            self.wt_error = None
+        except Exception as e:  # only the WebTunnel rows depend on it
+            self.wt_error = str(e)
+            log("WebTunnel server not up:", e)
 
     def stop(self):
         for p in reversed(self.procs):
@@ -660,11 +742,20 @@ def parse_loadgen(stdout, stderr):
     return {"ok": False, "error": (stderr or stdout or "no output").strip()[-400:]}
 
 
-def transfer_argv(op, nbytes, socks, timeout_s):
+def transfer_argv(op, nbytes, socks, timeout_s, flows=None):
+    """get/put: one transfer of nbytes. burst-get/burst-put: `flows` transfers
+    at once, nbytes each, one connection each."""
     if op == "get":
         argv = ["get", "-url", "http://%s/bytes?n=%d" % (THROUGH, nbytes), "-expect", str(nbytes)]
-    else:
+    elif op == "put":
         argv = ["put", "-url", "http://%s/sink" % THROUGH, "-bytes", str(nbytes)]
+    elif op == "burst-get":
+        argv = ["burst", "-op", "get", "-n", str(flows), "-each", str(nbytes),
+                "-url", "http://%s/bytes?n=%d" % (THROUGH, nbytes)]
+    elif op == "burst-put":
+        argv = ["burst", "-op", "put", "-n", str(flows), "-each", str(nbytes), "-url", "http://%s/sink" % THROUGH]
+    else:
+        raise LabError("unknown transfer %r" % op)
     argv += ["-timeout", "%ds" % timeout_s]
     if socks:
         argv += ["-socks", socks]
@@ -675,8 +766,8 @@ class LocalHost:
     def __init__(self, loadgen):
         self.loadgen = loadgen
 
-    def loadgen_run(self, op, nbytes, socks, timeout_s):
-        argv = [str(self.loadgen)] + transfer_argv(op, nbytes, socks, timeout_s)
+    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None):
+        argv = [str(self.loadgen)] + transfer_argv(op, nbytes, socks, timeout_s, flows)
         try:
             cp = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s + 30, env=clean_env())
             return parse_loadgen(cp.stdout, cp.stderr)
@@ -725,6 +816,51 @@ def transfer_figures(row, down, up, rows, wins, cpu_key="cpu"):
     return [e for e in errors if e]
 
 
+def run_burst(host, socks, timeout_s=150):
+    """The burst phase: BURST_FLOWS downloads at once, a pause, BURST_FLOWS
+    uploads at once, a short tail. Returns the two results and the window
+    (start, end) the figures are read over, tail included."""
+    b0 = time.time()
+    bdown = host.loadgen_run("burst-get", BURST_EACH_DOWN, socks, timeout_s, BURST_FLOWS)
+    time.sleep(PAUSE_S)
+    bup = host.loadgen_run("burst-put", BURST_EACH_UP, socks, timeout_s, BURST_FLOWS)
+    time.sleep(BURST_TAIL_S)
+    return bdown, bup, (b0, time.time())
+
+
+def burst_figures(row, bdown, bup, rows, win, mem_key="rss", cpu_key="cpu"):
+    """extra.burst_*: the peak memory, throughput and CPU of the burst. The
+    headline peak_rss_mb covers the whole life, so it includes the burst too."""
+    b0, b1 = win
+    moved = (bdown.get("bytes") or 0) + (bup.get("bytes") or 0)
+    cpu = delta(rows, cpu_key, b0, b1)
+    ex = row["extra"]
+    ex.update({
+        "burst_flows": BURST_FLOWS,
+        "burst_bytes_each_down_up": [BURST_EACH_DOWN, BURST_EACH_UP],
+        "burst_peak_mb": mb(max_of(rows, mem_key, b0, b1)),
+        "burst_mbps_down": rnd(bdown.get("mbps")) if bdown.get("ok") else None,
+        "burst_mbps_up": rnd(bup.get("mbps")) if bup.get("ok") else None,
+        "burst_ok_flows_down_up": [bdown.get("ok_flows", 0), bup.get("ok_flows", 0)],
+        "burst_slowest_first_byte_s": rnd(bdown.get("ttfb_s"), 3),
+        "burst_cpu_s_per_gb": rnd(cpu_per_gb(cpu, moved), 2) if moved else None,
+    })
+    if rows and "fp" in rows[0]:
+        ex["burst_peak_phys_footprint_mb"] = mb(max_of(rows, "fp", b0, b1))
+    return [("burst download: " + bdown.get("error", "")) if not bdown.get("ok") else "",
+            ("burst upload: " + bup.get("error", "")) if not bup.get("ok") else ""]
+
+
+def harness_burst_figures(row, h, win):
+    if not h or win[0] is None:
+        return
+    row["extra"].update({
+        "burst_go_sys_minus_released_peak_mb": mb(max_of(h, "sysrel", *win)),
+        "burst_go_goroutines_peak": max_of(h, "goroutines", *win),
+        "burst_go_heap_objects_peak_mb": mb(max_of(h, "heap", *win)),
+    })
+
+
 def harness_figures(row, h, t_ready, idle_win, down_win):
     if not h:
         return
@@ -760,6 +896,7 @@ class Spec:
         self.socks = kw.get("socks", "127.0.0.1:%d" % PORT_SOCKS)
         self.version = kw.get("version", "unknown")
         self.notes = list(kw.get("notes", []))
+        self.needs_webtunnel = kw.get("needs_webtunnel", False)
         self.slug = re.sub(r"[^a-z0-9]+", "-", ("%s %s %s" % (self.core, self.scenario, self.settings)).lower()).strip("-")
 
 
@@ -790,6 +927,7 @@ def run_desktop_spec(spec, ctx):
     down = up = {"ok": False, "error": "not run"}
     idle_win = (None, None)
     wins = ((None, None), (None, None))
+    bwin = (None, None)
     t_ready = time.time()
     sampler = None
     try:
@@ -824,7 +962,8 @@ def run_desktop_spec(spec, ctx):
         up = host.loadgen_run("put", UP_BYTES, spec.socks, 180)
         h3 = time.time()
         time.sleep(IDLE_AFTER_S)
-        t_end = time.time()
+        t_idle_end = time.time()
+        bdown, bup, bwin = run_burst(host, spec.socks)
         try:
             final = reader.read(proc.pid)
         except Exception:
@@ -832,7 +971,8 @@ def run_desktop_spec(spec, ctx):
         rows = sampler.halt()
         rows = reader.finish(rows, proc.pid, notes)
         wins = (window_of(down, (h0, h1)), window_of(up, (h2, h3)))
-        row["extra"]["idle_after_rss_mb"] = mb(median_in(rows, "rss", h3 + 1, t_end))
+        row["extra"]["idle_after_rss_mb"] = mb(median_in(rows, "rss", h3 + 1, t_idle_end))
+        notes += burst_figures(row, bdown, bup, rows, bwin)
     finally:
         if sampler is not None and sampler.is_alive():
             sampler.halt()
@@ -851,7 +991,9 @@ def run_desktop_spec(spec, ctx):
         })
     notes += transfer_figures(row, down, up, rows, wins)
     if spec.kind != "exec":
-        harness_figures(row, read_harness_stats(rundir / "stats.jsonl"), t_ready, idle_win, wins[0])
+        h = read_harness_stats(rundir / "stats.jsonl")
+        harness_figures(row, h, t_ready, idle_win, wins[0])
+        harness_burst_figures(row, h, bwin)
     row["notes"] = "; ".join(n for n in notes if n)
     return row
 
@@ -925,9 +1067,15 @@ def run_soak(transport, settings, ctx):
     notes = ["client AND server in one process: memory and CPU cover two peers",
              "throughput is what the loopback pump reaches, CPU-bound; no meeting service, no network",
              "vp8channel at the e2e options (30 fps, batch 64), not the app's 60 fps"]
-    env = clean_env({"GOGC": "10", "GOMEMLIMIT": "40MiB"} if settings == "ios-limits" else None)
+    env = clean_env({"GOGC": "10", "GOMEMLIMIT": "40MiB", "OLCRTC_LAB_CONSTRAINED": "1"}
+                    if settings == "ios-limits" else None)
     if settings == "ios-limits":
-        notes.append("GOGC=10 GOMEMLIMIT=40MiB through the environment, the extension's percent and limit")
+        notes.append("GOGC=10 GOMEMLIMIT=40MiB through the environment, the extension's percent and limit; "
+                     "the phones' constrained buffer profile (mobile.New's client.UseConstrainedBuffers) "
+                     "on for both peers")
+    else:
+        notes.append("server-sized buffers (smux 32 MiB / 4 MiB) on both peers: the desktop app's olcrtc binary's "
+                     "profile, which never calls mobile.New()")
     argv = [ctx["bin"] / "olcrtc-e2e.test", "-test.run", "^TestLocalThroughputSoak$", "-test.v", "-test.count=1",
             "-test.timeout=5m", "-olcrtc.local-soak", "-olcrtc.local-soak-duration=%ds" % SOAK_S,
             "-olcrtc.local-soak-transport=" + transport, "-olcrtc.local-soak-progress=5s"]
@@ -955,6 +1103,10 @@ def run_soak(transport, settings, ctx):
     m = SOAK_DONE.search(text)
     if not m:
         raise LabError("the soak printed no DONE line:\n" + tail(logp, 40))
+    constrained = "[lab] constrained buffers on" in text
+    row["extra"]["constrained_buffers"] = constrained
+    if settings == "ios-limits" and not constrained:
+        notes.append("WARNING: the constrained profile was not confirmed in the log; this row is NOT the phone's profile")
     t_done = t_done or (rows[-1]["t"] if rows else time.time())
     elapsed = go_duration(m.group(2)) or SOAK_S
     p0, p1 = t_done - elapsed, t_done
@@ -1036,6 +1188,9 @@ def cmd_desktop(a):
                  settings=settings, scenario="vless-xhttp-reality packet-up",
                  config=xray_xhttp(loop, servers.pub, answers_dns=True),
                  notes=extra + ["the iPhone's answers-dns shape (behind hev on a phone)", srv_note]),
+            Spec(kind="harness", core="cores harness: sing-box", harness_core="singbox", mode=mode, settings=settings,
+                 scenario=WEBTUNNEL, config=singbox_webtunnel(loop), needs_webtunnel=True,
+                 notes=extra + ["socks shape derived from vless-reality.json (see singbox_webtunnel)", srv_note]),
         ]
         if mode == "ios":
             specs += [
@@ -1048,6 +1203,9 @@ def cmd_desktop(a):
                 Spec(kind="exec", core="xray (exec)", argv=[xray_client, "run", "-c", "{config}"], settings="go-defaults",
                      scenario="vless-xhttp-reality packet-up", config=xray_xhttp(loop, servers.pub, answers_dns=False),
                      version=xr_version, notes=["official release zip, as the desktop app ships it", srv_note]),
+                Spec(kind="exec", core="sing-box (exec)", argv=[singbox, "run", "-c", "{config}"], settings="go-defaults",
+                     scenario=WEBTUNNEL, config=singbox_webtunnel(loop), version=sb_version, needs_webtunnel=True,
+                     notes=["scripts/build-singbox.sh", srv_note]),
             ]
     if a.tun:
         specs.append(Spec(kind="harness-tun", core="cores harness: sing-box", harness_core="singbox", mode="ios",
@@ -1060,6 +1218,10 @@ def cmd_desktop(a):
         for spec in specs:
             if not budget.allows(90):
                 add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, "skipped: out of time budget"))
+                continue
+            if spec.needs_webtunnel and servers.wt_error:
+                add(failed_row(a.platform, spec.core, spec.scenario, spec.settings,
+                               "the WebTunnel server: " + servers.wt_error))
                 continue
             log("run:", spec.core, "|", spec.scenario, "|", spec.settings)
             try:
@@ -1144,8 +1306,8 @@ class DeviceHost:
     def __init__(self, adb):
         self.adb = adb
 
-    def loadgen_run(self, op, nbytes, socks, timeout_s):
-        argv = [DEV_DIR + "/loadgen"] + transfer_argv(op, nbytes, socks, timeout_s)
+    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None):
+        argv = [DEV_DIR + "/loadgen"] + transfer_argv(op, nbytes, socks, timeout_s, flows)
         t0 = time.time()
         code, out, err = self.adb.sh(" ".join(shlex.quote(x) for x in argv), timeout=timeout_s + 40)
         res = parse_loadgen(out, err)
@@ -1289,6 +1451,7 @@ def device_measure(adb, host, socks, pids, runas, platform, core, version, scena
     time.sleep(PAUSE_S)
     up = host.loadgen_run("put", UP_BYTES, socks, 240)
     time.sleep(IDLE_AFTER_S)
+    bdown, bup, bwin = run_burst(host, socks, 240)
     rows = sampler.halt()
     wins = (down.get("host_window", (None, None)), up.get("host_window", (None, None)))
     core_rows = rows.get(str(pids[-1]), [])
@@ -1299,6 +1462,11 @@ def device_measure(adb, host, socks, pids, runas, platform, core, version, scena
         row["steady_rss_mb"] = mb(median_mid(merged, "pss", *wins[0]))
         row["peak_rss_mb"] = mb(max_of(merged, "pss"))
         notes += transfer_figures(row, down, up, merged, wins)
+        notes += burst_figures(row, bdown, bup, merged, bwin, mem_key="pss")
+        row["extra"].update({
+            "app_pss_burst_peak_mb": mb(max_of(app_rows, "pss", *bwin)),
+            "core_pss_burst_peak_mb": mb(max_of(core_rows, "pss", *bwin)),
+        })
         row["extra"].update({
             "app_pss_idle_mb": mb(median_in(app_rows, "pss", *idle_win)),
             "app_pss_steady_mb": mb(median_mid(app_rows, "pss", *wins[0])),
@@ -1320,7 +1488,9 @@ def device_measure(adb, host, socks, pids, runas, platform, core, version, scena
         row["steady_rss_mb"] = mb(median_mid(core_rows, "rss", *wins[0]))
         row["peak_rss_mb"] = mb(max(max_of(core_rows, "hwm") or 0, max_of(core_rows, "rss") or 0) or None)
         notes += transfer_figures(row, down, up, core_rows, wins)
+        notes += burst_figures(row, bdown, bup, core_rows, bwin)
         row["extra"].update({
+            "pss_burst_peak_mb": mb(max_of(core_rows, "pss", *bwin)),
             "pss_idle_mb": mb(median_in(core_rows, "pss", *idle_win)),
             "pss_steady_mb": mb(median_mid(core_rows, "pss", *wins[0])),
             "pss_peak_mb": mb(max_of(core_rows, "pss")),
@@ -1399,10 +1569,14 @@ def cmd_android(a):
             ("sing-box (exec)", "libsingboxcore.so", "vless-reality-vision", singbox_reality(server, servers.pub), sb_version),
             ("sing-box (exec)", "libsingboxcore.so", "hysteria2-salamander", singbox_hy2(server), sb_version),
             ("xray (exec)", "libxraycore.so", "vless-xhttp-reality packet-up", xray_xhttp(server, servers.pub, False), xr_version),
+            ("sing-box (exec)", "libsingboxcore.so", WEBTUNNEL, singbox_webtunnel(server), sb_version),
         ]
         for core, lib, scenario, config, version in execs:
             if not budget.allows(120):
                 add(failed_row(platform, core, scenario, "go-defaults", "skipped: out of time budget"))
+                continue
+            if scenario == WEBTUNNEL and servers.wt_error:
+                add(failed_row(platform, core, scenario, "go-defaults", "the WebTunnel server: " + servers.wt_error))
                 continue
             log("exec:", core, scenario)
             name = re.sub(r"[^a-z0-9]+", "-", scenario)
@@ -1448,10 +1622,15 @@ def cmd_android(a):
             links = links_for_app(server, servers.pub)
             plan = [("reality", "libsingboxcore", "vless-reality-vision"),
                     ("hy2", "libsingboxcore", "hysteria2-salamander"),
-                    ("xhttp", "libxraycore", "vless-xhttp-reality packet-up")]
+                    ("xhttp", "libxraycore", "vless-xhttp-reality packet-up"),
+                    ("webtunnel", "libsingboxcore", WEBTUNNEL)]
             for key, core_lib, scenario in plan:
                 if not budget.allows(150):
                     add(failed_row(platform, "Ghostlane app + " + core_lib, scenario, "app", "skipped: out of time budget"))
+                    continue
+                if key == "webtunnel" and servers.wt_error:
+                    add(failed_row(platform, "Ghostlane app + " + core_lib, scenario, "app",
+                                   "the WebTunnel server: " + servers.wt_error))
                     continue
                 log("app:", scenario)
                 try:
@@ -1535,24 +1714,26 @@ def app_run(adb, host, platform, app_version, key, link, core_lib, scenario, srv
 
 
 COLUMNS = [("platform", 22), ("core", 30), ("scenario", 30), ("settings", 11), ("idle", 6), ("steady", 6),
-           ("peak", 6), ("go s-r", 6), ("down", 7), ("up", 7), ("cpu/GB", 6)]
+           ("peak", 6), ("go s-r", 6), ("down", 7), ("up", 7), ("cpu/GB", 6), ("burst", 6), ("b-gor", 6)]
 
 
 def cells(r):
     def f(v):
         return "-" if v is None else str(v)
     if r.get("scenario") == "binary size":
-        return [r["platform"], r["core"], "size %s MB" % f(r.get("extra", {}).get("mb")), "", "", "", "", "", "", "", ""]
+        return [r["platform"], r["core"], "size %s MB" % f(r.get("extra", {}).get("mb"))] + [""] * 10
     return [r.get("platform", ""), r.get("core", ""), r.get("scenario", ""), r.get("settings", ""),
             f(r.get("idle_rss_mb")), f(r.get("steady_rss_mb")), f(r.get("peak_rss_mb")),
             f(r.get("go_sys_minus_released_mb")), f(r.get("mbps_down")), f(r.get("mbps_up")),
-            f(r.get("cpu_s_per_gb"))]
+            f(r.get("cpu_s_per_gb")), f(r.get("extra", {}).get("burst_peak_mb")),
+            f(r.get("extra", {}).get("burst_go_goroutines_peak"))]
 
 
 def print_table(rows, header=True):
     if header:
         print("memory in MiB (idle / steady under load / peak; go s-r = Go sys minus released, peak), "
-              "throughput in Mbit/s, CPU in s per GB moved")
+              "throughput in Mbit/s, CPU in s per GB moved; burst = peak memory while %d transfers ran at once, "
+              "b-gor = the harness's goroutines then" % BURST_FLOWS)
         print("  ".join(name.ljust(w) for name, w in COLUMNS))
     for r in rows:
         c = cells(r)
@@ -1563,7 +1744,7 @@ def print_table(rows, header=True):
 
 def markdown(rows):
     head = ["platform", "core", "scenario", "settings", "metric", "idle MiB", "steady MiB", "peak MiB",
-            "Go sys-rel MiB", "down Mbit/s", "up Mbit/s", "CPU s/GB"]
+            "Go sys-rel MiB", "down Mbit/s", "up Mbit/s", "CPU s/GB", "burst peak MiB", "burst goroutines"]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for r in rows:
         if r.get("scenario") == "binary size":
