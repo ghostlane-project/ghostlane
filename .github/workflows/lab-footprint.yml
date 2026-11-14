@@ -69,6 +69,9 @@ env:
 jobs:
   desktop:
     name: Cores on ${{ matrix.platform }}
+    # A commit whose message holds "[lab alloc only]" runs the allocator
+    # job alone (its follow-ups need no second copy of the desktop rows).
+    if: ${{ !contains(github.event.head_commit.message, '[lab alloc only]') }}
     runs-on: ${{ matrix.os }}
     # About 45 minutes when the xray-rust builds are new, about 25 when the
     # cache has them. The ceiling covers the worst case with room for Table
@@ -469,14 +472,24 @@ jobs:
   # Which allocator setup keeps the iOS extension's phys_footprint down
   # (lab.py alloc-rows, macOS): the fork's XHTTP upload fix with the lab's
   # allocator patch (lab/footprint/xray-rust-patches/lab-allocator-switch.patch,
-  # applied by rust-core-build.sh), one binary, five setups chosen by
-  # environment variables, four lines, each run twice. A job of its own so it
-  # runs beside the desktop rows on another Mac.
+  # applied by rust-core-build.sh), one binary, the setups LAB_ALLOC_SETUPS
+  # names chosen by environment variables, four lines, each run twice, with
+  # LAB_ALLOC_TAIL_S of idle after the last burst. A job of its own so it runs
+  # beside the desktop rows on another Mac.
   alloc:
     name: Allocator rows on macos-arm64
     runs-on: macos-latest
-    # The build's 5 minutes (none from the cache), the rows' 45, and room.
+    # The build's 8 minutes (none from the cache), the rows' 48, and room.
     timeout-minutes: 75
+    env:
+      # Run 43560510824 ran all five setups with 5 s after each burst. b and c
+      # (malloc_zone_pressure_relief) released nothing: on macOS 26 the
+      # default zone is xzone malloc, whose pressure_relief is libmalloc's
+      # malloc_zone_pressure_relief_fallback (returns 0). So the follow-up
+      # runs a, d and e, each with 60 s of idle after the last burst, long
+      # enough for the kernel's deferred reclaim (10 s sampling on macOS).
+      LAB_ALLOC_SETUPS: "a,d,e"
+      LAB_ALLOC_TAIL_S: "60"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -559,11 +572,11 @@ jobs:
           key: ${{ steps.xrs-a-cache.outputs.cache-primary-key }}
 
       - name: Allocator rows
-        timeout-minutes: 55
+        timeout-minutes: 60
         run: |
           set -euo pipefail
           python3 lab/footprint/lab.py alloc-rows --bin "$BIN" --out "$OUT/alloc-rows" --platform macos-arm64 \
-            --xray-rust "$XRS_ALLOC" --budget-min 48
+            --xray-rust "$XRS_ALLOC" --setups "$LAB_ALLOC_SETUPS" --tail-s "$LAB_ALLOC_TAIL_S" --budget-min 50
 
       - name: Keep the build record
         if: always()
@@ -794,7 +807,7 @@ jobs:
   summary:
     name: All results
     needs: [desktop, android, shapes]
-    if: always()
+    if: ${{ always() && !contains(github.event.head_commit.message, '[lab alloc only]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

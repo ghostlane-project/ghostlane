@@ -464,6 +464,22 @@ twice, in two passes with the setups interleaved. The tables are in the
 step's log and the job summary; `alloc-rows/alloc-rows.json` has every
 figure.
 
+`--setups` picks setups by key and `--tail-s` keeps the core idle that long
+after the last burst, the footprint read 5, 10, 15, 20, 30, 40, 60 and 90 s
+after it (as far as the tail goes) and every second in the JSON. The
+workflow passes the alloc job's `LAB_ALLOC_SETUPS` and `LAB_ALLOC_TAIL_S`.
+Run 43560510824 ran all five setups with no tail: b and c gave nothing back,
+because on macOS 26 the default zone is xzone malloc, whose `pressure_relief`
+is libmalloc's `malloc_zone_pressure_relief_fallback`, which returns 0
+(libmalloc-812, `src/xzone_malloc/xzone_malloc.c`); every call took about
+1 µs. xzone malloc hands freed pages to the kernel's deferred reclaim ring,
+which XNU samples every 10 s on macOS (1 s on iOS) and trims by what stayed
+unused (`osfmk/vm/vm_reclaim.c`), so the follow-up runs a, d and e with 60 s
+of idle after the last burst.
+
+A commit whose message holds `[lab alloc only]` runs the alloc job and the
+shapes job alone (the desktop jobs and the summary are skipped).
+
 ## What it cannot tell
 
 - macOS on Apple silicon is not iOS: no jetsam, no packet tunnel extension, a

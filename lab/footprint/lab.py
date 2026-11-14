@@ -5837,6 +5837,13 @@ ALLOC_SETTLE_S = 3.0
 ALLOC_BURSTS = 2
 ALLOC_MARKS = (0.5, 1.0, 2.0, 5.0)
 ALLOC_POLL_S = 0.02
+# --tail-s: after the last burst the core stays idle that long before the
+# snapshot, and the footprint is read at these marks (seconds after the
+# burst's last upload). On macOS 26 the default allocator is xzone malloc,
+# which hands freed pages to the kernel's deferred reclaim ring; the kernel
+# samples the ring every 10 s on macOS (1 s on iOS) and trims what stayed
+# unused (xnu osfmk/vm/vm_reclaim.c), so a 5 s window cannot show it.
+ALLOC_TAIL_MARKS = (5, 10, 15, 20, 30, 40, 60, 90)
 
 
 def relief_summary(path, windows):
@@ -5918,6 +5925,8 @@ def alloc_run(ctx, line, setup, run_no):
             bup = host.loadgen_run("burst-put", BURST_EACH_UP, HEAP_SOCKS, 150, BURST_FLOWS)
             b1 = time.time()
             time.sleep(max(ALLOC_MARKS) + 0.1)
+            if n == ALLOC_BURSTS and ctx.get("tail_s"):
+                time.sleep(max(0.0, b1 + ctx["tail_s"] + 0.1 - time.time()))
             rec["bursts"].append({"b0": b0, "up0": up0, "b1": b1, "down": bdown, "up": bup})
         rec["lifemax_bursts"] = reader.read(proc.pid).get("lifemax")
         t_snap = time.time()
@@ -5980,6 +5989,16 @@ def alloc_run(ctx, line, setup, run_no):
                "in_steady": rec["steady"]}
     for i, b in enumerate(rec["bursts"], 1):
         windows["after_burst_%d" % i] = (b["b1"], b["b1"] + max(ALLOC_MARKS))
+    if ctx.get("tail_s"):
+        last = rec["bursts"][-1]["b1"]
+        tail_s = ctx["tail_s"]
+        row["tail"] = {
+            "seconds": tail_s,
+            "fp_after_last_burst_mb": {str(m): mb(at_or_after(rows, "fp", last + m))
+                                       for m in ALLOC_TAIL_MARKS if m <= tail_s},
+            "fp_min_mb": mb(min((r["fp"] for r in rows if last <= r["t"] <= last + tail_s), default=None)),
+            "fp_each_second_mb": [mb(at_or_after(rows, "fp", last + k)) for k in range(0, int(tail_s) + 1)],
+        }
     row["relief"] = relief_summary(rundir / "relief.jsonl", windows)
     if row["relief"] and row["relief"].get("first_calls"):
         ends = [b["b1"] for b in rec["bursts"]]
@@ -6020,6 +6039,18 @@ ALLOC_HEAD = ("setup", "run", "idle", "b1 peak", "b1 +5s", "b2 start", "b2 peak"
               "steady Mbit/s down/up", "steady CPU s/GB", "relief calls/MiB/CPU ms")
 
 
+def alloc_tail_cells(r, marks):
+    t = (r.get("tail") or {}).get("fp_after_last_burst_mb") or {}
+    b = (r.get("bursts") or [{}])[-1]
+    return ([r["setup"] + " " + r.get("setup_name", ""), str(r.get("run")), alloc_cell(b.get("fp_peak_sampled_mb"))]
+            + [alloc_cell(t.get(str(m))) for m in marks] + [alloc_cell((r.get("tail") or {}).get("fp_min_mb"))])
+
+
+def alloc_tail_marks(doc):
+    tail = doc.get("tail_s") or 0
+    return [m for m in ALLOC_TAIL_MARKS if m <= tail]
+
+
 def alloc_text(doc):
     out = ["\nalloc-rows, macOS phys_footprint (MiB) by allocator setup, %s, mobile profile" % doc.get("version")]
     for line in doc.get("lines") or []:
@@ -6033,6 +6064,15 @@ def alloc_text(doc):
                                                         str(r["error"]).splitlines()[0][:200]))
                 continue
             out.append("  " + " | ".join(alloc_line(r)))
+    marks = alloc_tail_marks(doc)
+    if marks:
+        out.append("\nthe idle tail after the last burst (phys_footprint MiB, seconds after its last upload)")
+        for line in doc.get("lines") or []:
+            out.append("\n  " + line)
+            out.append("  " + " | ".join(["setup", "run", "b2 peak"] + ["+%ds" % m for m in marks] + ["min"]))
+            for r in doc["rows"]:
+                if r.get("line") == line and not r.get("error"):
+                    out.append("  " + " | ".join(alloc_tail_cells(r, marks)))
     return "\n".join(out)
 
 
@@ -6054,6 +6094,17 @@ def alloc_markdown(doc):
                 continue
             out.append("| " + " | ".join(alloc_line(r)) + " |")
         out.append("")
+    marks = alloc_tail_marks(doc)
+    if marks:
+        head = ["setup", "run", "b2 peak"] + ["+%ds" % m for m in marks] + ["min"]
+        out += ["### The idle tail after the last burst", "",
+                "phys_footprint (MiB) the given seconds after the last burst's last upload, the core idle.", ""]
+        for line in doc.get("lines") or []:
+            out += ["#### " + line, "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+            for r in doc["rows"]:
+                if r.get("line") == line and not r.get("error"):
+                    out.append("| " + " | ".join(alloc_tail_cells(r, marks)) + " |")
+            out.append("")
     return "\n".join(out) + "\n"
 
 
@@ -6065,10 +6116,16 @@ def cmd_alloc_rows(a):
     b = Path(a.bin).resolve()
     budget = Budget(a.budget_min)
     binary, info, ref, commit = xrs_build(a.xray_rust)
+    wanted = [k for k in a.setups.split(",") if k]
+    unknown = [k for k in wanted if k not in {x[0] for x in ALLOC_SETUPS}]
+    if unknown:
+        raise LabError("--setups: no setup %s (there are %s)" % (", ".join(unknown), ", ".join(x[0] for x in ALLOC_SETUPS)))
+    setups = [x for x in ALLOC_SETUPS if x[0] in wanted]
     doc = {"what": "phys_footprint of xray-rust under five allocator setups (lab_alloc.rs in the lab's patch)",
            "platform": a.platform, "runner": " ".join(os.uname()), "version": xrs_version_text(info),
            "xray_rust_build": info, "mobile_env": xrs_mobile_env(),
-           "setups": [{"key": k, "name": n, "env": e, "what": w} for k, n, e, _, w in ALLOC_SETUPS],
+           "setups": [{"key": k, "name": n, "env": e, "what": w} for k, n, e, _, w in setups],
+           "tail_s": a.tail_s,
            "procedure": "3 s idle; %d x (burst: %d downloads of %d B at once, %.0f s, %d uploads of %d B at once; "
                         "then %.0f s); footprint + vmmap; 500 MB down, %.0f s, 100 MB up; %.0f s. phys_footprint "
                         "polled every %.2f s" % (ALLOC_BURSTS, BURST_FLOWS, BURST_EACH_DOWN, PAUSE_S, BURST_FLOWS,
@@ -6086,7 +6143,7 @@ def cmd_alloc_rows(a):
             raise LabError("port %d is still taken" % port)
     servers = Servers(out, b / "loadgen", b / "xray-26.4.25" / "xray")
     ctx = {"out": out, "platform": a.platform, "xrs": binary, "version": doc["version"], "reader": MacReader(),
-           "snapper": MacSnapper(), "host": LocalHost(b / "loadgen")}
+           "snapper": MacSnapper(), "host": LocalHost(b / "loadgen"), "tail_s": a.tail_s}
     try:
         servers.start()
         doc["server"] = servers.version
@@ -6102,7 +6159,7 @@ def cmd_alloc_rows(a):
                         WEBTUNNEL: lambda: xrs_webtunnel(loop, wt_pin)}
         for run_no in (1, 2):
             for line in doc["lines"]:
-                for setup in ALLOC_SETUPS:
+                for setup in setups:
                     base = {"platform": a.platform, "line": line, "setup": setup[0], "setup_name": setup[1],
                             "run": run_no}
                     if not budget.allows(120):
@@ -6192,6 +6249,11 @@ def main(argv=None):
     al.add_argument("--xray-rust", required=True, help="the build with xray-rust-patches/lab-allocator-switch.patch")
     al.add_argument("--lines", default="reality,hysteria2,webtunnel,xhttp",
                     help="comma-separated, of %s" % ", ".join(HEAP_LINE_NAMES))
+    al.add_argument("--setups", default=",".join(x[0] for x in ALLOC_SETUPS),
+                    help="comma-separated setup keys (default: all)")
+    al.add_argument("--tail-s", type=float, default=0,
+                    help="seconds the core stays idle after the last burst, the footprint read at %s (default 0: "
+                         "the 5 s every burst has)" % ", ".join(str(m) for m in ALLOC_TAIL_MARKS))
     al.add_argument("--budget-min", type=float, default=40)
     fs = sub.add_parser("flow-socks", help="udp-flow's python SOCKS5 server (runs until killed)")
     fs.add_argument("--port", type=int, required=True)
