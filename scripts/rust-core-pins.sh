@@ -26,21 +26,29 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# eb19e285d909: the fork's `ghostlane` after its first integration
+# e850316844c6: the fork's `ghostlane` after its second integration
 # (2026-11-14). Upstream's second 0.10.0 candidate (4a61b057) with the
-# reviewed topic branches merged in this order: gl/reset-network (C ABI
-# 1.18, xray_core_reset_network), gl/logs (C ABI 1.19, the log callback),
-# gl/hev-udp (hev's UDP ASSOCIATE with a login), gl/hy2-memory (Hysteria2
-# windows per connection), gl/xhttp-upload-memory, gl/chrome-156-hello (the
-# Chrome 156 hello); then rustls from ghostlane-project/shaped-rustls at
-# b0dc21a7, that fork's `ghostlane` (its Chrome 156 hello and the deframer
-# shrink), the only git source deny.toml allows for it.
+# reviewed topic branches merged in this order:
+#  - first integration (eb19e285): gl/reset-network (C ABI 1.18,
+#    xray_core_reset_network), gl/logs (C ABI 1.19, the log callback),
+#    gl/hev-udp (hev's FWD_UDP, UDP in the control connection, with a
+#    login), gl/hy2-memory (Hysteria2 windows per connection),
+#    gl/xhttp-upload-memory, gl/chrome-156-hello (the Chrome 156 hello);
+#    then rustls from ghostlane-project/shaped-rustls at b0dc21a7, that
+#    fork's `ghostlane` (its Chrome 156 hello and the deframer shrink), the
+#    only git source deny.toml allows for it;
+#  - second integration: gl/dns-forward (the DNS outbound's `forward` rule,
+#    queries other than A/AAAA through a named outbound, which core.json
+#    writes), gl/gitleaks-olc-vectors (a gitleaks exception for the olcRTC
+#    port's synthetic key vectors, on their path only, so upstream's secrets
+#    job passes over every branch of the fork) and gl/fork-scope (AGENTS.md
+#    names the fork's write scope).
 #
 # Pin only commits on the fork's `ghostlane`. That branch moves by merges and
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-eb19e285d909771e70833b37b26d0f72c2c13c98}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-e850316844c64d54a7c73fc740e8f529dab92f5a}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
