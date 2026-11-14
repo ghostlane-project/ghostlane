@@ -9,8 +9,10 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
  * copied from `crates/xray-config/src/surface.rs` of ghostlane-project/xray-rust
- * at 7259d7b2 (the `ghostlane` branch's 4a61b057 with rustls from our fork; no
- * parser change between them). The parser refuses a whole config over one
+ * at eb19e285 (the `ghostlane` branch after its first integration; the only
+ * parser change since 4a61b057 is `log`, now read for the embedding's log
+ * lines, which also takes Xray-core's `logLevel` spelling this config never
+ * writes). The parser refuses a whole config over one
  * field it does not list (`reject_unknown_fields`), so a builder that grows a
  * field the core does not know fails here, before a phone fails to connect.
  *
@@ -18,8 +20,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * protocols [XrayConfig.buildIosCore] writes are known, and an object anywhere
  * else is reported as unchecked, so a new one has to be added here, from the
  * core's own list, to pass. `realitySettings` is checked against the fields
- * the core reads (it ignores others) and `log` against Xray's own (the core
- * reads none of it).
+ * the core reads (it ignores others) and `log` against the core's `LOG`.
  */
 object XrayRustSurface {
     val ROOT = setOf("log", "inbounds", "outbounds", "routing", "observatory", "dns", "policy", "reverse", "remarks", "meta")

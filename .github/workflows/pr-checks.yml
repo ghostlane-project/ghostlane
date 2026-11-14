@@ -663,12 +663,13 @@ jobs:
       # The one pin of the core on this branch. It moves to
       # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
       # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: 7259d7b2, the
-      # fork's ghostlane (4a61b057) with rustls from ghostlane-project/
-      # shaped-rustls. Bump it with the copy of the core's field lists in
-      # XrayRustSurface.
+      # this is the only copy here, and the same commit: eb19e285, the
+      # fork's ghostlane after its first integration (reset-network, logs,
+      # hev-udp, hy2-memory, xhttp-upload-memory, the Chrome 156 hello,
+      # rustls from ghostlane-project/shaped-rustls b0dc21a7). Bump it with
+      # the copy of the core's field lists in XrayRustSurface.
       XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: 7259d7b2199fb22ceb5910a8e3a01cf1ef33f88e
+      XRAY_RUST_COMMIT: eb19e285d909771e70833b37b26d0f72c2c13c98
     steps:
       - uses: actions/checkout@v7
         with:
