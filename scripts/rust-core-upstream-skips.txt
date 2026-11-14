@@ -1,0 +1,6 @@
+# Steps of xray-rust's own CI (its .github/workflows/ci.yml at the pin) that
+# .github/workflows/rust-core.yml does not run on our fork, through
+# scripts/rust-core-upstream-ci.py, each with why:
+#   <job> | <step name, exactly> | <reason>
+# A line naming a step the pinned ci.yml no longer has fails the run.
+supply-chain | Verify Gradle dependency provenance against canonical repositories | Android only: the app does not use the fork's Android adapter, and the check asks Maven repositories online for every Gradle dependency
