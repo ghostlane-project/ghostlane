@@ -54,6 +54,7 @@ jobs:
       mac_helper: ${{ steps.paths.outputs.mac_helper }}
       ios_extension: ${{ steps.paths.outputs.ios_extension }}
       android_tun2socks: ${{ steps.paths.outputs.android_tun2socks }}
+      singbox_size: ${{ steps.paths.outputs.singbox_size }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,6 +104,7 @@ jobs:
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
+            echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -126,9 +128,11 @@ jobs:
           # The Mac's tunnel helper is the one part of the app that is root, and
           # nothing else here compiles it: only a release build does, with a
           # signing identity. Built and asked on a Mac when it, what asks it, or
-          # the config it is handed changed. Not on a change to this file alone:
-          # a Mac's minutes are billed tenfold.
-          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$'; then
+          # the config it is handed changed, or the tags of the sing-box it runs:
+          # a resolver of the Mac's tun is one of them (with_dhcp), and only a
+          # Mac can tell it is gone. Not on a change to this file alone: a Mac's
+          # minutes are billed tenfold.
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^scripts/singbox-tags\.sh$'; then
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -137,7 +141,7 @@ jobs:
           # The iPhone's tunnel extension links no Kotlin, so a Mac builds it
           # without Gradle, on a change to what that job builds or reads: the
           # extension and its tests, the project file, the privacy manifest it
-          # checks, the script of its tests, and what it links, the prebuilt
+          # checks, the scripts of its tests, and what it links, the prebuilt
           # frameworks and their pins. Not on a change to this file alone, as
           # above; the shared Kotlin its tests read runs them in apple-compile.
           # A here-string: a pipe into grep -q can end in SIGPIPE under
@@ -158,11 +162,19 @@ jobs:
           else
             echo 'android_tun2socks=false' >> "$GITHUB_OUTPUT"
           fi
+          # What the sing-box tag lists save is sized by three more builds of
+          # it, minutes of the Gradle job, so only when the lists, the tree
+          # they compile or this file changed.
+          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+            echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'singbox_size=false' >> "$GITHUB_OUTPUT"
+          fi
 
   checks:
-    # After scope for the one step below that asks it what changed. Not held
+    # After scope for the two steps below that ask it what changed. Not held
     # to its success: !cancelled() runs the checks whatever became of scope,
-    # and that step is then skipped.
+    # and those steps are then skipped.
     needs: scope
     if: github.event_name != 'workflow_dispatch' && !cancelled()
     name: Gradle checks
@@ -170,9 +182,6 @@ jobs:
 
     env:
       ANDROID_NDK_VERSION: "28.2.13676358"
-      # The release the app pins (SingBoxConfig.SINGBOX_VERSION); every config
-      # the builders emit is checked against this exact binary below.
-      SINGBOX_VERSION: "1.13.14"
       XRAY_VERSION: "26.7.11"
       # crypt1/admin secrets (baked into GeneratedAppInfo). Absent on fork PRs ⇒
       # features compile but stay disabled; jvmTest uses its own explicit key.
@@ -272,27 +281,78 @@ jobs:
           test -n "$apk"
           python3 tools/check-android-compose-assets.py "$apk"
 
-      - name: Download pinned sing-box
+      # Built, not downloaded: the configs are checked with the binary the app
+      # ships, the patched tree with our tags (scripts/build-singbox.sh,
+      # scripts/singbox-tags.sh). SagerNet's release carries tags ours do not,
+      # so a shape that needs one of those passed `sing-box check` against it
+      # and would be refused by the app's own binary. Two lists, two binaries:
+      # the desktops' (Linux ships this one) and Android's, built for this
+      # runner.
+      - name: Build sing-box with the tags the app ships
+        working-directory: olcbox
         run: |
-          url="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "$url" -o sb.tar.gz
-          tar xzf sb.tar.gz
-          sudo mv "sing-box-${SINGBOX_VERSION}-linux-amd64/sing-box" /usr/local/bin/sing-box
+          set -euo pipefail
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box/desktop" desktop
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box/android" android
+          sudo install -m 0755 "$RUNNER_TEMP/sing-box/desktop" /usr/local/bin/sing-box
           sing-box version
 
-      # Every shape the builders emit, against the release the app pins. The
-      # jvm tests above wrote them; this is what `sing-box check` says about them.
+      # Every shape the builders emit, against the pinned version with the
+      # desktops' tags. The jvm tests above wrote them; this is what
+      # `sing-box check` says about them.
       - name: sing-box check the emitted configs
         working-directory: olcbox
+        run: scripts/check-singbox-configs.sh
+
+      # The same shapes against Android's binary, but for a tun's, which
+      # Android never writes (check-singbox-configs.sh says which those are).
+      # The desktops' list is a superset of Android's, so the step above
+      # cannot see a shape that needs a tag only the desktops have.
+      - name: sing-box check the emitted configs with Android's tags
+        working-directory: olcbox
+        env:
+          SINGBOX_BIN: ${{ runner.temp }}/sing-box/android
+          SINGBOX_TARGET: android
         run: scripts/check-singbox-configs.sh
 
       # The desktop draws its traffic chart from what the tun's sing-box says it
       # has carried, less the flows of the session's own lines. The names of the
       # totals and how a flow names its program are in no schema; they are asked
-      # of the pinned release here.
+      # of the desktops' binary here, which is also what says it has the API.
       - name: sing-box answers the traffic API as the app reads it
         working-directory: olcbox
         run: scripts/check-singbox-traffic-api.sh
+
+      # What the tag lists save, in the step summary: Android's (arm64, as in
+      # the APK) and the desktops' (amd64, as Linux ships it) beside the same
+      # tree with SagerNet's release list, which every build used before.
+      # Android's is built here without cgo; the APK's links through the NDK
+      # with 16 KB pages and is a little larger, by the same amount in both
+      # columns. Only when the lists or the tree changed (scope).
+      - name: sing-box size with our tags and with upstream's
+        if: needs.scope.outputs.singbox_size == 'true'
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          sb="$RUNNER_TEMP/sing-box"
+          GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/android-arm64" android
+          GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/upstream-android-arm64" upstream
+          bash scripts/build-singbox.sh "$sb/upstream" upstream
+          python3 - "$sb" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import os, sys
+          sb = sys.argv[1]
+          mib = lambda name: os.path.getsize(os.path.join(sb, name)) / 1048576
+          print("### sing-box, our tags and upstream's\n")
+          print("| binary | ours | upstream's | saved |")
+          print("|---|---|---|---|")
+          for what, ours, theirs in (
+              ("android/arm64, Android's tags", "android-arm64", "upstream-android-arm64"),
+              ("linux/amd64, the desktops' tags", "desktop", "upstream"),
+              ("linux/amd64, Android's tags", "android", "upstream"),
+          ):
+              a, b = mib(ours), mib(theirs)
+              print("| %s | %.1f MiB | %.1f MiB | %.1f MiB (%.0f %%) |" % (what, a, b, b - a, 100 * (b - a) / b))
+          PY
 
       - name: Validate generated Xray configurations
         working-directory: olcbox
@@ -469,16 +529,23 @@ jobs:
     if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper
     runs-on: macos-latest
-    timeout-minutes: 15
-    env:
-      # The release the app pins (SingBoxConfig.SINGBOX_VERSION).
-      SINGBOX_VERSION: "1.13.14"
+    # 15 until sing-box was built here rather than downloaded: a few minutes more.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
+      # The toolchain the releases build sing-box with (scripts/cores-pins.sh).
+      - name: The pinned Go
+        id: go
+        run: echo "version=$(bash -c 'unset GO_VERSION; . scripts/cores-pins.sh; echo "$GO_VERSION"')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          # Nothing here has a go.sum to key a cache on.
+          cache: false
       - name: Build the helper as the app's build does, and once to be asked over a pipe
         run: |
           src=desktopApp/tunneldaemon
@@ -491,13 +558,14 @@ jobs:
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
           cc -O2 -o "$RUNNER_TEMP/stand-in-line" scripts/macos-helper-check/stand-in-line.c
-      - name: The pinned sing-box, for this Mac
+      # The sing-box the app ships, not SagerNet's release: the patched tree
+      # with the desktops' tags (scripts/build-singbox.sh). The Mac's tun finds
+      # the network's own resolver through one of those tags (with_dhcp,
+      # scripts/singbox-tags.sh), and the release has it whether ours does or not.
+      - name: sing-box as the app ships it, for this Mac
         run: |
-          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
-          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
-          "$RUNNER_TEMP/sing-box" version | head -1
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box" desktop
+          "$RUNNER_TEMP/sing-box" version | sed -n 1p
       - name: Ask the helper what it does
         run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"
 
