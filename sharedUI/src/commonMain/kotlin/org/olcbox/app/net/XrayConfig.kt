@@ -44,9 +44,10 @@ object XrayConfig {
 
     /**
      * The tunnel-side resolver under [answersDns], reached through `out`. The
-     * same address SingBoxConfig uses for the same job.
+     * same address SingBoxConfig uses for the same job, and the one core.json's
+     * `dns` outbound forwards to through the line ([IosCore]).
      */
-    private const val REMOTE_DNS_SERVER = "1.1.1.1"
+    internal const val REMOTE_DNS_SERVER = "1.1.1.1"
 
     /**
      * What `ip_is_private` means to sing-box, spelled out: the local network,
@@ -267,7 +268,9 @@ object XrayConfig {
      *  - one inbound, SOCKS5 on 127.0.0.1:[socksPort] demanding [login], UDP on;
      *  - DNS answered by the core: the tun's resolver reaches it as a query to
      *    port 53, which the routing hands to a `dns` outbound; A gets a fake
-     *    address from [IosCore.FAKE_IP_POOL], AAAA nothing, HTTPS is refused;
+     *    address from [IosCore.FAKE_IP_POOL], AAAA nothing, HTTPS is refused,
+     *    and every other type is forwarded through the line to
+     *    [REMOTE_DNS_SERVER] (a rule only xray-rust reads);
      *  - under Bypass Russia, the names on [geodata]'s lists are resolved for
      *    real by the network's own resolver and leave directly, as do their
      *    addresses and the local network; everything else rides the tunnel;

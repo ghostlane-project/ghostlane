@@ -9,12 +9,14 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
  * copied from `crates/xray-config/src/surface.rs` of ghostlane-project/xray-rust
- * at eb19e285 (the `ghostlane` branch after its first integration; the only
- * parser change since 4a61b057 is `log`, now read for the embedding's log
+ * at e8503168 (the `ghostlane` branch after its second integration; the
+ * parser changes since 4a61b057 are `log`, now read for the embedding's log
  * lines, which also takes Xray-core's `logLevel` spelling this config never
- * writes). The parser refuses a whole config over one
- * field it does not list (`reject_unknown_fields`), so a builder that grows a
- * field the core does not know fails here, before a phone fails to connect.
+ * writes, and the `dns` outbound rule's `address`, `port` and `outboundTag`,
+ * which only its `forward` action takes). The parser refuses a whole config
+ * over one field it does not list (`reject_unknown_fields`), so a builder that
+ * grows a field the core does not know fails here, before a phone fails to
+ * connect.
  *
  * Narrower than the core where this config is narrower: only the objects and
  * protocols [XrayConfig.buildIosCore] writes are known, and an object anywhere
@@ -51,7 +53,7 @@ object XrayRustSurface {
         "rewriteNetwork", "rewriteAddress", "rewritePort", "network", "address", "port", "userLevel", "rules",
         "nonIPQuery", "blockTypes",
     )
-    val DNS_RULE = setOf("action", "qType", "qtype", "domain", "rCode")
+    val DNS_RULE = setOf("action", "qType", "qtype", "domain", "rCode", "address", "port", "outboundTag")
     val STREAM = setOf(
         "address", "port", "method", "network", "security", "tlsSettings", "realitySettings", "tcpSettings",
         "rawSettings", "wsSettings", "httpupgradeSettings", "grpcSettings", "xhttpSettings", "splithttpSettings",

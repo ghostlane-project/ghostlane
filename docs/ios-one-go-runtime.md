@@ -339,7 +339,13 @@ No build of this branch changes what an iPhone runs.
   the login, UDP on, sniffing for the rules only (`routeOnly`). DNS: the
   routing sends port 53 (TCP and UDP) from the inbound to a `dns` outbound;
   A gets a fake address from `dns.fakeIp` (198.18.0.0/15), AAAA nothing,
-  HTTPS is refused (REFUSED, as sing-box's `reject`). Under Bypass Russia
+  HTTPS is refused (REFUSED, as sing-box's `reject`), and every other type
+  (SRV, TXT, MX, PTR, SVCB…) is forwarded unchanged through `out` to
+  1.1.1.1:53, the server sing-box's `dns-remote` asks: the rule
+  `{"action": "forward", "qType": "2-27,29-64,66-65535", "address":
+  "1.1.1.1", "port": 53, "outboundTag": "out"}`, last, which only xray-rust
+  reads (the fork's `gl/dns-forward`; Go's Xray refuses the action, so no
+  Go config carries it). Under Bypass Russia
   the Russian names are forwarded, every type, to the network's resolver
   (the placeholder `DirectResolver.substitute` replaces, twice here) and
   their connections, the Russian addresses and the local network leave by
@@ -366,7 +372,7 @@ No build of this branch changes what an iPhone runs.
   in hex, a Salamander password outside 4 to 4096 bytes) goes to Go whole,
   and the app's log says why.
 - Held by `XrayConfigIosCoreTest` (every field against the core's own field
-  lists, `XrayRustSurface`, copied from the fork at 7259d7b2), the reference
+  lists, `XrayRustSurface`, copied from the fork at e8503168), the reference
   configs `ios-core-*.json` and `bypass-ios-core-*.json`
   (`RustCoreConfigDumpTest`; per line with stand-in lists, and
   `bypass-ios-core-bundled-lists.json` once with the bundled Russian lists,
@@ -397,16 +403,16 @@ What is not here yet, for the extension's half (a later branch):
 What does not match Phase 0, and why:
 
 - Non-address queries (SRV, TXT, MX, PTR, SVCB…) for names off the direct
-  lists get an empty NOERROR; sing-box asks 1.1.1.1 through the tunnel. The
-  core's `dns` outbound cannot dial through `out` (chaining it through a
-  REALITY `out` is refused by the core: "REALITY over a preconnected stream
-  is unsupported"), and it is the only thing that answers the tun's
-  resolver. Pending a fork patch, `gl/dns-forward`, being written now: a
-  `dns` outbound rule that forwards a query as a new flow through a named
-  outbound, as Xray's own DNS does with a tagged server. With it the app adds
-  that rule for every type but A, AAAA and HTTPS. Until then this is a known
-  divergence for the owner to accept or hold the switch on, and a device
-  check for D3/D5: an SRV or TXT lookup on the phone. A and AAAA are not
+  lists are asked of 1.1.1.1 through the line, as sing-box asks them, by the
+  `dns` outbound's `forward` rule (above). How the core asks differs: each
+  query is a flow of its own through `out` (no session kept between
+  queries), over UDP when the client asked over UDP and over TCP otherwise
+  or after a truncated answer; it holds one of the core's DNS operations
+  (16 under its Mobile profile) and is answered SERVFAIL at the outbound's deadline (the
+  smaller of `connIdle` and 5 s) or when none is free. The fork's
+  end-to-end tests ran it over plain VLESS; the app's Vision line carries the
+  UDP query as XUDP, the path `dns.servers` already uses, so an SRV or TXT
+  lookup on the phone stays a device check for D3/D5. A and AAAA are not
   affected: the exit resolves the name behind a fake address.
 - No `reverse_mapping`: under Bypass Russia a connection to a Russian name's
   real address that carries no name to sniff (not TLS, HTTP or QUIC) is

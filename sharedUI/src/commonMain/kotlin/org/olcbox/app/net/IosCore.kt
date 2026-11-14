@@ -88,6 +88,16 @@ object IosCore {
     private const val RCODE_REFUSED = 5
 
     /**
+     * Every query type but A (1), AAAA (28) and HTTPS (65): what the `dns`
+     * outbound's forward rule sends through the line. Type 0 is left out too
+     * and gets the outbound's empty answer.
+     */
+    private const val QTYPES_FORWARDED = "2-27,29-64,66-65535"
+
+    /** The line's outbound: first, so what no rule claims rides it. */
+    private const val LINE = "out"
+
+    /**
      * The fingerprints sing-box's names map to ([SingBoxConfig.singBoxFingerprint])
      * that xray-rust has no REALITY hello for: android and 360 offer no X25519
      * key share, and the core refuses them under `realitySettings`.
@@ -323,7 +333,7 @@ object IosCore {
     /** The line, tagged `out`: first, so what no rule claims rides the tunnel. */
     private fun JsonArrayBuilder.addOutbound(spec: OutboundSpec, line: IosCoreLine) {
         addJsonObject {
-            put("tag", "out")
+            put("tag", LINE)
             when (spec) {
                 is OutboundSpec.Vless -> putVless(spec, line)
                 is OutboundSpec.Hysteria2 -> putHysteria2(spec)
@@ -460,12 +470,17 @@ object IosCore {
     }
 
     /**
-     * Answers every query the routing below sends here, itself. With no rule
-     * an A query gets a fake address and an AAAA none, as sing-box's `fakeip`
-     * server answers them; HTTPS is refused, as sing-box's iOS shape refuses
-     * it. Under the bypass a name on the region's lists is first asked of the
+     * Answers every query the routing below sends here. An A query gets a
+     * fake address and an AAAA none, as sing-box's `fakeip` server answers
+     * them; HTTPS is refused, as sing-box's iOS shape refuses it. Every other
+     * type (SRV, TXT, MX, PTR, SVCB…) is forwarded unchanged through the line
+     * to the resolver the Go engines ask there, [XrayConfig.REMOTE_DNS_SERVER],
+     * as sing-box's `dns-remote` answers it: the `forward` rule, which only
+     * xray-rust has (Go's Xray refuses the action, so no Go config carries it).
+     * Under the bypass a name on the region's lists is first asked of the
      * network's own resolver, every type, as sing-box sends those names to
-     * `dns-direct`.
+     * `dns-direct`. The first rule that matches wins, so the forward rule is
+     * last.
      */
     private fun JsonArrayBuilder.addDnsOutbound(directResolver: String?, lists: XrayGeodata.Lists?) {
         addJsonObject {
@@ -488,6 +503,12 @@ object IosCore {
                         put("action", "return")
                         put("qType", QTYPE_HTTPS)
                         put("rCode", RCODE_REFUSED)
+                    }
+                    addJsonObject {
+                        put("action", "forward")
+                        put("qType", QTYPES_FORWARDED)
+                        put("address", XrayConfig.REMOTE_DNS_SERVER); put("port", 53)
+                        put("outboundTag", LINE)
                     }
                 }
             }
