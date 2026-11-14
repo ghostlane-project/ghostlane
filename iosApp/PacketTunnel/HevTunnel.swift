@@ -52,11 +52,14 @@ enum HevTunnel {
     /// is ending anyway and the thread goes with it.
     private static let stopGrace: TimeInterval = 3
 
-    /// The configuration, in hev's YAML. The numbers are hev's own low-memory
-    /// profile for iOS (task stack 20480 + tcp buffer 4096) and the session
-    /// count Tun2SocksKit ships with — the library most iOS clients use to
-    /// embed hev — rather than the README's 1200: each live session holds a
-    /// task stack, and 768 of them is already more than a phone opens.
+    /// The configuration, in hev's YAML. The `misc` numbers are sized for an
+    /// extension killed at about 50 MB; each says why below, with the
+    /// arithmetic against hev's own rules at the commit scripts/hev-pins.sh
+    /// pins. lwIP's sizes, which hev compiles in, are in
+    /// scripts/patches/hev-lwipopts-ios.patch, and its pools are sized for
+    /// `max-session-count`. HevTunnelConfigurationTests holds both: the
+    /// lines, the keys hev reads, the stack hev will really use, and the
+    /// pools against the session count.
     ///
     /// `tunnel.mtu` must match the tun's: hev sizes its read buffer by it.
     /// No name or addresses: with a descriptor handed in, hev configures no
@@ -84,9 +87,43 @@ enum HevTunnel {
         }
         lines += [
             "misc:",
+            // Every session, each TCP connection and each UDP association,
+            // runs on a task stack of its own, mmap'd at this size rounded up
+            // to the page, plus a guard page. hev raises a smaller value,
+            // without a word, to TASK_STACK_SIZE 20,480 + max(tcp-buffer-size,
+            // UDP_BUF_SIZE 1,500 x udp-copy-buffer-nums) (src/hev-config.c,
+            // hev_config_parse_doc). Until 2026-11-14 the copy buffers were
+            // hev's default ten, so the floor was 20,480 + 15,000 = 35,480 and
+            // not this 24,576: 48 KiB of stack and a 16 KiB guard per session
+            // on the phone's 16 KiB pages. With two copy buffers (below) the
+            // floor is 20,480 + max(4,096, 3,000) = 24,576, exactly this, and
+            // hev maps 32 KiB + 16 KiB. Only the pages a task touches are
+            // resident: one, or two for a deep path.
             "  task-stack-size: 24576",
+            // The ring hev copies a download through, alloca'd on that stack.
+            // hev hands it to lwIP without copying and frees it only as the
+            // app acknowledges, so these 4 KiB are also all of a download that
+            // a session holds, whatever lwIP's send buffer.
             "  tcp-buffer-size: 4096",
-            "  max-session-count: 768",
+            // Datagrams moved per wake of a UDP session, each into a 1,500-byte
+            // buffer on its stack (a variable-length array in
+            // hev-socks5-session-udp.c). 2 x 1,500 = 3,000 B keeps the floor
+            // above at the TCP ring's 24,576 (3 would raise it to 24,980), and
+            // should fit in the page the task starts on, where ten (15,000 B)
+            // spilled into a second. Darwin has no recvmmsg, so hev reads one
+            // datagram per call either way: two per wake costs task switches,
+            // not syscalls.
+            "  udp-copy-buffer-nums: 2",
+            // Sessions, TCP and UDP together. When a new one reaches the count
+            // hev ends the least recently active (hev-socks5-tunnel.c), so at
+            // most 255 are live. Each holds 16-32 KiB of touched stack and, on
+            // an upload the engine has not read yet, up to lwIP's window of
+            // 32,764 B in 9 KiB pbufs (about 36 KiB): 4-8 MB of stacks at the
+            // cap against 12-25 MB at the 768 before 2026-11-14. lwIP's pcb
+            // pools are sized for this count (hev-lwipopts-ios.patch). A phone
+            // rarely has a hundred open; a speed test's thirty connections and
+            // the resolver's associations (30 s each, below) fit.
+            "  max-session-count: 256",
             "  connect-timeout: 5000",
             // TCP too: a connection with no bytes either way for a minute is
             // closed. hev's default is five minutes; a minute is what the

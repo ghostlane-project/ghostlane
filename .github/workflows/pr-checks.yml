@@ -604,6 +604,11 @@ jobs:
       # holds the extension's device headers to the Kotlin they copy.
       - name: The room keeper's tests
         run: scripts/test-ios-room-list.sh
+      # The YAML hev is started with, against hev's own rules at the pin (the
+      # keys it reads, the task stack it would raise in silence) and against
+      # the lwIP pools the iOS patch sizes for its session count.
+      - name: hev's configuration
+        run: scripts/test-ios-hev-config.sh
       # A file nothing references is not in the bundle (app-store-submission.md),
       # and until 2026-10-20 the manifest was such a file.
       - name: The privacy manifest is a plist, and one of the app's resources
