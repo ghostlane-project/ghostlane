@@ -477,13 +477,19 @@ is libmalloc's `malloc_zone_pressure_relief_fallback`, which returns 0
 ring, which XNU looks at no more than every 10 s on macOS, and only when
 malloc updates the ring, and trims by what stayed unused
 (`osfmk/vm/vm_reclaim.c`), so run 43563973488 ran a, d and e with 60 s of
-idle after the last burst. iOS's xzone malloc has that ring off by default,
-so the next run compares a with f, the same allocator set up as on iOS.
+idle after the last burst: no setup gave back anything in that minute, and
+the system allocator gave back about two thirds of XHTTP's peak once the
+steady traffic ran. iOS's xzone malloc has that ring off by default, so run
+43567072000 compared a with f, the same allocator set up as on iOS: under f
+XHTTP's burst peaked at 18-19 MiB against 52-59 under a and fell to 9-10
+within 5 s; the other lines peaked at 8-11 against 11-16.
 
-Every alloc row sets `MallocReportConfig=1`: libmalloc prints its config
-to stderr (whether xzone malloc is on and why, and xzone's deferred reclaim
-switches), the row keeps those lines as `malloc_config`, and the job
-summary lists them per setup.
+Every alloc row sets `MallocReportConfig=1` and keeps any of libmalloc's
+config lines (whether xzone malloc is on and why, xzone's deferred reclaim
+switches) as `malloc_config`. On the macOS 26 runner libmalloc did not
+print them to the core's stderr, so the field stays empty; that a row ran
+xzone malloc shows in its vmmap, whose malloc regions are 4 MiB, an xzone
+segment (a magazine tiny region is about 1 MiB).
 
 A commit whose message holds `[lab alloc only]` runs the alloc job and the
 shapes job alone (the desktop jobs and the summary are skipped).
