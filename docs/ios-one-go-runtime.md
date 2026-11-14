@@ -154,7 +154,12 @@ Phase 0 trims sing-box's build tags for Android and the desktops.
 `lab/footprint/lab.py`) ran sing-box Reality on Linux both ways: with hev in
 front of a SOCKS inbound the Go runtime held 17.6 MB (`sys` minus released),
 with sing-box's own gVisor tun 38.2 MB; hev's resident set was 6.5 MB. About
-20 MB less in an extension that dies at 46.0 to 47.5 MB of footprint.
+20 MB less in an extension that dies at 46.0 to 47.5 MB of footprint. With
+this change's own configs (run 43541302148, the peak of a 32-connection
+burst): Reality 38.2 to 17.4 MB, Hysteria2 52.7 to 17.3, Bypass Russia
+Reality 38.7 to 19.0; CPU per GB the same, upload the same, a single
+download on loopback 689 against 1735 Mbit/s (a phone's link is far below
+both).
 
 **What changed.**
 
@@ -245,6 +250,23 @@ as xhttp and olcRTC lost them when hev went in front of those (1.0.426,
 UDP keeps hev's 30 s idle limit, and sing-box's inbound now has the same, so
 an association hev has ended does not hold its server connection for five
 minutes in sing-box.
+
+**A new flow is not slower on the phone.** Every new UDP association or TCP
+connection behind hev starts with a SOCKS5 handshake on loopback. On Linux,
+hev at our pin (hev-socks5-core f5c97b0, inside 941c758) waits about 0.42 s
+for it, because it sends the method offer and the login with `MSG_MORE` and
+Linux holds each of those writes for about 200 ms. Darwin has no `MSG_MORE`:
+hev falls back to 0, and the Mac's and the iPhone SDK's `<sys/socket.h>`
+have none. The lab measured it both ways (`lab.py udp-flow`, runs 43538233589
+and 43541302148):
+- On the macOS runner behind hev, a new name takes 0.020 s against 0.014 s
+  on sing-box's gVisor tun, and the first byte of a new connection arrives
+  in 0.0036 s against 0.0033 s.
+- On Linux, hev built without `MSG_MORE` matches the gVisor tun.
+
+Android and the desktop build their own hev 2.14.4, which has no `MSG_MORE`.
+Upstream fixed this in 2.20.0 (b43fa85); moving the pin needs its own memory
+run.
 
 **The way back.** `IosVpnManager.SING_BOX_BEHIND_HEV = false`: the app then
 writes `SingBoxConfig.buildTun` (same arguments, no login) and logs
