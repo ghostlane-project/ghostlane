@@ -47,7 +47,7 @@ env:
   # Moving the pin is a change to this file (and so a run).
   SPIKE_REPO: "https://github.com/ghostlane-project/xray-rust"
   SPIKE_REF: "gl/olc-spike"
-  SPIKE_COMMIT: "2e157679505b34c9e9e209fada58e88880bc13df"
+  SPIKE_COMMIT: "08d356d9751386d7fccd45fa83449548b1ec37cb"
   # The olcRTC engine at the exits' pin.
   ENGINE_REPO: "https://github.com/ghostlane-project/olcrtc"
   ENGINE_COMMIT: "2d4266af3947f4d9940efafb0d5aabb6207f6659"
@@ -104,7 +104,7 @@ jobs:
         working-directory: xrs/olc/spike
         continue-on-error: true
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           mkdir -p "$GITHUB_WORKSPACE/out"
           cargo test --release -p olc-spike-probe -p is -p olc-spike-dtls-boring > "$GITHUB_WORKSPACE/out/unit-tests.log" 2>&1
           rc=$?
@@ -128,7 +128,7 @@ jobs:
 
       - name: DTLS loopback (each provider and version)
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           for v in dimpl:12 dimpl:13 dimpl:auto boring:12 boring:13 boring:auto; do
             p=${v%%:*} ver=${v##*:}
             log="out/loopback-$p-$ver.log"
@@ -139,14 +139,14 @@ jobs:
 
       - name: All three crypto libraries in one Linux binary
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           /usr/bin/time -v bin/ios-link > out/ios-link-linux.log 2>&1; echo "rc=$?" >> out/ios-link-linux.log
           grep -E '^RESULT|^HANDSHAKE|^TLS_OK|^FAIL|^rc=|Maximum resident' out/ios-link-linux.log || true
           xrs/olc/spike/scripts/ios-symbols.sh bin/libolc_spike_ios_link.a | tee out/symbols-linux.txt
 
       - name: Probe (a), str0m against the engine's fake SFU
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           run() { # name binary flags...
             local name=$1 bin=$2; shift 2
             OLC_SPIKE_OUT="$PWD/out/probe-a-$name.out" xrs/olc/spike/scripts/probe-a.sh engine "$bin" "$@" \
@@ -155,7 +155,7 @@ jobs:
             echo "== $name ($*): $(grep -h '^RESULT' "out/probe-a-$name.out" 2>/dev/null || tail -3 "out/probe-a-$name.test.log" | tr '\n' ' ')"
           }
           {
-            run dimpl12-server bin/dimpl/sfu-probe --dtls dimpl --version 12
+            run dimpl12-server bin/dimpl/sfu-probe --dtls dimpl --version 12 --role server
             run dimpl12-client-chrome bin/dimpl/sfu-probe --dtls dimpl --version 12 --role client --stun chrome
             run boring12-client-chrome bin/boring/sfu-probe --dtls boring --version 12 --role client --stun chrome
             run boringauto-client-chrome bin/boring/sfu-probe --dtls boring --version auto --role client --stun chrome
@@ -163,14 +163,14 @@ jobs:
 
       - name: Chrome's own STUN and DTLS, captured
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           xrs/olc/spike/scripts/chrome-capture.sh out/chrome > out/chrome-capture.log 2>&1
           echo "rc=$?" >> out/chrome-capture.log
           cat out/chrome-capture.log
 
       - name: Wire shapes side by side (Chrome, pion, str0m)
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           w=xrs/olc/spike/scripts/wire.py
           {
             echo "### STUN binding requests"
@@ -248,7 +248,7 @@ jobs:
       - name: Build for the macOS host, the simulator and the device
         working-directory: xrs/olc/spike
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           mkdir -p "$GITHUB_WORKSPACE/out"
           for t in aarch64-apple-darwin aarch64-apple-ios-sim aarch64-apple-ios; do
             if cargo build --release -p olc-spike-ios-link --target "$t" > "$GITHUB_WORKSPACE/out/build-$t.log" 2>&1; then
@@ -260,7 +260,7 @@ jobs:
 
       - name: Symbols
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           for t in aarch64-apple-ios-sim aarch64-apple-ios; do
             a=xrs/olc/spike/target/$t/release/libolc_spike_ios_link.a
             [ -f "$a" ] || continue
@@ -270,7 +270,7 @@ jobs:
 
       - name: Run on the macOS host
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           b=xrs/olc/spike/target/aarch64-apple-darwin/release/ios-link
           [ -x "$b" ] || exit 0
           /usr/bin/time -l "$b" > out/host.log 2>&1; echo "rc=$?" >> out/host.log
@@ -278,7 +278,7 @@ jobs:
 
       - name: Link into a C program and run in the simulator
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           udid=$(xcrun simctl list devices available --json | python3 -c '
           import json, sys
           d = json.load(sys.stdin)["devices"]
@@ -354,7 +354,7 @@ jobs:
         env:
           OLC_SPIKE_MTSLINK_ROOM: ${{ secrets.OLC_SPIKE_MTSLINK_ROOM }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           chmod +x bin/sdp-bridge; mkdir -p out
           if [ -z "$OLC_SPIKE_MTSLINK_ROOM" ]; then echo "no OLC_SPIKE_MTSLINK_ROOM secret: skipped"; exit 0; fi
           OLC_SPIKE_OUT=$PWD/out/probe-b.out xrs/olc/spike/scripts/probe-b-mtslink.sh engine bin/sdp-bridge \
@@ -364,7 +364,7 @@ jobs:
         env:
           OLC_SPIKE_VKCALLS_ROOM: ${{ secrets.OLC_SPIKE_VKCALLS_ROOM }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           chmod +x bin/sdp-bridge; mkdir -p out
           if [ -z "$OLC_SPIKE_VKCALLS_ROOM" ]; then echo "no OLC_SPIKE_VKCALLS_ROOM secret: skipped"; exit 0; fi
           OLC_SPIKE_OUT=$PWD/out/probe-c.out xrs/olc/spike/scripts/probe-c-vkcalls.sh engine bin/sdp-bridge \
