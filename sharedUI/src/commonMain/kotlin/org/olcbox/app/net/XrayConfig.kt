@@ -351,7 +351,12 @@ object XrayConfig {
                 addJsonObject {
                     put("type", "field")
                     putJsonArray("inboundTag") { add("in") }
-                    put("network", "udp"); put("port", 53)
+                    // TCP too: the system asks again over TCP when an answer
+                    // comes back truncated (TC=1). Without the rule that
+                    // retry leaves by the tunnel, to the tun's resolver
+                    // address, which nothing answers out there, and times
+                    // out. The same rule as core.json's (IosCore).
+                    put("network", "tcp,udp"); put("port", 53)
                     put("outboundTag", "dns-out")
                 }
                 if (geodata != null || serverByName) {
