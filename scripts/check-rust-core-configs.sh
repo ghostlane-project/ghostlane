@@ -46,6 +46,8 @@ fi
 
 work="$(mktemp -d)"
 server=""
+# Invoked by the trap below, which shellcheck does not count as a call.
+# shellcheck disable=SC2329
 cleanup() {
   if [ -n "$server" ]; then kill -9 "$server" 2>/dev/null || true; fi
   rm -rf "$work"

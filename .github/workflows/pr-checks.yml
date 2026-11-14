@@ -674,9 +674,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Cache the CLI
+      # Restored and saved as two steps, so a CLI built once is kept even
+      # when the check after it fails.
+      - name: Restore the CLI
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/rust-core-cli
           key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.XRAY_RUST_COMMIT }}-v1
@@ -701,6 +703,13 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           (cd "$src" && cargo "+$toolchain" build --locked --release -p xray-cli)
           install -D -m 0755 "$src/target/release/xray-rust" ~/.cache/rust-core-cli/xray-rust
+
+      - name: Save the CLI
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: The core parses and starts every reference config
         run: |
