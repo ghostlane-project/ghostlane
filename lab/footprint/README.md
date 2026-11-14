@@ -38,8 +38,11 @@ the bytes a core sent first), `servers/` (the server's config and logs) and
 artifacts also hold `xray-rust.build.json` (repo, tag, commit, rustc, the
 release profile, build seconds, bytes, the run that built it),
 `xray-rust-build.log` when this run built it, `xray-rust-latest.txt` (the
-newest release against the pin), and on Linux `hev.versions.txt` and
-`hev-build.log`.
+newest release against the pin), `hello-parity.json` (the ClientHello parity
+of every client against a real Chrome, below), on the Mac
+`xray-rust-patched.build.json` and `xray-rust-patched-build.log` (the build
+with the lab's patches, which names each patch and its sha256), and on Linux
+`hev.versions.txt` and `hev-build.log`.
 
 ## What is built, and how
 
@@ -193,11 +196,60 @@ Rows:
 - **client hello: <line>** (desktops): the first bytes a core sends on a TCP
   line, read by a relay in front of the server port: xray-rust on Reality,
   XHTTP and WebTunnel; sing-box (exec) on Reality and WebTunnel; xray (exec) on
-  XHTTP. The ClientHello table gives JA4, the key shares, ALPN, the hello's
-  size, whether an ECH GREASE extension went out and the extension count;
-  `extra` has JA3, the full lists and whether a fetch through the relay
-  completed. Hysteria2's hello travels in a QUIC Initial under Salamander and
-  is not read.
+  XHTTP. Each client is captured three times, each time from a fresh process,
+  so what it draws per connection shows against what it keeps; a second fetch
+  per process opens a later connection, kept apart (`extra.later_connections`:
+  JA4, whether it resumed with `pre_shared_key`, its extension order). The
+  ClientHello table gives JA4, the key shares, ALPN, the hello's size, whether
+  an ECH GREASE extension went out and the extension count; `extra` has JA3,
+  the full lists, each extension's length and content where it matters
+  (`ext_details`: ECH's suite and lengths, compress_certificate's algorithms,
+  ALPS's codepoint and protocols, psk modes, point formats), the record
+  layer's version, and `captures`/`variation` (each field per capture, and
+  which ones moved). Hysteria2's hello travels in a QUIC Initial under
+  Salamander and is not read.
+- **client hello: chrome, ...** (desktops, gate 2.2, tasks.md 6.2): a real
+  Google Chrome, the runner's own (its `--version` is the row's version), run
+  headless with a fresh profile per capture, navigating to
+  `https://<name>:20550/` with `--host-resolver-rules=MAP <name> 127.0.0.1`,
+  so its first connection goes through the same relay: once to the Reality
+  server name `reality.lab.test` (the relay in front of the Reality port,
+  which hands an unauthenticated hello to its fallback site) and once to a
+  plain TLS server, `webtunnel.lab.test` (Xray's TLS on the WebTunnel port).
+  No DNS answers the name, so there is no ECH config and Chrome sends its ECH
+  GREASE, as it does for any site without an HTTPS record. The flags change no
+  TLS setting; a fresh profile with background networking off has no
+  variations seed, so a server-side field trial a user's Chrome may be in is
+  not in this hello. Three captures each.
+- **ClientHello parity** (the summary's parity tables, `hello-parity.json`):
+  per platform and target (Reality server names, a plain TLS server), each
+  field for Chrome and every core: JA4, record and legacy versions, session id
+  length, the cipher list with its GREASE position, supported_versions, the
+  extension set (GREASE aside) and whether its order moves between captures
+  (`permutes`: Chrome has shuffled its extensions since 110), each
+  extension's length (the server name's own bytes taken out, since the lines
+  use names of different lengths), where GREASE sits, supported_groups,
+  key_share, ALPN, signature algorithms, the ECH GREASE extension and its
+  length, padding, compress_certificate, ALPS's codepoint, psk modes, point
+  formats, status_request, renegotiation_info, and the hello's and the first
+  record's lengths. A field a core holds fixed unlike Chrome's is marked
+  **≠**; a field drawn per connection (ECH's payload length and the lengths
+  that follow it) is marked ≈ when the captures came out differently, which
+  three draws alone do not make a difference of shape.
+- **XHTTP window rows** (macOS, gate 2.8): xray-rust's XHTTP line in the
+  mobile profile with its H2 receive windows set lower, measured like every
+  other row, phys_footprint included: `mob s1M`, `mob s256K` and `mob s64K` set
+  `h2StreamReceiveWindow` (1 MiB, 256 KiB, its minimum 65535) in the app's
+  XHTTP shape; `mob c4M (p)` runs a build with
+  `xray-rust-patches/h2-connection-window-4mib.patch` (the connection window, a
+  constant at the tag, 16 MiB to 4 MiB) and the stream window unset;
+  `mob s256K p100K` also halves `scMaxEachPostBytes` (a wire change: the Go
+  rows keep the app's 200000). Every row also records the peak of each half of
+  the burst apart (`burst_down_half_peak_*`, `burst_up_half_peak_*`: 32
+  downloads at once, then 32 uploads at once), sampled every 0.2 s, beside the
+  lifetime peak. Loopback has no round trip, so a small window costs nothing
+  here that it would cost on a phone: window x 8 / RTT bounds one flow (256
+  KiB at 120 ms is about 17 Mbit/s).
 - **binary size** rows for every binary measured (xray-rust and hev
   included) and every `.so` in the APK.
 
@@ -330,6 +382,9 @@ iPhone's code path; each row's notes name the binary.
 - `shapes/`: the XHTTP client shapes, and Phase 0's iOS SOCKS shapes with
   `ios-socks.provenance.txt`; `xray-assets.txt`: the Xray archives
   and their sha256; `engine-src.sh`, `engine-build.sh`: the engine at the pin.
-- `rust-core-build.sh`: xray-rust at the workflow's pins; `hev-build.sh`:
+- `rust-core-build.sh`: xray-rust at the workflow's pins, and with
+  `XRS_PATCHES` the same tag with patches from `xray-rust-patches/` applied
+  (`h2-connection-window-4mib.patch`: the XHTTP H2 connection window, a
+  constant at v0.9.0); `hev-build.sh`:
   hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit, then udp-flow's
   `hev-socks5-tunnel-nomore`.

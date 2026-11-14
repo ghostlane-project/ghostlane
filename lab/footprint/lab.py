@@ -42,6 +42,7 @@ import os
 import re
 import select
 import shlex
+import shutil
 import signal
 import socket
 import statistics
@@ -706,6 +707,40 @@ def xrs_webtunnel(server, pin, port=PORT_WEBTUNNEL):
         "the sing-box WebTunnel shape (singbox_webtunnel) written as Xray JSON: no flow, TLS with fingerprint "
         "chrome, httpupgrade path and host, no alpn written (the app writes none, so the chrome profile's "
         "ALPN goes out); insecure becomes pinnedPeerCertSha256 of the lab's certificate"]
+
+
+# The XHTTP window rows (macOS, the mobile profile, gate 2.8): settings label,
+# whether the row runs the patched build, the xhttpSettings fields added to
+# the app's shape, and what that means. At v0.9.0 (commit 30928ad5):
+#   - h2StreamReceiveWindow, the one JSON field for it (65535..16777216 bytes,
+#     xray-config/src/parser/xhttp.rs:741-760, xray-transport/src/stream/xhttp/
+#     config.rs:19-25): a configured window is fixed on every host; unset, the
+#     mobile profile opens at 1 MiB and grows to 4 MiB (stream/xhttp/h2.rs:58-89);
+#   - the connection window, H2_CONNECTION_RECEIVE_WINDOW = 16 MiB, a constant
+#     (stream/xhttp/config.rs:17, used at h2.rs:46 and 332), per H2 connection,
+#     and xmux opens up to maxConnections = 3 of them by default
+#     (xray-config/src/model.rs:1135);
+#   - packet-up's upload: scMaxEachPostBytes (the app writes 200000) sizes each
+#     flow's pipe (tokio duplex), its read buffer and the POST body in flight
+#     (stream/xhttp/transport.rs:895-902, 1013-1015, 1076-1080).
+XHTTP_WINDOW_ROWS = (
+    ("mob s1M", False, {"h2StreamReceiveWindow": 1048576},
+     "h2StreamReceiveWindow 1048576: each XHTTP H2 stream's receive window fixed at 1 MiB (a configured window does "
+     "not grow); connection window 16 MiB as pinned, up to 3 connections"),
+    ("mob s256K", False, {"h2StreamReceiveWindow": 262144},
+     "h2StreamReceiveWindow 262144: each stream's window fixed at 256 KiB, so 32 streams can hold at most 8 MiB "
+     "unread; about 17 Mbit/s per flow at 120 ms RTT (window x 8 / RTT), which loopback does not show"),
+    ("mob s64K", False, {"h2StreamReceiveWindow": 65535},
+     "h2StreamReceiveWindow 65535, the field's minimum (HTTP/2's default window): at most 2 MiB unread for 32 "
+     "streams; about 4.4 Mbit/s per flow at 120 ms RTT, which loopback does not show"),
+    ("mob c4M (p)", True, {},
+     "patched build: H2_CONNECTION_RECEIVE_WINDOW 16 MiB -> 4 MiB (lab/footprint/xray-rust-patches/"
+     "h2-connection-window-4mib.patch), stream window unset (the mobile profile's 1 MiB growing to 4 MiB): at most "
+     "4 MiB unread per H2 connection, 12 MiB over xmux's 3, while one flow keeps a window of up to 4 MiB"),
+    ("mob s256K p100K", False, {"h2StreamReceiveWindow": 262144, "scMaxEachPostBytes": 100000},
+     "h2StreamReceiveWindow 262144 and scMaxEachPostBytes 100000 (the app writes 200000): the upload half's "
+     "buffers halved too; a wire change (POST size), so the Go rows, at 200000, are not its twin"),
+)
 
 
 def xrs_check(xrs, cfg_path, report_path):
@@ -1404,6 +1439,8 @@ def run_burst(host, socks, timeout_s=150, target=THROUGH):
     b0 = time.time()
     bdown = host.loadgen_run("burst-get", BURST_EACH_DOWN, socks, timeout_s, BURST_FLOWS, target=target)
     time.sleep(PAUSE_S)
+    # Where the upload half starts, so the figures can say which half peaked.
+    bdown["host_up_start"] = time.time()
     bup = host.loadgen_run("burst-put", BURST_EACH_UP, socks, timeout_s, BURST_FLOWS, target=target)
     time.sleep(BURST_TAIL_S)
     return bdown, bup, (b0, time.time())
@@ -1426,8 +1463,17 @@ def burst_figures(row, bdown, bup, rows, win, mem_key="rss", cpu_key="cpu"):
         "burst_slowest_first_byte_s": rnd(bdown.get("ttfb_s"), 3),
         "burst_cpu_s_per_gb": rnd(cpu_per_gb(cpu, moved), 2) if moved else None,
     })
+    split = bdown.get("host_up_start")
+    if split:
+        # The two halves apart: 32 downloads at once (receive windows), then
+        # 32 uploads at once (upload buffers).
+        ex["burst_down_half_peak_mb"] = mb(max_of(rows, mem_key, b0, split))
+        ex["burst_up_half_peak_mb"] = mb(max_of(rows, mem_key, split, b1))
     if rows and "fp" in rows[0]:
         ex["burst_peak_phys_footprint_mb"] = mb(max_of(rows, "fp", b0, b1))
+        if split:
+            ex["burst_down_half_peak_phys_footprint_mb"] = mb(max_of(rows, "fp", b0, split))
+            ex["burst_up_half_peak_phys_footprint_mb"] = mb(max_of(rows, "fp", split, b1))
     return [("burst download: " + bdown.get("error", "")) if not bdown.get("ok") else "",
             ("burst upload: " + bup.get("error", "")) if not bup.get("ok") else ""]
 
@@ -1833,10 +1879,10 @@ def run_soak(transport, settings, ctx):
 
 class HelloTap(threading.Thread):
     """A loopback relay in front of a server port that keeps the client's
-    first flight of the first connection: what the server is shown. The bytes
-    pass unchanged both ways."""
+    first flight of each connection, in accept order (up to `keep` of them):
+    what the server is shown. The bytes pass unchanged both ways."""
 
-    def __init__(self, listen_port, upstream_port):
+    def __init__(self, listen_port, upstream_port, keep=8):
         super().__init__(daemon=True)
         self.upstream = upstream_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1844,9 +1890,14 @@ class HelloTap(threading.Thread):
         self.sock.bind(("127.0.0.1", listen_port))
         self.sock.listen(64)
         self.sock.settimeout(0.5)
-        self.first = None
+        self.keep = keep
+        self.flights = []  # one bytearray per kept connection, client to server
         self._halt = threading.Event()
         self.conns = []
+
+    @property
+    def first(self):
+        return bytes(self.flights[0]) if self.flights else None
 
     def run(self):
         while not self._halt.is_set():
@@ -1861,20 +1912,21 @@ class HelloTap(threading.Thread):
                 continue
             u.settimeout(None)
             self.conns += [c, u]
-            keep = self.first is None
-            if keep:
-                self.first = b""
-            threading.Thread(target=self._pump, args=(c, u, keep), daemon=True).start()
-            threading.Thread(target=self._pump, args=(u, c, False), daemon=True).start()
+            buf = None
+            if len(self.flights) < self.keep:
+                buf = bytearray()
+                self.flights.append(buf)
+            threading.Thread(target=self._pump, args=(c, u, buf), daemon=True).start()
+            threading.Thread(target=self._pump, args=(u, c, None), daemon=True).start()
 
-    def _pump(self, src, dst, keep):
+    def _pump(self, src, dst, buf):
         try:
             while True:
                 data = src.recv(65536)
                 if not data:
                     break
-                if keep and len(self.first) < 32768:
-                    self.first += data
+                if buf is not None and len(buf) < 32768:
+                    buf += data
                 dst.sendall(data)
         except OSError:
             pass
@@ -1907,6 +1959,47 @@ EXT_NAMES = {0: "server_name", 5: "status_request", 10: "supported_groups", 11: 
              65281: "renegotiation_info"}
 GROUP_NAMES = {0x001d: "x25519", 0x0017: "secp256r1", 0x0018: "secp384r1", 0x0019: "secp521r1",
                0x11ec: "X25519MLKEM768", 0x6399: "X25519Kyber768Draft00", 0x0100: "ffdhe2048", 0x0101: "ffdhe3072"}
+CERT_COMPRESSION = {1: "zlib", 2: "brotli", 3: "zstd"}
+
+
+def _u8_list(data):
+    return list(data[1:1 + data[0]]) if data else []
+
+
+def _ext_detail(et, data):
+    """What an extension says, beyond its length, for the fields the parity
+    table compares. Random bodies (ECH payload, key shares, GREASE) are
+    described by their lengths only."""
+    if et == 27:
+        return [CERT_COMPRESSION.get(v, "0x%04x" % v) for v in _u8_list_u16(data)]
+    if et in (17513, 17613):
+        protos, q = [], 2
+        while q < len(data):
+            n = data[q]
+            protos.append(data[q + 1:q + 1 + n].decode(errors="replace"))
+            q += 1 + n
+        return {"codepoint": et, "protocols": protos}
+    if et == 65037 and len(data) >= 6:
+        d = {"type": data[0], "kdf": "0x%04x" % int.from_bytes(data[1:3], "big"),
+             "aead": "0x%04x" % int.from_bytes(data[3:5], "big")}
+        if data[0] == 0 and len(data) >= 8:
+            enc = int.from_bytes(data[6:8], "big")
+            d["enc_bytes"] = enc
+            if len(data) >= 10 + enc:
+                d["payload_bytes"] = int.from_bytes(data[8 + enc:10 + enc], "big")
+        return d
+    if et == 45 or et == 11:
+        return _u8_list(data)
+    if et in (5, 65281, 28, 34):
+        return data.hex()
+    return None
+
+
+def _u8_list_u16(data):
+    """A u8-length-prefixed list of u16 values (compress_certificate)."""
+    if not data:
+        return []
+    return [int.from_bytes(data[j:j + 2], "big") for j in range(1, 1 + data[0], 2)]
 
 
 def parse_client_hello(buf):
@@ -1915,6 +2008,7 @@ def parse_client_hello(buf):
     of the fingerprints, as JA3 and JA4 define them."""
     hs, i = b"", 0
     rec_len = None
+    rec_version = buf[1:3].hex() if len(buf) >= 3 else None
     while i + 5 <= len(buf) and buf[i] == 0x16:
         n = struct.unpack(">H", buf[i + 3:i + 5])[0]
         rec_len = n if rec_len is None else rec_len
@@ -1939,7 +2033,7 @@ def parse_client_hello(buf):
     take(sid_len)
     cs = take(int.from_bytes(take(2), "big"))
     ciphers = [int.from_bytes(cs[j:j + 2], "big") for j in range(0, len(cs), 2)]
-    take(take(1)[0])
+    compression = list(take(take(1)[0]))
     ext_end = p + 2 + int.from_bytes(body[p:p + 2], "big")
     p += 2
     exts, info = [], {}
@@ -1996,6 +2090,30 @@ def parse_client_hello(buf):
             ec_formats = list(data[1:1 + data[0]])
     ja3 = "%d,%s,%s,%s,%s" % (int(legacy, 16), "-".join(str(c) for c in clean_c), "-".join(str(e) for e in clean_e),
                               "-".join(str(g) for g in groups if not is_grease(g)), "-".join(str(f) for f in ec_formats))
+    # The parity table's fields: the extension set and order without GREASE,
+    # each extension's length, where GREASE sits, and what the extensions
+    # whose content matters say.
+    ext_order = [name(e, EXT_NAMES) for e, _, _ in exts if not is_grease(e)]
+    ext_lengths, ext_details, grease_exts = {}, {}, []
+    for pos, (et, el, data) in enumerate(exts):
+        if is_grease(et):
+            grease_exts.append("%s:%d" % ("first" if pos == 0 else "last" if pos == len(exts) - 1 else "at %d" % pos, el))
+            continue
+        ext_lengths[name(et, EXT_NAMES)] = el
+        d = _ext_detail(et, data)
+        if d is not None:
+            ext_details[name(et, EXT_NAMES)] = d
+    info.update({
+        "record_version": rec_version,
+        "compression_methods": compression,
+        "ext_order": ext_order,
+        "ext_set": sorted(ext_order),
+        "ext_lengths": ext_lengths,
+        "ext_details": ext_details,
+        "grease_extensions": grease_exts,
+        "grease_cipher_positions": [j for j, c in enumerate(ciphers) if is_grease(c)],
+        "ja3_full": ja3,
+    })
     info.update({
         "ja4": "%s_%s_%s" % (ja4_a, ja4_b, ja4_c),
         "ja3_md5": hashlib.md5(ja3.encode()).hexdigest(),
@@ -2016,39 +2134,337 @@ def parse_client_hello(buf):
     return info
 
 
+# Each client's hello is captured this many times, each from a fresh process
+# (a fresh browser profile for Chrome), so what a client draws per connection
+# shows against what it keeps.
+HELLO_CAPTURES = 3
+# The fields the parity table compares, each reduced to what a fingerprinter
+# sees; the server name's own bytes are taken out of the lengths, since the
+# lines use names of different lengths.
+# Fields a client draws per connection (Chrome's ECH GREASE payload is one of
+# four lengths, and the hello's length follows): a difference here is told
+# apart from a fixed one ("≈" in the table, "drawn" in the JSON).
+HELLO_DRAWN = ("ech", "ech_bytes", "padding_bytes", "hello_bytes_minus_name", "record_bytes_minus_name")
+HELLO_FIELDS = ("ja4", "record_version", "legacy_version", "session_id_bytes", "compression_methods",
+                "cipher_suites", "grease_cipher_positions", "supported_versions", "ext_set", "permutes",
+                "ext_lengths", "grease_extensions", "supported_groups", "key_shares", "alpn", "signature_algorithms",
+                "ech", "ech_bytes", "padding_bytes", "compress_certificate", "application_settings",
+                "psk_key_exchange_modes", "ec_point_formats", "status_request", "renegotiation_info",
+                "hello_bytes_minus_name", "record_bytes_minus_name")
+
+
+def hello_slug(core, line):
+    return "hello-" + re.sub(r"[^a-z0-9]+", "-", ("%s %s" % (core, line)).lower()).strip("-")
+
+
+def hello_summary(h):
+    """One capture reduced to HELLO_FIELDS (permutes is filled in across captures)."""
+    if not h or h.get("error"):
+        return None
+    n = len(h.get("sni") or "")
+    # ECH and padding have fields of their own (their lengths are drawn).
+    lengths = {k: v for k, v in (h.get("ext_lengths") or {}).items() if k not in ("encrypted_client_hello", "padding")}
+    if "server_name" in lengths:
+        lengths["server_name"] = "name+%d" % (lengths["server_name"] - n)
+    lengths = dict(sorted(lengths.items()))
+    det = h.get("ext_details") or {}
+    alps = [k for k in det if k.startswith("application_settings")]
+    return {
+        "ja4": h.get("ja4"), "record_version": h.get("record_version"), "legacy_version": h.get("legacy_version"),
+        "session_id_bytes": h.get("session_id_bytes"), "compression_methods": h.get("compression_methods"),
+        "cipher_suites": h.get("cipher_suites"), "grease_cipher_positions": h.get("grease_cipher_positions"),
+        "supported_versions": h.get("supported_versions"), "ext_set": h.get("ext_set"), "ext_order": h.get("ext_order"),
+        "ext_lengths": lengths, "grease_extensions": h.get("grease_extensions"),
+        "supported_groups": h.get("supported_groups"), "key_shares": h.get("key_shares"), "alpn": h.get("alpn"),
+        "signature_algorithms": h.get("signature_algorithms"),
+        "ech": {k: v for k, v in (det.get("encrypted_client_hello") or {}).items()} or None,
+        "ech_bytes": h.get("ech_bytes"), "padding_bytes": h.get("padding_bytes"),
+        "compress_certificate": det.get("compress_certificate"),
+        "application_settings": ["codepoint %d, %s" % (det[k]["codepoint"], ",".join(det[k]["protocols"]))
+                                 for k in alps] or None,
+        "psk_key_exchange_modes": det.get("psk_key_exchange_modes"), "ec_point_formats": det.get("ec_point_formats"),
+        "status_request": det.get("status_request"), "renegotiation_info": det.get("renegotiation_info"),
+        "hello_bytes_minus_name": (h.get("client_hello_bytes") or 0) - n,
+        "record_bytes_minus_name": (h.get("first_record_bytes") or 0) - n,
+    }
+
+
+def hello_variation(summaries):
+    """Across the captures of one client: each field's distinct values, and
+    whether the extension order (GREASE aside) moved between connections."""
+    caps = [s for s in summaries if s]
+    out = {"captures": len(caps)}
+    if not caps:
+        return out
+    orders = {tuple(s["ext_order"] or []) for s in caps}
+    out["permutes"] = len(orders) > 1 if len(caps) > 1 else None
+    out["distinct_orders"] = len(orders)
+    varies = []
+    for f in HELLO_FIELDS:
+        if f == "permutes":
+            continue
+        vals = []
+        for s in caps:
+            v = s.get(f)
+            if v not in vals:
+                vals.append(v)
+        out[f] = vals[0] if len(vals) == 1 else {"varies": vals}
+        if len(vals) > 1:
+            varies.append(f)
+    out["varies"] = varies
+    return out
+
+
 def run_hello(core, line, config, argv, env, upstream, ctx):
-    """One short start of a core whose line points at the tap instead of the
-    server: one 1000-byte fetch, then the first flight is parsed."""
-    rundir = ctx["out"] / "runs" / ("hello-" + re.sub(r"[^a-z0-9]+", "-", ("%s %s" % (core, line)).lower()).strip("-"))
+    """HELLO_CAPTURES short starts of a core whose line points at the tap
+    instead of the server. Each start makes one 1000-byte fetch, whose
+    connection's first flight is a capture, then a second fetch: a later
+    connection of the same process, kept apart (it may resume or reuse)."""
+    rundir = ctx["out"] / "runs" / hello_slug(core, line)
     rundir.mkdir(parents=True, exist_ok=True)
     row = base_row(ctx["platform"], core, "", "client hello: " + line, "", "")
-    if not wait_port_free(PORT_SOCKS):
-        raise LabError("port %d is still taken by the previous run" % PORT_SOCKS)
     cfg = rundir / "config.json"
     write_json(cfg, config)
-    tap = HelloTap(PORT_TAP, upstream)
-    tap.start()
-    proc = None
-    try:
-        proc = Proc([a if a != "{config}" else str(cfg) for a in argv], rundir / "core.log", cwd=rundir,
-                    env=clean_env(env))
-        if not wait_port(PORT_SOCKS, 20, proc):
-            raise LabError("the core's SOCKS port never opened:\n" + tail(rundir / "core.log"))
-        probe = ctx["host"].probe("127.0.0.1:%d" % PORT_SOCKS, 20)
-        row["extra"]["fetch_through_tap_ok"] = bool(probe.get("ok"))
-    finally:
-        if proc is not None:
-            proc.stop()
-        tap.halt()
-    first = tap.first or b""
-    (rundir / "first-flight.bin").write_bytes(first)
-    if not first:
-        raise LabError("the core sent nothing to the server port:\n" + tail(rundir / "core.log"))
-    hello = parse_client_hello(first)
+    captures, later, fetches = [], [], []
+    for i in range(HELLO_CAPTURES):
+        if not wait_port_free(PORT_SOCKS):
+            raise LabError("port %d is still taken by the previous run" % PORT_SOCKS)
+        tap = HelloTap(PORT_TAP, upstream)
+        tap.start()
+        proc = None
+        log_path = rundir / ("core-%d.log" % (i + 1))
+        try:
+            proc = Proc([a if a != "{config}" else str(cfg) for a in argv], log_path, cwd=rundir, env=clean_env(env))
+            if not wait_port(PORT_SOCKS, 20, proc):
+                raise LabError("the core's SOCKS port never opened:\n" + tail(log_path))
+            probe = ctx["host"].probe("127.0.0.1:%d" % PORT_SOCKS, 20)
+            again = ctx["host"].loadgen_run("get", 1000, "127.0.0.1:%d" % PORT_SOCKS, 8)
+            fetches.append([bool(probe.get("ok")), bool(again.get("ok"))])
+            time.sleep(0.3)
+        finally:
+            if proc is not None:
+                proc.stop()
+            tap.halt()
+        flights = [bytes(f) for f in tap.flights]
+        for j, f in enumerate(flights):
+            (rundir / ("first-flight-%d-%d.bin" % (i + 1, j + 1))).write_bytes(f)
+        if not flights or not flights[0]:
+            raise LabError("the core sent nothing to the server port (capture %d):\n%s" % (i + 1, tail(log_path)))
+        if i == 0:
+            (rundir / "first-flight.bin").write_bytes(flights[0])
+        captures.append(parse_client_hello(flights[0]))
+        for f in flights[1:]:
+            h = parse_client_hello(f)
+            later.append({"capture": i + 1, "ja4": h.get("ja4"), "error": h.get("error"),
+                          "pre_shared_key": "pre_shared_key" in (h.get("ext_set") or []),
+                          "ext_order": h.get("ext_order"), "client_hello_bytes": h.get("client_hello_bytes")})
+    hello = captures[0]
     row["extra"].update(hello)
-    row["notes"] = hello.get("error") or ("the first flight of the first connection, as the server's port saw it; "
-                                          "first-flight.bin beside the config")
+    row["extra"]["fetch_through_tap_ok"] = all(f[0] for f in fetches)
+    row["extra"]["fetches_ok"] = fetches
+    row["extra"]["captures"] = [hello_summary(h) or {"error": h.get("error")} for h in captures]
+    row["extra"]["variation"] = hello_variation([hello_summary(h) for h in captures])
+    row["extra"]["later_connections"] = later
+    errors = [h.get("error") for h in captures if h.get("error")]
+    row["notes"] = "; ".join(errors) if errors else (
+        "the first flight of the first connection of %d fresh processes, as the server's port saw it "
+        "(first-flight-<process>-<connection>.bin beside the config); a second fetch per process opened %d later "
+        "connection(s), kept apart in extra.later_connections" % (len(captures), len(later)))
     return row
+
+
+def find_chrome():
+    """A Google Chrome on the runner: $CHROME_BIN, then the usual names."""
+    cands = [os.environ.get("CHROME_BIN", "")]
+    if sys.platform == "darwin":
+        cands.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    for n in ("google-chrome", "google-chrome-stable", "chrome"):
+        cands.append(shutil.which(n) or "")
+    for c in cands:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+CHROME_CORE = "Google Chrome (headless, fresh profile)"
+
+
+def run_chrome_hello(chrome, version, name, label, upstream, ctx):
+    """A real Chrome's first flight: a navigation to https://<name>:PORT_TAP/,
+    the name mapped to 127.0.0.1 by --host-resolver-rules (no DNS, so no ECH
+    config and Chrome sends its ECH GREASE, as for any site without an HTTPS
+    record), HELLO_CAPTURES times, each a new browser with a fresh profile.
+    The tap passes the bytes to `upstream`; the certificate Chrome then gets is
+    not one it trusts, which does not touch the hello it already sent."""
+    rundir = ctx["out"] / "runs" / hello_slug("chrome", label)
+    rundir.mkdir(parents=True, exist_ok=True)
+    row = base_row(ctx["platform"], CHROME_CORE, version, "client hello: " + label, "", "")
+    url = "https://%s:%d/" % (name, PORT_TAP)
+    flags = ["--headless", "--no-first-run", "--no-default-browser-check", "--disable-gpu",
+             "--disable-background-networking", "--disable-component-update", "--disable-sync",
+             "--host-resolver-rules=MAP %s 127.0.0.1" % name, "--dump-dom"]
+    if sys.platform == "darwin":
+        flags.append("--use-mock-keychain")
+    else:
+        flags.append("--no-sandbox")
+    captures, later = [], []
+    for i in range(HELLO_CAPTURES):
+        profile = rundir / ("profile-%d" % (i + 1))
+        tap = HelloTap(PORT_TAP, upstream)
+        tap.start()
+        log_path = rundir / ("chrome-%d.log" % (i + 1))
+        proc = None
+        try:
+            proc = Proc([chrome] + flags + ["--user-data-dir=%s" % profile, url], log_path, cwd=rundir,
+                        env=clean_env())
+            deadline = time.time() + 40
+            while time.time() < deadline and not (tap.flights and parse_client_hello(bytes(tap.flights[0])).get("ja4")):
+                if not proc.alive() and not tap.flights:
+                    break
+                time.sleep(0.2)
+            time.sleep(2.0)  # any second connection Chrome opens
+        finally:
+            if proc is not None:
+                proc.stop(grace=4)
+                try:
+                    os.killpg(proc.p.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            tap.halt()
+        flights = [bytes(f) for f in tap.flights]
+        for j, f in enumerate(flights):
+            (rundir / ("first-flight-%d-%d.bin" % (i + 1, j + 1))).write_bytes(f)
+        if not flights or not flights[0]:
+            raise LabError("Chrome sent nothing to the tap (capture %d):\n%s" % (i + 1, tail(log_path)))
+        captures.append(parse_client_hello(flights[0]))
+        for f in flights[1:]:
+            h = parse_client_hello(f)
+            # A second fresh connection of the same new browser is one more
+            # full hello; one that resumes says so.
+            later.append({"capture": i + 1, "ja4": h.get("ja4"), "error": h.get("error"),
+                          "pre_shared_key": "pre_shared_key" in (h.get("ext_set") or []),
+                          "ext_order": h.get("ext_order"), "client_hello_bytes": h.get("client_hello_bytes"),
+                          "summary": hello_summary(h)})
+    hello = captures[0]
+    row["extra"].update(hello)
+    row["extra"]["chrome"] = chrome
+    row["extra"]["chrome_flags"] = flags
+    row["extra"]["url"] = url
+    row["extra"]["captures"] = [hello_summary(h) or {"error": h.get("error")} for h in captures]
+    row["extra"]["variation"] = hello_variation([hello_summary(h) for h in captures])
+    row["extra"]["later_connections"] = later
+    errors = [h.get("error") for h in captures if h.get("error")]
+    row["notes"] = "; ".join(errors) if errors else (
+        "%s, the first connection of %d fresh headless browsers navigating to %s (the name mapped to 127.0.0.1 by "
+        "--host-resolver-rules, the tap in front of port %d); %d further connection(s) from the same browsers in "
+        "extra.later_connections; the flags change no TLS setting; no variations seed (a fresh profile with "
+        "background networking off), so no server-side field trial either" % (
+            version, len(captures), url, upstream, len(later)))
+    return row
+
+
+# ---------------------------------------------------------------- hello parity
+
+HELLO_REALITY_LINES = ("vless-reality-vision", "vless-xhttp-reality packet-up")
+
+
+def hello_target(r):
+    """'reality' for a hello sent to a Reality server name, 'tls' for a plain
+    TLS server (WebTunnel's), from the row's line."""
+    line = str(r.get("scenario", "")).replace("client hello: ", "")
+    if line.startswith("chrome"):
+        return "reality" if "reality" in line else "tls"
+    return "reality" if line in HELLO_REALITY_LINES else "tls"
+
+
+def hello_parity(rows):
+    """Chrome against every other client, per platform and target: each
+    field's values (a list where captures differ), whether the extension
+    order moves, and the fields where a client's values are not Chrome's."""
+    out = {}
+    for r in rows:
+        if not is_hello(r) or not r.get("extra", {}).get("variation"):
+            continue
+        plat = out.setdefault(r["platform"], {})
+        tgt = plat.setdefault(hello_target(r), {"clients": {}, "differences": {}})
+        label = "%s | %s" % (r["core"], r["scenario"].replace("client hello: ", ""))
+        tgt["clients"][label] = dict(r["extra"]["variation"], version=r.get("version"))
+    for plat in out.values():
+        for tgt in plat.values():
+            chrome = [k for k in tgt["clients"] if k.startswith(CHROME_CORE)]
+            if not chrome:
+                continue
+            ref = tgt["clients"][chrome[0]]
+            for k, v in tgt["clients"].items():
+                if k == chrome[0]:
+                    continue
+                diffs, drawn = {}, {}
+                for f in HELLO_FIELDS:
+                    a, b = ref.get(f), v.get(f)
+                    if a != b:
+                        (drawn if f in HELLO_DRAWN else diffs)[f] = {"chrome": a, "client": b}
+                tgt["differences"][k] = diffs
+                tgt.setdefault("drawn_differences", {})[k] = drawn
+    return out
+
+
+def _cell(v):
+    if isinstance(v, dict) and set(v) == {"varies"}:
+        return "varies: " + " / ".join(_cell(x) for x in v["varies"])
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v) if v else "none"
+    if isinstance(v, dict):
+        return ", ".join("%s=%s" % (k, _cell(x)) for k, x in v.items())
+    return "-" if v is None else str(v)
+
+
+def parity_markdown(rows):
+    par = hello_parity(rows)
+    lines = []
+    for plat, tgts in sorted(par.items()):
+        for tgt, d in sorted(tgts.items()):
+            clients = list(d["clients"])
+            if not any(c.startswith(CHROME_CORE) for c in clients):
+                continue
+            clients.sort(key=lambda c: (not c.startswith(CHROME_CORE), c))
+            lines += ["", "ClientHello parity, %s, %s (%d captures each, fresh process each; server name bytes taken "
+                      "out of lengths; `varies` = the captures differ; **≠** a fixed field unlike Chrome's, ≈ a field "
+                      "drawn per connection that came out differently):" % (
+                          plat, "Reality server names" if tgt == "reality" else "a plain TLS server", HELLO_CAPTURES),
+                      "", "| field | " + " | ".join(c.replace("|", "/") for c in clients) + " |",
+                      "|---|" + "---|" * len(clients)]
+            for f in HELLO_FIELDS:
+                cells_ = []
+                for c in clients:
+                    v = d["clients"][c].get(f)
+                    mark = ""
+                    if not c.startswith(CHROME_CORE):
+                        if f in d["differences"].get(c, {}):
+                            mark = " **≠**"
+                        elif f in d.get("drawn_differences", {}).get(c, {}):
+                            mark = " ≈"
+                    cells_.append(_cell(v).replace("|", "/") + mark)
+                lines.append("| %s | %s |" % (f, " | ".join(cells_)))
+    return lines
+
+
+def parity_text(rows):
+    par = hello_parity(rows)
+    out = []
+    for plat, tgts in sorted(par.items()):
+        for tgt, d in sorted(tgts.items()):
+            out.append("== ClientHello parity, %s, %s" % (plat, tgt))
+            for c, v in d["clients"].items():
+                out.append("  %s: captures %s, permutes %s, ja4 %s, version %s" % (
+                    c, v.get("captures"), v.get("permutes"), _cell(v.get("ja4")), v.get("version")))
+            for c, diffs in d["differences"].items():
+                drawn = d.get("drawn_differences", {}).get(c, {})
+                out.append("  -- %s against Chrome: %s%s" % (c, ", ".join(diffs) or "no fixed difference",
+                                                             (" (drawn per connection, differ: %s)" % ", ".join(drawn))
+                                                             if drawn else ""))
+                for f, ab in list(diffs.items()) + list(drawn.items()):
+                    out.append("     %s: chrome %s | client %s" % (f, _cell(ab["chrome"])[:400], _cell(ab["client"])[:400]))
+    return "\n".join(out)
 
 
 def size_row(platform, name, path, what):
@@ -2282,11 +2698,51 @@ def cmd_desktop(a):
                     scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt, xrs_check=xrs_bin,
                     aux_checks=aux, extra={"xray_rust_build": xrs_info},
                     notes=prof_notes + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
+        # Gate 2.8 (tasks.md): XHTTP at or below Go's phys_footprint peak with
+        # iOS limits. The mobile profile with the receive windows set lower,
+        # through the one JSON field xray-rust has for them, and through the
+        # connection window, a constant, patched (rust-core-build.sh with
+        # XRS_PATCHES). macOS only: phys_footprint is what iOS counts.
+        win_specs, win_patched = [], []
+        if is_mac:
+            mobile_env, mobile_notes = profiles[1][1], profiles[1][2]
+            p_bin = Path(a.xray_rust_patched).resolve() / "xray-rust" if a.xray_rust_patched else None
+            try:
+                p_info = load_json(p_bin.parent / "xray-rust.build.json") if p_bin else {}
+            except (OSError, ValueError):
+                p_info = {}
+            p_patches = ", ".join("%s (sha256 %s)" % (q.get("file"), str(q.get("sha256"))[:12])
+                                  for q in p_info.get("patches") or []) or "none recorded"
+            for settings, patched, fields, what in XHTTP_WINDOW_ROWS:
+                cfg, cfg_notes = xrs_xhttp(loop, servers.pub)
+                cfg["outbounds"][0]["streamSettings"]["xhttpSettings"].update(fields)
+                binary = p_bin if patched else xrs_bin
+                info = p_info if patched else xrs_info
+                notes = mobile_notes + [what, "xhttpSettings here: %s" % json.dumps(
+                    cfg["outbounds"][0]["streamSettings"]["xhttpSettings"], sort_keys=True)] + cfg_notes
+                if patched:
+                    notes.append("xray-rust at %s with the lab's patches applied by rust-core-build.sh: %s; built by "
+                                 "run %s" % (xrs_tag, p_patches, p_info.get("built_by_run")))
+                else:
+                    notes.append("xray-rust at %s, %s" % (xrs_tag, build_note))
+                spec = Spec(kind="exec", core=xrs_core, argv=[binary, "run", "-config", "{config}"],
+                            settings=settings, env=mobile_env, scenario="vless-xhttp-reality packet-up", config=cfg,
+                            version=xrs_version + (" + lab patches" if patched else ""), xrs_check=binary,
+                            extra={"xray_rust_build": info, "xhttp_window_row": {
+                                "patched": bool(patched), "xhttpSettings_added": fields}},
+                            notes=notes + [srv_note])
+                (win_patched if patched else win_specs).append(spec)
+            if win_patched and not (p_bin and p_bin.exists()):
+                reason = "the patched xray-rust was not built (xray-rust-patched-build.log in this artifact): " + \
+                    tail(out / "xray-rust-patched-build.log", 8).replace("\n", " | ")
+                missing += [(s, reason) for s in win_patched]
+                win_patched = []
+        xrs_specs += win_specs + win_patched
         if not xrs_bin.exists():
             reason = "xray-rust was not built (xray-rust-build.log in this artifact): " + \
                 tail(out / "xray-rust-build.log", 8).replace("\n", " | ")
-            missing += [(s, reason) for s in xrs_specs]
-            xrs_specs = []
+            missing += [(s, reason) for s in xrs_specs if s not in win_patched]
+            xrs_specs = [s for s in xrs_specs if s in win_patched]
 
     def run_specs(batch):
         for spec in batch:
@@ -2361,6 +2817,36 @@ def cmd_desktop(a):
             except Exception as e:
                 traceback.print_exc()
                 add(failed_row(a.platform, core, "client hello: " + line, "", e))
+        # Gate 2.2 (tasks.md 6.2): a real current Google Chrome's first flight
+        # through the same tap, to a Reality server name and to a plain TLS
+        # server, beside the cores' hellos above.
+        chrome = find_chrome()
+        chrome_targets = (("chrome, Reality server name %s" % SNI_REALITY, SNI_REALITY, PORT_REALITY),
+                          ("chrome, plain TLS server %s" % SNI_WEBTUNNEL, SNI_WEBTUNNEL, PORT_WEBTUNNEL))
+        chrome_version = first_line([chrome, "--version"]) if chrome else ""
+        for label, name, upstream in chrome_targets:
+            if chrome is None:
+                add(failed_row(a.platform, CHROME_CORE, "client hello: " + label, "",
+                               "no Google Chrome on this runner ($CHROME_BIN, google-chrome, the macOS app)"))
+                continue
+            if not budget.allows(60):
+                add(failed_row(a.platform, CHROME_CORE, "client hello: " + label, "", "skipped: out of time budget"))
+                continue
+            if upstream == PORT_WEBTUNNEL and servers.wt_error:
+                add(failed_row(a.platform, CHROME_CORE, "client hello: " + label, "",
+                               "the WebTunnel server: " + servers.wt_error))
+                continue
+            log("hello:", chrome_version, "|", label)
+            try:
+                add(run_chrome_hello(chrome, chrome_version, name, label, upstream, ctx))
+            except Exception as e:
+                traceback.print_exc()
+                add(failed_row(a.platform, CHROME_CORE, "client hello: " + label, "", e))
+        hello_rows = [r for r in results if is_hello(r)]
+        write_json(out / "hello-parity.json", {"chrome_version": chrome_version, "chrome": chrome,
+                                               "captures_per_client": HELLO_CAPTURES,
+                                               "parity": hello_parity(hello_rows)})
+        print(parity_text(hello_rows), flush=True)
     finally:
         servers.stop()
     for name, path, what in (
@@ -2908,6 +3394,22 @@ def markdown(rows):
                 r["platform"], r["core"], r["scenario"].replace("client hello: ", ""), e.get("ja4"),
                 ", ".join(e.get("key_shares") or []), ", ".join(e.get("alpn") or []) or "none",
                 e.get("client_hello_bytes"), "yes" if e.get("ech_bytes") else "no", len(e.get("extensions") or [])))
+        lines += parity_markdown(rows)
+    xh = [r for r in rows if r.get("scenario") == "vless-xhttp-reality packet-up"
+          and r.get("extra", {}).get("peak_phys_footprint_mb") is not None]
+    if xh:
+        lines += ["", "XHTTP packet-up, macOS phys_footprint (what iOS counts) and the burst's two halves "
+                      "(32 downloads at once, then 32 uploads at once; the halves are sampled every %.1f s, the peak "
+                      "is the lifetime maximum):" % PERIOD_S, "",
+                  "| platform | core | settings | peak fp MiB | burst down half fp | burst up half fp | down Mbit/s | "
+                  "up Mbit/s | CPU s/GB | burst down / up Mbit/s | burst CPU s/GB |", "|---|---|---|---|---|---|---|---|---|---|---|"]
+        for r in xh:
+            e = r["extra"]
+            lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s / %s | %s |" % (
+                r["platform"], r["core"], r["settings"], e.get("peak_phys_footprint_mb"),
+                e.get("burst_down_half_peak_phys_footprint_mb"), e.get("burst_up_half_peak_phys_footprint_mb"),
+                r.get("mbps_down"), r.get("mbps_up"), r.get("cpu_s_per_gb"), e.get("burst_mbps_down"),
+                e.get("burst_mbps_up"), e.get("burst_cpu_s_per_gb")))
     checked = [r for r in rows if r.get("extra", {}).get("ios_checks")]
     if checked:
         lines += ["", "iOS shape checks, before any load: (1) an A query to the tun's resolver %s, (2) HTTP to that "
@@ -2939,6 +3441,9 @@ def cmd_table(a):
             except (OSError, ValueError) as e:
                 print("skip %s: %s" % (f, e))
     print_table(rows)
+    text = parity_text([r for r in rows if is_hello(r)])
+    if text:
+        print(text)
     if a.json_out:
         write_json(Path(a.json_out), rows)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -3842,6 +4347,8 @@ def main(argv=None):
                         "(Linux, passwordless sudo)")
     d.add_argument("--xray-rust", help="a directory with xray-rust and xray-rust.build.json (rust-core-build.sh); "
                                        "its rows fail by name when the binary is missing")
+    d.add_argument("--xray-rust-patched", help="the same, built with the lab's patches (rust-core-build.sh with "
+                                               "XRS_PATCHES): the macOS XHTTP window rows that need a constant changed")
     d.add_argument("--budget-min", type=float, default=24)
     n = sub.add_parser("android")
     n.add_argument("--bin", required=True, help="runner binaries: loadgen, xray-26.4.25/xray")

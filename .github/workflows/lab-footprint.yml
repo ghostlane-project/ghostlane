@@ -41,8 +41,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     # About 35 minutes when xray-rust is built, about 20 when the cache has it.
     # The ceiling covers the worst case with room for Table and Upload: about
-    # 5 min of Go builds, the 30 min xray-rust build, hev's 6 and Measure's 40.
-    timeout-minutes: 85
+    # 5 min of Go builds, the 30 min xray-rust build (twice on the Mac, with
+    # the patched one), hev's 6 and Measure's 40.
+    timeout-minutes: 115
     env:
       # xray-rust (https://github.com/aimalygin/xray-rust): its newest release
       # when the lab was extended (GET /repos/aimalygin/xray-rust/releases/latest,
@@ -94,6 +95,7 @@ jobs:
             echo "OUT=${RUNNER_TEMP}/lab-out"
             echo "ENGINE=${RUNNER_TEMP}/olcrtc"
             echo "XRS=${RUNNER_TEMP}/xray-rust"
+            echo "XRS_P=${RUNNER_TEMP}/xray-rust-patched"
           } >> "$GITHUB_ENV"
           echo "cores: $(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)"
           uname -a
@@ -186,6 +188,41 @@ jobs:
           path: ${{ runner.temp }}/xray-rust
           key: ${{ steps.xrs-cache.outputs.cache-primary-key }}
 
+      # The XHTTP window rows (gate 2.8, macOS only) include one setting that
+      # xray-rust holds as a constant, the H2 connection window: the same tag,
+      # commit and toolchain with lab/footprint/xray-rust-patches/ applied by
+      # rust-core-build.sh (XRS_PATCHES), in a directory and a cache entry of
+      # its own, so the pinned binary above stays the tag as published. A
+      # failed build fails only the patched rows, by name.
+      - name: Restore the patched xray-rust from the cache
+        id: xrs-p-cache
+        if: runner.os == 'macOS'
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-patched
+          key: xray-rust-patched-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh', 'lab/footprint/xray-rust-patches/*.patch') }}
+
+      - name: Build xray-rust with the lab's patches (the XHTTP connection-window rows)
+        id: xrs-p-build
+        if: runner.os == 'macOS' && steps.xrs-p-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          XRS_PATCHES="lab/footprint/xray-rust-patches/h2-connection-window-4mib.patch" \
+            XRS_BUILD_LOG="$OUT/xray-rust-patched-build.log" bash lab/footprint/rust-core-build.sh "$XRS_P"
+
+      - name: Save the patched xray-rust to the cache
+        if: runner.os == 'macOS' && steps.xrs-p-build.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-patched
+          key: ${{ steps.xrs-p-cache.outputs.cache-primary-key }}
+
       # The hev rows need root and a tun, so they run where --tun runs; the
       # Mac builds it too, with Apple's clang, for udp-flow. A failed build
       # fails only those rows, with the tail of hev-build.log.
@@ -204,7 +241,7 @@ jobs:
           set -euo pipefail
           if [ -n "${{ matrix.lab_flags }}" ]; then sudo -n true; fi
           python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
-            --engine-src "$ENGINE" --xray-rust "$XRS" --budget-min 34 ${{ matrix.lab_flags }}
+            --engine-src "$ENGINE" --xray-rust "$XRS" --xray-rust-patched "$XRS_P" --budget-min 34 ${{ matrix.lab_flags }}
 
       # Where a new UDP flow's time goes behind hev (lab.py udp-flow, root):
       # the ios-shape hev row taken apart one change at a time, 20 DNS
@@ -231,6 +268,7 @@ jobs:
                    "$BIN/hev-nomore.identical.txt" "$BIN/msg_more.txt" "$XRS/xray-rust.build.json"; do
             [ -f "$f" ] && cp "$f" "$OUT/"
           done
+          [ -f "$XRS_P/xray-rust.build.json" ] && cp "$XRS_P/xray-rust.build.json" "$OUT/xray-rust-patched.build.json"
           python3 lab/footprint/lab.py table "$OUT"
 
       - name: Upload results

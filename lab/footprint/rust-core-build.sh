@@ -24,6 +24,13 @@
 # succeeded, so a cache of <dest-dir> never holds half a build. The build log
 # goes to stdout, and to $XRS_BUILD_LOG as well when that is set.
 #
+# XRS_PATCHES (optional): patch files, space-separated, relative to the
+# working directory, applied with `git apply` to the checked-out tag before
+# the build. The lab uses it only for a setting that xray-rust holds as a
+# constant (lab/footprint/xray-rust-patches/); the pin itself never moves,
+# and the build record names each patch and its sha256. Unset, the build is
+# the tag as published.
+#
 # bash 3.2 safe (macOS runners).
 set -euo pipefail
 
@@ -32,7 +39,8 @@ tag="${XRAY_RUST_TAG:?XRAY_RUST_TAG is not set}"
 commit="${XRAY_RUST_COMMIT:?XRAY_RUST_COMMIT is not set}"
 want_chan="${XRAY_RUST_TOOLCHAIN:?XRAY_RUST_TOOLCHAIN is not set}"
 repo="${XRAY_RUST_REPO:-https://github.com/aimalygin/xray-rust.git}"
-work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/xray-rust-build"
+patches="${XRS_PATCHES:-}"
+work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/xray-rust-build-$(basename "${dest}")"
 
 if [ -n "${XRS_BUILD_LOG:-}" ]; then
   mkdir -p "$(dirname "${XRS_BUILD_LOG}")"
@@ -55,6 +63,18 @@ chan="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "${src}/rust-toolchain.toml")"
 if [ "${chan}" != "${want_chan}" ]; then
   echo "rust-toolchain.toml at ${tag} asks for '${chan}', the workflow pins '${want_chan}'" >&2
   exit 1
+fi
+
+patch_paths=""
+for pf in ${patches}; do
+  test -f "${pf}" || { echo "XRS_PATCHES names ${pf}, which is not a file" >&2; exit 1; }
+  abs="$(cd "$(dirname "${pf}")" && pwd)/$(basename "${pf}")"
+  echo "== git apply ${pf} =="
+  git -C "${src}" apply --verbose "${abs}"
+  patch_paths="${patch_paths} ${pf}"
+done
+if [ -n "${patch_paths}" ]; then
+  git -C "${src}" --no-pager diff --stat
 fi
 
 echo "== toolchain ${chan} =="
@@ -85,9 +105,10 @@ install -m 0755 "${bin}" "${dest}/xray-rust"
 # Values go through the environment: the profile text carries quotes.
 B_REPO="${repo}" B_TAG="${tag}" B_COMMIT="${commit}" B_CHAN="${chan}" B_RUSTC="${rustc_v}" \
 B_HOST="${host}" B_PROFILE="${profile}" B_SECONDS="${seconds}" B_BYTES="${bytes}" \
-B_RUN="${GITHUB_RUN_ID:-local}" python3 -I -c '
-import json, os, sys
+B_RUN="${GITHUB_RUN_ID:-local}" B_PATCHES="${patch_paths}" python3 -I -c '
+import hashlib, json, os, sys
 e = os.environ
+patches = [{"file": f, "sha256": hashlib.sha256(open(f, "rb").read()).hexdigest()} for f in e["B_PATCHES"].split()]
 json.dump({
     "repo": e["B_REPO"], "tag": e["B_TAG"], "commit": e["B_COMMIT"],
     "toolchain": e["B_CHAN"], "rustc": e["B_RUSTC"], "host": e["B_HOST"],
@@ -95,6 +116,7 @@ json.dump({
     "profile_release": e["B_PROFILE"],
     "build_seconds": int(e["B_SECONDS"]), "bytes": int(e["B_BYTES"]),
     "built_by_run": e["B_RUN"],
+    "patches": patches,
 }, open(sys.argv[1], "w"), indent=1)
 ' "${dest}/xray-rust.build.json"
 cat "${dest}/xray-rust.build.json"
