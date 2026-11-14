@@ -9,8 +9,10 @@ name: Lab - olcRTC client, Chrome's DTLS
 #     against Chrome 157's, the extension permutation, the certificate, the
 #     cap on data before the handshake, and every peer-connection test of
 #     olc-rtc and olc-salutejazz over BoringSSL; clippy;
-#   - the same tests with the profile broken (no permutation, no ML-KEM
-#     group), which must fail: the tests can tell;
+#   - the same tests with the profiles broken (no permutation, no ML-KEM
+#     group), which must fail: the tests can tell; the same for the TLS
+#     profile of TURN over TLS (olc_rtc::tls_boring, its hello against the
+#     turn-capture job's Chrome 157 hello);
 #   - a release build of olc-client with the feature, run through the olcRTC
 #     engine's fake SaluteJazz SFU (pion) against the Go engine at the exits'
 #     pin (olc/interop/fakeroom.sh): the gate's S0-S5 beside the Go client,
@@ -46,7 +48,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-rtc"
-  XRS_COMMIT: "5e722e76343248f9e3c5a19b74fc2f79d20daac3"
+  XRS_COMMIT: "35af9c52edf1caca2d70aa157a6fd23b3c46ddd1"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -104,7 +106,7 @@ jobs:
           rc=$?
           grep -E '^test |test result|^error|^warning|panicked' "$o/tests.log" | head -400
           [ $rc -eq 0 ] || tail -80 "$o/tests.log"
-          echo "RESULT tests rc=$rc $(grep -c '^test .* ok$' "$o/tests.log") ok, $(grep -c '^test .* FAILED$' "$o/tests.log") failed, dtls_boring: $(grep -c '^test dtls_boring::tests::.* ok$' "$o/tests.log") ok" | tee "$o/result-tests.txt"
+          echo "RESULT tests rc=$rc $(grep -c '^test .* ok$' "$o/tests.log") ok, $(grep -c '^test .* FAILED$' "$o/tests.log") failed, dtls_boring: $(grep -c '^test dtls_boring::tests::.* ok$' "$o/tests.log") ok, tls_boring: $(grep -c '^test tls_boring::tests::.* ok$' "$o/tests.log") ok" | tee "$o/result-tests.txt"
           exit $rc
 
       - name: Clippy with BoringSSL's DTLS
@@ -126,19 +128,24 @@ jobs:
         run: |
           set +e -uo pipefail
           o=$GITHUB_WORKSPACE/out
-          f=olc/olc-rtc/src/dtls_boring.rs
-          sed -i -e 's/ctx\.set_permute_extensions(true);/ctx.set_permute_extensions(false);/' \
-            -e 's/"X25519MLKEM768:X25519:P-256:P-384"/"X25519:P-256:P-384"/' "$f"
-          changed=$(git diff --numstat -- "$f" | cut -f1)
-          timeout 20m cargo test --locked -p olc-rtc --features boring --lib dtls_boring > "$o/red.log" 2>&1
+          # Both profiles, DTLS and TURN's TLS, lose the permutation and
+          # the ML-KEM group.
+          changed=0
+          for f in olc/olc-rtc/src/dtls_boring.rs olc/olc-rtc/src/tls_boring.rs; do
+            sed -i -e 's/ctx\.set_permute_extensions(true);/ctx.set_permute_extensions(false);/' \
+              -e 's/"X25519MLKEM768:X25519:P-256:P-384"/"X25519:P-256:P-384"/' "$f"
+            changed=$((changed + $(git diff --numstat -- "$f" | cut -f1)))
+          done
+          timeout 20m cargo test --locked -p olc-rtc --features boring --lib tls_boring > "$o/red.log" 2>&1
           rc=$?
-          git checkout -q -- "$f"
+          git checkout -q -- olc/olc-rtc/src/dtls_boring.rs olc/olc-rtc/src/tls_boring.rs
           grep -E '^test |test result|panicked' "$o/red.log" | head -40
           ok=1
-          [ "$changed" = 2 ] || { echo "the mutation changed $changed lines, not 2"; ok=0; }
+          [ "$changed" = 4 ] || { echo "the mutation changed $changed lines, not 4"; ok=0; }
           [ $rc -ne 0 ] || { echo "the tests passed on a broken profile"; ok=0; }
-          for t in the_client_hello_is_chromes the_extensions_are_permuted; do
-            grep -q "^test dtls_boring::tests::$t \.\.\. FAILED$" "$o/red.log" || { echo "$t did not fail"; ok=0; }
+          for t in dtls_boring::tests::the_client_hello_is_chromes dtls_boring::tests::the_extensions_are_permuted \
+            tls_boring::tests::the_turns_hello_is_chromes tls_boring::tests::the_turns_extensions_are_permuted; do
+            grep -q "^test $t \.\.\. FAILED$" "$o/red.log" || { echo "$t did not fail"; ok=0; }
           done
           echo "RESULT red $([ $ok = 1 ] && echo ok || echo MISSING) (rc=$rc)" | tee "$o/result-red.txt"
           [ $ok = 1 ]
