@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Typechecks the hev-socks5-tunnel integration — HevTunnel.swift,
-# TunDescriptor.swift and PacketTunnelProvider.swift — with a swift.org
+# TunDescriptor.swift, TunArrangement.swift and PacketTunnelProvider.swift —
+# with a swift.org
 # toolchain on Linux, in both language modes. NetworkExtension, Network,
 # Cores (the Go bind), hev's C API and the extension's own Darwin-heavy
 # helpers (LibboxPlatform, the two engine bridges, the traces) are shimmed to
@@ -119,7 +120,13 @@ public final class LibboxPlatform: NSObject {
   public init(provider: NEPacketTunnelProvider) {}
   public static func tunnelSettings(dns: [String] = Tun.dns) -> NEPacketTunnelNetworkSettings { NEPacketTunnelNetworkSettings() }
   public static func invalidatePinCache() {}
+  public static func noteSystemPath(_ interfaces: [String]) {}
   public static func tracePhysicalInterfaces(_ stage: String) {}
+}
+public enum SingBoxDebugLog { public static func reset(workingPath: String) {} }
+public final class RoomKeeper: @unchecked Sendable {
+  public static let shared = RoomKeeper()
+  public func apply(primary: String, extras: [String], carrier: String, source: String) {}
 }
 public enum XrayEngine { public static func start(configJSON: String) throws {}; public static func stop() {} }
 public enum OlcrtcEngine {
@@ -141,7 +148,7 @@ extension FileManager {
 public let IFNAMSIZ_shim: Int32 = 16
 #endif
 SHIM
-for f in HevTunnel TunDescriptor PacketTunnelProvider; do
+for f in HevTunnel TunDescriptor TunArrangement PacketTunnelProvider; do
   # The real imports name modules that do not exist here; the shims stand in.
   sed -e 's/^import Cores$//' -e 's/^import Darwin$/import Glibc/' -e 's/^import os$//' \
       -e 's/^import Network$//' -e 's/^import NetworkExtension$//' -e 's/^import HevSocks5Tunnel$//' \
@@ -152,10 +159,11 @@ done
 # The extension target builds in Swift 5 mode (SWIFT_VERSION = 5.0), and the
 # provider's path-monitor closure predates this work and is a Swift 6 error
 # (a captured var mutated in a @Sendable closure). So the provider is checked
-# in its own mode, and the two new files in both.
+# in its own mode, and the other files in both.
 $swiftc -typecheck -swift-version 5 -parse-as-library \
-  "$work/shims.swift" "$work/HevTunnel.swift" "$work/TunDescriptor.swift" "$work/PacketTunnelProvider.swift"
-echo "HevTunnel + TunDescriptor + PacketTunnelProvider: typecheck in Swift 5 mode"
+  "$work/shims.swift" "$work/HevTunnel.swift" "$work/TunDescriptor.swift" "$work/TunArrangement.swift" \
+  "$work/PacketTunnelProvider.swift"
+echo "HevTunnel + TunDescriptor + TunArrangement + PacketTunnelProvider: typecheck in Swift 5 mode"
 $swiftc -typecheck -swift-version 6 -parse-as-library \
-  "$work/shims.swift" "$work/HevTunnel.swift" "$work/TunDescriptor.swift"
-echo "HevTunnel + TunDescriptor: typecheck in Swift 6 mode"
+  "$work/shims.swift" "$work/HevTunnel.swift" "$work/TunDescriptor.swift" "$work/TunArrangement.swift"
+echo "HevTunnel + TunDescriptor + TunArrangement: typecheck in Swift 6 mode"

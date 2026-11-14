@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -154,6 +155,7 @@ class SingBoxConfigTest {
 
     private fun iosShapes(routing: Routing = Routing.Global) = mapOf(
         "tun" to SingBoxConfig.buildTun(vless(), routing = routing),
+        "ios-socks" to SingBoxConfig.buildIosSocks(vless(), tunLogin, routing = routing),
         "tun-socks" to SingBoxConfig.buildTunSocks(10810, routing = routing),
         "tun-socks-lossy" to SingBoxConfig.buildTunSocks(
             10810, username = "u", password = "p", upstreamUdpIsLossy = true, routing = routing
@@ -227,6 +229,103 @@ class SingBoxConfigTest {
         }
     }
 
+    // --- iOS since 2026-11-13: sing-box behind hev, on a loopback SOCKS port ---
+
+    private val tunLogin = SocksLogin("tun-user", "tun-password")
+
+    /** Every line sing-box speaks on iOS, under both routings the phone builds. */
+    private fun iosSingBoxLines(): List<Pair<String, Pair<OutboundSpec, Routing>>> {
+        val lines = mapOf(
+            "reality" to vless(),
+            "reality-grpc" to vless().copy(flow = null, transport = TransportSpec.Grpc("rutube")),
+            "hysteria2" to hy2(),
+            "webtunnel-ws" to vless().copy(
+                publicKey = "", shortId = "", flow = null, transport = TransportSpec.Ws("/wt", "wt.example.org")
+            ),
+            "webtunnel-httpupgrade" to vless().copy(
+                publicKey = "", shortId = "", flow = null, transport = TransportSpec.HttpUpgrade("/wt", "wt.example.org")
+            ),
+        )
+        val routings = mapOf("global" to Routing.Global, "bypass" to bypass(DirectDns.Placeholder))
+        return lines.flatMap { (line, spec) ->
+            routings.map { (routing, value) -> "$line/$routing" to (spec to value) }
+        }
+    }
+
+    @Test fun iosSocksShapeListensOnLoopbackWithTheLogin() {
+        // hev reaches this port on loopback, and so could any other app on the
+        // phone: one inbound, on 127.0.0.1, demanding the pair the extension
+        // reads back and hands to hev.
+        for ((name, line) in iosSingBoxLines()) {
+            val (spec, routing) = line
+            val all = inbounds(SingBoxConfig.buildIosSocks(spec, tunLogin, routing = routing))
+            assertEquals(1, all.size, name)
+            val inbound = all.single().jsonObject
+            assertEquals("socks", str(inbound, "type"), name)
+            assertEquals("127.0.0.1", str(inbound, "listen"), name)
+            assertEquals(SingBoxConfig.SINGBOX_SOCKS_PORT, inbound["listen_port"]!!.jsonPrimitive.content.toInt(), name)
+            val user = inbound["users"]!!.jsonArray.single().jsonObject
+            assertEquals("tun-user", str(user, "username"), name)
+            assertEquals("tun-password", str(user, "password"), name)
+            // hev's udp-read-write-timeout (HevTunnel.swift): an association
+            // hev has ended is not kept for sing-box's default five minutes.
+            assertEquals("30s", str(inbound, "udp_timeout"), name)
+        }
+        val elsewhere = inbounds(SingBoxConfig.buildIosSocks(vless(), tunLogin, socksPort = 20810)).single().jsonObject
+        assertEquals(20810, elsewhere["listen_port"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test fun iosSocksShapeIsTheTunShapeWithAnotherInbound() {
+        // One renderer, the inbound its only difference: DNS, fake addresses,
+        // sniffing, the rules, the outbounds and the cache are the tun's, key
+        // for key and in the same order, so the way back is the way it was.
+        for ((name, line) in iosSingBoxLines()) {
+            val (spec, routing) = line
+            for (verbose in listOf(false, true)) {
+                val socks = obj(
+                    SingBoxConfig.buildIosSocks(spec, tunLogin, routing = routing, verboseLogs = verbose, logOutput = "sing-box.log")
+                )
+                val tun = obj(
+                    SingBoxConfig.buildTun(spec, routing = routing, verboseLogs = verbose, logOutput = "sing-box.log")
+                )
+                assertEquals(tun.keys.toList(), socks.keys.toList(), name)
+                assertEquals(JsonObject(tun - "inbounds"), JsonObject(socks - "inbounds"), name)
+                assertEquals("tun", str(tun["inbounds"]!!.jsonArray.single().jsonObject, "type"), name)
+            }
+        }
+    }
+
+    @Test fun iosSocksShapeIsTheAndroidSocksInboundWithALogin() {
+        // The same inbound the Android and desktop shapes write, so a field one
+        // of them gains reaches the other. All but the UDP timeout, which only
+        // iOS sets, to match hev's in front of it; Android keeps the default.
+        val android = inbounds(SingBoxConfig.build(vless(), login = tunLogin))[0].jsonObject
+        val ios = inbounds(SingBoxConfig.buildIosSocks(vless(), tunLogin))[0].jsonObject
+        assertFalse("udp_timeout" in android, android.toString())
+        assertEquals(android, JsonObject(ios - "udp_timeout"))
+    }
+
+    @Test fun iosSocksShapeRefusesAnOpenPort() {
+        for (login in listOf(SocksLogin("", "p"), SocksLogin("u", ""), SocksLogin(" ", " "))) {
+            assertFailsWith<IllegalArgumentException> { SingBoxConfig.buildIosSocks(vless(), login) }
+        }
+    }
+
+    @Test fun iosSocksShapeKeepsTheTunShapesRoutingLimits() {
+        // Nothing but a bypass has been built or run on the phone; the socks
+        // inbound changes nothing about that.
+        assertFailsWith<IllegalArgumentException> {
+            SingBoxConfig.buildIosSocks(
+                vless(), tunLogin,
+                routing = Routing.Rules("/data/rules", DirectDns.Placeholder, Routing.Policy.BlockedOnly)
+            )
+        }
+    }
+
+    @Test fun iosSocksShapeRefusesXhttpLikeTheTun() {
+        assertFailsWith<IllegalArgumentException> { SingBoxConfig.buildIosSocks(xhttp(), tunLogin) }
+    }
+
     @Test fun xrayHandlesTheTransportSingBoxRefuses() {
         // The pairing that makes xhttp work at all: whatever sing-box turns
         // down, Xray must accept.
@@ -277,6 +376,7 @@ class SingBoxConfigTest {
         for (json in listOf(
             SingBoxConfig.build(vless()),
             SingBoxConfig.buildTun(vless()),
+            SingBoxConfig.buildIosSocks(vless(), tunLogin),
             SingBoxConfig.buildTunSocks(socksPort = 10809),
             SingBoxConfig.buildDesktopTun(corePort = 10809, verifyPort = 10810),
             SingBoxConfig.buildOlcrtcSocks(olcrtcPort = 10808),
@@ -986,6 +1086,7 @@ class SingBoxConfigTest {
         "socks" to SingBoxConfig.build(vless(), routing = routing),
         "socks-chain" to SingBoxConfig.buildSocksChain(10808, username = "u", password = "p", routing = routing),
         "tun" to SingBoxConfig.buildTun(vless(), routing = routing),
+        "ios-socks" to SingBoxConfig.buildIosSocks(vless(), tunLogin, routing = routing),
         "tun-socks" to SingBoxConfig.buildTunSocks(10810, routing = routing),
         "tun-socks-lossy" to SingBoxConfig.buildTunSocks(
             10810, username = "u", password = "p", upstreamUdpIsLossy = true, routing = routing
@@ -1069,7 +1170,7 @@ class SingBoxConfigTest {
     @Test fun remoteResolverRidesTcpOnlyWhenTheUpstreamIsLossy() {
         val byShape = shapes(bypass()).mapValues { str(dnsServers(it.value)[0], "type") }
         assertEquals("tcp", byShape["tun-socks-lossy"])
-        for (name in listOf("socks", "socks-chain", "tun", "tun-socks")) assertEquals("udp", byShape[name], name)
+        for (name in listOf("socks", "socks-chain", "tun", "ios-socks", "tun-socks")) assertEquals("udp", byShape[name], name)
     }
 
     @Test fun desktopDirectResolverIsTheSystemOne() {

@@ -28,10 +28,11 @@ object XrayConfig {
     /**
      * Kept off the PAC port 10809.
      *
-     * The same number as [SingBoxConfig.SINGBOX_SOCKS_PORT] and safely so: on
-     * Android and desktop only one core runs at a time, and on iOS — where both
-     * do — sing-box owns the tun and has no SOCKS inbound of its own, so this
-     * port has exactly one listener either way.
+     * The same number as [SingBoxConfig.SINGBOX_SOCKS_PORT] and safely so:
+     * one core runs at a time on every platform. On iOS hev-socks5-tunnel
+     * fronts Xray on xhttp and sing-box is not started there (since 1.0.426);
+     * on sing-box's own lines sing-box listens here and Xray is not started
+     * (since 2026-11-13). So this port has exactly one listener either way.
      */
     const val XRAY_SOCKS_PORT = 10810
 

@@ -26,9 +26,16 @@ import kotlin.test.assertTrue
 class SingBoxConfigDumpTest {
     private val outDir = File("build/singbox-configs")
 
-    private fun dump(name: String, json: String) {
+    /**
+     * Writes [written] where `sing-box check` and the start in
+     * check-singbox-configs.sh find it, and holds [json], what the builder
+     * wrote, to the reference file when there is one. The two differ only
+     * for a shape whose copy is moved to run on the runner (see
+     * [dumpWithCacheInBuild]).
+     */
+    private fun dump(name: String, json: String, written: String = json) {
         outDir.mkdirs()
-        File(outDir, "$name.json").writeText(json)
+        File(outDir, "$name.json").writeText(written)
         val reference = File("src/jvmTest/resources/reference-configs/$name.json")
         if (reference.isFile) {
             val expected = Json.parseToJsonElement(reference.readText())
@@ -446,11 +453,7 @@ class SingBoxConfigDumpTest {
                 put("listen", "127.0.0.1"); put("listen_port", 18811)
             }
         }
-        val experimental = obj["experimental"]?.jsonObject?.toMutableMap() ?: mutableMapOf()
-        val cache = experimental["cache_file"]?.jsonObject?.toMutableMap() ?: mutableMapOf()
-        cache["path"] = JsonPrimitive(File(outDir, "$name.cache.db").absolutePath)
-        experimental["cache_file"] = JsonObject(cache)
-        obj["experimental"] = JsonObject(experimental)
+        putCacheInBuild(obj, name)
         // A daemon shape binds its direct outbound to a macOS interface; the twin
         // runs on Linux, so it binds to the loopback there — nothing dials.
         obj["outbounds"] = buildJsonArray {
@@ -461,6 +464,29 @@ class SingBoxConfigDumpTest {
             }
         }
         dump("$name-as-socks", JsonObject(obj).toString())
+    }
+
+    /** Points the config's cache file into the build directory, where a run on the runner may write it. */
+    private fun putCacheInBuild(obj: MutableMap<String, JsonElement>, name: String) {
+        val experimental = obj["experimental"]?.jsonObject?.toMutableMap() ?: mutableMapOf()
+        val cache = experimental["cache_file"]?.jsonObject?.toMutableMap() ?: mutableMapOf()
+        cache["path"] = JsonPrimitive(File(outDir, "$name.cache.db").absolutePath)
+        experimental["cache_file"] = JsonObject(cache)
+        obj["experimental"] = JsonObject(experimental)
+    }
+
+    /**
+     * A shape with no tun, which check-singbox-configs.sh therefore starts as
+     * it is. The builder leaves the cache file's path to libbox, which on the
+     * phone puts it in the extension's working directory; on the runner that
+     * would be cache.db in the checkout, shared by every such start. So the
+     * copy written for the check has its cache in the build directory, and
+     * the reference file holds what the builder wrote. Nothing else differs.
+     */
+    private fun dumpWithCacheInBuild(name: String, json: String) {
+        val obj = Json.parseToJsonElement(json).jsonObject.toMutableMap()
+        putCacheInBuild(obj, name)
+        dump(name, json, written = JsonObject(obj).toString())
     }
 
     /** The iOS shapes in Global: they answer DNS themselves now, with fake addresses. */
@@ -481,7 +507,21 @@ class SingBoxConfigDumpTest {
             SingBoxConfig.buildTunSocks(10810, username = "u", password = "p", upstreamUdpIsLossy = true)
         )
         assertTrue(File(outDir, "ios-tun-socks-lossy-as-socks.json").exists())
+
+        // Since 2026-11-13 sing-box's own lines run behind hev: the tun shape
+        // with a socks inbound and a login, and nothing else changed. They need
+        // no twin; they are started as they are.
+        val hy2 = LinkParser.parse(
+            "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#RU-hy2"
+        )
+        assertNotNull(hy2)
+        dumpWithCacheInBuild("ios-socks-reality", SingBoxConfig.buildIosSocks(reality, iosLogin))
+        dumpWithCacheInBuild("ios-socks-hysteria2", SingBoxConfig.buildIosSocks(hy2, iosLogin))
+        assertTrue(File(outDir, "ios-socks-reality.json").exists())
     }
+
+    /** The pair the iOS socks shapes are dumped with; the app generates its own. */
+    private val iosLogin = SocksLogin("ios-tun-user", "ios-tun-password")
 
     @Test fun dumpBypassShapes() = runTest {
         val rules = File(outDir, "rules").apply { mkdirs() }
@@ -504,6 +544,8 @@ class SingBoxConfigDumpTest {
         dump("bypass-socks-chain", SingBoxConfig.buildSocksChain(10808, username = "u", password = "p", routing = android))
         dumpWithSocksTwin("bypass-tun-reality", SingBoxConfig.buildTun(reality, routing = ios))
         dumpWithSocksTwin("bypass-tun-hysteria2", SingBoxConfig.buildTun(hy2, routing = ios))
+        dumpWithCacheInBuild("bypass-ios-socks-reality", SingBoxConfig.buildIosSocks(reality, iosLogin, routing = ios))
+        dumpWithCacheInBuild("bypass-ios-socks-hysteria2", SingBoxConfig.buildIosSocks(hy2, iosLogin, routing = ios))
         dumpWithSocksTwin("bypass-tun-socks", SingBoxConfig.buildTunSocks(10810, routing = ios))
         dumpWithSocksTwin(
             "bypass-tun-socks-lossy",

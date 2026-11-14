@@ -146,7 +146,7 @@ jobs:
           # above; the shared Kotlin its tests read runs them in apple-compile.
           # A here-string: a pipe into grep -q can end in SIGPIPE under
           # pipefail once grep has its match.
-          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-room-list\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-(room-list|tun-arrangement)\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else

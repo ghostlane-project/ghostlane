@@ -3,17 +3,25 @@ import Network
 import NetworkExtension
 import os
 
-/// The tunnel extension: one tun, and behind it one of two arrangements.
+/// The tunnel extension: one tun, and behind it one of three arrangements
+/// (`TunArrangement`, decided once per start from the files the app wrote).
 ///
-///   * Reality and Hysteria2 are sing-box's own transports, so sing-box owns
-///     the tun (libbox) and does the whole job.
+///   * Reality, Hysteria2 and WebTunnel are sing-box's own transports. Since
+///     2026-11-13 sing-box speaks them on a loopback SOCKS port and
+///     hev-socks5-tunnel owns the tun and forwards every connection to it.
+///     sing-box still answers the tun's DNS, sniffs, and applies the Bypass
+///     Russia rules; it no longer runs a network stack of its own.
 ///   * xhttp and olcRTC are spoken by another engine — Xray, olcRTC — which
-///     listens on a loopback SOCKS port; hev-socks5-tunnel owns the tun and
-///     forwards every connection to that port. sing-box is not started at all.
+///     listens on a loopback SOCKS port; hev owns the tun the same way, and
+///     sing-box is not started at all.
+///   * The way back for the first: when config.json's inbound is a tun,
+///     sing-box owns the tun itself (libbox, gVisor) and does the whole job,
+///     as it did for Reality and Hysteria2 until 2026-11-13.
 ///
-/// The second arrangement replaced sing-box-in-front-of-the-engine in 1.0.426:
-/// two Go network stacks in a process killed at about 50 MB was the shape of
-/// every speed-test death (docs/ios-one-go-runtime.md).
+/// hev replaced sing-box-in-front-of-the-engine in 1.0.426: two Go network
+/// stacks in a process killed at about 50 MB was the shape of every
+/// speed-test death. sing-box's own gVisor tun went for the same budget: in
+/// the lab, about 20 MB of the runtime (docs/ios-one-go-runtime.md).
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let log = Logger(subsystem: "org.proofkit.app", category: "tunnel")
@@ -46,7 +54,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Without this a Wi-Fi to cellular handover is noticed only when a
     /// connection finally fails, which to a user looks like the VPN randomly
     /// breaking. sing-box knows how to rebuild its sockets; it just has to be
-    /// told the ground moved.
+    /// told the ground moved, whether it owns the tun or sits behind hev.
     ///
     /// It also says which interface the system routes through, and every
     /// outbound socket is pinned to that one when it can be (#58), so it runs
@@ -178,11 +186,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let resolvers = ResolverSnapshot.servers()
         NetworkDiagnostics.record("resolvers from the network: \(resolvers.count)")
 
-        // Which engine owns the tun decides which resolvers the system is told
-        // about: sing-box answers 172.19.0.2 itself; hev forwards to resolvers
-        // on the internet. See LibboxPlatform.Tun.
-        let hevOwnsTun = Self.hevOwnsTun(xrayConfig: xrayConfig, olcrtc: olcrtc)
-        let dns = hevOwnsTun ? LibboxPlatform.Tun.dnsThroughSocks : LibboxPlatform.Tun.dns
+        // What owns the tun and what stands behind it, decided once: the
+        // resolvers the system is told about and the start path both come
+        // from this, so the two cannot disagree. sing-box answers 172.19.0.2
+        // itself, on the tun or behind hev; behind Xray or olcRTC hev forwards
+        // to resolvers on the internet. See LibboxPlatform.Tun.
+        let arrangement = TunArrangement.decide(
+            config: config,
+            xrayConfig: xrayConfig,
+            olcrtcSocks: olcrtc.map {
+                LoopbackSocks(port: $0.socksPort, username: $0.socksUser, password: $0.socksPass)
+            }
+        )
+        NetworkDiagnostics.record("arrangement: \(arrangement.engineLabel)")
+        let dns = Self.tunResolvers(for: arrangement)
         // Applied before the engine starts: libbox asks for the descriptor
         // synchronously and complains if answering takes long.
         setTunnelNetworkSettings(LibboxPlatform.tunnelSettings(dns: dns)) { [weak self] error in
@@ -199,6 +216,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             LibboxPlatform.tracePhysicalInterfaces("after-tun")
             self?.startEngine(
+                arrangement: arrangement,
                 config: config,
                 xrayConfig: xrayConfig?.isEmpty == false ? xrayConfig : nil,
                 olcrtc: olcrtc,
@@ -210,6 +228,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func startEngine(
+        arrangement: TunArrangement,
         config: String,
         xrayConfig: String?,
         olcrtc: OlcrtcEngine.Parameters?,
@@ -265,169 +284,159 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 NetworkDiagnostics.record("crash log failed domain=\(logError.domain) code=\(logError.code)")
             }
 
-            // The borrowed core first, whichever it is: sing-box's outbound
-            // points at its SOCKS port, and a sing-box that starts against a
-            // port nobody is listening on fails every connection rather than
-            // waiting. Never both — a location is one transport.
-            if let xrayConfig {
-                mark("xray")
-                // Under Bypass Russia the Xray config carries the same direct
-                // resolver placeholder the sing-box one does; only this
-                // process can fill it in. A no-op for a config without it.
-                try XrayEngine.start(configJSON: DirectResolver.substitute(in: xrayConfig, resolvers: resolvers))
-            }
-            if let olcrtc {
-                mark("olcrtc")
-                try OlcrtcEngine.start(olcrtc, resolvers: resolvers)
-            }
-
-            // After every engine has started, never before. Two of them set a
-            // ceiling of their own on the one runtime they share, and the last
-            // call wins:
-            //
-            //   * LibboxSetMemoryLimit above sets 45 MB. That is above where
-            //     this process actually dies — three traces from a phone show
-            //     the kill at 46.0, 47.5 and 47.5 MB of footprint, since the
-            //     footprint counts what the Go heap does not. A ceiling above
-            //     the kill is not a ceiling.
-            //   * libXray's `runXrayFromJson` calls its `memory.InitForceFree`,
-            //     which sets 30 MiB and GC percent 10, and starts a goroutine
-            //     that returns memory to the OS once a second. 30 MiB sits
-            //     below what the runtime genuinely holds under a speed test
-            //     (44.6 MB of `sys` minus `rel` in the 1.0.423 trace), so
-            //     every xhttp session ran on the treadmill 1.0.416 was meant
-            //     to end: `heap 26.9/30.0`, fifty collections a second, and
-            //     the kill at 46.8 MB anyway. Nothing stops that goroutine;
-            //     the limit it set is what this call replaces.
-            //
-            // The trace prints the limit in force on every line, so a build
-            // that gets this order wrong says so in its first sample.
-            MobileSetMemoryLimit(Self.goMemoryLimit)
-            NetworkDiagnostics.record(
-                "go memory limit \(MobileMemoryLimit() / 1_048_576) MB in force (libbox and libXray defaults replaced)"
-            )
-
-            // The engine that speaks the transport is up on its SOCKS port;
-            // hev takes the tun and forwards to it. No libbox service on this
-            // path: sing-box was the second Go stack, and the point is that
-            // there is only one.
-            if let socks = Self.hevSocks(xrayConfig: xrayConfig, olcrtc: olcrtc) {
-                mark("hev")
-                guard let fd = TunDescriptor.find(in: packetFlow) else {
-                    throw Self.failure("no descriptor behind packetFlow")
+            switch arrangement {
+            case .engineBehindHev(let engine, let socks):
+                // The engine that speaks the transport first, on its SOCKS
+                // port: hev forwards to that port, and a connection to a port
+                // nobody listens on fails rather than waits. No libbox service
+                // on this path: one Go engine, and no network stack in Go.
+                switch engine {
+                case .xray:
+                    guard let xrayConfig else { throw Self.failure("no Xray config for an xhttp start") }
+                    mark("xray")
+                    // Under Bypass Russia the Xray config carries the same direct
+                    // resolver placeholder the sing-box one does; only this
+                    // process can fill it in. A no-op for a config without it.
+                    try XrayEngine.start(configJSON: DirectResolver.substitute(in: xrayConfig, resolvers: resolvers))
+                case .olcrtc:
+                    guard let olcrtc else { throw Self.failure("no olcRTC parameters for an olcRTC start") }
+                    mark("olcrtc")
+                    try OlcrtcEngine.start(olcrtc, resolvers: resolvers)
                 }
-                try HevTunnel.start(socks: socks, mtu: LibboxPlatform.Tun.mtu, tunFd: fd)
-                let engine = xrayConfig != nil ? "xray" : "olcrtc"
-                NetworkDiagnostics.record(
-                    "tun up: engine=\(engine)+hev socks=127.0.0.1:\(socks.port) fd=\(fd) dns=\(LibboxPlatform.Tun.dnsThroughSocks.joined(separator: ","))"
-                )
+                applyGoMemoryLimit()
+                try startHev(socks: socks, arrangement: arrangement)
+
+            case .singBoxBehindHev(let socks):
+                // sing-box first, on its SOCKS port, for the same reason. It
+                // is the same libbox service as on the tun, with a socks
+                // inbound in place of the tun one, so nothing calls openTun.
+                try startSingBox(config: config, resolvers: resolvers)
+                // After the service, which is this path's only engine. Should
+                // the limit or hev fail, the catch below closes the service
+                // that is already running.
+                applyGoMemoryLimit()
+                try startHev(socks: socks, arrangement: arrangement)
+
+            case .singBoxTun:
+                // The way back: sing-box owns the tun and does the whole job.
+                // The limit goes on before its service starts, as it always
+                // did on this path; starting the service sets no limit.
+                applyGoMemoryLimit()
+                try startSingBox(config: config, resolvers: resolvers)
                 mark("ready")
-                log.info("hev-socks5-tunnel started in front of \(engine, privacy: .public)")
-                completionHandler(nil)
-                return
             }
-            mark("service")
-
-            // The platform object is what libbox calls back into; openTun is where
-            // the system settings get applied, so there is no separate call here.
-            let platform = LibboxPlatform(provider: self)
-            let handler = LibboxCommandHandler(provider: self)
-            var serverError: NSError?
-            guard let server = LibboxNewCommandServer(handler, platform, &serverError) else {
-                throw serverError ?? Self.failure("libbox would not build a command server")
-            }
-            mark("starting")
-            // Bypass Russia: the config names a placeholder where the direct
-            // resolver goes, because only this process could read it. A Global
-            // config carries no placeholder and passes through untouched.
-            let substituted = DirectResolver.substitute(in: config, resolvers: resolvers)
-            let config = substituted
-            // Deliberately not `server.start()`: that binds the gRPC command
-            // socket for an app that talks to us through handleAppMessage
-            // instead. Starting the engine is a separate call, and this is it.
-            try server.startOrReloadService(config, options: LibboxOverrideOptions())
-            mark("ready")
-            self.commandHandler = handler
-            self.commandServer = server
-
-            log.info("sing-box started, config \(config.count, privacy: .public) bytes")
             completionHandler(nil)
         } catch {
             mark("failed: \(error.localizedDescription)")
+            // The tun's owner first, as in stopTunnel: hev stops reading the
+            // descriptor before the engine it forwards to goes away.
             HevTunnel.stop()
+            closeSingBox()
             XrayEngine.stop()
             OlcrtcEngine.stop()
             completionHandler(error)
         }
     }
 
-    /// Whether hev-socks5-tunnel, rather than sing-box, owns the tun for
-    /// this start: for both engines that speak their transport behind a
-    /// SOCKS port, xhttp (Xray) and olcRTC.
+    /// The soft ceiling on the Go runtime, after every engine has started,
+    /// never before. Two of them set a ceiling of their own on the one
+    /// runtime they share, and the last call wins:
     ///
-    /// olcRTC waited one release: with hev the system's DNS queries travel
-    /// through the engine as UDP, and on olcRTC that was the relay's
-    /// datagram lane, which loses packets under load. Since engine
+    ///   * LibboxSetMemoryLimit in startEngine sets 45 MB. That is above where
+    ///     this process actually dies — three traces from a phone show the
+    ///     kill at 46.0, 47.5 and 47.5 MB of footprint, since the footprint
+    ///     counts what the Go heap does not. A ceiling above the kill is not
+    ///     a ceiling.
+    ///   * libXray's `runXrayFromJson` calls its `memory.InitForceFree`, which
+    ///     sets 30 MiB and GC percent 10, and starts a goroutine that returns
+    ///     memory to the OS once a second. 30 MiB sits below what the runtime
+    ///     genuinely holds under a speed test (44.6 MB of `sys` minus `rel` in
+    ///     the 1.0.423 trace), so every xhttp session ran on the treadmill
+    ///     1.0.416 was meant to end: `heap 26.9/30.0`, fifty collections a
+    ///     second, and the kill at 46.8 MB anyway. Nothing stops that
+    ///     goroutine; the limit it set is what this call replaces.
+    ///
+    /// Starting a libbox service sets no limit, so on the tun the call can
+    /// come before it; behind hev it comes after it, with the rest.
+    ///
+    /// The trace prints the limit in force on every line, so a build that
+    /// gets this order wrong says so in its first sample.
+    private func applyGoMemoryLimit() {
+        MobileSetMemoryLimit(Self.goMemoryLimit)
+        NetworkDiagnostics.record(
+            "go memory limit \(MobileMemoryLimit() / 1_048_576) MB in force (libbox and libXray defaults replaced)"
+        )
+    }
+
+    /// Builds the command server and has it start sing-box with `config`, on
+    /// the tun or on its SOCKS port, whichever inbound the config has. The
+    /// server and its handler are held from the moment the service runs, so
+    /// a later failure and stopTunnel both close them.
+    private func startSingBox(config: String, resolvers: [String]) throws {
+        mark("service")
+        // The platform object is what libbox calls back into. On the tun,
+        // openTun is where it hands over the descriptor (the system settings
+        // are already applied); behind hev nothing opens a tun, and the
+        // platform still answers whatever else sing-box asks of the system.
+        let platform = LibboxPlatform(provider: self)
+        let handler = LibboxCommandHandler(provider: self)
+        var serverError: NSError?
+        guard let server = LibboxNewCommandServer(handler, platform, &serverError) else {
+            throw serverError ?? Self.failure("libbox would not build a command server")
+        }
+        mark("starting")
+        // Bypass Russia: the config names a placeholder where the direct
+        // resolver goes, because only this process could read it. A Global
+        // config carries no placeholder and passes through untouched.
+        let substituted = DirectResolver.substitute(in: config, resolvers: resolvers)
+        // Deliberately not `server.start()`: that binds the gRPC command
+        // socket for an app that talks to us through handleAppMessage
+        // instead. Starting the engine is a separate call, and this is it.
+        try server.startOrReloadService(substituted, options: LibboxOverrideOptions())
+        self.commandHandler = handler
+        self.commandServer = server
+        log.info("sing-box started, config \(substituted.count, privacy: .public) bytes")
+    }
+
+    /// Closes the sing-box service and the server that owns it, if one runs.
+    /// On the tun, closing the service is what releases the descriptor;
+    /// skipping it leaves the next start fighting this one for it. Two
+    /// calls: one stops the engine, the other tears down the server.
+    private func closeSingBox() {
+        try? commandServer?.closeService()
+        commandServer?.close()
+        commandServer = nil
+        commandHandler = nil
+    }
+
+    /// hev takes the tun and forwards everything to `socks`, where the engine
+    /// is already listening. Last on every hev path, after the memory limit.
+    private func startHev(socks: LoopbackSocks, arrangement: TunArrangement) throws {
+        mark("hev")
+        guard let fd = TunDescriptor.find(in: packetFlow) else {
+            throw Self.failure("no descriptor behind packetFlow")
+        }
+        try HevTunnel.start(socks: socks, mtu: LibboxPlatform.Tun.mtu, tunFd: fd)
+        let engine = arrangement.engineLabel
+        let dns = Self.tunResolvers(for: arrangement).joined(separator: ",")
+        NetworkDiagnostics.record("tun up: engine=\(engine) socks=127.0.0.1:\(socks.port) fd=\(fd) dns=\(dns)")
+        mark("ready")
+        log.info("hev-socks5-tunnel up, engine=\(engine, privacy: .public)")
+    }
+
+    /// The resolvers the tun advertises to the system for an arrangement:
+    /// 172.19.0.2, which only sing-box answers, wherever sing-box runs;
+    /// resolvers on the internet, reached through the SOCKS engine, behind
+    /// Xray or olcRTC. See TunArrangement.singBoxAnswersDns.
+    ///
+    /// olcRTC waited one release for the second: with hev the system's DNS
+    /// queries travel through the engine as UDP, and on olcRTC that was the
+    /// relay's datagram lane, which loses packets under load. Since engine
     /// aac553b8 the client answers a port-53 datagram over a smux stream
     /// instead (TCP DNS to the resolver the tun advertises, the server dials
     /// it like any CONNECT), so the lane no longer carries the resolver.
-    /// One predicate decides both the tun's resolvers and the engine
-    /// arrangement, so the two cannot disagree.
-    private static func hevOwnsTun(xrayConfig: String?, olcrtc: OlcrtcEngine.Parameters?) -> Bool {
-        olcrtc != nil || xrayConfig?.isEmpty == false
-    }
-
-    /// The SOCKS server hev forwards to on the paths it owns, or nil on the
-    /// paths sing-box owns. olcRTC's port and credentials come from its
-    /// parameters; Xray's port and login are read from the config the app wrote
-    /// (the inbound it built).
-    private static func hevSocks(xrayConfig: String?, olcrtc: OlcrtcEngine.Parameters?) -> HevTunnel.Socks? {
-        guard hevOwnsTun(xrayConfig: xrayConfig, olcrtc: olcrtc) else { return nil }
-        if let olcrtc {
-            return HevTunnel.Socks(port: olcrtc.socksPort, username: olcrtc.socksUser, password: olcrtc.socksPass)
-        }
-        guard let xrayConfig else { return nil }
-        let login = xraySocksLogin(in: xrayConfig)
-        return HevTunnel.Socks(port: xraySocksPort(in: xrayConfig), username: login?.username, password: login?.password)
-    }
-
-    /// The login Xray's SOCKS inbound demands, or nil when it demands none.
-    ///
-    /// The app builds that inbound with the pair olcRTC is started with
-    /// (SocksLogin in XrayConfig.kt): on loopback any other app on the phone
-    /// could reach an open one, leave through the tunnel and read its exit.
-    /// hev has to send exactly what the inbound demands - a login offered to an
-    /// inbound without one is refused just as surely as none offered to one
-    /// with it - so it is read from the same config rather than assumed.
-    static func xraySocksLogin(in configJSON: String) -> (username: String, password: String)? {
-        guard let data = configJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let inbounds = object["inbounds"] as? [[String: Any]]
-        else { return nil }
-        for inbound in inbounds where inbound["protocol"] as? String == "socks" {
-            guard let settings = inbound["settings"] as? [String: Any],
-                  settings["auth"] as? String == "password",
-                  let account = (settings["accounts"] as? [[String: Any]])?.first,
-                  let username = account["user"] as? String, !username.isEmpty,
-                  let password = account["pass"] as? String, !password.isEmpty
-            else { return nil }
-            return (username, password)
-        }
-        return nil
-    }
-
-    /// The port Xray's SOCKS inbound listens on, or 10810 when the config
-    /// cannot be read — the constant XrayConfig.kt builds with.
-    static func xraySocksPort(in configJSON: String) -> Int {
-        guard let data = configJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let inbounds = object["inbounds"] as? [[String: Any]]
-        else { return 10810 }
-        for inbound in inbounds where inbound["protocol"] as? String == "socks" {
-            if let port = inbound["port"] as? Int { return port }
-            if let port = inbound["port"] as? NSNumber { return port.intValue }
-        }
-        return 10810
+    private static func tunResolvers(for arrangement: TunArrangement) -> [String] {
+        arrangement.singBoxAnswersDns ? LibboxPlatform.Tun.dns : LibboxPlatform.Tun.dnsThroughSocks
     }
 
     private func startWatchingNetworkChanges() {
@@ -446,16 +455,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard current != lastInterface else { return }
             lastInterface = current
             guard let self else { return }
-            if HevTunnel.isRunning {
-                // hev keeps its tun and its sessions; the engine behind it
-                // re-dials through the pin on its own, as it did before.
+            let server = self.commandServer
+            if HevTunnel.isRunning, server == nil {
+                // Xray or olcRTC behind hev: hev keeps its tun and its
+                // sessions, and the engine re-dials through the pin on its
+                // own, as it did before.
                 NetworkDiagnostics.record("network changed; hev keeps its tun, the engine re-dials")
                 return
             }
-            guard let server = self.commandServer else { return }
+            guard let server else { return }
+            // sing-box, on the tun or behind hev, has to be told: it closes
+            // what it holds and rebuilds its sockets on the new interface.
+            // Behind hev the tun stays up; the connections sing-box closes
+            // end at hev, which closes them toward the apps, and they redial.
             self.log.info("network changed to \(current ?? "none", privacy: .public), resetting")
             server.resetNetwork()
-            NetworkDiagnostics.record("sing-box resetNetwork; olcrtc not explicitly restarted")
+            NetworkDiagnostics.record(HevTunnel.isRunning
+                ? "network changed; hev keeps its tun, sing-box resetNetwork"
+                : "network changed; sing-box resetNetwork")
         }
         pathMonitor.start(queue: DispatchQueue(label: "org.proofkit.path"))
     }
@@ -466,17 +483,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         log.info("stopTunnel reason=\(reason.rawValue, privacy: .public)")
         NetworkDiagnostics.record("stop reason=\(reason.rawValue)")
-        // Closing the service is what releases the tun descriptor; skipping it
-        // leaves the next start fighting the previous one for it. Two calls now:
-        // one stops the engine, the other tears down the server that owns it.
         pathMonitor.cancel()
-        // The tun's owner first, on either path: hev stops reading the
-        // descriptor before the engine it forwards to goes away.
+        // The tun's owner first, on every path: hev stops reading the
+        // descriptor before the engine it forwards to goes away, sing-box
+        // included. On the tun sing-box is the owner, and closing its
+        // service is what releases the descriptor (closeSingBox).
         HevTunnel.stop()
-        try? commandServer?.closeService()
-        commandServer?.close()
-        commandServer = nil
-        commandHandler = nil
+        closeSingBox()
         XrayEngine.stop()
         OlcrtcEngine.stop()
         MemoryPressure.stop()

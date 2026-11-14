@@ -109,11 +109,15 @@ object SingBoxConfig {
     const val DESKTOP_TUN_MTU = 1500
 
     /**
-     * Config for a core that owns the tun itself, as on iOS.
+     * Config for a core that owns the tun itself: the iOS shape for sing-box's
+     * own transports until 2026-11-13, and the way back from [buildIosSocks].
+     * The extension starts sing-box on the tun whenever the config it is handed
+     * has a tun inbound, so going back is this call in place of that one.
      *
-     * The desktop and Android builds put the core behind a SOCKS port and bridge
-     * packets into it separately. In a Network Extension there is no room for that
-     * hop — the core is handed the tunnel descriptor and does the whole job.
+     * The core is handed the tunnel descriptor and does the whole job, on
+     * gVisor. That stack is what the extension could not afford: about 20 MB
+     * more than the same sing-box behind hev-socks5-tunnel
+     * (docs/ios-one-go-runtime.md).
      *
      * The gvisor stack is not a preference: the system stack needs raw-socket
      * privileges the extension sandbox withholds, and a tun built on it comes up
@@ -127,18 +131,61 @@ object SingBoxConfig {
         directDns: DirectDns = DirectDns.Placeholder,
         verboseLogs: Boolean = false,
         logOutput: String? = null,
-    ): String = renderTun(address, mtu, resolveOverTcp = false, routing, directDns, verboseLogs, logOutput) {
+    ): String = renderIos(
+        IosInbound.Tun(address, mtu), resolveOverTcp = false, routing, directDns, verboseLogs, logOutput
+    ) {
         addOutbound(outbound)
+    }
+
+    /**
+     * The iOS shape for sing-box's own transports (Reality, Hysteria2, and
+     * WebTunnel's VLESS over ws or httpupgrade) since 2026-11-13: [buildTun]
+     * with one difference, the inbound. sing-box listens on a loopback SOCKS
+     * port and hev-socks5-tunnel owns the tun and forwards every connection
+     * to it, as it has for Xray and olcRTC since 1.0.426 and 1.0.428. One Go
+     * network stack fewer in a process killed at about 50 MB.
+     *
+     * Everything else is [buildTun]'s, written by the same code, so the two
+     * cannot drift: sing-box still answers every name (the system resolver is
+     * still 172.19.0.2, whose queries now reach it as SOCKS5 UDP and are
+     * hijacked on port 53), hands out fake addresses, sniffs, and applies the
+     * Bypass Russia rules.
+     *
+     * [login] is not optional here. The port is on loopback, so every app on
+     * the phone can reach it; open, it would carry any of them through the
+     * tunnel (see [SocksLogin]). The extension reads the pair back from this
+     * config and gives it to hev.
+     */
+    fun buildIosSocks(
+        outbound: OutboundSpec,
+        login: SocksLogin,
+        socksPort: Int = SINGBOX_SOCKS_PORT,
+        routing: Routing = Routing.Global,
+        directDns: DirectDns = DirectDns.Placeholder,
+        verboseLogs: Boolean = false,
+        logOutput: String? = null,
+    ): String {
+        require(login.username.isNotBlank() && login.password.isNotBlank()) {
+            "a loopback SOCKS port other apps can reach needs a login"
+        }
+        return renderIos(
+            IosInbound.Socks(socksPort, login), resolveOverTcp = false, routing, directDns, verboseLogs, logOutput
+        ) {
+            addOutbound(outbound)
+        }
     }
 
     /**
      * Config for a core that owns the tun and hands the traffic to another core
      * listening on a local SOCKS port.
      *
-     * This is how xhttp works on iOS: sing-box cannot speak that transport, so
-     * Xray runs beside it in the same extension and sing-box becomes the tun
-     * front-end for it. Android reaches the same arrangement from the other
-     * direction — there a separate tun2socks feeds whichever core is running.
+     * This is how xhttp and olcRTC worked on iOS until 1.0.426 and 1.0.428:
+     * sing-box became the tun front-end for the engine that speaks the
+     * transport. Since then hev-socks5-tunnel fronts those engines and the
+     * extension does not start sing-box on them; the app still writes this
+     * shape beside xray.json and olcrtc.json. Android reaches the same
+     * arrangement from the other direction — there a separate tun2socks
+     * feeds whichever core is running.
      */
     fun buildTunSocks(
         socksPort: Int,
@@ -151,8 +198,8 @@ object SingBoxConfig {
         directDns: DirectDns = DirectDns.Placeholder,
         verboseLogs: Boolean = false,
         logOutput: String? = null,
-    ): String = renderTun(
-        address, mtu, resolveOverTcp = upstreamUdpIsLossy, routing, directDns, verboseLogs, logOutput
+    ): String = renderIos(
+        IosInbound.Tun(address, mtu), resolveOverTcp = upstreamUdpIsLossy, routing, directDns, verboseLogs, logOutput
     ) {
         addSocksOutbound(socksPort, username, password)
     }
@@ -216,7 +263,7 @@ object SingBoxConfig {
      * about the tun in front of it — which is the half that is new here, so it is
      * the half a green light has to be about.
      *
-     * This is not [renderTun]: that one emits neither an exclusion nor a second
+     * This is not [renderIos]: that one emits neither an exclusion nor a second
      * inbound, and bending it to would leave the iOS shape carrying desktop
      * concerns it has no use for.
      */
@@ -578,10 +625,16 @@ object SingBoxConfig {
      * Under Bypass Russia the Russian lists are resolved for real, on the
      * network underneath, before any of that; those connections then match
      * by name or by address and go direct.
+     *
+     * The [inbound] is the one thing the iOS arrangements differ in: a tun
+     * sing-box owns ([buildTun], [buildTunSocks]) or a loopback SOCKS port
+     * hev-socks5-tunnel forwards to ([buildIosSocks]). None of the above
+     * depends on which: a query to the tun's resolver is hijacked on port 53
+     * whether it arrives from gVisor or as SOCKS5 UDP, and a fake address is
+     * turned back into its name for any inbound.
      */
-    private fun renderTun(
-        address: String,
-        mtu: Int,
+    private fun renderIos(
+        inbound: IosInbound,
         resolveOverTcp: Boolean,
         routing: Routing,
         directDns: DirectDns,
@@ -593,7 +646,7 @@ object SingBoxConfig {
         // Nothing but a bypass has been built or run in this shape: the phone gets
         // blocked-only and custom rules with the rest of its routing work.
         require(bypass == null || (bypass.policy is Routing.Policy.Bypass && bypass.custom.isEmpty)) {
-            "the tun shape builds bypass routing only"
+            "the iOS shape builds bypass routing only"
         }
         val direct = bypass?.directDns ?: directDns
         val obj = buildJsonObject {
@@ -606,12 +659,15 @@ object SingBoxConfig {
             }
             putIosDns(remoteOverTcp = resolveOverTcp, direct = direct, bypass = bypass)
             putJsonArray("inbounds") {
-                addJsonObject {
-                    put("type", "tun"); put("tag", "tun-in")
-                    putJsonArray("address") { add(address) }
-                    put("mtu", mtu)
-                    put("auto_route", true)
-                    put("stack", "gvisor")
+                when (inbound) {
+                    is IosInbound.Tun -> addJsonObject {
+                        put("type", "tun"); put("tag", "tun-in")
+                        putJsonArray("address") { add(inbound.address) }
+                        put("mtu", inbound.mtu)
+                        put("auto_route", true)
+                        put("stack", "gvisor")
+                    }
+                    is IosInbound.Socks -> addSocksInbound(inbound.port, inbound.login, IOS_SOCKS_UDP_TIMEOUT)
                 }
             }
             putJsonArray("outbounds") {
@@ -627,6 +683,49 @@ object SingBoxConfig {
             }
         }
         return obj.toString()
+    }
+
+    /** What receives the traffic in the iOS shape; see [renderIos]. */
+    private sealed interface IosInbound {
+        /** sing-box owns the tun, on gVisor. */
+        data class Tun(val address: String, val mtu: Int) : IosInbound
+
+        /** hev-socks5-tunnel owns the tun and forwards to this loopback port. */
+        data class Socks(val port: Int, val login: SocksLogin) : IosInbound
+    }
+
+    /**
+     * How long the iOS SOCKS inbound keeps a UDP association with no packets:
+     * hev's own `udp-read-write-timeout` of 30000 ms (HevTunnel.swift), paired
+     * on purpose. When hev ends an idle UDP session it closes the
+     * association's TCP connection, but sing-box never reads that connection;
+     * it keeps the association, and under Reality its own connection to the
+     * server, until this timeout. Unset, that is sing-box's default of five
+     * minutes, and a flow that resumes after 30 s holds two associations
+     * meanwhile. DNS, NTP, STUN, QUIC and DTLS already get shorter timeouts
+     * from the router; this is for every other UDP flow.
+     */
+    private const val IOS_SOCKS_UDP_TIMEOUT = "30s"
+
+    /**
+     * A SOCKS inbound on loopback, demanding [login] when there is one: the
+     * Android and desktop shape ([render]) and the iOS one behind hev
+     * ([buildIosSocks]), written once. [udpTimeout] only for iOS, where hev
+     * in front drops idle UDP sessions on its own clock; Android and the
+     * desktops keep sing-box's default.
+     */
+    private fun JsonArrayBuilder.addSocksInbound(port: Int, login: SocksLogin?, udpTimeout: String? = null) {
+        addJsonObject {
+            put("type", "socks"); put("tag", "in")
+            put("listen", "127.0.0.1"); put("listen_port", port)
+            if (udpTimeout != null) put("udp_timeout", udpTimeout)
+            if (login != null) putJsonArray("users") {
+                addJsonObject {
+                    put("username", login.username)
+                    put("password", login.password)
+                }
+            }
+        }
     }
 
     private fun JsonObjectBuilder.putIosDns(remoteOverTcp: Boolean, direct: DirectDns, bypass: Routing.RuleBased?) {
@@ -683,18 +782,7 @@ object SingBoxConfig {
             if (resolver != null) putJsonObject("dns") {
                 putJsonArray("servers") { addDirectDnsServer(resolver) }
             }
-            putJsonArray("inbounds") {
-                addJsonObject {
-                    put("type", "socks"); put("tag", "in")
-                    put("listen", "127.0.0.1"); put("listen_port", socksPort)
-                    if (login != null) putJsonArray("users") {
-                        addJsonObject {
-                            put("username", login.username)
-                            put("password", login.password)
-                        }
-                    }
-                }
-            }
+            putJsonArray("inbounds") { addSocksInbound(socksPort, login) }
             putJsonArray("outbounds") {
                 outbounds()
                 if (bypass != null) addDirectOutbound()

@@ -33,10 +33,16 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         // knows as encrypted-DNS providers and quietly upgraded to DoT/DoH:
         // those queries left through the tunnel past the hijack, and on a
         // lossy relay each one took twenty seconds. Inside the tun's own /30.
+        //
+        // Wherever sing-box runs: on the tun it sees the query itself, and
+        // behind hev-socks5-tunnel (Reality, Hysteria2 and WebTunnel since
+        // 2026-11-13) hev hands it over as SOCKS5 UDP to 172.19.0.2:53 and
+        // sing-box hijacks it the same way. Nothing else ever answers it.
         static let dns = ["172.19.0.2"]
-        // For the tun hev-socks5-tunnel owns (xhttp and olcRTC): there is no
-        // sing-box to hijack 172.19.0.2, so a query to it would travel through
-        // the SOCKS engine to an address nothing answers. These are answered on
+        // For the tun hev-socks5-tunnel owns in front of Xray or olcRTC
+        // (xhttp and olcRTC): there is no sing-box to hijack 172.19.0.2, so a
+        // query to it would travel through the SOCKS engine to an address
+        // nothing answers. These are answered on
         // the internet, reached the way every other packet is, as UDP through
         // SOCKS5 UDP ASSOCIATE. OpenDNS rather than 1.1.1.1 or 8.8.8.8, which
         // iOS knows as encrypted-DNS providers and quietly upgrades to DoT/DoH
@@ -84,9 +90,10 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     }
 
     /// The settings the tun is brought up with. `dns` names the resolvers the
-    /// system is told to use: `Tun.dns` when sing-box owns the tun and answers
-    /// them itself, `Tun.dnsThroughSocks` when hev-socks5-tunnel does and every
-    /// query travels through the SOCKS engine to a resolver on the internet.
+    /// system is told to use: `Tun.dns` wherever sing-box runs, on the tun or
+    /// behind hev-socks5-tunnel, and answers them itself; `Tun.dnsThroughSocks`
+    /// when hev fronts Xray or olcRTC and every query travels through the
+    /// SOCKS engine to a resolver on the internet (`TunArrangement`).
     static func tunnelSettings(dns: [String] = Tun.dns) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: Tun.address)
         let ipv4 = NEIPv4Settings(addresses: [Tun.address], subnetMasks: [Tun.mask])
@@ -99,16 +106,30 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         // networks do, every connection to an AAAA address then left directly,
         // at the phone's own address, with the VPN shown as connected. That is
         // the leak the desktop tun had and closed the same way
-        // (docs/macos-tunnel-daemon.md, "The tun claims IPv6"). On the hev paths
-        // the resolver is a public one and answers AAAA as it finds them, so
-        // there it was the ordinary case, not a corner.
+        // (docs/macos-tunnel-daemon.md, "The tun claims IPv6"). On the paths
+        // where hev fronts Xray or olcRTC the resolver is a public one and
+        // answers AAAA as it finds them, so there it was the ordinary case,
+        // not a corner.
         //
         // What happens to the packets once they are here is the engine's
-        // business: sing-box carries them to the exit like any other, and hev,
-        // which is given no IPv6 address, drops them, so a client falls back to
-        // IPv4 through the tunnel. Either way they no longer leave by another
-        // door. The engines' own sockets are unaffected: they are pinned to the
-        // physical interface per family (bindToPhysicalInterface).
+        // business. hev-socks5-tunnel takes IPv6 TCP and UDP for any address,
+        // as it takes IPv4, and hands it to the engine behind it as an IPv6
+        // SOCKS address (its lwIP accepts every destination; having no IPv6
+        // address of its own changes nothing). Xray and olcRTC carry it to
+        // the exit. sing-box routes it as it routed IPv6 on its own tun:
+        // through `out`, or under Bypass Russia `direct` for a Russian or
+        // private address, and Russian names get real AAAA answers there
+        // (only the names bound for the tunnel get fake addresses, which are
+        // IPv4 only). hev accepts the connection before the engine has
+        // dialed, so an exit without IPv6 shows as a reset, not a refusal.
+        // Either way the packets no longer leave by another door.
+        //
+        // The engines' own sockets: olcRTC's are pinned to the physical
+        // interface per family (bindToPhysicalInterface, through its
+        // protector). sing-box's are not: it applies the platform's control
+        // only with `route.auto_detect_interface`, which no iOS config sets
+        // (and `getInterfaces` here would fail every dial if one did). Xray's
+        // are not either.
         let ipv6 = NEIPv6Settings(addresses: [Tun.address6], networkPrefixLengths: [NSNumber(value: Tun.prefix6)])
         ipv6.includedRoutes = [NEIPv6Route.default()]
         settings.ipv6Settings = ipv6
@@ -140,6 +161,11 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
     /// to hear the same answer the system was given: in that mode only its
     /// gVisor stack works, which is the one the config asks for anyway, and it
     /// refuses the others outright.
+    ///
+    /// Only a tun inbound asks, so only the `singBoxTun` arrangement, the way
+    /// back. Behind hev-socks5-tunnel sing-box has no tun and nothing calls
+    /// this; hev is a userspace stack like gVisor and runs under the kill
+    /// switch as it does in front of Xray and olcRTC.
     func includeAllNetworks() -> Bool {
         (provider?.protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
     }
