@@ -15,6 +15,13 @@
 # The stamp beside the framework holds the tag and the sha256, so a pin bump
 # replaces the framework instead of trusting whatever is there.
 #
+# A framework built on this Mac (build-rust-core-ios.sh <destination-dir>)
+# is stamped "<tag> local <commit>". It is used only when asked for with
+# RUST_CORE_IOS_ALLOW_LOCAL=1, and only while its tag is the pin's: that is
+# the way to build the extension before anything is published, or to try a
+# packaging change. Without the variable it is replaced by the published one
+# (or, with nothing published yet, left alone and refused).
+#
 # Usage: fetch-rust-core-ios.sh <destination-dir>
 set -euo pipefail
 
@@ -27,11 +34,27 @@ WANT="${RUST_CORE_IOS_SHA256}"
 FRAMEWORK="XrayRust.xcframework"
 CACHE="${RUST_CORE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/olcbox/rust-core}/${TAG}"
 STAMP="${DEST}/${FRAMEWORK}.tag"
+LOCAL_STAMP="${TAG} local ${XRAY_RUST_COMMIT}"
+PUBLISH_HOW="gh workflow run rust-core.yml --repo ghostlane-project/ghostlane --ref <this branch> -f publish=true"
+BUILD_HOW="bash scripts/build-rust-core-ios.sh \"${DEST}\" (Xcode and rustup, about 15 minutes), then build with RUST_CORE_IOS_ALLOW_LOCAL=1"
+
+present=""
+if [ -d "${DEST}/${FRAMEWORK}/ios-arm64" ]; then
+    present="$(cat "${STAMP}" 2>/dev/null || echo "an unstamped framework")"
+fi
+
+if [ -n "${present}" ] && [ "${present}" = "${LOCAL_STAMP}" ]; then
+    if [ "${RUST_CORE_IOS_ALLOW_LOCAL:-}" = "1" ]; then
+        echo "${FRAMEWORK} built here for ${TAG} (RUST_CORE_IOS_ALLOW_LOCAL=1): using it, not the published one"
+        exit 0
+    fi
+    echo "== ${DEST} holds a ${FRAMEWORK} built here for ${TAG}; it is used only with RUST_CORE_IOS_ALLOW_LOCAL=1 =="
+fi
 
 if [ -z "${WANT}" ]; then
-    echo "rust-core-pins.sh pins no sha256 for ${TAG}: nothing has been published for xray-rust ${XRAY_RUST_COMMIT:0:12} yet." >&2
-    echo "Run the 'Rust core' workflow by hand with publish, and paste the sha256 its summary prints;" >&2
-    echo "or build it yourself (Xcode and rustup, an hour): bash scripts/build-rust-core-ios.sh \"${DEST}\"" >&2
+    echo "rust-core-pins.sh pins no sha256 for ${TAG}: nothing has been published for xray-rust ${XRAY_RUST_COMMIT:0:12} build ${RUST_CORE_IOS_BUILD} yet." >&2
+    echo "Publish it (${PUBLISH_HOW}) and paste the sha256 its summary prints;" >&2
+    echo "or build it here: ${BUILD_HOW}." >&2
     exit 1
 fi
 case "${WANT}" in
@@ -54,15 +77,16 @@ check_zip() {
     fi
 }
 
-if [ -d "${DEST}/${FRAMEWORK}/ios-arm64" ]; then
-    present="$(cat "${STAMP}" 2>/dev/null || echo "an unstamped framework")"
+if [ -n "${present}" ]; then
     if [ "${present}" = "${want_stamp}" ]; then
         echo "${FRAMEWORK} already present in ${DEST} (${TAG})"
         exit 0
     fi
     echo "== ${DEST} holds ${present}, this build wants ${want_stamp}: replacing =="
 fi
-rm -rf "${DEST:?}/${FRAMEWORK}" "${STAMP}"
+# The build record goes with the framework it describes (a local build leaves
+# it as rust-core-ios.build.json).
+rm -rf "${DEST:?}/${FRAMEWORK}" "${STAMP}" "${DEST}/${FRAMEWORK}.build.json" "${DEST}/rust-core-ios.build.json"
 mkdir -p "${DEST}"
 
 work="$(mktemp -d)"
@@ -76,7 +100,7 @@ else
     echo "== fetching ${ASSET} from ${TAG} =="
     curl -fsSL --retry 3 -o "${zip}" "${RUST_CORE_IOS_URL}" || {
         echo "no ${ASSET} at ${RUST_CORE_IOS_URL}, and nothing usable cached in ${CACHE}." >&2
-        echo "Build it yourself (Xcode and rustup, an hour): bash scripts/build-rust-core-ios.sh \"${DEST}\"" >&2
+        echo "Publish it (${PUBLISH_HOW}), or build it here: ${BUILD_HOW}." >&2
         exit 1
     }
     check_zip "${zip}"
