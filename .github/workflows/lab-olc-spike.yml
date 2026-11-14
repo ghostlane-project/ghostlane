@@ -18,8 +18,8 @@ name: Lab - olcRTC stack spike
 #
 # Runs on a push to lab/olc-spike or by hand, never on main, never on a pull
 # request, no schedule. A push reads no secret; only a run by hand with
-# `carriers` ticked reads the two room links of probes (b) and (c), and only in
-# the carriers job. (PR Checks, whose `push:` has no filter, starts on the same
+# `carriers` ticked reads room links (the gate's pools, or the spike's own
+# rooms), and only in the carriers job. (PR Checks, whose `push:` has no filter, starts on the same
 # push; its scope job decides what it runs.)
 on:
   push:
@@ -29,9 +29,10 @@ on:
     inputs:
       carriers:
         description: >-
-          Also run probes (b) and (c) against live MTS Link and VK Calls rooms. Reads
-          the repository secrets OLC_SPIKE_MTSLINK_ROOM and OLC_SPIKE_VKCALLS_ROOM (one
-          room link each); a probe whose secret is empty is skipped.
+          Also run probes (b) and (c) against live MTS Link and VK Calls rooms: the first
+          room of the gate's pools GATE_MTSLINK_ROOMS and GATE_VKCALLS_ROOMS, or the room
+          in OLC_SPIKE_MTSLINK_ROOM / OLC_SPIKE_VKCALLS_ROOM when set, inside the gate's
+          concurrency groups. Dispatch when no gate run is waiting.
         type: boolean
         default: false
 
@@ -329,13 +330,33 @@ jobs:
           retention-days: 14
 
   carriers:
-    name: Probes (b) and (c), live rooms
-    # By hand only, with the box ticked: these join real MTS Link and VK Calls
-    # rooms as a guest, with the room links the owner put in the secrets.
+    name: Probe (${{ matrix.probe }}), ${{ matrix.provider }} live room
+    # By hand only, with the box ticked: str0m joins a real room as a guest, the
+    # engine's own Go code doing the service's part. The room is the first link of
+    # the gate's own pool (GATE_MTSLINK_ROOMS / GATE_VKCALLS_ROOMS, comma-separated,
+    # docs/gate.md), unless OLC_SPIKE_<PROVIDER>_ROOM names a room of its own. It
+    # runs in the gate's concurrency group for that provider, so it never shares a
+    # room with a gate leg of this repository. GitHub keeps one PENDING job per
+    # group: dispatch this when no gate run is waiting, or it takes that leg's place.
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.carriers }}
     needs: linux
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: mtslink
+            probe: b
+            script: probe-b-mtslink.sh
+            extra: ""
+          - provider: vkcalls
+            probe: c
+            script: probe-c-vkcalls.sh
+            extra: "--role client"
+    concurrency:
+      group: ghostlane-gate-${{ matrix.provider }}
+      cancel-in-progress: false
     steps:
       - name: Fetch the spike and the engine
         run: |
@@ -357,36 +378,30 @@ jobs:
           name: olc-spike-bridge
           path: bin
 
-      - name: Probe (b), MTS Link
+      - name: Probe (${{ matrix.probe }}), ${{ matrix.provider }}
         env:
-          OLC_SPIKE_MTSLINK_ROOM: ${{ secrets.OLC_SPIKE_MTSLINK_ROOM }}
+          OWN_ROOM: ${{ matrix.provider == 'mtslink' && secrets.OLC_SPIKE_MTSLINK_ROOM || matrix.provider == 'vkcalls' && secrets.OLC_SPIKE_VKCALLS_ROOM || '' }}
+          GATE_POOL: ${{ matrix.provider == 'mtslink' && secrets.GATE_MTSLINK_ROOMS || matrix.provider == 'vkcalls' && secrets.GATE_VKCALLS_ROOMS || '' }}
         run: |
           set +e -uo pipefail
           chmod +x bin/*/sdp-bridge; mkdir -p out
-          if [ -z "$OLC_SPIKE_MTSLINK_ROOM" ]; then echo "no OLC_SPIKE_MTSLINK_ROOM secret: skipped"; exit 0; fi
+          room=$OWN_ROOM
+          [ -n "$room" ] || room=$(printf '%s' "$GATE_POOL" | cut -d, -f1 | tr -d '[:space:]')
+          if [ -z "$room" ]; then echo "no room for ${{ matrix.provider }}: skipped"; exit 0; fi
+          # One entry of a pool is not the secret's whole value, so GitHub would not mask it.
+          echo "::add-mask::$room"
+          if [ "${{ matrix.provider }}" = mtslink ]; then export OLC_SPIKE_MTSLINK_ROOM=$room; else export OLC_SPIKE_VKCALLS_ROOM=$room; fi
+          unset OWN_ROOM GATE_POOL room
           for v in "boring auto" "dimpl 12"; do
             set -- $v
-            OLC_SPIKE_OUT=$PWD/out/probe-b-$1.out xrs/olc/spike/scripts/probe-b-mtslink.sh engine "bin/$1/sdp-bridge" \
-              --dtls "$1" --version "$2" --stun chrome 2>&1 | tee "out/probe-b-$1.test.log"
-          done
-
-      - name: Probe (c), VK Calls
-        env:
-          OLC_SPIKE_VKCALLS_ROOM: ${{ secrets.OLC_SPIKE_VKCALLS_ROOM }}
-        run: |
-          set +e -uo pipefail
-          chmod +x bin/*/sdp-bridge; mkdir -p out
-          if [ -z "$OLC_SPIKE_VKCALLS_ROOM" ]; then echo "no OLC_SPIKE_VKCALLS_ROOM secret: skipped"; exit 0; fi
-          for v in "boring auto" "dimpl 12"; do
-            set -- $v
-            OLC_SPIKE_OUT=$PWD/out/probe-c-$1.out xrs/olc/spike/scripts/probe-c-vkcalls.sh engine "bin/$1/sdp-bridge" \
-              --dtls "$1" --version "$2" --stun chrome --role client 2>&1 | tee "out/probe-c-$1.test.log"
+            OLC_SPIKE_OUT=$PWD/out/probe-${{ matrix.probe }}-$1.out xrs/olc/spike/scripts/${{ matrix.script }} engine "bin/$1/sdp-bridge" \
+              --dtls "$1" --version "$2" --stun chrome ${{ matrix.extra }} 2>&1 | tee "out/probe-${{ matrix.probe }}-$1.test.log"
           done
 
       - name: Upload
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: olc-spike-carriers
+          name: olc-spike-${{ matrix.provider }}
           path: out/
           retention-days: 14
