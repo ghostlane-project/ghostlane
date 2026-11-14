@@ -47,6 +47,9 @@ import org.olcbox.app.net.UdpBlockedFailover
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.IosCore
+import org.olcbox.app.net.IosEngine
+import org.olcbox.app.net.IosTransport
 import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
@@ -419,9 +422,11 @@ class IosVpnManager(
         // 1.0.428), and sing-box for its own transports, Reality, Hysteria2
         // and WebTunnel (since 2026-11-13; docs/ios-one-go-runtime.md). The
         // last follows SING_BOX_BEHIND_HEV, the switch that picks the shape
-        // written, so the label cannot outlive a way back.
+        // written, so the label cannot outlive a way back. The Rust core
+        // (core.json) runs the lines IOS_ENGINES gives it, also behind hev.
         val engine = when {
             request.olcrtc != null -> "olcrtc+hev"
+            request.coreConfig != null -> "rust+hev"
             request.xrayConfig != null -> "xray+hev"
             SING_BOX_BEHIND_HEV -> "sing-box+hev"
             else -> "sing-box"
@@ -579,7 +584,7 @@ class IosVpnManager(
         } else {
             null
         }
-        return IosPacketTunnelStartRequest(
+        val goRequest = IosPacketTunnelStartRequest(
             config = if (xrayConfig != null) {
                 SingBoxConfig.buildTunSocks(
                     XrayConfig.XRAY_SOCKS_PORT,
@@ -613,6 +618,27 @@ class IosVpnManager(
             xrayConfig = xrayConfig,
             olcrtc = null,
             ruleSets = ruleSets
+        )
+
+        // D2, per transport: a line IOS_ENGINES gives to the Rust core runs
+        // from core.json, with xray.json removed so the extension reaches it
+        // (it looks for olcrtc.json, xray.json, core.json, then config.json).
+        // Everything above stays as Phase 0 wrote it: config.json is still
+        // written, and a line the core cannot take goes to Go whole.
+        val choice = IosCore.choose(spec, IOS_ENGINES)
+        if (choice.engine != IosEngine.RUST) {
+            choice.reason?.let { addLog("Rust core: $it; this line stays on the Go engine") }
+            return goRequest
+        }
+        return goRequest.copy(
+            xrayConfig = null,
+            coreConfig = XrayConfig.buildIosCore(
+                spec,
+                login = requireNotNull(socksLogin) { "No login for the tunnel's own SOCKS port" },
+                routing = routing,
+                geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                verboseLogs = verboseLogs,
+            )
         )
     }
 
@@ -1215,6 +1241,23 @@ class IosVpnManager(
          * the config with no change (docs/ios-one-go-runtime.md).
          */
         const val SING_BOX_BEHIND_HEV = true
+
+        /**
+         * D2 of ghostlane-rust-core, Phase 1: the engine each transport runs
+         * on. RUST writes core.json for `ghostlane-core` (xray-rust) behind
+         * hev; GO is Phase 0's path above, untouched. A line the core cannot
+         * take (IosCore.refusal) goes to Go whatever this says, and olcRTC
+         * has no Rust engine. One entry back to GO is the way back for that
+         * transport alone, and a release.
+         */
+        val IOS_ENGINES: Map<IosTransport, IosEngine> = mapOf(
+            IosTransport.Reality to IosEngine.RUST,
+            IosTransport.RealityGrpc to IosEngine.RUST,
+            IosTransport.WebTunnel to IosEngine.RUST,
+            IosTransport.Hysteria2 to IosEngine.RUST,
+            IosTransport.Xhttp to IosEngine.RUST,
+            IosTransport.Olcrtc to IosEngine.GO,
+        )
         const val KEY_SOCKS_PORT = "ios_socks_port"
         const val KEY_SOCKS_USERNAME = "ios_socks_username"
         const val KEY_SOCKS_PASSWORD = "ios_socks_password"

@@ -133,7 +133,15 @@ data class IosPacketTunnelStartRequest(
      * Anything else that starts a tunnel wants its files to be the ones that
      * run, and replaces what is running.
      */
-    val onlyIfDown: Boolean = false
+    val onlyIfDown: Boolean = false,
+    /**
+     * `core.json`: the Rust core's config ([org.olcbox.app.net.XrayConfig.buildIosCore])
+     * when the per-transport choice gives this line to it, else null. The
+     * bridge writes it or removes it, like [xrayConfig]; the extension looks
+     * for olcrtc.json, xray.json, core.json, then config.json, so with it set
+     * the other two engine files are absent and [config] is written but not run.
+     */
+    val coreConfig: String? = null
 )
 
 /**

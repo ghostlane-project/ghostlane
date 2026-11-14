@@ -875,6 +875,13 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
                 Self.olcrtcParameters(request.olcrtc),
                 to: container.appendingPathComponent("olcrtc.json")
             )
+            // The Rust core's config, for a line the app gives to it; the
+            // extension looks for it after olcrtc.json and xray.json and before
+            // config.json, so it is removed on every other line.
+            try Self.handOver(
+                request.coreConfig,
+                to: container.appendingPathComponent("core.json")
+            )
             // Written or removed, like the two above: a `rules/` left behind
             // by a Bypass Russia connection is harmless to a Global config,
             // which never names it, but a config that names a file the app

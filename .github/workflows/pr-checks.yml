@@ -370,6 +370,7 @@ jobs:
           path: |
             olcbox/sharedUI/build/xray-configs/
             olcbox/sharedUI/build/xray-configs-26/
+            olcbox/sharedUI/build/rust-core-configs/
             olcbox/sharedUI/build/reports/tests/jvmTest/
 
   # The release gate's scripts decide what a release may ship and scrub what a

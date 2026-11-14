@@ -256,6 +256,38 @@ object XrayConfig {
     }
 
     /**
+     * `core.json`: the config the iOS extension starts `ghostlane-core`
+     * (xray-rust) from, behind hev-socks5-tunnel, for a line the per-transport
+     * choice gives to the Rust core ([IosCore.choose]). A shape of its own:
+     * [buildXhttp] stays what Go's Xray runs on every platform.
+     *
+     * It is sing-box's iOS shape ([SingBoxConfig.buildIosSocks]) in the Xray
+     * JSON xray-rust's parser accepts, which refuses the whole document over
+     * one field it does not know:
+     *  - one inbound, SOCKS5 on 127.0.0.1:[socksPort] demanding [login], UDP on;
+     *  - DNS answered by the core: the tun's resolver reaches it as a query to
+     *    port 53, which the routing hands to a `dns` outbound; A gets a fake
+     *    address from [IosCore.FAKE_IP_POOL], AAAA nothing, HTTPS is refused;
+     *  - under Bypass Russia, the names on [geodata]'s lists are resolved for
+     *    real by the network's own resolver and leave directly, as do their
+     *    addresses and the local network; everything else rides the tunnel;
+     *  - `log` at warning (debug with [verboseLogs]) and no access log.
+     *
+     * [spec] must be one of [IosCoreLine] that the core takes: [IosCore.refusal]
+     * says why one is not, and this throws IllegalArgumentException for it.
+     * [routing] is Global or a bypass; under a bypass [geodata] carries the
+     * region's lists inline, as [buildXhttp] does.
+     */
+    fun buildIosCore(
+        spec: OutboundSpec,
+        login: SocksLogin,
+        routing: Routing = Routing.Global,
+        geodata: XrayGeodata.Lists? = null,
+        verboseLogs: Boolean = false,
+        socksPort: Int = XRAY_SOCKS_PORT,
+    ): String = IosCore.build(spec, login, routing, geodata, verboseLogs, socksPort)
+
+    /**
      * Two resolvers, each tagged so the routing below can send its queries
      * where they belong: `dns-direct` on the network underneath for the
      * Russian lists and the server's own name, `dns-remote` through the tunnel

@@ -318,6 +318,67 @@ the build that ships this.
    everything else through the exit.
 9. Ping: no answer on any line, under either routing (expected, see above).
 
+## The Rust core's config, core.json (Phase 1, the app's half)
+
+`ghostlane-core` (xray-rust, OpenSpec change `ghostlane-rust-core`) runs a line
+from `core.json` in the App Group, behind hev like the Go engines. The app
+writes it; the extension looks for olcrtc.json, xray.json, core.json, then
+config.json, and starts the first it finds.
+
+- `XrayConfig.buildIosCore` (shared Kotlin, `IosCore.kt`): sing-box's iOS
+  shape in the Xray JSON xray-rust's parser accepts, which refuses a whole
+  config over one unknown field. One SOCKS inbound on 127.0.0.1:10810 with
+  the login, UDP on, sniffing for the rules only (`routeOnly`). DNS: the
+  routing sends port 53 (TCP and UDP) from the inbound to a `dns` outbound;
+  A gets a fake address from `dns.fakeIp` (198.18.0.0/15), AAAA nothing,
+  HTTPS is refused (REFUSED, as sing-box's `reject`). Under Bypass Russia
+  the Russian names are forwarded, every type, to the network's resolver
+  (the placeholder `DirectResolver.substitute` replaces, twice here) and
+  their connections, the Russian addresses and the local network leave by
+  `freedom`; everything else rides `out`. Lines: Reality (Vision or none),
+  Reality gRPC, WebTunnel over ws and httpupgrade, Hysteria2 (Salamander,
+  `pinSHA256` verified as `pinnedPeerCertSha256`), XHTTP Reality with Go's
+  512 KiB stream window.
+- `IosVpnManager.IOS_ENGINES`: the engine per transport (D2). A Rust line
+  gets core.json and no xray.json; config.json is still Phase 0's. A line
+  the core would refuse (`IosCore.refusal`: a server named by a hostname,
+  `allowInsecure`, a flow other than Vision, a fingerprint with no REALITY
+  hello, Hysteria2 waived with no pin, a pin not in hex, a Salamander
+  password outside 4 to 4096 bytes) goes to Go whole, and the app's log says
+  why. The app's log says `engine=rust+hev`.
+- Held by `XrayConfigIosCoreTest` (every field against the core's own field
+  lists, `XrayRustSurface`), the reference configs `ios-core-*.json` and
+  `bypass-ios-core-*.json` (`RustCoreConfigDumpTest`), and
+  `scripts/check-rust-core-configs.sh <xray-rust>`, which has the core's
+  parser read them.
+
+What does not match Phase 0, and why:
+
+- Non-address queries (SRV, TXT, MX, PTR, SVCB…) for names off the direct
+  lists get an empty NOERROR; sing-box asks 1.1.1.1 through the tunnel. The
+  core's `dns` outbound cannot dial through `out`, and that is the only
+  thing that answers the tun's resolver. A and AAAA are not affected: the
+  exit resolves the name behind a fake address.
+- No `reverse_mapping`: under Bypass Russia a connection to a Russian name's
+  real address that carries no name to sniff (not TLS, HTTP or QUIC) is
+  matched by the address list alone, which is IPv4 only (`XrayGeodata`), so
+  a Russian name hosted elsewhere, or reached over IPv6, rides the tunnel.
+- The fake-address store lives in memory with the core's 60 s TTL; sing-box
+  keeps it in its cache file. After the extension restarts, an address an
+  app still holds is dialled by the sniffed name, or fails until the app
+  asks again.
+- No `udp_timeout`: the core ends a UDP association when hev closes its TCP
+  connection, which sing-box never read.
+- `log` is not read by the core; the embedding decides its log.
+- Hysteria2 with a pin is verified against it; sing-box cannot pin and skips
+  verification for such a server.
+- Vision is written as `xtls-rprx-vision-udp443`, so QUIC to 443 is carried
+  as sing-box carries it; the server is sent plain Vision either way.
+- XHTTP: the connection window is fixed at 16 MiB in the core, against Go's
+  1 MiB; only the stream window can be set.
+- The server's own name is resolved by the embedding, not by a resolver the
+  config names, so a line with a hostname stays on Go.
+
 ## Why not Rust
 
 The Rust equivalent is [tun2proxy](https://github.com/tun2proxy/tun2proxy)
