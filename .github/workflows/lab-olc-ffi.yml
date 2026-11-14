@@ -39,7 +39,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "4241e17e9868385fb75f572b186f6234d45cf06d"
+  XRS_COMMIT: "6c3bc31eb402e3dd3c77d046613237f604bcf0dd"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
