@@ -31,6 +31,14 @@
 # and the build record names each patch and its sha256. Unset, the build is
 # the tag as published.
 #
+# XRS_LINE_TABLES=1 (optional): the same build with line tables kept, for the
+# heap profile (lab.py heap-profile, heaptrack on Linux):
+# CARGO_PROFILE_RELEASE_DEBUG=line-tables-only and
+# CARGO_PROFILE_RELEASE_STRIP=none over the workspace's [profile.release],
+# so every allocation's backtrace has a file and a line, inlined frames
+# included. Debug info is not loaded at run time and does not change the
+# code; the build record names the two overrides.
+#
 # bash 3.2 safe (macOS runners).
 set -euo pipefail
 
@@ -87,6 +95,13 @@ echo "== [profile.release] at ${tag} =="
 profile="$(awk '/^\[profile\.release\]/{on=1; next} /^\[/{on=0} on && NF' "${src}/Cargo.toml" | tr '\n' ';' | sed 's/;$//')"
 echo "${profile}"
 
+overrides=""
+if [ "${XRS_LINE_TABLES:-}" = "1" ]; then
+  export CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none
+  overrides="CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none"
+  echo "== over it: ${overrides} =="
+fi
+
 echo "== cargo build --locked --release -p xray-cli =="
 start="$(date +%s)"
 (
@@ -105,15 +120,17 @@ install -m 0755 "${bin}" "${dest}/xray-rust"
 # Values go through the environment: the profile text carries quotes.
 B_REPO="${repo}" B_TAG="${tag}" B_COMMIT="${commit}" B_CHAN="${chan}" B_RUSTC="${rustc_v}" \
 B_HOST="${host}" B_PROFILE="${profile}" B_SECONDS="${seconds}" B_BYTES="${bytes}" \
-B_RUN="${GITHUB_RUN_ID:-local}" B_PATCHES="${patch_paths}" python3 -I -c '
+B_RUN="${GITHUB_RUN_ID:-local}" B_PATCHES="${patch_paths}" B_OVERRIDES="${overrides}" python3 -I -c '
 import hashlib, json, os, sys
 e = os.environ
 patches = [{"file": f, "sha256": hashlib.sha256(open(f, "rb").read()).hexdigest()} for f in e["B_PATCHES"].split()]
+overrides = e["B_OVERRIDES"].split()
 json.dump({
     "repo": e["B_REPO"], "tag": e["B_TAG"], "commit": e["B_COMMIT"],
     "toolchain": e["B_CHAN"], "rustc": e["B_RUSTC"], "host": e["B_HOST"],
-    "cargo": "cargo build --locked --release -p xray-cli",
+    "cargo": " ".join(overrides + ["cargo build --locked --release -p xray-cli"]),
     "profile_release": e["B_PROFILE"],
+    "profile_overrides": overrides,
     "build_seconds": int(e["B_SECONDS"]), "bytes": int(e["B_BYTES"]),
     "built_by_run": e["B_RUN"],
     "patches": patches,

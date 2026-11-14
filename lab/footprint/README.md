@@ -15,9 +15,10 @@ loaded. Nothing gates on this; it is a measurement for planning.
 
 Push the branch `lab/core-footprint`. `.github/workflows/lab-footprint.yml` runs
 on a push to that branch and on nothing else (not main, not a pull request, no
-schedule), and it reads no secret. A run takes about 40 minutes; the desktop
-jobs take about 35 when they build xray-rust and about 20 when the actions
-cache already holds it (keyed by its tag, commit, toolchain and build script).
+schedule), and it reads no secret. A run takes about an hour; the desktop
+jobs take about 50 minutes when they build xray-rust and about 40 when the
+actions cache already holds it (keyed by its tag, commit, toolchain and build
+script), the heap profile included.
 PR Checks also starts on the same push, because its `push:` trigger has no
 branch filter.
 
@@ -29,6 +30,7 @@ Each job prints a compact table in its log and uploads its results:
 | `lab-footprint-macos-arm64` | macos-latest (Apple silicon), the stand-in for an iPhone |
 | `lab-footprint-android` | ubuntu-latest with KVM, an x86_64 Android 11 (API 30) emulator |
 | `lab-footprint-all` | every `results.json` merged; the run's summary page has the same table |
+| `lab-heaptrack-linux-x86_64` | the heap profile's heaptrack data files and heaptrack_print's text (below), kept 7 days |
 
 Each artifact holds `results.json` (one object per core and scenario), `runs/`
 (per run: the config, the core's log, the harness's runtime samples, and for
@@ -42,7 +44,11 @@ newest release against the pin), `hello-parity.json` (the ClientHello parity
 of every client against a real Chrome, below), on the Mac
 `xray-rust-patched.build.json` and `xray-rust-patched-build.log` (the build
 with the lab's patches, which names each patch and its sha256), and on Linux
-`hev.versions.txt` and `hev-build.log`.
+`hev.versions.txt` and `hev-build.log`, `xray-rust-lines.build.json` and
+`xray-rust-lines-build.log` (the build with line tables) and
+`heaptrack.version.txt`. `heap-profile/` holds the heap profile
+(`heap-profile.json`, and per run its config and logs; on the Mac each
+`footprint` and `vmmap` text it read).
 
 ## What is built, and how
 
@@ -55,6 +61,7 @@ with the lab's patches, which names each patch and its sha256), and on Linux
 | the app | `assembleGithubDebug` with `-Polcbox.android.abiFilters=x86_64` | `androidApp/build.gradle.kts` |
 | server | Xray 26.4.25, the version `scripts/xray-servers.txt` names for the platform's exits | `xray-assets.txt` (sha256 checked) |
 | xray-rust (exec) | [aimalygin/xray-rust](https://github.com/aimalygin/xray-rust) cloned at the release tag, checked against the pinned commit; `cargo +<toolchain> build --locked --release -p xray-cli` with the toolchain its `rust-toolchain.toml` names and the workspace's `[profile.release]` (codegen-units 1, thin LTO, panic unwind, symbols stripped) (`rust-core-build.sh`) | the project's README "Quick start" (`cargo build --locked -p xray-cli`) with `--release`; its mobile scripts build `xray-ffi` with the same profile |
+| xray-rust with line tables (Linux, the heap profile only) | the same, with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` and `CARGO_PROFILE_RELEASE_STRIP=none` over `[profile.release]` (`rust-core-build.sh` with `XRS_LINE_TABLES=1`), in a directory and a cache entry of its own: the same code, with a file and a line for each frame | the heap profile's need; no row runs it |
 | hev-socks5-tunnel | a recursive clone checked out at `scripts/hev-pins.sh`'s `HEV_COMMIT` with its submodules, then `make clean exec` (`hev-build.sh`) | the iPhone's pin and the checkout of `.github/workflows/hev-tunnel.yml`, built with the make target of `desktopApp/build.gradle.kts` `buildHevSocks5TunnelLinux` (the desktop app and Android run it on their own patched copy, `androidApp/src/main/jni/hev-socks5-tunnel`, 2.14.4, which the lab does not build) |
 
 The Go pins come from `scripts/cores-pins.sh`; each job fails first if the
@@ -192,7 +199,15 @@ Rows:
   the Tokio workers `xray-ffi` would size on this runner (available
   parallelism clamped to 2..6). The `version` column names the tag, the commit,
   rustc and the release profile. The project documents no separate library
-  or iOS cargo profile, so there is no second build.
+  or iOS cargo profile, so there is no second build. `mobile 1 worker` (Reality
+  Vision and Hysteria2, after every other xray-rust row) is the mobile profile
+  with `TOKIO_WORKER_THREADS=1`: Tokio's multi-thread runtime with one worker
+  (`xray-cli` leaves the variable to Tokio and sets 2 only when it is unset),
+  read beside `mobile profile` for peak memory, CPU per GB and throughput.
+  `xray-ffi` sets its own worker count and reads no variable, so one worker on
+  a phone would need a change there. Every xray-rust row records its threads
+  (`extra.threads_idle`, `extra.threads_after_burst`: by name on Linux, the
+  count on the Mac).
 - **client hello: <line>** (desktops): the first bytes a core sends on a TCP
   line, read by a relay in front of the server port: xray-rust on Reality,
   XHTTP and WebTunnel; sing-box (exec) on Reality and WebTunnel; xray (exec) on
@@ -326,6 +341,54 @@ Since then the Linux hev rows of Measure (the hev row and the ios-shape hev
 rows) run `hev-socks5-tunnel-nomore` when it was built, so they stand for the
 iPhone's code path; each row's notes name the binary.
 
+## Where xray-rust's memory goes (`heap-profile`)
+
+`lab.py heap-profile` (both desktops; the step after udp-flow, with servers
+of its own, so no row moves) runs xray-rust in the mobile profile on the four
+lines (Reality Vision, WebTunnel, Hysteria2, XHTTP packet-up) under two loads:
+the rows' burst (32 downloads of 4 MB at once, then 32 uploads of 2 MB), and
+a hold: 32 connections through the core at once, a GET of 1024 bytes on each,
+20 s idle, then a second GET on each to show they lived (threads of `lab.py`
+itself, so the samples see only the core).
+
+On Linux each line and load runs twice, both times the build with line
+tables. Once plain: RSS (`VmHWM`), and `RssAnon`, `RssFile` and
+`/proc/<pid>/smaps` at its largest sample (polled every 10 ms), smaps split by
+kind (the binary, glibc's main arena, thread arenas by their 64 MiB
+alignment, thread and signal stacks by the guard page below them, malloc's
+mmapped chunks and the rest, shared libraries). Once under heaptrack (Ubuntu's
+package): the heap's peak, the bytes each backtrace held at that moment, and,
+because the core is stopped with SIGTERM (which it does not catch, so nothing
+unwinds) once the load is over and while the hold's connections are still
+open, the heap live at that moment as heaptrack's "leaked". heaptrack_print's
+own merge groups by the address of the malloc call, which in Rust is the
+allocator shim, one place for almost everything, so the lab reads the
+unmerged backtraces (the 2000 largest) and groups them by their first frame
+in xray-rust's `crates/` or `vendor/` (`site`, file:line and function), with
+the call it made (`via`), the leaf-most frame outside the standard library
+(`alloc_at`, often a crate's buffer: `bytes`, `h2`, the shaped rustls) and
+its own callers. heaptrack slows the core, so its peak need not fall at the
+plain run's moment; `RSS - heap` and `anon - heap` (plain RSS less heaptrack's
+heap peak) are the non-heap part up to that difference.
+
+On the Mac, `footprint` and `vmmap --summary` (with `sudo -n` when they need
+root) split phys_footprint: malloc by zone (tiny, small, large, and the rest),
+stacks, dirty `__DATA*` segments, and the rest by name; vmmap's MALLOC ZONE
+table adds the bytes malloc handed out against the dirty pages it holds
+(fragmentation). Either tool takes longer than a burst half, so the first
+burst only finds the peak (phys_footprint polled every 10 ms); in each next
+one the core is stopped (SIGSTOP) the moment its footprint crosses 95 % of
+that peak (85 % on the third try), both tools read the frozen process, and it
+goes on. The hold is read in the middle of its idle. The Mac also runs the
+XHTTP window rows' settings, burst only.
+
+The tables are in the step's log and the job summary;
+`heap-profile/heap-profile.json` has every figure and the top 50 sites per
+run (`sites_at_peak`, and for the hold `sites_live_at_end`). heaptrack's data
+files are in `lab-heaptrack-linux-x86_64`; `heaptrack_gui` or
+`heaptrack_print` opens them beside a build with line tables from the same
+pins.
+
 ## What it cannot tell
 
 - macOS on Apple silicon is not iOS: no jetsam, no packet tunnel extension, a
@@ -373,7 +436,8 @@ iPhone's code path; each row's notes name the binary.
 ## Files
 
 - `lab.py`: the driver (Python 3.9+, standard library): `desktop`, `android`,
-  `table`, `shapes-check`, `udp-flow` (and `flow-socks`, its SOCKS5 server).
+  `table`, `shapes-check`, `udp-flow` (and `flow-socks`, its SOCKS5 server),
+  `heap-profile`.
 - `harness/`: the cores harness (`build.sh`; `cores_stub.go` and the
   `labnocores` tag exist only to vet the harness's own code without the cores).
 - `loadgen/`: the page, the TLS site, the transfers, keys and certificates
@@ -385,6 +449,7 @@ iPhone's code path; each row's notes name the binary.
 - `rust-core-build.sh`: xray-rust at the workflow's pins, and with
   `XRS_PATCHES` the same tag with patches from `xray-rust-patches/` applied
   (`h2-connection-window-4mib.patch`: the XHTTP H2 connection window, a
-  constant at v0.9.0); `hev-build.sh`:
+  constant at v0.9.0), and with `XRS_LINE_TABLES=1` the build with line
+  tables the heap profile runs; `hev-build.sh`:
   hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit, then udp-flow's
   `hev-socks5-tunnel-nomore`.

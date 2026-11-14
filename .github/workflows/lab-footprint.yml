@@ -12,6 +12,11 @@ name: Lab - core footprint
 # plus the iOS shape rows: the iPhone's sing-box configs on the gVisor tun and
 # Phase 0's behind hev, checked for DNS, a name and UDP before the load.
 #
+# After the rows, `lab.py heap-profile` takes xray-rust's memory apart: on
+# Linux the heap by allocation site (heaptrack, a build with line tables)
+# beside RSS by kind, on macOS phys_footprint by category (footprint, vmmap)
+# with the core stopped near its peak.
+#
 # Runs on a push to lab/core-footprint and nothing else: never on main, never
 # on a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
 # has no filter, starts on the same push; its scope job decides what it runs.)
@@ -39,11 +44,12 @@ jobs:
   desktop:
     name: Cores on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    # About 35 minutes when xray-rust is built, about 20 when the cache has it.
+    # About 50 minutes when xray-rust is built, about 40 when the cache has it.
     # The ceiling covers the worst case with room for Table and Upload: about
-    # 5 min of Go builds, the 30 min xray-rust build (twice on the Mac, with
-    # the patched one), hev's 6 and Measure's 40.
-    timeout-minutes: 115
+    # 5 min of Go builds, the 30 min xray-rust build twice (on the Mac with the
+    # patched one, on Linux with line tables), hev's 6, Measure's 40, udp-flow's
+    # 8, heaptrack's install and the heap profile's 35.
+    timeout-minutes: 160
     env:
       # xray-rust (https://github.com/aimalygin/xray-rust): its newest release
       # when the lab was extended (GET /repos/aimalygin/xray-rust/releases/latest,
@@ -96,6 +102,8 @@ jobs:
             echo "ENGINE=${RUNNER_TEMP}/olcrtc"
             echo "XRS=${RUNNER_TEMP}/xray-rust"
             echo "XRS_P=${RUNNER_TEMP}/xray-rust-patched"
+            echo "XRS_L=${RUNNER_TEMP}/xray-rust-lines"
+            echo "HT=${RUNNER_TEMP}/lab-heaptrack"
           } >> "$GITHUB_ENV"
           echo "cores: $(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)"
           uname -a
@@ -223,6 +231,39 @@ jobs:
           path: ${{ runner.temp }}/xray-rust-patched
           key: ${{ steps.xrs-p-cache.outputs.cache-primary-key }}
 
+      # The heap profile (Linux) needs a file and a line for every frame: the
+      # same tag, commit, toolchain and profile with line tables kept
+      # (rust-core-build.sh XRS_LINE_TABLES=1), in a directory and a cache
+      # entry of its own; the rows never run it. A failed build fails only the
+      # heap profile's Linux rows, by name.
+      - name: Restore xray-rust with line tables from the cache
+        id: xrs-l-cache
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-lines
+          key: xray-rust-lines-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+
+      - name: Build xray-rust with line tables (the heap profile's binary)
+        id: xrs-l-build
+        if: runner.os == 'Linux' && steps.xrs-l-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          XRS_LINE_TABLES=1 XRS_BUILD_LOG="$OUT/xray-rust-lines-build.log" bash lab/footprint/rust-core-build.sh "$XRS_L"
+
+      - name: Save xray-rust with line tables to the cache
+        if: runner.os == 'Linux' && steps.xrs-l-build.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-lines
+          key: ${{ steps.xrs-l-cache.outputs.cache-primary-key }}
+
       # The hev rows need root and a tun, so they run where --tun runs; the
       # Mac builds it too, with Apple's clang, for udp-flow. A failed build
       # fails only those rows, with the tail of hev-build.log.
@@ -260,6 +301,37 @@ jobs:
           sudo -n true
           python3 lab/footprint/lab.py udp-flow --bin "$BIN" --out "$OUT/udp-flow"
 
+      # heaptrack from Ubuntu's archive, after the rows so Measure's runner is
+      # the same as before. A failure fails only the heap profile's Linux rows.
+      - name: Install heaptrack (the heap profile, Linux)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends heaptrack \
+            || { sudo apt-get update -q && sudo apt-get install -y --no-install-recommends heaptrack; }
+          dpkg-query -W heaptrack | tee "$OUT/heaptrack.version.txt"
+
+      # Where xray-rust's memory goes (lab.py heap-profile): the mobile profile
+      # on the four lines, the burst and 32 connections held idle for 20 s. On
+      # Linux heaptrack's heap by allocation site beside RSS by kind (a run
+      # without heaptrack); on macOS phys_footprint by category, the core
+      # stopped near its peak, plus the XHTTP window rows' bursts. After every
+      # row, with servers of its own, so no row moves; its tables are in this
+      # step's log and the summary, its JSON in heap-profile/heap-profile.json
+      # of this job's artifact, heaptrack's files in lab-heaptrack-linux-x86_64.
+      # A failure fails only it.
+      - name: Heap profile (where xray-rust's memory goes)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          python3 lab/footprint/lab.py heap-profile --bin "$BIN" --out "$OUT/heap-profile" \
+            --platform "${{ matrix.platform }}" --xray-rust "$XRS" --xray-rust-patched "$XRS_P" \
+            --xray-rust-lines "$XRS_L" --heaptrack-out "$HT" --budget-min 27
+
       - name: Table
         if: always()
         timeout-minutes: 2
@@ -269,6 +341,7 @@ jobs:
             [ -f "$f" ] && cp "$f" "$OUT/"
           done
           [ -f "$XRS_P/xray-rust.build.json" ] && cp "$XRS_P/xray-rust.build.json" "$OUT/xray-rust-patched.build.json"
+          [ -f "$XRS_L/xray-rust.build.json" ] && cp "$XRS_L/xray-rust.build.json" "$OUT/xray-rust-lines.build.json"
           python3 lab/footprint/lab.py table "$OUT"
 
       - name: Upload results
@@ -279,6 +352,20 @@ jobs:
           name: lab-footprint-${{ matrix.platform }}
           path: ${{ env.OUT }}
           retention-days: 14
+          if-no-files-found: warn
+
+      # heaptrack's data files and heaptrack_print's text, apart from the
+      # results (the summary job downloads lab-footprint-* only). Open a data
+      # file with heaptrack_gui or heaptrack_print beside the binary with line
+      # tables: same tag, commit, toolchain and rust-core-build.sh.
+      - name: Upload heaptrack's files
+        if: always() && runner.os == 'Linux'
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-heaptrack-${{ matrix.platform }}
+          path: ${{ env.HT }}
+          retention-days: 7
           if-no-files-found: warn
 
   android:

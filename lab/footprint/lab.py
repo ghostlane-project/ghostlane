@@ -6,6 +6,7 @@
     lab.py table        FILE_OR_DIR...        prints (and adds to the job summary) one table
     lab.py shapes-check                       the lab's client shapes against the app's builders
     lab.py udp-flow     --bin DIR --out DIR   where a new UDP flow's time goes behind hev (Linux, macOS; root)
+    lab.py heap-profile --bin DIR --out DIR   where xray-rust's memory goes (heaptrack on Linux, footprint on macOS)
 
 Every run is one core on one config, between servers this script starts on
 the same machine: one Xray 26.4.25 process (the version scripts/xray-servers.txt
@@ -39,6 +40,7 @@ import ipaddress
 import json
 import math
 import os
+import queue
 import re
 import select
 import shlex
@@ -498,6 +500,27 @@ def cpu_per_gb(cpu_s, nbytes):
     if cpu_s is None or not nbytes:
         return None
     return cpu_s / (nbytes / 1e9)
+
+
+def thread_census(pid):
+    """A process's threads: on Linux by name (/proc/<pid>/task/*/comm, cut to
+    15 characters; Tokio names its workers and its blocking-pool threads
+    alike, tokio-runtime-worker), on macOS the count `ps -M` lists."""
+    if sys.platform.startswith("linux"):
+        names = {}
+        for comm in Path("/proc/%d/task" % pid).glob("*/comm"):
+            try:
+                n = comm.read_text().strip()
+            except OSError:
+                continue
+            names[n] = names.get(n, 0) + 1
+        return {"threads": sum(names.values()), "by_name": dict(sorted(names.items()))} if names else None
+    try:
+        out = subprocess.run(["ps", "-M", "-p", str(pid)], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = [ln for ln in out.splitlines()[1:] if ln.strip()]
+    return {"threads": len(lines)} if lines else None
 
 
 def read_harness_stats(path):
@@ -1684,6 +1707,9 @@ def run_desktop_spec(spec, ctx):
         t0 = time.time()
         time.sleep(IDLE_SETTLE_S)
         idle_win = (t0 + IDLE_SETTLE_S / 2, time.time())
+        if spec.xrs_check:
+            # After the idle window: how many threads the runtime started.
+            row["extra"]["threads_idle"] = thread_census(proc.pid)
         h0 = time.time()
         down = host.loadgen_run("get", DOWN_BYTES, spec.socks, 240, target=target)
         h1 = time.time()
@@ -1698,6 +1724,8 @@ def run_desktop_spec(spec, ctx):
             final = read()
         except Exception:
             final = {}
+        if spec.xrs_check:
+            row["extra"]["threads_after_burst"] = thread_census(proc.pid)
         rows = sampler.halt()
         rows = reader.finish(rows, proc.pid, notes)
         wins = (window_of(down, (h0, h1)), window_of(up, (h2, h3)))
@@ -2737,7 +2765,28 @@ def cmd_desktop(a):
                     tail(out / "xray-rust-patched-build.log", 8).replace("\n", " | ")
                 missing += [(s, reason) for s in win_patched]
                 win_patched = []
-        xrs_specs += win_specs + win_patched
+        # One Tokio worker: is a one-thread runtime enough in the extension?
+        # The mobile profile with TOKIO_WORKER_THREADS=1 on Reality Vision
+        # (the least CPU a byte) and Hysteria2 (the most), the same row as the
+        # mobile profile's above (its peak memory, CPU per GB and Mbit/s), and
+        # a thread census. xray-cli's main keeps Tokio's own reading of the
+        # variable (it sets 2 workers only when the variable is unset); the
+        # runtime is still Tokio's multi-thread one with one worker, not a
+        # current-thread runtime. After every other row, so none moves.
+        one_env = dict(profiles[1][1], TOKIO_WORKER_THREADS="1")
+        one_specs = []
+        for scenario, (cfg, cfg_notes), wt in lines[:2]:
+            one_specs.append(Spec(
+                kind="exec", core=xrs_core, argv=[xrs_bin, "run", "-config", "{config}"], settings="mobile 1 worker",
+                env=one_env, scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt,
+                xrs_check=xrs_bin, extra={"xray_rust_build": xrs_info, "tokio_worker_threads": 1},
+                notes=["the mobile profile (XRAY_TUN_PROFILE=mobile) with TOKIO_WORKER_THREADS=1 instead of %d: "
+                       "Tokio's multi-thread runtime with one worker (crates/xray-cli/src/main.rs leaves the "
+                       "variable to Tokio); xray-ffi, which the extension links, sets its worker count itself "
+                       "(available parallelism clamped to 2..6, crates/xray-ffi/src/lib.rs) and reads no variable, "
+                       "so one worker on a phone needs a change there" % workers]
+                + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
+        xrs_specs += win_specs + win_patched + one_specs
         if not xrs_bin.exists():
             reason = "xray-rust was not built (xray-rust-build.log in this artifact): " + \
                 tail(out / "xray-rust-build.log", 8).replace("\n", " | ")
@@ -4331,6 +4380,1390 @@ def cmd_flow_socks(a):
         threading.Thread(target=handle, args=(c,), daemon=True).start()
 
 
+# ---------------------------------------------------------------- heap-profile: where xray-rust's memory goes
+#
+# `lab.py heap-profile` (the step after Measure, with servers of its own, so
+# no row moves): xray-rust in the mobile profile on the four lines, under two
+# loads each: the rows' burst (run_burst), and HEAP_HOLD_N connections opened
+# through the core, one small GET on each, then left idle for HEAP_HOLD_S
+# (Hold, threads of lab.py, which checks with a second GET that each one
+# lived).
+#
+# Linux, per line and load, two runs of the build with line tables
+# (rust-core-build.sh XRS_LINE_TABLES=1: the rows' code, debug info that is
+# never loaded): one plain, for RSS (VmHWM, and RssAnon, RssFile and
+# /proc/<pid>/smaps at its largest sample, polled every HEAP_POLL_S), and one
+# under heaptrack, for the heap: its peak, and the bytes each allocation
+# backtrace held at that peak (heaptrack_print, unmerged), grouped here by
+# the backtrace's first frame in xray-rust's crates/ or vendor/. heaptrack's
+# own merge groups by the address of the malloc call, which in Rust is the
+# allocator shim, one place for nearly every allocation. The heaptrack run
+# ends with SIGTERM, which xray-rust does not catch (only Ctrl-C), so nothing
+# unwinds and heaptrack's "leaked" is the heap still live at that moment: for
+# the hold, what 32 idle connections keep.
+#
+# macOS: phys_footprint split by `footprint` and `vmmap --summary`. A burst
+# half lasts 0.1 to 0.4 s here, less than either tool takes, so the first
+# burst only finds the peak (phys_footprint polled every HEAP_POLL_S); in the
+# next ones the core is stopped (SIGSTOP) the moment its footprint crosses
+# HEAP_FREEZE_AT of that peak, both tools read the frozen process, and it
+# goes on (SIGCONT). The hold is read in the middle of its idle.
+
+HEAP_HOLD_N = BURST_FLOWS
+HEAP_HOLD_S = 20
+HEAP_HOLD_GET = 1024
+HEAP_POLL_S = 0.01
+HEAP_SETTLE_S = 3.0
+HEAP_TOP = 25
+HEAP_TRACES = 2000
+# One freeze per burst after the first, until one lands; the last try lower.
+HEAP_FREEZE_AT = (0.95, 0.95, 0.85)
+HEAP_SOCKS = "127.0.0.1:%d" % PORT_SOCKS
+HEAP_LINES = ("vless-reality-vision", WEBTUNNEL, "hysteria2-salamander", "vless-xhttp-reality packet-up")
+
+
+def xrs_mobile_env():
+    """cmd_desktop's mobile profile: XRAY_TUN_PROFILE=mobile and the Tokio workers xray-ffi sizes here."""
+    return {"XRAY_TUN_PROFILE": "mobile", "TOKIO_WORKER_THREADS": str(max(2, min(6, os.cpu_count() or 2)))}
+
+
+class FastPoll(threading.Thread):
+    """Samples one process every HEAP_POLL_S and keeps every sample and the
+    largest by `key`. `on_max(row)` runs, in this thread, whenever a sample
+    sets a new maximum (Linux reads smaps there). `arm(threshold, action)`
+    runs `action(row)` once, in this thread, on the first sample at or above
+    `threshold` (the macOS freeze)."""
+
+    def __init__(self, read, key, on_max=None, period=HEAP_POLL_S):
+        super().__init__(daemon=True)
+        self.read, self.key, self.on_max, self.period = read, key, on_max, period
+        self.rows = []
+        self.max_row = None
+        self._armed = None
+        self._lock = threading.Lock()
+        self._halt = threading.Event()
+
+    def arm(self, threshold, action):
+        with self._lock:
+            self._armed = (threshold, action)
+
+    def disarm(self):
+        with self._lock:
+            self._armed = None
+
+    def last(self):
+        return self.rows[-1] if self.rows else None
+
+    def run(self):
+        while not self._halt.is_set():
+            t = time.time()
+            try:
+                row = self.read()
+            except Exception:  # gone, or between two states
+                row = None
+            if row and row.get(self.key) is not None:
+                row["t"] = t
+                self.rows.append(row)
+                if self.max_row is None or row[self.key] > self.max_row[self.key]:
+                    self.max_row = row
+                    if self.on_max:
+                        try:
+                            self.on_max(row)
+                        except Exception:
+                            pass
+                fire = None
+                with self._lock:
+                    if self._armed and row[self.key] >= self._armed[0]:
+                        fire, self._armed = self._armed[1], None
+                if fire:
+                    try:
+                        fire(row)
+                    except Exception:
+                        traceback.print_exc()
+            self._halt.wait(self.period)
+
+    def halt(self):
+        self._halt.set()
+        self.join(60)
+        return self.rows
+
+
+class Hold:
+    """HEAP_HOLD_N connections through the core's SOCKS port at once, a GET
+    /bytes?n=HEAP_HOLD_GET on each (HTTP/1.1, kept alive), HEAP_HOLD_S idle,
+    a second GET on each (each checked against the page's own bytes). They
+    stay open after the result until release(). Threads of this process: the
+    samples read only the core. Events come out of next(): {"event": "open"}
+    once every connection had its first answer, then the result."""
+
+    def __init__(self, rundir):
+        self.rundir = rundir
+        self.lines = queue.Queue()
+        self.socks = [None] * HEAP_HOLD_N
+        self.errors = []
+        self._lock = threading.Lock()
+        self._release = threading.Event()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _get(self, s):
+        s.sendall(("GET /bytes?n=%d HTTP/1.1\r\nHost: %s\r\nUser-Agent: lab-hold\r\nAccept-Encoding: identity\r\n\r\n"
+                   % (HEAP_HOLD_GET, THROUGH)).encode())
+        http_read_page(s, HEAP_HOLD_GET)
+
+    def _err(self, text):
+        with self._lock:
+            self.errors.append(text)
+
+    def _open(self, i):
+        try:
+            s = socks5_open(PORT_SOCKS, None, "plain", 1, THROUGH, 80, timeout=30)[0]
+        except Exception as e:
+            self._err("connection %d, SOCKS: %s" % (i, e))
+            return
+        try:
+            self._get(s)
+            self.socks[i] = s
+        except Exception as e:
+            self._err("connection %d, first GET: %s" % (i, e))
+            s.close()
+
+    def _again(self, i, alive):
+        try:
+            self._get(self.socks[i])
+            with self._lock:
+                alive.append(i)
+        except Exception as e:
+            self._err("connection %d, GET after the idle: %s" % (i, e))
+
+    @staticmethod
+    def _all(target, args_list):
+        threads = [threading.Thread(target=target, args=args, daemon=True) for args in args_list]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(90)
+
+    def _run(self):
+        t0 = time.time()
+        res = {"op": "hold", "flows": HEAP_HOLD_N, "ok_flows": 0, "alive_after_idle": 0, "start_ms": int(t0 * 1000),
+               "ok": False}
+        try:
+            self._all(self._open, [(i,) for i in range(HEAP_HOLD_N)])
+            opened = [i for i, s in enumerate(self.socks) if s is not None]
+            t_open = time.time()
+            res.update(ok_flows=len(opened), open_ms=int(t_open * 1000))
+            self.lines.put({"event": "open", "flows": HEAP_HOLD_N, "ok_flows": len(opened),
+                            "start_ms": res["start_ms"], "open_ms": res["open_ms"]})
+            if opened:
+                self._release.wait(HEAP_HOLD_S)
+                res["idle_end_ms"] = int(time.time() * 1000)
+                alive = []
+                self._all(self._again, [(i, alive) for i in opened])
+                res["alive_after_idle"] = len(alive)
+            res["end_ms"] = int(time.time() * 1000)
+            res["bytes"] = HEAP_HOLD_GET * (res["ok_flows"] + res["alive_after_idle"])
+            res["ok"] = res["ok_flows"] == HEAP_HOLD_N and res["alive_after_idle"] == HEAP_HOLD_N
+        except Exception as e:
+            self._err("hold: %s: %s" % (type(e).__name__, e))
+        if self.errors:
+            res["error"] = "%d problems; first: %s" % (len(self.errors), "; ".join(self.errors[:3]))
+        try:
+            write_json(self.rundir / "hold.json", dict(res, problems=self.errors[:50]))
+        except OSError:
+            pass
+        self.lines.put(res)
+
+    def next(self, timeout):
+        try:
+            return self.lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def release(self):
+        self._release.set()
+        for s in self.socks:
+            if s is not None:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+
+def heap_drive(ctx, load, rundir, mid=None, at_end=None):
+    """HEAP_SETTLE_S, then the load: 'burst', the rows' burst; 'hold', the
+    Hold. `mid()` runs in the middle of the hold's idle; `at_end()` runs once
+    the load is over, for the hold while its connections are still held.
+    Returns the loadgen results and the windows (wall-clock seconds)."""
+    t_settle = time.time()
+    time.sleep(HEAP_SETTLE_S)
+    rec = {"settle": (t_settle, time.time())}
+    if load == "burst":
+        bdown, bup, win = run_burst(ctx["host"], HEAP_SOCKS)
+        rec.update(loadgen=[bdown, bup], window=win, up_start=bdown.get("host_up_start"),
+                   ok=bool(bdown.get("ok") and bup.get("ok")))
+        if at_end:
+            at_end()
+        return rec
+    hold = Hold(rundir)
+    try:
+        ev = hold.next(120)
+        if not ev or ev.get("event") != "open":
+            raise LabError("the hold never had its connections open: %s" % ev)
+        if not ev.get("ok_flows"):
+            raise LabError("the hold opened none of its %d connections: %s" % (HEAP_HOLD_N, "; ".join(hold.errors[:3])))
+        t_open = ev["open_ms"] / 1000.0
+        rec["open"] = ev
+        if mid:
+            wait = t_open + HEAP_HOLD_S / 2.0 - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            mid()
+        res = hold.next(HEAP_HOLD_S + 120)
+        if not res:
+            raise LabError("the hold gave no result: " + "; ".join(hold.errors[:3]))
+        idle_end = (res.get("idle_end_ms") or 0) / 1000.0 or time.time()
+        rec.update(loadgen=[ev, res], window=((res.get("start_ms") or 0) / 1000.0 or t_open, time.time()),
+                   idle=(t_open + 2.0, idle_end), ok=bool(res.get("ok")))
+        if at_end:
+            at_end()
+    finally:
+        hold.release()
+    return rec
+
+
+def load_summary(rec):
+    """The loadgen side of a run, short: did every transfer or connection make it."""
+    out = []
+    for r in rec.get("loadgen") or []:
+        if r.get("event") == "open":
+            continue
+        if r.get("op") == "hold":
+            out.append("hold: %s/%s opened, %s alive after %d s idle%s" % (
+                r.get("ok_flows", 0), r.get("flows"), r.get("alive_after_idle", 0), HEAP_HOLD_S,
+                "" if r.get("ok") else "; " + str(r.get("error", ""))[:200]))
+        else:
+            out.append("%s: %s/%s whole, %s Mbit/s%s" % (
+                r.get("op"), r.get("ok_flows", 0), r.get("flows"), rnd(r.get("mbps")),
+                "" if r.get("ok") else "; " + str(r.get("error", ""))[:200]))
+    return "; ".join(out)
+
+
+# ---- Linux: RSS by kind, from /proc/<pid>/status and smaps
+
+
+def heap_mem_linux(pid):
+    with open("/proc/%d/status" % pid) as f:
+        s = f.read()
+    m = re.search(r"^Threads:\s+(\d+)", s, re.M)
+    return {"rss": proc_status_kb(s, "VmRSS"), "hwm": proc_status_kb(s, "VmHWM"),
+            "anon": proc_status_kb(s, "RssAnon"), "file": proc_status_kb(s, "RssFile"),
+            "threads": int(m.group(1)) if m else None}
+
+
+SMAPS_HEAD = re.compile(r"^([0-9a-f]+)-([0-9a-f]+) (\S{4}) \S+ \S+ \d+\s*(.*)$")
+# glibc's HEAP_MAX_SIZE on 64-bit: a thread arena's heaps start on it.
+GLIBC_HEAP_ALIGN = 64 * MIB
+
+
+def smaps_read(pid):
+    maps, cur = [], None
+    with open("/proc/%d/smaps" % pid) as f:
+        for line in f:
+            m = SMAPS_HEAD.match(line)
+            if m:
+                cur = {"start": int(m.group(1), 16), "end": int(m.group(2), 16), "perms": m.group(3),
+                       "path": m.group(4).strip(), "rss": 0}
+                maps.append(cur)
+            elif cur is not None and line.startswith("Rss:"):
+                cur["rss"] = int(line.split()[1]) * 1024
+    return maps
+
+
+def smaps_split(maps, exe):
+    """RSS by kind, in bytes. The kernel no longer names thread stacks, so
+    anonymous mappings are told apart by shape: rw-p right above a small
+    ---p guard is a thread's stack (256 KiB and up) or a signal stack (Rust
+    gives each thread one); rw-p starting on a 64 MiB boundary is a glibc
+    thread arena's heap; the rest is malloc's own mmaps (chunks of 128 KiB
+    and up) and anything else that maps memory."""
+    exe = os.path.realpath(str(exe))
+    out = {}
+    prev = None
+    for m in sorted(maps, key=lambda x: x["start"]):
+        path, perms, size = m["path"], m["perms"], m["end"] - m["start"]
+        if path == exe or path.startswith(exe + " "):
+            kind = "binary: code" if "x" in perms else (
+                "binary: written data" if perms[1] == "w" else "binary: read-only data")
+        elif path == "[heap]":
+            kind = "malloc: main arena ([heap])"
+        elif path == "[stack]":
+            kind = "stack: main thread"
+        elif path.startswith("["):
+            kind = "kernel ([vdso], [vvar])"
+        elif path:
+            kind = "shared libraries" if ".so" in os.path.basename(path) else "other files"
+        elif perms == "---p":
+            kind = None
+        else:
+            guard = (prev is not None and not prev["path"] and prev["perms"] == "---p" and prev["end"] == m["start"]
+                     and prev["end"] - prev["start"] <= 64 * 1024)
+            if guard and size >= 256 * 1024:
+                kind = "stack: other threads"
+            elif guard:
+                kind = "stack: signal stacks"
+            elif m["start"] % GLIBC_HEAP_ALIGN == 0:
+                kind = "malloc: thread arenas"
+            else:
+                kind = "anonymous: other (malloc's mmapped chunks, runtime maps)"
+        if kind:
+            out[kind] = out.get(kind, 0) + m["rss"]
+        prev = m
+    return out
+
+
+def proc_start_wall(pid):
+    """When a process started, wall clock, to the kernel's tick: heaptrack's
+    timestamps count from its start."""
+    with open("/proc/%d/stat" % pid) as f:
+        stat = f.read()
+    ticks = int(stat[stat.rindex(")") + 2:].split()[19])
+    with open("/proc/uptime") as f:
+        uptime = float(f.read().split()[0])
+    return time.time() - uptime + ticks / os.sysconf("SC_CLK_TCK")
+
+
+# ---- heaptrack_print's text, and allocation sites by xray-rust's own frames
+
+HT_UNIT = {"B": 1, "K": 10 ** 3, "M": 10 ** 6, "G": 10 ** 9, "T": 10 ** 12}
+HT_ENTRY = re.compile(r"^(-?[\d.]+[BKMGT]B?) (?:peak memory consumed|leaked) over (\d+) calls from$")
+HT_SUMMARY = re.compile(r"^(total runtime|calls to allocation functions|temporary memory allocations|"
+                        r"peak heap memory consumption|peak RSS \(including heaptrack overhead\)|"
+                        r"total memory leaked|suppressed leaks): (.*)$")
+HT_OURS = re.compile(r"(?:^|/xray-rust-build-[^/]+/src/)((crates|vendor)/[^/]+/.+)$")
+HT_REGISTRY = re.compile(r"/\.?cargo/registry/src/[^/]+/([^/]+)/(.+)$")
+HT_GIT = re.compile(r"/\.?cargo/git/checkouts/[^/]+/[^/]+/(.+)$")
+HT_STD = re.compile(r"/rustc/[0-9a-f]+/library/(.+)$|/rust/deps/(.+)$")
+
+
+def ht_bytes(text):
+    """heaptrack's formatBytes: 1000-based, two decimals, one letter (12.34M, 1.50K, 123B)."""
+    m = re.match(r"^\s*(-?[\d.]+)([BKMGT])B?\b", text or "")
+    return int(round(float(m.group(1)) * HT_UNIT[m.group(2)])) if m else None
+
+
+def ht_parse(text):
+    """heaptrack_print's unmerged output: {"peaks": [...], "leaks": [...],
+    "summary": {...}}. Each entry: bytes, calls and frames, leaf first, each
+    frame {fn, file, line, module} (inlined frames have no module)."""
+    out = {"peaks": [], "leaks": [], "summary": {}}
+    section = cur = frame = None
+    for line in text.splitlines():
+        if line in ("PEAK MEMORY CONSUMERS", "MEMORY LEAKS"):
+            section = "peaks" if line.startswith("PEAK") else "leaks"
+            cur = frame = None
+            continue
+        if line in ("MOST CALLS TO ALLOCATION FUNCTIONS", "MOST TEMPORARY ALLOCATIONS"):
+            section = cur = frame = None
+            continue
+        m = HT_SUMMARY.match(line)
+        if m:
+            out["summary"][m.group(1)] = m.group(2).strip()
+            section = cur = frame = None
+            continue
+        if section is None:
+            continue
+        m = HT_ENTRY.match(line)
+        if m:
+            cur = {"bytes": ht_bytes(m.group(1)), "calls": int(m.group(2)), "frames": []}
+            out[section].append(cur)
+            frame = None
+            continue
+        if cur is None:
+            continue
+        if line.startswith("    at "):
+            if frame is not None:
+                loc = line[7:]
+                f, _, ln = loc.rpartition(":")
+                frame["file"], frame["line"] = (f, int(ln)) if ln.isdigit() else (loc, None)
+        elif line.startswith("    in "):
+            if frame is not None:
+                frame["module"] = line[7:]
+        elif line.startswith("  ") and not line.startswith("   "):
+            frame = {"fn": line[2:], "file": None, "line": None, "module": None}
+            cur["frames"].append(frame)
+    return out
+
+
+def rust_name(name):
+    """A Rust symbol as heaptrack names it, without the legacy hash and with
+    the legacy escapes undone (when no Rust demangler was linked in)."""
+    s = name or ""
+    if s.startswith("_ZN") and s.endswith("E"):
+        # Not demangled at all: the legacy scheme's length-prefixed parts.
+        parts, i, body = [], 3, s[:-1]
+        while i < len(body):
+            m = re.match(r"\d+", body[i:])
+            if not m:
+                break
+            n, i = int(m.group(0)), i + len(m.group(0))
+            parts.append(body[i:i + n])
+            i += n
+        if parts and i >= len(body):
+            s = "::".join(parts)
+    s = re.sub(r"::h[0-9a-f]{16}$", "", s)
+    if "$" in s:
+        for k, v in (("$LT$", "<"), ("$GT$", ">"), ("$RF$", "&"), ("$BP$", "*"), ("$C$", ","), ("$u20$", " "),
+                     ("$u27$", "'"), ("$u5b$", "["), ("$u5d$", "]"), ("$u7b$", "{"), ("$u7d$", "}"), ("$u3b$", ";"),
+                     ("$u2b$", "+"), ("$u22$", '"'), ("$u3d$", "="), ("$u21$", "!"), ("$u7e$", "~")):
+            s = s.replace(k, v)
+        s = s.replace("..", "::")
+        if s.startswith("_<"):
+            s = s[1:]
+    return s
+
+
+def ht_where(frame):
+    """(kind, where) of a frame by its source file: 'xray-rust' (crates/),
+    'vendor' (vendor/: the crates xray-rust patches in), 'crate' (a registry
+    or git crate), 'std', 'other' (C libraries, no file)."""
+    f = frame.get("file") or ""
+    ln = frame.get("line")
+    at = (lambda p: "%s:%s" % (p, ln) if ln else p)
+    m = HT_OURS.search(f)
+    if m and "/.cargo/" not in f and "/rustc/" not in f:
+        return ("xray-rust" if m.group(2) == "crates" else "vendor"), at(m.group(1))
+    m = HT_REGISTRY.search(f)
+    if m:
+        return "crate", at(m.group(1) + "/" + m.group(2))
+    m = HT_GIT.search(f)
+    if m:
+        return "crate", at(m.group(1))
+    m = HT_STD.search(f)
+    if m:
+        return "std", at(m.group(1) or m.group(2))
+    return "other", at(f) if f else (os.path.basename(frame.get("module") or "") or "?")
+
+
+def heap_sites(entries, total, top=HEAP_TOP * 2):
+    """The backtraces grouped by their first (leaf-most) frame in xray-rust or
+    a vendored crate: that frame's file:line and function is the site, `via`
+    the call it made (the frame just below it that is not the standard
+    library's, else the one just below it), `callers` the next two of its
+    own frames above it. A backtrace with no such frame is grouped by its
+    first frame outside the standard library."""
+    sites = {}
+    for e in entries:
+        frames = e["frames"]
+        kinds = [ht_where(fr) for fr in frames]
+        i = next((k for k, (kind, _) in enumerate(kinds) if kind in ("xray-rust", "vendor")), None)
+        # Where the bytes are asked for: the leaf-most frame that is neither
+        # the standard library nor a C library (a crate's buffer, a Vec in
+        # xray-rust itself).
+        a = next((k for k, (kind, _) in enumerate(kinds) if kind not in ("std", "other")), None)
+        alloc_at = ("%s (%s)" % (rust_name(frames[a]["fn"]), kinds[a][1])) if a is not None else None
+        if i is None:
+            j = next((k for k, (kind, _) in enumerate(kinds) if kind not in ("std",)), None)
+            j = j if j is not None else (len(frames) - 1 if frames else None)
+            kind, where = ("none", "(no xray-rust frame) " + kinds[j][1]) if j is not None else ("none", "??")
+            fn = rust_name(frames[j]["fn"]) if j is not None else "??"
+            via, callers = None, []
+        else:
+            kind, where = kinds[i]
+            fn = rust_name(frames[i]["fn"])
+            below = [k for k in range(i - 1, -1, -1) if kinds[k][0] != "std"]
+            v = below[0] if below else (i - 1 if i > 0 else None)
+            via = ("%s (%s)" % (rust_name(frames[v]["fn"]), kinds[v][1])) if v is not None else None
+            callers = ["%s (%s)" % (rust_name(frames[k]["fn"]), kinds[k][1]) for k in range(i + 1, len(frames))
+                       if kinds[k][0] in ("xray-rust", "vendor")][:2]
+        key = (where, fn)
+        s = sites.setdefault(key, {"site": where, "function": fn, "kind": kind, "bytes": 0, "calls": 0,
+                                   "traces": 0, "via": {}, "alloc_at": {}, "callers": {}})
+        s["bytes"] += e["bytes"] or 0
+        s["calls"] += e["calls"]
+        s["traces"] += 1
+        if via:
+            s["via"][via] = s["via"].get(via, 0) + (e["bytes"] or 0)
+        if alloc_at:
+            s["alloc_at"][alloc_at] = s["alloc_at"].get(alloc_at, 0) + (e["bytes"] or 0)
+        if callers:
+            c = " <- ".join(callers)
+            s["callers"][c] = s["callers"].get(c, 0) + (e["bytes"] or 0)
+    out = sorted(sites.values(), key=lambda s: -s["bytes"])[:top]
+    for s in out:
+        s["mb"] = rnd(s["bytes"] / MIB, 2)
+        s["share"] = rnd(100.0 * s["bytes"] / total, 1) if total else None
+        s["via"] = [{"call": k, "bytes": v} for k, v in sorted(s["via"].items(), key=lambda kv: -kv[1])[:3]]
+        s["alloc_at"] = [{"frame": k, "bytes": v} for k, v in sorted(s["alloc_at"].items(), key=lambda kv: -kv[1])[:3]]
+        s["callers"] = [{"chain": k, "bytes": v} for k, v in sorted(s["callers"].items(), key=lambda kv: -kv[1])[:3]]
+    return out
+
+
+def massif_series(path):
+    """heaptrack_print --print-massif with no detailed snapshots: the live heap
+    at each of heaptrack's timestamps (every 10 ms), as (seconds since the
+    process started, bytes)."""
+    series, t = [], None
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith("time="):
+                    t = float(line[5:])
+                elif line.startswith("mem_heap_B=") and t is not None:
+                    series.append((t, int(line[11:])))
+                    t = None
+    except (OSError, ValueError):
+        pass
+    return series
+
+
+def heaptrack_report(ctx, data, slug):
+    """heaptrack_print twice: unmerged (every backtrace's bytes at the peak
+    and still live at the end, the heap over time) and merged (heaptrack's own
+    view, kept as it prints it)."""
+    htdir = ctx["htdir"]
+    unmerged = htdir / (slug + ".peaks-and-leaks.txt")
+    merged = htdir / (slug + ".peaks-merged.txt")
+    massif = htdir / (slug + ".massif.txt")
+    base = [str(ctx["heaptrack_print"]), "--file", str(data), "--print-allocators", "0", "--print-temporary", "0"]
+    t0 = time.time()
+    with open(unmerged, "w") as f:
+        cp = subprocess.run(base + ["--print-peaks", "1", "--print-leaks", "1", "--merge-backtraces", "0",
+                                    "--peak-limit", str(HEAP_TRACES), "--print-massif", str(massif),
+                                    "--massif-detailed-freq", "0"],
+                            stdout=f, stderr=subprocess.PIPE, text=True, timeout=420)
+    if cp.returncode != 0:
+        raise LabError("heaptrack_print (unmerged) exited %d: %s" % (cp.returncode, (cp.stderr or "")[-600:]))
+    merged_s = time.time() - t0
+    try:
+        with open(merged, "w") as f:
+            subprocess.run(base + ["--print-peaks", "1", "--print-leaks", "0", "--merge-backtraces", "1",
+                                   "--peak-limit", str(HEAP_TOP), "--sub-peak-limit", str(HEAP_TOP)],
+                           stdout=f, stderr=subprocess.STDOUT, text=True, timeout=max(60, min(300, 2 * merged_s)))
+    except subprocess.TimeoutExpired:
+        with open(merged, "a") as f:
+            f.write("\n[lab: heaptrack_print --merge-backtraces 1 stopped after its timeout]\n")
+    parsed = ht_parse(unmerged.read_text(errors="replace"))
+    s = parsed["summary"]
+    peak = ht_bytes(s.get("peak heap memory consumption"))
+    leaked = ht_bytes(s.get("total memory leaked"))
+    listed_peak = sum(e["bytes"] or 0 for e in parsed["peaks"])
+    listed_leak = sum(e["bytes"] or 0 for e in parsed["leaks"])
+    calls = re.match(r"(\d+)", s.get("calls to allocation functions", ""))
+    return {
+        "peak_heap_bytes": peak, "live_at_end_bytes": leaked,
+        "peak_rss_with_heaptrack_bytes": ht_bytes(s.get("peak RSS (including heaptrack overhead)")),
+        "calls": int(calls.group(1)) if calls else None, "runtime": s.get("total runtime"),
+        "summary": s, "print_seconds": rnd(time.time() - t0, 1),
+        "traces_listed_at_peak": len(parsed["peaks"]), "traces_listed_live_at_end": len(parsed["leaks"]),
+        "listed_share_of_peak": rnd(100.0 * listed_peak / peak, 1) if peak else None,
+        "listed_share_live_at_end": rnd(100.0 * listed_leak / leaked, 1) if leaked else None,
+        "sites_at_peak": heap_sites(parsed["peaks"], peak),
+        "sites_live_at_end": heap_sites(parsed["leaks"], leaked),
+        "files": {"data": data.name, "unmerged": unmerged.name, "merged": merged.name, "massif": massif.name},
+        "massif": massif_series(massif),
+    }
+
+
+def heap_series_figures(series, t_base, rec):
+    """The heap over time against the load's windows: where its peak fell, and
+    for the hold the median over the idle."""
+    if not series or t_base is None:
+        return {}
+    wall = [(t_base + t, b) for t, b in series]
+    t_pk, b_pk = max(wall, key=lambda tb: tb[1])
+    out = {"heap_peak_at_s_into_load": rnd(t_pk - rec["settle"][1], 2)}
+    if rec.get("up_start"):
+        out["heap_peak_half"] = "down half" if t_pk < rec["up_start"] else "up half"
+        b0, b1 = rec["window"]
+        out["heap_down_half_peak_mb"] = mb(max([b for t, b in wall if b0 <= t < rec["up_start"]] or [0]))
+        out["heap_up_half_peak_mb"] = mb(max([b for t, b in wall if rec["up_start"] <= t <= b1] or [0]))
+    if rec.get("idle"):
+        i0, i1 = rec["idle"]
+        vals = [b for t, b in wall if i0 <= t <= i1]
+        out["heap_hold_median_mb"] = mb(statistics.median(vals)) if vals else None
+        out["heap_hold_max_mb"] = mb(max(vals)) if vals else None
+        out["heap_peak_half"] = "during the idle" if i0 <= t_pk <= i1 else (
+            "before the idle (connections opening)" if t_pk < i0 else "after the idle")
+    out["heap_before_load_mb"] = mb(statistics.median([b for t, b in wall if rec["settle"][0] <= t <= rec["settle"][1]]
+                                                      or [0]))
+    return out
+
+
+def heap_linux_plain(ctx, cfg_path, env, rundir, load):
+    """The line-tables build alone: RSS, and what it is made of at its largest sample."""
+    exe = ctx["xrs"]
+    proc = Proc([exe, "run", "-config", cfg_path], rundir / "core.log", cwd=rundir, env=clean_env(env))
+    at_max, at_mid = {}, {}
+
+    def on_max(row):
+        at_max["row"] = dict(row)
+        at_max["smaps"] = smaps_split(smaps_read(proc.pid), exe)
+
+    def mid():
+        at_mid["row"] = heap_mem_linux(proc.pid)
+        at_mid["smaps"] = smaps_split(smaps_read(proc.pid), exe)
+
+    poll = None
+    try:
+        if not wait_port(PORT_SOCKS, 30, proc):
+            raise LabError("xray-rust's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        probe = ctx["host"].probe(HEAP_SOCKS, 40)
+        if not probe.get("ok"):
+            raise LabError("no byte crossed the core in 40 s (%s):\n%s" % (probe.get("error"), tail(rundir / "core.log")))
+        poll = FastPoll(lambda: heap_mem_linux(proc.pid), "rss", on_max=on_max)
+        poll.start()
+        rec = heap_drive(ctx, load, rundir, mid=mid if load == "hold" else None)
+        final = heap_mem_linux(proc.pid)
+    finally:
+        if poll is not None:
+            poll.halt()
+        proc.stop()
+    rows = poll.rows
+    w0, w1 = rec["window"]
+    out = {"vmhwm_mb": mb(final.get("hwm")), "rss_sampled_max_mb": mb(max_of(rows, "rss")),
+           "rss_before_load_mb": mb(median_in(rows, "rss", *rec["settle"])),
+           "rss_load_max_mb": mb(max_of(rows, "rss", w0, w1)), "threads_max": max_of(rows, "threads"),
+           "samples": len(rows), "load": load_summary(rec), "load_ok": rec["ok"]}
+    if at_max:
+        r = at_max["row"]
+        out.update(at_max={"t_into_load_s": rnd(r["t"] - rec["settle"][1], 2), "rss_mb": mb(r["rss"]),
+                           "rss_anon_mb": mb(r.get("anon")), "rss_file_mb": mb(r.get("file")),
+                           "smaps_mb": {k: mb(v) for k, v in sorted(at_max["smaps"].items(), key=lambda kv: -kv[1])}})
+        if rec.get("up_start"):
+            out["at_max"]["half"] = "down half" if r["t"] < rec["up_start"] else "up half"
+    if rec.get("idle"):
+        out["rss_hold_median_mb"] = mb(median_in(rows, "rss", *rec["idle"]))
+        out["rss_anon_hold_median_mb"] = mb(median_in(rows, "anon", *rec["idle"]))
+        if at_mid:
+            out["mid_hold"] = {"rss_mb": mb(at_mid["row"].get("rss")), "rss_anon_mb": mb(at_mid["row"].get("anon")),
+                               "rss_file_mb": mb(at_mid["row"].get("file")),
+                               "smaps_mb": {k: mb(v) for k, v in sorted(at_mid["smaps"].items(), key=lambda kv: -kv[1])}}
+    return out
+
+
+def heap_linux_heaptrack(ctx, cfg_path, env, rundir, load, slug):
+    """The line-tables build under heaptrack, stopped with SIGTERM once the
+    load is over (the hold's connections still open), then heaptrack_print."""
+    exe = ctx["xrs"]
+    for old in ctx["htdir"].glob(slug + ".*"):
+        old.unlink()
+    script = Proc([ctx["heaptrack"], "-o", ctx["htdir"] / slug, exe, "run", "-config", cfg_path],
+                  rundir / "heaptrack.log", cwd=rundir, env=clean_env(env))
+    pid, poll, t_base, killed = None, None, None, {}
+
+    def kill():
+        os.kill(pid, signal.SIGTERM)
+        killed["t"] = time.time()
+
+    try:
+        pid = find_pid_by_argv(Path(exe).name, str(cfg_path), seconds=30)
+        if pid is None:
+            raise LabError("xray-rust under heaptrack did not start:\n" + tail(rundir / "heaptrack.log"))
+        try:
+            t_base = proc_start_wall(pid)
+        except (OSError, ValueError, IndexError):
+            t_base = None
+        if not wait_port(PORT_SOCKS, 60, script):
+            raise LabError("xray-rust's SOCKS port never opened under heaptrack:\n" + tail(rundir / "heaptrack.log"))
+        probe = ctx["host"].probe(HEAP_SOCKS, 60)
+        if not probe.get("ok"):
+            raise LabError("no byte crossed the core under heaptrack in 60 s (%s):\n%s" % (
+                probe.get("error"), tail(rundir / "heaptrack.log")))
+        poll = FastPoll(lambda: heap_mem_linux(pid), "rss", period=0.05)
+        poll.start()
+        rec = heap_drive(ctx, load, rundir, at_end=kill)
+    finally:
+        if poll is not None:
+            poll.halt()
+        if pid and not killed:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        try:
+            script.p.wait(300)  # heaptrack_interpret finishes the file after the core is gone
+        except subprocess.TimeoutExpired:
+            pass
+        script.stop()
+    data = next((p for p in sorted(ctx["htdir"].glob(slug + ".*")) if p.suffix in (".zst", ".gz")), None)
+    if data is None:
+        raise LabError("heaptrack wrote no data file:\n" + tail(rundir / "heaptrack.log"))
+    rep = heaptrack_report(ctx, data, slug)
+    rep["data_bytes"] = data.stat().st_size
+    rep["rss_sampled_max_mb"] = mb(max_of(poll.rows, "rss"))
+    rep["load"] = load_summary(rec)
+    rep["load_ok"] = rec["ok"]
+    rep.update(heap_series_figures(rep.pop("massif"), t_base, rec))
+    return rep
+
+
+def heap_linux_row(ctx, line, load, cfg, cfg_notes):
+    slug = re.sub(r"[^a-z0-9]+", "-", ("%s %s" % (line, load)).lower()).strip("-")
+    row = {"platform": ctx["platform"], "line": line, "load": load, "settings": "mobile profile",
+           "version": ctx["xrs_version"], "notes": list(cfg_notes), "error": None}
+    env = xrs_mobile_env()
+    base = ctx["out"] / "runs" / slug
+    plain_dir, ht_dir = base / "plain", base / "heaptrack"
+    for d in (plain_dir, ht_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    cfgs = []
+    for d in (plain_dir, ht_dir):
+        p = d / "config.json"
+        write_json(p, cfg)
+        cfgs.append(p)
+    ok, check_notes, _ = xrs_check(ctx["xrs"], cfgs[0], plain_dir / "config-check.json")
+    row["notes"] += check_notes
+    if not ok:
+        raise LabError("xray-rust refused the config: " + ("; ".join(check_notes) or "no diagnostics"))
+    for port in (PORT_SOCKS,):
+        if not wait_port_free(port):
+            raise LabError("port %d is still taken" % port)
+    row["plain"] = heap_linux_plain(ctx, cfgs[0], env, plain_dir, load)
+    if not wait_port_free(PORT_SOCKS):
+        raise LabError("port %d is still taken after the plain run" % PORT_SOCKS)
+    row["heaptrack"] = ht = heap_linux_heaptrack(ctx, cfgs[1], env, ht_dir, load, slug)
+    pl = row["plain"]
+    heap = (ht.get("peak_heap_bytes") or 0) / MIB
+    am = pl.get("at_max") or {}
+    fig = {"heap_peak_mb": rnd(heap, 2), "rss_peak_mb": pl.get("vmhwm_mb"),
+           "rss_anon_at_peak_mb": am.get("rss_anon_mb"), "rss_file_at_peak_mb": am.get("rss_file_mb"),
+           "rss_minus_heap_mb": rnd(pl["vmhwm_mb"] - heap, 1) if pl.get("vmhwm_mb") is not None and heap else None,
+           "anon_minus_heap_mb": rnd(am["rss_anon_mb"] - heap, 1) if am.get("rss_anon_mb") is not None and heap else None,
+           "heap_live_at_end_mb": rnd((ht.get("live_at_end_bytes") or 0) / MIB, 2),
+           "heaptrack_rss_peak_mb": mb(ht.get("peak_rss_with_heaptrack_bytes")),
+           "heap_peak_when": ht.get("heap_peak_half")}
+    if load == "hold":
+        fig.update(heap_hold_median_mb=ht.get("heap_hold_median_mb"), rss_hold_median_mb=pl.get("rss_hold_median_mb"),
+                   rss_anon_hold_median_mb=pl.get("rss_anon_hold_median_mb"))
+    row["figures"] = fig
+    row["notes"].append("RSS from a run of the same binary without heaptrack (its VmHWM; anon and file at its largest "
+                        "sample, polled every %d ms); the heap from the heaptrack run, which is slower, so its peak "
+                        "need not fall at the same moment" % int(HEAP_POLL_S * 1000))
+    if not (pl.get("load_ok") and ht.get("load_ok")):
+        row["notes"].append("load: plain %s; heaptrack %s" % (pl.get("load"), ht.get("load")))
+    return row
+
+
+# ---- macOS: phys_footprint by category, from footprint and vmmap
+
+
+class MacSnapper:
+    """footprint and vmmap --summary of one process. The first invocation that
+    works (with sudo -n when it needs root) is kept for the rest of the step,
+    and every one tried is recorded."""
+
+    CANDIDATES = {
+        "footprint": (["footprint", "-f", "bytes", "-p", "{pid}"], ["footprint", "-p", "{pid}"],
+                      ["footprint", "{pid}"]),
+        "vmmap": (["vmmap", "--summary", "{pid}"], ["vmmap", "-summary", "{pid}"]),
+    }
+    MARK = {"footprint": "Footprint", "vmmap": "REGION TYPE"}
+
+    def __init__(self):
+        self.ways = {}
+        self.tried = {}
+
+    def run(self, tool, pid, path):
+        if tool in self.ways:
+            cands = [self.ways[tool]]
+        else:
+            base = self.CANDIDATES[tool]
+            cands = list(base) + [["sudo", "-n"] + list(b) for b in base]
+        for pre in cands:
+            argv = [str(pid) if a == "{pid}" else a for a in pre]
+            try:
+                cp = subprocess.run(argv, capture_output=True, text=True, timeout=90)
+            except (OSError, subprocess.SubprocessError) as e:
+                self.tried.setdefault(tool, []).append({"argv": " ".join(argv), "error": str(e)[:300]})
+                continue
+            ok = cp.returncode == 0 and self.MARK[tool] in (cp.stdout or "")
+            if tool not in self.ways:
+                self.tried.setdefault(tool, []).append({"argv": " ".join(argv), "rc": cp.returncode, "worked": ok,
+                                                        "said": ((cp.stderr or "") + (cp.stdout or ""))[:300]})
+            if ok:
+                self.ways[tool] = pre
+                Path(path).write_text(cp.stdout + (("\n[stderr]\n" + cp.stderr) if (cp.stderr or "").strip() else ""))
+                return cp.stdout
+        Path(path).write_text("no invocation worked: %s\n" % json.dumps(self.tried.get(tool), indent=1))
+        return None
+
+
+MAC_UNIT = {"B": 1, "bytes": 1, "K": 1 << 10, "KB": 1 << 10, "M": 1 << 20, "MB": 1 << 20, "G": 1 << 30, "GB": 1 << 30,
+            "T": 1 << 40, "TB": 1 << 40, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
+MAC_SIZE = re.compile(r"^(-?[\d.]+)([KMGT]i?B?|B)?$")
+
+
+def mac_size(tokens, i):
+    """One size at tokens[i] ('123', '123 KB', '1.5M'; Apple's tools count in
+    KiB and MiB): (bytes, next index), or (None, i)."""
+    m = MAC_SIZE.match(tokens[i])
+    if not m:
+        return None, i
+    unit = m.group(2)
+    if unit is None and i + 1 < len(tokens) and tokens[i + 1] in MAC_UNIT:
+        unit, i = tokens[i + 1], i + 1
+    return int(float(m.group(1)) * MAC_UNIT.get(unit or "B", 1)), i + 1
+
+
+def footprint_parse(text):
+    """footprint's category table: {footprint, columns, categories: {name:
+    {column: bytes}}, total, aux}. Lenient: a format it cannot read leaves
+    the categories empty and the text is in the artifact."""
+    out = {"footprint": None, "columns": None, "categories": {}, "total": None, "aux": {}}
+    m = re.search(r"Footprint:\s*([\d.]+)\s*([KMGT]?i?B|bytes)", text)
+    if m:
+        out["footprint"] = int(float(m.group(1)) * MAC_UNIT[m.group(2)])
+    for k, v, u in re.findall(r"^\s*(phys_footprint(?:_peak)?):\s*([\d.]+)\s*([KMGT]?i?B|bytes)", text, re.M):
+        out["aux"][k] = int(float(v) * MAC_UNIT[u])
+    cols = None
+    for line in text.splitlines():
+        s = line.strip()
+        if cols is None:
+            if s.endswith("Category") and "Dirty" in s:
+                cols = re.split(r"\s{2,}", s)[:-1]
+                out["columns"] = cols
+            continue
+        if not s or not set(s.replace(" ", "")) - set("-="):
+            continue
+        tokens = s.split()
+        vals, i = [], 0
+        for _ in cols:
+            if i >= len(tokens):
+                break
+            v, i2 = mac_size(tokens, i)
+            if v is None:
+                break
+            vals.append(v)
+            i = i2
+        if len(vals) != len(cols) or i >= len(tokens):
+            if out["categories"]:
+                break
+            continue
+        name = " ".join(tokens[i:])
+        if name.startswith("TOTAL"):
+            out["total"] = dict(zip(cols, vals))
+            break
+        out["categories"][name] = dict(zip(cols, vals))
+    return out
+
+
+def vmmap_parse(text):
+    """vmmap --summary: the physical footprint lines, the region table
+    ({name: {column: bytes}}) and the MALLOC ZONE table (allocated bytes
+    against dirty, the fragmentation)."""
+    out = {"physical_footprint": None, "physical_footprint_peak": None, "regions": {}, "zones": {}}
+    for key, label in (("physical_footprint", "Physical footprint:"),
+                       ("physical_footprint_peak", "Physical footprint (peak):")):
+        m = re.search(re.escape(label) + r"\s*([\d.]+[KMGT]?)\s*$", text, re.M)
+        if m:
+            out[key] = mac_size([m.group(1)], 0)[0]
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith("REGION TYPE") and idx > 0:
+            cols = [c.lower() for c in lines[idx - 1].split()]
+            rows = []
+            seps = 0
+            for r in lines[idx + 1:]:
+                if r.startswith("==="):
+                    seps += 1
+                    if seps == 2:
+                        continue
+                    continue
+                if not r.strip():
+                    if seps >= 2:
+                        break
+                    continue
+                rows.append((seps, r))
+            for seps_at, r in rows:
+                tokens = r.split()
+                k = next((j for j in range(len(tokens)) if all(
+                    MAC_SIZE.match(t) for t in tokens[j:j + len(cols)]) and len(tokens[j:j + len(cols)]) == len(cols)),
+                    None)
+                if not k:
+                    continue
+                name = " ".join(tokens[:k])
+                vals = {}
+                try:
+                    for c, t in zip(cols, tokens[k:k + len(cols)]):
+                        vals[c] = int(float(t)) if c == "region" else mac_size([t], 0)[0]
+                except ValueError:
+                    continue
+                (out.setdefault("totals", {}) if seps_at >= 2 else out["regions"])[name] = vals
+        if line.startswith("MALLOC ZONE") and idx > 0:
+            names = ("virtual", "resident", "dirty", "swapped", "allocation_count", "bytes_allocated", "frag",
+                     "frag_pct", "region_count")
+            for r in lines[idx + 1:]:
+                if r.startswith("==="):
+                    continue
+                if not r.strip():
+                    break
+                tokens = r.split()
+                if len(tokens) < 1 + len(names):
+                    continue
+                name, vals = " ".join(tokens[:-len(names)]), tokens[-len(names):]
+                rec = {}
+                try:
+                    for n, t in zip(names, vals):
+                        if n in ("allocation_count", "region_count"):
+                            rec[n] = int(t) if t.isdigit() else t
+                        elif n == "frag_pct":
+                            rec[n] = t
+                        else:
+                            rec[n] = mac_size([t], 0)[0]
+                except ValueError:
+                    continue
+                out["zones"][name] = rec
+    return out
+
+
+def mac_group(name):
+    """The split asked for: malloc by zone, stacks, dirty __DATA, the rest."""
+    n = name.strip()
+    up = n.upper()
+    for zone in ("TINY", "SMALL", "LARGE", "MEDIUM", "NANO"):
+        if up.startswith("MALLOC_" + zone):
+            return "malloc " + zone.lower()
+    if up.startswith("MALLOC"):
+        return "malloc other"
+    if up.startswith("STACK"):
+        return "stacks"
+    if (n.startswith("__") and not n.startswith(("__TEXT", "__LINKEDIT"))) or "__DATA" in n:
+        return "dirty __DATA*"
+    return "rest"
+
+
+MAC_GROUPS = ("malloc tiny", "malloc small", "malloc large", "malloc medium", "malloc nano", "malloc other",
+              "stacks", "dirty __DATA*", "rest")
+
+
+def mac_split(snap):
+    """Bytes of phys_footprint per group: footprint's dirty (and swapped or
+    compressed, when it shows them) per category, else vmmap's dirty plus
+    swapped per region type."""
+    fp, vm = snap.get("footprint") or {}, snap.get("vmmap") or {}
+    groups, source, rest = {g: 0 for g in MAC_GROUPS}, None, {}
+    if fp.get("categories"):
+        source = "footprint"
+        for name, vals in fp["categories"].items():
+            v = sum(b for c, b in vals.items() if re.search(r"dirty|swap|compress", c, re.I))
+            groups[mac_group(name)] += v
+            if mac_group(name) == "rest" and v:
+                rest[name] = v
+    elif vm.get("regions"):
+        source = "vmmap"
+        for name, vals in vm["regions"].items():
+            v = (vals.get("dirty") or 0) + (vals.get("swapped") or 0)
+            groups[mac_group(name)] += v
+            if mac_group(name) == "rest" and v:
+                rest[name] = v
+    total = (fp.get("footprint") or vm.get("physical_footprint"))
+    zones = vm.get("zones") or {}
+    zt = zones.get("TOTAL")
+    if zt is None and zones:
+        zt = {k: sum(z.get(k) or 0 for z in zones.values() if isinstance(z.get(k), int))
+              for k in ("bytes_allocated", "dirty", "frag")}
+        zt["frag_pct"] = None
+    return {"source": source, "total_mb": mb(total), "groups_mb": {g: mb(v) for g, v in groups.items()},
+            "rest_mb": {k: mb(v) for k, v in sorted(rest.items(), key=lambda kv: -kv[1])[:8]},
+            "malloc_allocated_mb": mb(zt.get("bytes_allocated")) if zt else None,
+            "malloc_dirty_mb": mb(zt.get("dirty")) if zt else None,
+            "malloc_frag_mb": mb(zt.get("frag")) if zt else None, "malloc_frag_pct": zt.get("frag_pct") if zt else None}
+
+
+def mac_snapshot(snapper, pid, rundir, tag):
+    fp_text = snapper.run("footprint", pid, rundir / ("footprint-%s.txt" % tag))
+    vm_text = snapper.run("vmmap", pid, rundir / ("vmmap-%s.txt" % tag))
+    snap = {"tag": tag, "t": time.time(), "footprint": None, "vmmap": None}
+    for key, text, parse in (("footprint", fp_text, footprint_parse), ("vmmap", vm_text, vmmap_parse)):
+        if text:
+            try:
+                snap[key] = parse(text)
+            except Exception as e:  # the text is in the artifact; the row keeps the other tool
+                snap.setdefault("parse_errors", {})[key] = "%s: %s" % (type(e).__name__, e)
+    snap["split"] = mac_split(snap)
+    return snap
+
+
+def heap_mac_row(ctx, line, settings, load, binary, cfg, cfg_notes):
+    slug = re.sub(r"[^a-z0-9]+", "-", ("%s %s %s" % (line, settings, load)).lower()).strip("-")
+    rundir = ctx["out"] / "runs" / slug
+    rundir.mkdir(parents=True, exist_ok=True)
+    row = {"platform": ctx["platform"], "line": line, "load": load, "settings": settings,
+           "version": ctx["xrs_version"] + (" + lab patches" if binary != ctx["xrs"] else ""),
+           "notes": list(cfg_notes), "error": None}
+    cfg_path = rundir / "config.json"
+    write_json(cfg_path, cfg)
+    ok, check_notes, _ = xrs_check(binary, cfg_path, rundir / "config-check.json")
+    row["notes"] += check_notes
+    if not ok:
+        raise LabError("xray-rust refused the config: " + ("; ".join(check_notes) or "no diagnostics"))
+    if not wait_port_free(PORT_SOCKS):
+        raise LabError("port %d is still taken" % PORT_SOCKS)
+    reader, snapper = ctx["reader"], ctx["snapper"]
+    proc = Proc([binary, "run", "-config", cfg_path], rundir / "core.log", cwd=rundir, env=clean_env(xrs_mobile_env()))
+    poll, snaps, bursts = None, [], []
+    try:
+        if not wait_port(PORT_SOCKS, 30, proc):
+            raise LabError("xray-rust's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        probe = ctx["host"].probe(HEAP_SOCKS, 40)
+        if not probe.get("ok"):
+            raise LabError("no byte crossed the core in 40 s (%s):\n%s" % (probe.get("error"), tail(rundir / "core.log")))
+        time.sleep(1.0)
+        snaps.append(mac_snapshot(snapper, proc.pid, rundir, "idle"))
+        poll = FastPoll(lambda: reader.read(proc.pid), "fp")
+        poll.start()
+        if load == "burst":
+            rec = heap_drive(ctx, "burst", rundir)
+            b0, b1 = rec["window"]
+            peak0 = max_of(poll.rows, "fp", b0, b1)
+            bursts.append({"freeze": None, "peak_mb": mb(peak0), "load": load_summary(rec)})
+            if not peak0:
+                raise LabError("no phys_footprint sample during the first burst")
+            for n, at in enumerate(HEAP_FREEZE_AT, 1):
+                start = (poll.last() or {}).get("fp") or 0
+                # Near the first burst's peak, and above where this burst
+                # starts (what the first one left behind) by a margin, so it
+                # fires inside the burst, never at its first sample.
+                threshold = max(at * peak0, start + 0.5 * max(0, peak0 - start), start + MIB / 4)
+                hit = {}
+
+                def freeze(r, n=n, hit=hit):
+                    hit["started"] = True
+                    t = time.time()
+                    try:
+                        os.kill(proc.pid, signal.SIGSTOP)
+                        try:
+                            s = mac_snapshot(snapper, proc.pid, rundir, "burst%d-frozen" % n)
+                            try:
+                                s["fp_frozen_mb"] = mb(reader.read(proc.pid)["fp"])
+                            except Exception:
+                                pass
+                        finally:
+                            os.kill(proc.pid, signal.SIGCONT)
+                        s.update(frozen_at=t, trigger_fp_mb=mb(r["fp"]), frozen_s=rnd(time.time() - t, 2))
+                        hit["snap"] = s
+                    finally:
+                        hit["done"] = True
+
+                poll.arm(threshold, freeze)
+                bdown, bup, win = run_burst(ctx["host"], HEAP_SOCKS)
+                poll.disarm()
+                deadline = time.time() + 120
+                while hit.get("started") and not hit.get("done") and time.time() < deadline:
+                    time.sleep(0.05)
+                one = {"freeze": "at %.1f MiB (%.2f of %.1f, from %.1f at the start)" % (
+                    threshold / MIB, at, peak0 / MIB, start / MIB),
+                    "peak_mb": mb(max_of(poll.rows, "fp", *win)),
+                    "load": load_summary({"loadgen": [bdown, bup]})}
+                bursts.append(one)
+                if hit.get("snap"):
+                    s = hit["snap"]
+                    up = bdown.get("host_up_start")
+                    s["half"] = ("down half" if up and s["frozen_at"] < up else "up half") if up else None
+                    s["into_burst_s"] = rnd(s["frozen_at"] - win[0], 2)
+                    snaps.append(s)
+                    one["froze"] = True
+                    break
+                time.sleep(1.0)
+        else:
+            rec = heap_drive(ctx, "hold", rundir,
+                             mid=lambda: snaps.append(mac_snapshot(snapper, proc.pid, rundir, "hold-mid")))
+            row["hold"] = {"fp_median_mb": mb(median_in(poll.rows, "fp", *rec["idle"])),
+                           "fp_max_mb": mb(max_of(poll.rows, "fp", *rec["idle"])), "load": load_summary(rec),
+                           "load_ok": rec["ok"]}
+        final = reader.read(proc.pid)
+    finally:
+        if poll is not None:
+            poll.halt()
+        try:
+            os.kill(proc.pid, signal.SIGCONT)
+        except (ProcessLookupError, PermissionError):
+            pass
+        proc.stop()
+    row["bursts"] = bursts
+    row["fp_lifetime_peak_mb"] = mb(final.get("lifemax"))
+    row["fp_sampled_max_mb"] = mb(max_of(poll.rows, "fp"))
+    best = [s for s in snaps if s["tag"] != "idle"]
+    best = best[-1] if best else None
+    row["idle"] = {"split": snaps[0]["split"]} if snaps else None
+    if best:
+        row["snapshot"] = {k: best.get(k) for k in ("tag", "half", "into_burst_s", "trigger_fp_mb", "fp_frozen_mb",
+                                                     "frozen_s", "split")}
+        row["snapshot"]["vmmap_physical_footprint_mb"] = mb((best.get("vmmap") or {}).get("physical_footprint"))
+        row["snapshot"]["footprint_mb"] = mb((best.get("footprint") or {}).get("footprint"))
+        row["snapshot"]["footprint_columns"] = (best.get("footprint") or {}).get("columns")
+    elif load == "burst":
+        row["notes"].append("no burst crossed the freeze threshold, so there is no snapshot at the peak; the idle "
+                            "snapshot is in row.idle")
+    row["snapshots_files"] = sorted(p.name for p in rundir.glob("*.txt"))
+    return row
+
+
+# ---- tables
+
+
+def heap_cell(v, digits=1):
+    return "-" if v is None else ("%.*f" % (digits, v) if isinstance(v, float) else str(v))
+
+
+def heap_text(doc):
+    """The job log's tables: one line per run, then each run's allocation sites."""
+    out = []
+    linux = [r for r in doc["rows"] if r.get("platform", "").startswith("linux")]
+    mac = [r for r in doc["rows"] if r.get("platform", "").startswith("macos")]
+    if linux:
+        out.append("\nheap-profile, Linux (heaptrack; RSS from a run without it), %s, mobile profile, MiB" %
+                   doc.get("xray_rust_version", "xray-rust"))
+        out.append("%-31s %-6s %8s %7s %8s %8s %9s %9s %9s %8s %-12s" % (
+            "line", "load", "heap pk", "RSS pk", "anon@pk", "file@pk", "RSS-heap", "anon-heap", "heap@end", "ht RSS",
+            "heap peak"))
+        for r in linux:
+            if r.get("error"):
+                out.append("%-31s %-6s FAILED: %s" % (r["line"][:31], r["load"], r["error"].splitlines()[0][:160]))
+                continue
+            f = r["figures"]
+            out.append("%-31s %-6s %8s %7s %8s %8s %9s %9s %9s %8s %-12s" % (
+                r["line"][:31], r["load"], heap_cell(f.get("heap_peak_mb"), 2), heap_cell(f.get("rss_peak_mb")),
+                heap_cell(f.get("rss_anon_at_peak_mb")), heap_cell(f.get("rss_file_at_peak_mb")),
+                heap_cell(f.get("rss_minus_heap_mb")), heap_cell(f.get("anon_minus_heap_mb")),
+                heap_cell(f.get("heap_live_at_end_mb"), 2), heap_cell(f.get("heaptrack_rss_peak_mb")),
+                f.get("heap_peak_when") or "-"))
+            if r["load"] == "hold":
+                out.append("    hold idle: heap median %s, RSS median %s, RSS anon median %s" % (
+                    heap_cell(f.get("heap_hold_median_mb"), 2), heap_cell(f.get("rss_hold_median_mb")),
+                    heap_cell(f.get("rss_anon_hold_median_mb"))))
+            sm = (r["plain"].get("at_max") or {}).get("smaps_mb") or {}
+            if sm:
+                out.append("    RSS at its largest sample by kind: " + ", ".join("%s %s" % (k, v) for k, v in sm.items()
+                                                                                  if v))
+        for r in linux:
+            if r.get("error"):
+                continue
+            ht = r["heaptrack"]
+            for key, label, n in (("sites_at_peak", "at the heap's peak", HEAP_TOP),
+                                  ("sites_live_at_end", "still live when the core was stopped", 10)):
+                if key == "sites_live_at_end" and r["load"] != "hold":
+                    continue
+                total = ht.get("peak_heap_bytes") if key == "sites_at_peak" else ht.get("live_at_end_bytes")
+                out.append("\n  %s / %s: top %d allocation sites %s (%.2f MiB; the %s listed backtraces hold %s%%)" % (
+                    r["line"], r["load"], n, label, (total or 0) / MIB,
+                    ht.get("traces_listed_at_peak") if key == "sites_at_peak" else ht.get("traces_listed_live_at_end"),
+                    ht.get("listed_share_of_peak") if key == "sites_at_peak" else ht.get("listed_share_live_at_end")))
+                out.append("  %3s %7s %6s %8s  %-64s %s" % ("#", "MiB", "%", "calls", "site (file:line)", "function; via"))
+                for k, s in enumerate(ht.get(key) or [], 1):
+                    if k > n:
+                        break
+                    via = s["via"][0]["call"] if s.get("via") else ""
+                    at = s["alloc_at"][0]["frame"] if s.get("alloc_at") else ""
+                    out.append("  %3d %7.2f %6s %8d  %-64s %s%s%s" % (
+                        k, s["bytes"] / MIB, heap_cell(s.get("share")), s["calls"], s["site"][-64:],
+                        s["function"][-70:], ("; via " + via[-90:]) if via else "",
+                        ("; asked in " + at[-90:]) if at and at != via else ""))
+    if mac:
+        out.append("\nheap-profile, macOS (footprint / vmmap of the core, frozen near its peak), %s, MiB of "
+                   "phys_footprint" % doc.get("xray_rust_version", "xray-rust"))
+        head = ("line", "settings", "load", "snap", "peak", "when") + MAC_GROUPS + ("m-alloc", "m-frag")
+        out.append("%-29s %-15s %-5s %6s %6s %-9s " % head[:6] + " ".join("%7s" % g.replace("malloc ", "m-")[:7]
+                                                                           for g in head[6:]))
+        for r in mac:
+            if r.get("error"):
+                out.append("%-29s %-15s %-5s FAILED: %s" % (r["line"][:29], r["settings"][:15], r["load"],
+                                                            r["error"].splitlines()[0][:150]))
+                continue
+            snap = r.get("snapshot") or {}
+            sp = snap.get("split") or {}
+            g = sp.get("groups_mb") or {}
+            peak = r.get("fp_lifetime_peak_mb") if r["load"] == "burst" else (r.get("hold") or {}).get("fp_max_mb")
+            when = snap.get("half") or ("mid-idle" if r["load"] == "hold" and snap else "-")
+            out.append("%-29s %-15s %-5s %6s %6s %-9s " % (
+                r["line"][:29], r["settings"][:15], r["load"], heap_cell(sp.get("total_mb")), heap_cell(peak),
+                str(when)[:9]) + " ".join("%7s" % heap_cell(g.get(k)) for k in MAC_GROUPS) +
+                " %7s %7s" % (heap_cell(sp.get("malloc_allocated_mb")), heap_cell(sp.get("malloc_frag_mb"))))
+            if sp.get("rest_mb"):
+                out.append("    rest: " + ", ".join("%s %s" % kv for kv in list(sp["rest_mb"].items())[:6]))
+    return "\n".join(out)
+
+
+def heap_markdown(doc):
+    """The job summary: the same tables, ten sites per run."""
+    out = ["## Where xray-rust's memory goes (lab.py heap-profile)", ""]
+    linux = [r for r in doc["rows"] if r.get("platform", "").startswith("linux")]
+    mac = [r for r in doc["rows"] if r.get("platform", "").startswith("macos")]
+    if linux:
+        out += ["Linux: heaptrack's heap peak against the RSS of a run without heaptrack (MiB).", "",
+                "| line | load | heap peak | RSS peak | anon at peak | file at peak | RSS - heap | anon - heap | "
+                "heap live at end | heap peak in |", "|---|---|---|---|---|---|---|---|---|---|"]
+        for r in linux:
+            if r.get("error"):
+                out.append("| %s | %s | FAILED: %s |||||||" % (r["line"], r["load"],
+                                                               r["error"].splitlines()[0][:200].replace("|", "/")))
+                continue
+            f = r["figures"]
+            out.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                r["line"], r["load"], heap_cell(f.get("heap_peak_mb"), 2), heap_cell(f.get("rss_peak_mb")),
+                heap_cell(f.get("rss_anon_at_peak_mb")), heap_cell(f.get("rss_file_at_peak_mb")),
+                heap_cell(f.get("rss_minus_heap_mb")), heap_cell(f.get("anon_minus_heap_mb")),
+                heap_cell(f.get("heap_live_at_end_mb"), 2), f.get("heap_peak_when") or "-"))
+        for r in linux:
+            if r.get("error"):
+                continue
+            ht = r["heaptrack"]
+            out += ["", "%s / %s, top 10 sites at the heap's peak (%.2f MiB):" % (
+                r["line"], r["load"], (ht.get("peak_heap_bytes") or 0) / MIB), "",
+                "| # | MiB | % | calls | site | function | via |", "|---|---|---|---|---|---|---|"]
+            for k, s in enumerate((ht.get("sites_at_peak") or [])[:10], 1):
+                out.append("| %d | %.2f | %s | %d | `%s` | `%s` | %s |" % (
+                    k, s["bytes"] / MIB, heap_cell(s.get("share")), s["calls"], s["site"], s["function"][-80:],
+                    ("`%s`" % s["via"][0]["call"][-100:]) if s.get("via") else ""))
+    if mac:
+        out += ["", "macOS: phys_footprint of the core frozen near its peak (MiB), by footprint's categories.", "",
+                "| line | settings | load | snapshot | peak | when | " + " | ".join(MAC_GROUPS) +
+                " | malloc allocated | malloc frag |", "|" + "---|" * (6 + len(MAC_GROUPS) + 2)]
+        for r in mac:
+            if r.get("error"):
+                out.append("| %s | %s | %s | FAILED: %s |" % (r["line"], r["settings"], r["load"],
+                                                             r["error"].splitlines()[0][:200].replace("|", "/")))
+                continue
+            snap = r.get("snapshot") or {}
+            sp = snap.get("split") or {}
+            g = sp.get("groups_mb") or {}
+            peak = r.get("fp_lifetime_peak_mb") if r["load"] == "burst" else (r.get("hold") or {}).get("fp_max_mb")
+            out.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                r["line"], r["settings"], r["load"], heap_cell(sp.get("total_mb")), heap_cell(peak),
+                snap.get("half") or ("mid-idle" if r["load"] == "hold" and snap else "-"),
+                " | ".join(heap_cell(g.get(k)) for k in MAC_GROUPS), heap_cell(sp.get("malloc_allocated_mb")),
+                heap_cell(sp.get("malloc_frag_mb"))))
+    return "\n".join(out) + "\n"
+
+
+def cmd_heap_profile(a):
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    b = Path(a.bin).resolve()
+    budget = Budget(a.budget_min)
+    is_mac = sys.platform == "darwin"
+    platform = a.platform
+    doc = {"what": "where xray-rust's memory goes: %s" % (
+        "phys_footprint by category (footprint, vmmap --summary) of the core frozen near its peak" if is_mac else
+        "the heap by allocation site (heaptrack) beside RSS by kind (a run without heaptrack)"),
+        "platform": platform, "runner": " ".join(os.uname()), "loads": {
+            "burst": "the rows' burst: %d downloads of %d bytes at once, a %.0f s pause, %d uploads of %d "
+                     "bytes at once, a %.0f s tail" % (BURST_FLOWS, BURST_EACH_DOWN, PAUSE_S, BURST_FLOWS, BURST_EACH_UP, BURST_TAIL_S),
+            "hold": "%d connections opened at once, a GET of %d bytes on each, %d s idle, a second GET on each, "
+                    "each answer checked against the page's bytes" % (HEAP_HOLD_N, HEAP_HOLD_GET, HEAP_HOLD_S)},
+        "settings": "mobile profile: %s" % json.dumps(xrs_mobile_env(), sort_keys=True), "rows": []}
+    rows = doc["rows"]
+    xrs_dir = Path((a.xray_rust if is_mac else a.xray_rust_lines) or (out / "no-xray-rust-given")).resolve()
+    xrs = xrs_dir / "xray-rust"
+    try:
+        info = load_json(xrs_dir / "xray-rust.build.json")
+    except (OSError, ValueError):
+        info = {}
+    doc["xray_rust_build"] = info
+    doc["xray_rust_version"] = "xray-rust %s %s%s" % (info.get("tag", "?"), str(info.get("commit", "?"))[:12],
+                                                      " + line tables" if info.get("profile_overrides") else "")
+    ctx = {"out": out, "bin": b, "loadgen": b / "loadgen", "host": LocalHost(b / "loadgen"), "platform": platform,
+           "xrs": xrs, "xrs_version": doc["xray_rust_version"]}
+    lines = list(HEAP_LINES)
+    loads = ("burst", "hold")
+    plan = [(line, "mobile profile", load) for line in lines for load in loads]
+    why_not = None
+    if not xrs.exists():
+        why_not = "the xray-rust %s was not built: %s missing (%s)" % (
+            "build" if is_mac else "build with line tables", xrs, tail(out.parent / (
+                "xray-rust-build.log" if is_mac else "xray-rust-lines-build.log"), 6).replace("\n", " | "))
+    if is_mac:
+        ctx["reader"] = MacReader()
+        ctx["snapper"] = MacSnapper()
+        p_bin = Path(a.xray_rust_patched).resolve() / "xray-rust" if a.xray_rust_patched else None
+        plan += [("vless-xhttp-reality packet-up", settings, "burst") for settings, *_ in XHTTP_WINDOW_ROWS]
+        for tool, argv in (("footprint", ["footprint", "--help"]), ("vmmap", ["vmmap", "--help"]),
+                           ("sw_vers", ["sw_vers"])):
+            try:
+                cp = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+                (out / ("%s.help.txt" % tool)).write_text((cp.stdout or "") + (cp.stderr or ""))
+            except (OSError, subprocess.SubprocessError) as e:
+                (out / ("%s.help.txt" % tool)).write_text("did not run: %s\n" % e)
+    else:
+        ctx["heaptrack"] = shutil.which("heaptrack")
+        ctx["heaptrack_print"] = shutil.which("heaptrack_print")
+        ctx["htdir"] = Path(a.heaptrack_out or (out / "heaptrack")).resolve()
+        ctx["htdir"].mkdir(parents=True, exist_ok=True)
+        if why_not is None and not (ctx["heaptrack"] and ctx["heaptrack_print"]):
+            why_not = "heaptrack is not installed (the workflow's apt step)"
+        if ctx["heaptrack"]:
+            doc["heaptrack_version"] = first_line([ctx["heaptrack"], "--version"])
+            doc["heaptrack_print_version"] = first_line([ctx["heaptrack_print"], "--version"])
+    if why_not:
+        for line, settings, load in plan:
+            rows.append({"platform": platform, "line": line, "settings": settings, "load": load, "error": why_not})
+        write_json(out / "heap-profile.json", doc)
+        print(heap_text(doc), flush=True)
+        return 1
+    for port in (PORT_PAGE, PORT_DEST, PORT_REALITY, PORT_XHTTP, PORT_WEBTUNNEL, PORT_SOCKS):
+        if not wait_port_free(port, 15):
+            raise LabError("port %d is still taken" % port)
+    servers = Servers(out, b / "loadgen", b / "xray-26.4.25" / "xray")
+    try:
+        servers.start()
+        doc["server"] = servers.version
+        loop = "127.0.0.1"
+        hy2_pin = cert_sha256(servers.dir / "hy2.crt")
+        try:
+            wt_pin = cert_sha256(servers.dir / "webtunnel.crt")
+        except (OSError, LabError):
+            wt_pin = "0" * 64
+        build = {"vless-reality-vision": lambda: xrs_reality(loop, servers.pub),
+                 "hysteria2-salamander": lambda: xrs_hy2(loop, hy2_pin),
+                 "vless-xhttp-reality packet-up": lambda: xrs_xhttp(loop, servers.pub),
+                 WEBTUNNEL: lambda: xrs_webtunnel(loop, wt_pin)}
+        windows = {s: (patched, fields, what) for s, patched, fields, what in XHTTP_WINDOW_ROWS}
+        for line, settings, load in plan:
+            base = {"platform": platform, "line": line, "settings": settings, "load": load}
+            if not budget.allows(150):
+                rows.append(dict(base, error="skipped: out of the %.0f min budget" % a.budget_min))
+                continue
+            if line == WEBTUNNEL and servers.wt_error:
+                rows.append(dict(base, error="the WebTunnel server: " + servers.wt_error))
+                continue
+            log("heap-profile:", line, "|", settings, "|", load)
+            t0 = time.time()
+            try:
+                cfg, cfg_notes = build[line]()
+                if is_mac:
+                    binary = xrs
+                    if settings in windows:
+                        patched, fields, what = windows[settings]
+                        cfg["outbounds"][0]["streamSettings"]["xhttpSettings"].update(fields)
+                        cfg_notes = cfg_notes + [what]
+                        if patched:
+                            if not (p_bin and p_bin.exists()):
+                                raise LabError("the patched xray-rust was not built (xray-rust-patched-build.log)")
+                            binary = p_bin
+                    row = heap_mac_row(ctx, line, settings, load, binary, cfg, cfg_notes)
+                else:
+                    row = heap_linux_row(ctx, line, load, cfg, cfg_notes)
+            except Exception as e:
+                traceback.print_exc()
+                row = dict(base, error="%s: %s" % (type(e).__name__, e))
+            row["seconds"] = rnd(time.time() - t0, 1)
+            rows.append(row)
+            write_json(out / "heap-profile.json", doc)
+            print(heap_text(dict(doc, rows=[row])), flush=True)
+    finally:
+        servers.stop()
+        if is_mac:
+            doc["snapshot_tools"] = {"used": {k: " ".join(v) for k, v in ctx["snapper"].ways.items()},
+                                     "tried": ctx["snapper"].tried}
+        write_json(out / "heap-profile.json", doc)
+    print(heap_text(doc), flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(heap_markdown(doc))
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -4364,6 +5797,17 @@ def main(argv=None):
     f.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray, harness, hev-socks5-tunnel[-nomore]")
     f.add_argument("--out", required=True)
     f.add_argument("--budget-min", type=float, default=4.5)
+    h = sub.add_parser("heap-profile", help="where xray-rust's memory goes: heaptrack on Linux, footprint and vmmap "
+                                            "on macOS")
+    h.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray")
+    h.add_argument("--out", required=True)
+    h.add_argument("--platform", required=True)
+    h.add_argument("--xray-rust", help="the rows' build (macOS runs it)")
+    h.add_argument("--xray-rust-patched", help="the patched build (macOS: the XHTTP window row that needs it)")
+    h.add_argument("--xray-rust-lines", help="the build with line tables (Linux runs it; rust-core-build.sh "
+                                             "XRS_LINE_TABLES=1)")
+    h.add_argument("--heaptrack-out", help="where heaptrack's data and heaptrack_print's text go (Linux)")
+    h.add_argument("--budget-min", type=float, default=24)
     fs = sub.add_parser("flow-socks", help="udp-flow's python SOCKS5 server (runs until killed)")
     fs.add_argument("--port", type=int, required=True)
     fs.add_argument("--login", help="username:password")
@@ -4378,6 +5822,8 @@ def main(argv=None):
             return cmd_table(a)
         if a.cmd == "udp-flow":
             return cmd_udp_flow(a)
+        if a.cmd == "heap-profile":
+            return cmd_heap_profile(a)
         if a.cmd == "flow-socks":
             return cmd_flow_socks(a)
         return cmd_shapes_check(a)
