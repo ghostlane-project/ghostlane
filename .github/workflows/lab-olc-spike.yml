@@ -47,7 +47,7 @@ env:
   # Moving the pin is a change to this file (and so a run).
   SPIKE_REPO: "https://github.com/ghostlane-project/xray-rust"
   SPIKE_REF: "gl/olc-spike"
-  SPIKE_COMMIT: "e47a162abaef8d2f72f03f0d9e1d0f8a6860ba67"
+  SPIKE_COMMIT: "56d3f1f28f0a631f7ca59435e063c4cdcc8233b4"
   # The olcRTC engine at the exits' pin.
   ENGINE_REPO: "https://github.com/ghostlane-project/olcrtc"
   ENGINE_COMMIT: "2d4266af3947f4d9940efafb0d5aabb6207f6659"
@@ -202,7 +202,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: olc-spike-bridge
-          path: bin/dimpl/sdp-bridge
+          path: |
+            bin/dimpl/sdp-bridge
+            bin/boring/sdp-bridge
           retention-days: 3
 
       - name: Upload
@@ -261,6 +263,7 @@ jobs:
           done | tee "$GITHUB_WORKSPACE/out/build-summary.txt"
 
       - name: Symbols
+        if: ${{ !cancelled() }}
         run: |
           set +e -uo pipefail
           for t in aarch64-apple-ios-sim aarch64-apple-ios; do
@@ -271,6 +274,7 @@ jobs:
           done | tee out/symbols.txt
 
       - name: Run on the macOS host
+        if: ${{ !cancelled() }}
         run: |
           set +e -uo pipefail
           b=xrs/olc/spike/target/aarch64-apple-darwin/release/ios-link
@@ -279,6 +283,7 @@ jobs:
           grep -E '^RESULT|^HANDSHAKE|^TLS_OK|^FAIL|^rc=|maximum resident|peak memory footprint' out/host.log
 
       - name: Link into a C program and run in the simulator
+        if: ${{ !cancelled() }}
         run: |
           set +e -uo pipefail
           udid=$(xcrun simctl list devices available --json | python3 -c '
@@ -357,20 +362,26 @@ jobs:
           OLC_SPIKE_MTSLINK_ROOM: ${{ secrets.OLC_SPIKE_MTSLINK_ROOM }}
         run: |
           set +e -uo pipefail
-          chmod +x bin/sdp-bridge; mkdir -p out
+          chmod +x bin/*/sdp-bridge; mkdir -p out
           if [ -z "$OLC_SPIKE_MTSLINK_ROOM" ]; then echo "no OLC_SPIKE_MTSLINK_ROOM secret: skipped"; exit 0; fi
-          OLC_SPIKE_OUT=$PWD/out/probe-b.out xrs/olc/spike/scripts/probe-b-mtslink.sh engine bin/sdp-bridge \
-            --dtls dimpl --version 12 --stun chrome 2>&1 | tee out/probe-b.test.log
+          for v in "boring auto" "dimpl 12"; do
+            set -- $v
+            OLC_SPIKE_OUT=$PWD/out/probe-b-$1.out xrs/olc/spike/scripts/probe-b-mtslink.sh engine "bin/$1/sdp-bridge" \
+              --dtls "$1" --version "$2" --stun chrome 2>&1 | tee "out/probe-b-$1.test.log"
+          done
 
       - name: Probe (c), VK Calls
         env:
           OLC_SPIKE_VKCALLS_ROOM: ${{ secrets.OLC_SPIKE_VKCALLS_ROOM }}
         run: |
           set +e -uo pipefail
-          chmod +x bin/sdp-bridge; mkdir -p out
+          chmod +x bin/*/sdp-bridge; mkdir -p out
           if [ -z "$OLC_SPIKE_VKCALLS_ROOM" ]; then echo "no OLC_SPIKE_VKCALLS_ROOM secret: skipped"; exit 0; fi
-          OLC_SPIKE_OUT=$PWD/out/probe-c.out xrs/olc/spike/scripts/probe-c-vkcalls.sh engine bin/sdp-bridge \
-            --dtls dimpl --version 12 --stun chrome --role client 2>&1 | tee out/probe-c.test.log
+          for v in "boring auto" "dimpl 12"; do
+            set -- $v
+            OLC_SPIKE_OUT=$PWD/out/probe-c-$1.out xrs/olc/spike/scripts/probe-c-vkcalls.sh engine "bin/$1/sdp-bridge" \
+              --dtls "$1" --version "$2" --stun chrome --role client 2>&1 | tee "out/probe-c-$1.test.log"
+          done
 
       - name: Upload
         if: ${{ !cancelled() }}
