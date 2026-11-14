@@ -55,6 +55,7 @@ jobs:
       ios_extension: ${{ steps.paths.outputs.ios_extension }}
       android_tun2socks: ${{ steps.paths.outputs.android_tun2socks }}
       singbox_size: ${{ steps.paths.outputs.singbox_size }}
+      rust_core: ${{ steps.paths.outputs.rust_core }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -105,6 +106,7 @@ jobs:
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
             echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
+            echo 'rust_core=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -169,6 +171,15 @@ jobs:
             echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
           else
             echo 'singbox_size=false' >> "$GITHUB_OUTPUT"
+          fi
+          # The Rust core reads and starts the core.json references: when they,
+          # the script that asks it, or this file (which pins the core) changed.
+          # The references change with every change to what the app writes
+          # for the core, which the Gradle job's dump test enforces.
+          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/(bypass-)?ios-core-|^scripts/check-rust-core-configs\.sh$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+            echo 'rust_core=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'rust_core=false' >> "$GITHUB_OUTPUT"
           fi
 
   checks:
@@ -634,3 +645,65 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+  # The Rust core's own verdict on the core.json the app writes for it: the
+  # parser of ghostlane-project/xray-rust at the pinned commit reads every
+  # reference config (sharedUI/src/jvmTest/resources/reference-configs/
+  # ios-core-*.json and bypass-ios-core-*.json, which the Gradle job's dump
+  # test holds XrayConfig.buildIosCore to), and the core is started from each
+  # until it binds its SOCKS port (scripts/check-rust-core-configs.sh). The
+  # CLI is built once per pin and cached (25 MB).
+  rust-core-configs:
+    needs: scope
+    if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true'
+    name: "Rust core: the app's core.json"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # The one pin of the core on this branch. It moves to
+      # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
+      # feat/rust-core-ci, is on the same branch as this job; until then
+      # this is the only copy here, and the same commit: 7259d7b2, the
+      # fork's ghostlane (4a61b057) with rustls from ghostlane-project/
+      # shaped-rustls. Bump it with the copy of the core's field lists in
+      # XrayRustSurface.
+      XRAY_RUST_REPO: ghostlane-project/xray-rust
+      XRAY_RUST_COMMIT: 7259d7b2199fb22ceb5910a8e3a01cf1ef33f88e
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Cache the CLI
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.XRAY_RUST_COMMIT }}-v1
+
+      # The project's own CLI build (its README: cargo build --locked -p
+      # xray-cli) with --release, from exactly the pinned commit, with the
+      # toolchain its rust-toolchain.toml names.
+      - name: Build xray-rust's CLI at the pin
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_RETRY: "5"
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/xray-rust"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "https://github.com/${XRAY_RUST_REPO}.git" "$XRAY_RUST_COMMIT"
+          git -C "$src" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$XRAY_RUST_COMMIT"
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$src/rust-toolchain.toml")"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          (cd "$src" && cargo "+$toolchain" build --locked --release -p xray-cli)
+          install -D -m 0755 "$src/target/release/xray-rust" ~/.cache/rust-core-cli/xray-rust
+
+      - name: The core parses and starts every reference config
+        run: |
+          set -euo pipefail
+          shellcheck scripts/check-rust-core-configs.sh
+          bash scripts/check-rust-core-configs.sh ~/.cache/rust-core-cli/xray-rust
