@@ -42,7 +42,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-rtc"
-  XRS_COMMIT: "3117a2d53afa7afd0d0335095655c2146d363970"
+  XRS_COMMIT: "5e722e76343248f9e3c5a19b74fc2f79d20daac3"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
