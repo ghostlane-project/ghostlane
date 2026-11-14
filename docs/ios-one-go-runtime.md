@@ -320,10 +320,18 @@ the build that ships this.
 
 ## The Rust core's config, core.json (Phase 1, the app's half)
 
-`ghostlane-core` (xray-rust, OpenSpec change `ghostlane-rust-core`) runs a line
-from `core.json` in the App Group, behind hev like the Go engines. The app
-writes it; the extension looks for olcrtc.json, xray.json, core.json, then
-config.json, and starts the first it finds.
+`ghostlane-core` (xray-rust, OpenSpec change `ghostlane-rust-core`) is to run
+a line from `core.json` in the App Group, behind hev like the Go engines. This
+is the app's half: the app can write core.json, and writes it for no line yet.
+
+**Not live.** `IosVpnManager.IOS_ENGINES` gives every transport to GO. The
+packet tunnel on this branch reads only olcrtc.json, xray.json and
+config.json; a transport mapped to RUST would run sing-box from config.json
+under a log that says `engine=rust+hev`, and XHTTP would have no engine at
+all. A transport turns to RUST in the commit where this half meets the
+extension's, and Hysteria2 and XHTTP only once their lab rows pass (D5 gate
+2: Hysteria2 measured 19.8 MiB against Go's 16.4, XHTTP 48.9 against 32.9).
+No build of this branch changes what an iPhone runs.
 
 - `XrayConfig.buildIosCore` (shared Kotlin, `IosCore.kt`): sing-box's iOS
   shape in the Xray JSON xray-rust's parser accepts, which refuses a whole
@@ -339,26 +347,67 @@ config.json, and starts the first it finds.
   Reality gRPC, WebTunnel over ws and httpupgrade, Hysteria2 (Salamander,
   `pinSHA256` verified as `pinnedPeerCertSha256`), XHTTP Reality with Go's
   512 KiB stream window.
-- `IosVpnManager.IOS_ENGINES`: the engine per transport (D2). A Rust line
-  gets core.json and no xray.json; config.json is still Phase 0's. A line
-  the core would refuse (`IosCore.refusal`: a server named by a hostname,
-  `allowInsecure`, a flow other than Vision, a fingerprint with no REALITY
-  hello, Hysteria2 waived with no pin, a pin not in hex, a Salamander
-  password outside 4 to 4096 bytes) goes to Go whole, and the app's log says
-  why. The app's log says `engine=rust+hev`.
+- WebTunnel offers the link's ALPN: ProofKit's links say `alpn=h2,http/1.1`,
+  a browser's offer, and the core keeps exactly that list on an upgrade
+  handshake and sends `http/1.1` alone for anything else, the fingerprint
+  the line exists to avoid. Phase 0's sing-box had the same gap (given no
+  ALPN it offers `http/1.1` alone); it now writes `h2, http/1.1` when the
+  link asks for exactly that, on ws and httpupgrade.
+- Hysteria2 with Salamander turns ChromeParrot off
+  (`finalmask.quicParams.disableChromeParrot`): the parrot shapes QUIC's
+  handshake like Chrome's and with it replaces the core's receive windows by
+  Chrome's 6 and 15 MiB, while Salamander hides that handshake. Without
+  Salamander the parrot stays on.
+- `IosVpnManager.IOS_ENGINES`: the engine per transport (D2), all GO for now
+  (above). A Rust line is to get core.json and no xray.json; config.json is
+  still Phase 0's. A line the core would refuse (`IosCore.refusal`: a server
+  named by a hostname, `allowInsecure`, a flow other than Vision, a
+  fingerprint with no REALITY hello, Hysteria2 waived with no pin, a pin not
+  in hex, a Salamander password outside 4 to 4096 bytes) goes to Go whole,
+  and the app's log says why.
 - Held by `XrayConfigIosCoreTest` (every field against the core's own field
-  lists, `XrayRustSurface`), the reference configs `ios-core-*.json` and
-  `bypass-ios-core-*.json` (`RustCoreConfigDumpTest`), and
-  `scripts/check-rust-core-configs.sh <xray-rust>`, which has the core's
-  parser read them.
+  lists, `XrayRustSurface`, copied from the fork at 7259d7b2), the reference
+  configs `ios-core-*.json` and `bypass-ios-core-*.json`
+  (`RustCoreConfigDumpTest`; per line with stand-in lists, and
+  `bypass-ios-core-bundled-lists.json` once with the bundled Russian lists,
+  which a lists refresh moves and the core is asked about again), and PR
+  Checks' job "Rust core: the app's core.json", which builds the fork's CLI
+  at the pinned commit and runs `scripts/check-rust-core-configs.sh` on every
+  reference: the core's parser reads each, and the core starts it, binds its
+  SOCKS port and stops.
+
+What is not here yet, for the extension's half (a later branch):
+
+- The packet tunnel reads core.json (after olcrtc.json and xray.json, before
+  config.json) and starts the core from it behind hev, with hev's UDP mode
+  per engine: `udp: 'tcp'` for core.json (the core's password inbound
+  refuses UDP ASSOCIATE for 0.0.0.0:0 by design), `udp: 'udp'` for the Go
+  engines; hev's `max-session-count` stays under the core's 1024 UDP flows.
+- `DirectResolver.pick` skips a zoned link-local resolver (`fe80::1%en0`)
+  for core.json and uses `DirectResolver.fallback`: the core refuses a zone
+  in `dns.servers[].address`, and the whole config with it, so Bypass Russia
+  would not start on an IPv6-only network with a link-local RDNSS. A test in
+  `DirectResolverTests`. (Stripping the zone is not a fix: a link-local
+  address without its scope usually cannot be dialled.)
+- The app writes the new engine file before it removes the stale ones, so
+  an on-demand start in between sees the old config or the new one, never
+  the fallback; and a Rust XHTTP line never falls back to config.json,
+  which cannot run without xray.json.
 
 What does not match Phase 0, and why:
 
 - Non-address queries (SRV, TXT, MX, PTR, SVCB…) for names off the direct
   lists get an empty NOERROR; sing-box asks 1.1.1.1 through the tunnel. The
-  core's `dns` outbound cannot dial through `out`, and that is the only
-  thing that answers the tun's resolver. A and AAAA are not affected: the
-  exit resolves the name behind a fake address.
+  core's `dns` outbound cannot dial through `out` (chaining it through a
+  REALITY `out` is refused by the core: "REALITY over a preconnected stream
+  is unsupported"), and it is the only thing that answers the tun's
+  resolver. Pending a fork patch, `gl/dns-forward`, being written now: a
+  `dns` outbound rule that forwards a query as a new flow through a named
+  outbound, as Xray's own DNS does with a tagged server. With it the app adds
+  that rule for every type but A, AAAA and HTTPS. Until then this is a known
+  divergence for the owner to accept or hold the switch on, and a device
+  check for D3/D5: an SRV or TXT lookup on the phone. A and AAAA are not
+  affected: the exit resolves the name behind a fake address.
 - No `reverse_mapping`: under Bypass Russia a connection to a Russian name's
   real address that carries no name to sniff (not TLS, HTTP or QUIC) is
   matched by the address list alone, which is IPv4 only (`XrayGeodata`), so

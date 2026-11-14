@@ -423,7 +423,8 @@ class IosVpnManager(
         // and WebTunnel (since 2026-11-13; docs/ios-one-go-runtime.md). The
         // last follows SING_BOX_BEHIND_HEV, the switch that picks the shape
         // written, so the label cannot outlive a way back. The Rust core
-        // (core.json) runs the lines IOS_ENGINES gives it, also behind hev.
+        // (core.json) is to run the lines IOS_ENGINES gives it, also behind
+        // hev; it gives it none until the extension reads core.json.
         val engine = when {
             request.olcrtc != null -> "olcrtc+hev"
             request.coreConfig != null -> "rust+hev"
@@ -620,11 +621,12 @@ class IosVpnManager(
             ruleSets = ruleSets
         )
 
-        // D2, per transport: a line IOS_ENGINES gives to the Rust core runs
-        // from core.json, with xray.json removed so the extension reaches it
-        // (it looks for olcrtc.json, xray.json, core.json, then config.json).
-        // Everything above stays as Phase 0 wrote it: config.json is still
-        // written, and a line the core cannot take goes to Go whole.
+        // D2, per transport: a line IOS_ENGINES gives to the Rust core is to
+        // run from core.json, with xray.json removed so the extension reaches
+        // it (it is to look for olcrtc.json, xray.json, core.json, then
+        // config.json). Everything above stays as Phase 0 wrote it:
+        // config.json is still written, and a line the core cannot take goes
+        // to Go whole. The map gives the core nothing yet (IOS_ENGINES).
         val choice = IosCore.choose(spec, IOS_ENGINES)
         if (choice.engine != IosEngine.RUST) {
             choice.reason?.let { addLog("Rust core: $it; this line stays on the Go engine") }
@@ -1249,13 +1251,22 @@ class IosVpnManager(
          * take (IosCore.refusal) goes to Go whatever this says, and olcRTC
          * has no Rust engine. One entry back to GO is the way back for that
          * transport alone, and a release.
+         *
+         * Every transport is GO here, and must stay GO until the extension
+         * runs core.json: on this branch the packet tunnel reads only
+         * olcrtc.json, xray.json and config.json, so a RUST entry would run
+         * sing-box from config.json under a log that says `rust+hev`, and
+         * would leave XHTTP with no engine at all. The extension half comes in
+         * a later branch (docs/ios-one-go-runtime.md, "What is not here
+         * yet"); an entry turns to RUST in the commit where both halves meet,
+         * and Hysteria2 and XHTTP only once their lab rows pass (D5 gate 2).
          */
         val IOS_ENGINES: Map<IosTransport, IosEngine> = mapOf(
-            IosTransport.Reality to IosEngine.RUST,
-            IosTransport.RealityGrpc to IosEngine.RUST,
-            IosTransport.WebTunnel to IosEngine.RUST,
-            IosTransport.Hysteria2 to IosEngine.RUST,
-            IosTransport.Xhttp to IosEngine.RUST,
+            IosTransport.Reality to IosEngine.GO,
+            IosTransport.RealityGrpc to IosEngine.GO,
+            IosTransport.WebTunnel to IosEngine.GO,
+            IosTransport.Hysteria2 to IosEngine.GO,
+            IosTransport.Xhttp to IosEngine.GO,
             IosTransport.Olcrtc to IosEngine.GO,
         )
         const val KEY_SOCKS_PORT = "ios_socks_port"
