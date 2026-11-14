@@ -1,0 +1,4 @@
+/build/
+/Sources/OlcFfi/
+/.build/
+/.swiftpm/

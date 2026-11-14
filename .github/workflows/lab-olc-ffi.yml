@@ -1,0 +1,193 @@
+name: Lab - olcRTC FFI
+
+# A measurement, not a check: the groundwork of milestone M9 of the olcRTC
+# client port to Rust (the FFI). The iOS simulator XCTest of the plan's §10.7
+# drives OlcrtcRuntime, the Rust client's UniFFI API, as OlcrtcEngine drives
+# the Go framework today, against the T1 hub and the pinned Go server running
+# on this Mac runner:
+#   - the Rust core is ghostlane-core at the xray-rust commit pinned below
+#     (olc-ffi and xray-ffi in one static library, one Tokio runtime, one
+#     allocator), built for aarch64-apple-ios-sim with the Swift bindings
+#     generated from it (lab/olc-ffi/build-core.sh);
+#   - the T1 side is the engine at its pin with xray-rust's overlay, the
+#     overlay's TestT1Host (hub, origin, UDP echo, server), in the background;
+#   - the XCTest (lab/olc-ffi/Tests) checks the API, the callbacks, start,
+#     wait_ready and stop, a fetch through the SOCKS port with the login, UDP
+#     through hev in front (FWD_UDP and UDP ASSOCIATE), ten stop/starts, Go's
+#     error texts in localizedDescription and memory_stats().
+# Every RESULT/MEM line lands in the job summary; the logs in the artifact.
+#
+# Simulator only: no device, no TestFlight, no live carrier room, no secret.
+# Runs on a push to lab/olc-ffi or by hand, never on main, never on a pull
+# request, no schedule. (PR Checks, whose `push:` has no filter, starts on
+# the same push; its scope job decides what it runs.)
+on:
+  push:
+    branches:
+      - lab/olc-ffi
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-ffi
+  cancel-in-progress: true
+
+env:
+  # ghostlane-project/xray-rust gl/olc-ffi, fetched by its hash. Moving the
+  # pin is a change to this file (and so a run).
+  XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
+  XRS_REF: "gl/olc-ffi"
+  XRS_COMMIT: "4241e17e9868385fb75f572b186f6234d45cf06d"
+  GO_VERSION: "1.26.5"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  ios:
+    name: XCTest in the iOS simulator
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch xray-rust
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='xray-rust %H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchains
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-apple-ios-sim
+          rustup default "$RUST_TOOLCHAIN"
+          cargo --version; go version; xcodebuild -version
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-ffi-ios-${{ env.XRS_COMMIT }}
+          restore-keys: olc-ffi-ios-
+
+      - name: The T1 host (hub, origin, UDP echo, the pinned server)
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          echo "T1_CONFIG=$RUNNER_TEMP/olc-t1.json" >> "$GITHUB_ENV"
+          # The engine at its pin plus the overlay (olc/interop/lib.sh).
+          ( . xrs/olc/interop/lib.sh && olc_prepare "$OLC_WORK/engine" && echo "$OLC_WORK/engine" > "$RUNNER_TEMP/engine-dir" )
+          engine=$(cat "$RUNNER_TEMP/engine-dir")
+          cd "$engine"
+          OLC_T1_HOST_OUT="$RUNNER_TEMP/olc-t1.json" OLC_T1_HOST_FOR=75m GOFLAGS=-mod=readonly \
+            nohup go test -count=1 -timeout 85m -tags olcrtc_interop ./internal/gate -run '^TestT1Host$' -v \
+              -olcrtc.gate-target=interop > "$GITHUB_WORKSPACE/out/t1-host.log" 2>&1 &
+          echo "T1 host starting (pid $!); it builds the server first"
+
+      - name: hev-socks5-tunnel
+        run: |
+          set -euo pipefail
+          if ! bash scripts/fetch-hev-ios.sh lab/olc-ffi/build; then
+            . scripts/hev-pins.sh
+            git clone -q --recursive https://github.com/heiher/hev-socks5-tunnel.git "$RUNNER_TEMP/hev"
+            (cd "$RUNNER_TEMP/hev" && git checkout -q --recurse-submodules "$HEV_COMMIT")
+            bash scripts/build-hev-ios.sh "$RUNNER_TEMP/hev" lab/olc-ffi/build
+          fi
+          ls lab/olc-ffi/build/HevSocks5Tunnel.xcframework
+
+      - name: The Rust core and its Swift bindings
+        run: |
+          set -euo pipefail
+          bash lab/olc-ffi/build-core.sh xrs lab/olc-ffi 2>&1 | tee out/build-core.log | grep -E '^(BUILD|SYMBOLS|error)|Finished' || true
+          test -f lab/olc-ffi/build/GhostlaneCoreFFI.xcframework/Info.plist
+          grep -h '^BUILD\|^SYMBOLS' out/build-core.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Wait for the T1 host
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 300); do
+            [ -s "$T1_CONFIG" ] && break
+            if ! pgrep -f 'TestT1Host' > /dev/null; then echo "the T1 host ended:"; tail -40 out/t1-host.log; exit 1; fi
+            sleep 2
+          done
+          [ -s "$T1_CONFIG" ] || { echo "no T1 host within 10 min"; tail -40 out/t1-host.log; exit 1; }
+          cp "$T1_CONFIG" /tmp/olc-t1.json
+          cat "$T1_CONFIG"; echo
+
+      - name: XCTest in the simulator
+        run: |
+          set +e -uo pipefail
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          best = None
+          for rt, devs in d.items():
+              if "iOS" not in rt:
+                  continue
+              v = tuple(int(x) for x in rt.rsplit("iOS-", 1)[-1].split("-") if x.isdigit())
+              for dev in devs:
+                  if dev["name"].startswith("iPhone") and (best is None or v > best[0]):
+                      best = (v, dev["udid"], dev["name"], rt)
+          print(best[1]); print(best[2], best[3], file=sys.stderr)
+          ')
+          echo "simulator $udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b > /dev/null
+          cd lab/olc-ffi
+          xcodebuild -list -json > "$GITHUB_WORKSPACE/out/xcodebuild-list.json" 2> "$GITHUB_WORKSPACE/out/xcodebuild-list.err"
+          # The package's own scheme (all its tests) when Xcode made one, else
+          # the library's.
+          scheme=$(python3 -c '
+          import json, sys
+          j = json.load(open(sys.argv[1]))
+          s = (j.get("workspace") or j.get("project") or {}).get("schemes", [])
+          print(next((x for x in s if x.endswith("-Package")), "OlcFfi" if "OlcFfi" in s else (s[0] if s else "OlcFfi")))
+          ' "$GITHUB_WORKSPACE/out/xcodebuild-list.json")
+          echo "scheme $scheme of: $(cat "$GITHUB_WORKSPACE/out/xcodebuild-list.json" | tr -d '\n ')"
+          TEST_RUNNER_T1_CONFIG="$T1_CONFIG" xcodebuild test -scheme "$scheme" \
+            -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$GITHUB_WORKSPACE/out/xctest.xcresult" \
+            > "$GITHUB_WORKSPACE/out/xctest.log" 2>&1
+          rc=$?
+          cd "$GITHUB_WORKSPACE"
+          grep -E '^(RESULT|MEM) |Test Case .*(passed|failed)|error: |XCTAssert|\*\* TEST' out/xctest.log | head -80
+          {
+            echo '### XCTest (iOS simulator)'
+            echo '```'
+            grep -E '^(RESULT|MEM) |Test Case .*(passed|failed)|\*\* TEST' out/xctest.log | head -80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ $rc -eq 0 ] || tail -80 out/xctest.log
+          exit $rc
+
+      - name: Stop the T1 host
+        if: always()
+        run: |
+          set +e
+          [ -n "${T1_CONFIG:-}" ] && touch "$T1_CONFIG.stop"
+          for _ in $(seq 1 20); do pgrep -f 'TestT1Host' > /dev/null || break; sleep 1; done
+          pkill -f 'TestT1Host'
+          srv=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["server_log"])' "$T1_CONFIG" 2>/dev/null)
+          [ -n "$srv" ] && [ -f "$srv" ] && cp "$srv" out/server.log
+          tail -20 out/t1-host.log
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: olc-ffi-ios
+          path: out/
+          retention-days: 14
