@@ -47,7 +47,7 @@ env:
   # Moving the pin is a change to this file (and so a run).
   SPIKE_REPO: "https://github.com/ghostlane-project/xray-rust"
   SPIKE_REF: "gl/olc-spike"
-  SPIKE_COMMIT: "2c40a05d7e848ef34a2a23035dc6264c7082bba1"
+  SPIKE_COMMIT: "2e157679505b34c9e9e209fada58e88880bc13df"
   # The olcRTC engine at the exits' pin.
   ENGINE_REPO: "https://github.com/ghostlane-project/olcrtc"
   ENGINE_COMMIT: "2d4266af3947f4d9940efafb0d5aabb6207f6659"
