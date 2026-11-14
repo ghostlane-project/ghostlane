@@ -41,8 +41,8 @@ env:
   # The client: ghostlane-project/xray-rust, fetched by its hash. Moving the
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
-  XRS_REF: "gl/olc-rtc-boring"
-  XRS_COMMIT: "27276224b6dcb7f385fd11a4e2abb8701e9f7f4b"
+  XRS_REF: "gl/olc-rtc"
+  XRS_COMMIT: "051efac2a2c35bcd30266dd54d691f1cf44d6167"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
