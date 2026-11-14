@@ -232,6 +232,34 @@ which only an iOS build of libXray contains; then `MobileSetMemoryLimit(40 MiB)`
 and `MemoryWatch.swift`'s release (`FreeOSMemory` above a 36 MiB footprint, at
 most every 5 s, checked four times a second). `-mode plain` applies none of it.
 
+## Where a new UDP flow's time goes (`udp-flow`)
+
+The ios-shape hev rows answered one DNS query to the tun's resolver in about
+0.42 s where the gVisor rows took 0.012 s, and each new UDP socket cost about
+that again. `lab.py udp-flow` (Linux, root via sudo; the step after Measure,
+so no row moves) takes that shape apart, one change per variant. Each variant
+sends 20 A queries to 172.19.0.2, each for a new name on a UDP socket of its
+own (behind hev, a new SOCKS5 association each), and opens 20 fresh TCP
+connections, each with a GET of 1024 bytes of the page; it reports the median
+and the p90 (nearest rank) of the query time, of the connect and of the first
+byte, both counted from the start of the connect.
+
+| id | what changes |
+|---|---|
+| V1 | nothing: `ios-socks-reality.json` behind hev at the pin, as the ios-shape hev row runs it |
+| V2 | V1 without the route rule `{"action":"sniff"}` |
+| V3 | V1 without the SOCKS login, in sing-box and in hev |
+| V4 | no hev and no tun: a python SOCKS5 client talks to sing-box's socks inbound with the login, a fresh association (or CONNECT) each time, timing the method reply, the login reply, the request reply and the datagram's answer (or the first byte); three ways: no option, `TCP_NODELAY`, and `MSG_MORE` on the method offer and the login, as hev at the pin sends them |
+| V5 | hev at the pin with the login in front of `lab.py flow-socks`, a python SOCKS5 server that answers DNS itself and sends every CONNECT to the page: hev without sing-box |
+| V6 | V5 with hev's `udp: 'tcp'` (UDP in TCP, hev's FWD_UDP), which the python server speaks and sing-box does not |
+| V7 | the control: `ios-tun-reality.json` on sing-box's own gVisor tun, as the ios-shape gVisor row runs it |
+| V8 | V1 with hev's `pipeline: true` |
+| V9 | V1 with `hev-socks5-tunnel-nomore`: the pin with `MSG_MORE` dropped from the two handshake writes that pass it (`hev-build.sh` builds it second). That is the iPhone's build, since Darwin has no `MSG_MORE` and hev-socks5-core falls back to 0, and upstream's b43fa85 outside pipeline mode |
+
+The table is in the step's log and the job summary; `udp-flow/udp-flow.json`
+in the Linux artifact has every figure, `udp-flow/runs/<id>/` the configs and
+logs. It starts its own servers and its own tuns (`pklab4`, `pklab5`).
+
 ## What it cannot tell
 
 - macOS on Apple silicon is not iOS: no jetsam, no packet tunnel extension, a
@@ -279,7 +307,7 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
 ## Files
 
 - `lab.py`: the driver (Python 3.9+, standard library): `desktop`, `android`,
-  `table`, `shapes-check`.
+  `table`, `shapes-check`, `udp-flow` (and `flow-socks`, its SOCKS5 server).
 - `harness/`: the cores harness (`build.sh`; `cores_stub.go` and the
   `labnocores` tag exist only to vet the harness's own code without the cores).
 - `loadgen/`: the page, the TLS site, the transfers, keys and certificates
@@ -289,4 +317,5 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
   `ios-socks.provenance.txt`; `xray-assets.txt`: the Xray archives
   and their sha256; `engine-src.sh`, `engine-build.sh`: the engine at the pin.
 - `rust-core-build.sh`: xray-rust at the workflow's pins; `hev-build.sh`:
-  hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit.
+  hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit, then udp-flow's
+  `hev-socks5-tunnel-nomore`.

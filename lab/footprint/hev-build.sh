@@ -51,3 +51,27 @@ install -m 0755 "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel"
 } > "${out}/hev.versions.txt"
 cat "${out}/hev.versions.txt"
 ls -l "${out}/hev-socks5-tunnel"
+
+# A second binary for lab.py udp-flow (V9) only: the same tree with MSG_MORE
+# dropped from the two writes of the SOCKS5 handshake that pass it
+# (hev-socks5-core f5c97b0, in the pin, sends the method offer and the login
+# with MSG_MORE in the standard handshake too). That is how Apple's clang
+# builds the iPhone's copy (Darwin has no MSG_MORE, so the file's fallback
+# makes it 0), and what upstream's b43fa85 (2026-11-06) does outside pipeline
+# mode. The pinned binary above is installed first and stays as built; a
+# failure here costs only the V9 row.
+client_c="${src}/src/core/src/hev-socks5-client.c"
+if [ "$(grep -c 'MSG_WAITALL | MSG_MORE' "${client_c}")" = 2 ]; then
+  sed -i 's/MSG_WAITALL | MSG_MORE/MSG_WAITALL/' "${client_c}"
+  if ( cd "${src}" && make clean exec ) \
+    && ! cmp -s "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel"; then
+    install -m 0755 "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel-nomore"
+    echo "hev-socks5-tunnel-nomore: ${got} with MSG_MORE dropped from the two handshake writes in ${client_c#"${src}/"}" \
+      > "${out}/hev-nomore.versions.txt"
+    ls -l "${out}/hev-socks5-tunnel-nomore"
+  else
+    echo "the MSG_MORE-free build failed or came out identical; no hev-socks5-tunnel-nomore" >&2
+  fi
+else
+  echo "${client_c} does not hold the two MSG_MORE writes; no hev-socks5-tunnel-nomore" >&2
+fi

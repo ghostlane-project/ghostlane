@@ -205,6 +205,21 @@ jobs:
           python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
             --engine-src "$ENGINE" --xray-rust "$XRS" --budget-min 34 ${{ matrix.lab_flags }}
 
+      # Where a new UDP flow's time goes behind hev (lab.py udp-flow, Linux,
+      # root): the ios-shape hev row taken apart one change at a time, 20 DNS
+      # queries on new sockets and 20 fresh TCP connections per variant, beside
+      # the gVisor tun. After Measure, with servers and tuns of its own, so no
+      # row moves; its table is in this step's log and the summary, its JSON in
+      # udp-flow/udp-flow.json of this job's artifact. A failure fails only it.
+      - name: UDP flow latency (hev against the gVisor tun)
+        if: ${{ !cancelled() && contains(matrix.lab_flags, '--tun') }}
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo -n true
+          python3 lab/footprint/lab.py udp-flow --bin "$BIN" --out "$OUT/udp-flow"
+
       - name: Table
         if: always()
         timeout-minutes: 2

@@ -5,6 +5,7 @@
     lab.py android      --bin DIR --device-bin DIR --apk FILE --out DIR
     lab.py table        FILE_OR_DIR...        prints (and adds to the job summary) one table
     lab.py shapes-check                       the lab's client shapes against the app's builders
+    lab.py udp-flow     --bin DIR --out DIR   where a new UDP flow's time goes behind hev (Linux, root)
 
 Every run is one core on one config, between servers this script starts on
 the same machine: one Xray 26.4.25 process (the version scripts/xray-servers.txt
@@ -36,8 +37,10 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
+import select
 import shlex
 import signal
 import socket
@@ -1003,23 +1006,18 @@ def dns_skip_name(data, off):
         off += 1 + n
 
 
-def dns_query_a(server, name, timeout=2.0):
-    """One A query over UDP, on a socket of its own (as the system resolver
-    asks): {rcode, a: [addresses], rtt_s}. Raises OSError on silence."""
+def dns_a_query(name):
+    """(id, bytes) of an A query for `name`, recursion desired."""
     qid = int.from_bytes(os.urandom(2), "big")
     query = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
     for label in name.rstrip(".").split("."):
         query += bytes([len(label)]) + label.encode("ascii")
     query += b"\0" + struct.pack(">HH", 1, 1)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.settimeout(timeout)
-        t0 = time.time()
-        s.sendto(query, (server, 53))
-        while True:
-            data, _ = s.recvfrom(4096)
-            if len(data) >= 12 and struct.unpack(">H", data[:2])[0] == qid:
-                break
-        rtt = time.time() - t0
+    return qid, query
+
+
+def dns_a_answer(data):
+    """(rcode, [IPv4 addresses]) of a DNS answer."""
     _, flags, qd, an, _, _ = struct.unpack(">HHHHHH", data[:12])
     off = 12
     for _ in range(qd):
@@ -1032,7 +1030,24 @@ def dns_query_a(server, name, timeout=2.0):
         if rtype == 1 and rdlen == 4:
             addrs.append(socket.inet_ntoa(data[off:off + 4]))
         off += rdlen
-    return {"rcode": flags & 0xF, "a": addrs, "rtt_s": round(rtt, 3)}
+    return flags & 0xF, addrs
+
+
+def dns_query_a(server, name, timeout=2.0):
+    """One A query over UDP, on a socket of its own (as the system resolver
+    asks): {rcode, a: [addresses], rtt_s}. Raises OSError on silence."""
+    qid, query = dns_a_query(name)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        t0 = time.time()
+        s.sendto(query, (server, 53))
+        while True:
+            data, _ = s.recvfrom(4096)
+            if len(data) >= 12 and struct.unpack(">H", data[:2])[0] == qid:
+                break
+        rtt = time.time() - t0
+    rcode, addrs = dns_a_answer(data)
+    return {"rcode": rcode, "a": addrs, "rtt_s": round(rtt, 3)}
 
 
 def ios_shape_checks(fake_range, seconds=20):
@@ -2968,6 +2983,798 @@ def cmd_shapes_check(a):
     return 1 if bad else 0
 
 
+# ---------------------------------------------------------------- udp-flow: where a new UDP flow's time goes
+#
+# The ios-shape hev rows took about 0.42 s for one DNS query to the tun's
+# resolver where the gVisor rows took 0.012 s, and every new UDP socket cost
+# about that again. `lab.py udp-flow` (Linux, root via sudo) takes the shape
+# apart: each variant changes one thing, then sends FLOW_N A queries to the
+# resolver, each on a socket of its own (a new UDP flow: behind hev, a new
+# SOCKS5 association), and opens FLOW_N fresh TCP connections, each with a
+# small GET. It starts its own servers and its own tuns under its own output
+# directory, and the workflow runs it after Measure, so no row moves.
+
+FLOW_N = 20
+FLOW_TUN_HEV = "pklab4"
+FLOW_TUN_GVISOR = "pklab5"
+FLOW_PORT_PYSOCKS = 10830
+FLOW_LOGIN = ("flow-user", "flow-pass")
+FLOW_GET_BYTES = 1024
+# The python SOCKS server sends every CONNECT to the page, so any address in
+# the routed fake range will do for its TCP series.
+FLOW_PY_TCP_TARGET = "198.18.0.10"
+# hev-socks5-core f5c97b0 (in the pin) sends the method offer and the login
+# with MSG_MORE in the standard handshake too; upstream b43fa85 (2026-11-06)
+# keeps MSG_MORE for the pipelined one only. Darwin has no MSG_MORE, so the
+# iPhone's build takes the file's fallback, 0.
+FLOW_HEV_MORE = "hev-socks5-tunnel"
+FLOW_HEV_NOMORE = "hev-socks5-tunnel-nomore"
+
+
+def pctl(values, q):
+    """Nearest-rank percentile: the p90 of 20 is the 18th smallest."""
+    s = sorted(values)
+    if not s:
+        return None
+    return s[max(0, math.ceil(q * len(s) - 1e-9) - 1)]
+
+
+def flow_summary(values):
+    return {"n": len(values), "median_s": rnd(statistics.median(values), 4) if values else None,
+            "p90_s": rnd(pctl(values, 0.9), 4), "min_s": rnd(min(values), 4) if values else None,
+            "max_s": rnd(max(values), 4) if values else None}
+
+
+def recv_exact(s, n):
+    data = b""
+    while len(data) < n:
+        chunk = s.recv(n - len(data))
+        if not chunk:
+            raise OSError("closed after %d of %d bytes" % (len(data), n))
+        data += chunk
+    return data
+
+
+def http_read_page(s, nbytes):
+    """Reads one response to a GET /bytes?n=nbytes and checks it is the
+    page's: status 200 and the page's own bytes. Returns when the body is in,
+    without waiting for the close."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = s.recv(65536)
+        if not chunk:
+            raise OSError("closed in the headers: %r" % data[:80])
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    m = re.search(rb"(?im)^content-length:\s*(\d+)", head)
+    if not head.startswith(b"HTTP/1.1 200") or not m or int(m.group(1)) != nbytes:
+        raise OSError("not the page: %r" % head[:120])
+    while len(body) < nbytes:
+        chunk = s.recv(65536)
+        if not chunk:
+            raise OSError("closed after %d of %d body bytes" % (len(body), nbytes))
+        body += chunk
+    if body[:nbytes] != page_pattern(nbytes):
+        raise OSError("%d bytes, but not the page's" % len(body))
+
+
+class Prefixed:
+    """A socket whose first recv returns bytes already read."""
+
+    def __init__(self, sock, head):
+        self.sock, self.head = sock, head
+
+    def recv(self, n):
+        if self.head:
+            out, self.head = self.head, b""
+            return out
+        return self.sock.recv(n)
+
+
+def flow_http_once(addr, port=80, timeout=10.0):
+    """One fresh TCP connection and a GET of FLOW_GET_BYTES of the page:
+    (connect s, first byte s), both counted from the start of the connect."""
+    t0 = time.perf_counter()
+    s = socket.create_connection((addr, port), timeout=timeout)
+    try:
+        t1 = time.perf_counter()
+        s.sendall(("GET /bytes?n=%d HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n"
+                   % (FLOW_GET_BYTES, IOS_CHECK_NAME)).encode())
+        first = s.recv(1)
+        t2 = time.perf_counter()
+        if not first:
+            raise OSError("closed before the first byte")
+
+        http_read_page(Prefixed(s, first), FLOW_GET_BYTES)
+    finally:
+        s.close()
+    return t1 - t0, t2 - t0
+
+
+def flow_series(n, once):
+    """`once(i)` n times; stops after 3 failures in a row."""
+    ok, fails, streak = [], [], 0
+    for i in range(n):
+        try:
+            ok.append(once(i))
+            streak = 0
+        except (OSError, LabError, struct.error, IndexError, ValueError) as e:
+            fails.append("#%d %s: %s" % (i, type(e).__name__, e))
+            streak += 1
+            if streak >= 3:
+                fails.append("stopped after 3 failures in a row")
+                break
+    return ok, fails
+
+
+def flow_dns_series(tag, n=FLOW_N):
+    """n A queries to the tun's resolver, each for a new name on a socket of
+    its own: a new UDP flow each."""
+    def once(i):
+        t0 = time.perf_counter()
+        a = dns_query_a(IOS_TUN_DNS, "%s-%d.flow.lab.test" % (tag, i), timeout=3.0)
+        rtt = time.perf_counter() - t0
+        if not a["a"]:
+            raise OSError("no A record (rcode %d)" % a["rcode"])
+        return rtt, a["a"][0]
+    ok, fails = flow_series(n, once)
+    out = {"queries": n, "answered": len(ok), "distinct_addresses": len({x[1] for x in ok}),
+           "rtt_s": [round(x[0], 4) for x in ok], "failures": fails[:5]}
+    out.update(flow_summary([x[0] for x in ok]))
+    return out
+
+
+def flow_tcp_series(addr, n=FLOW_N):
+    ok, fails = flow_series(n, lambda i: flow_http_once(addr))
+    return {"connections": n, "ok": len(ok), "target": addr,
+            "connect": flow_summary([x[0] for x in ok]), "first_byte": flow_summary([x[1] for x in ok]),
+            "connect_s": [round(x[0], 4) for x in ok], "first_byte_s": [round(x[1], 4) for x in ok],
+            "failures": fails[:5]}
+
+
+def flow_measure(tag, tcp_target=None):
+    """Warm up (one answered query for the page's name, then one GET), then
+    the DNS series and the TCP series through the tun. The TCP series goes to
+    the address the warm-up query got (sing-box's fake address for the page),
+    or to `tcp_target`."""
+    deadline = time.time() + 20
+    addr, err, tries = None, "not tried", 0
+    while time.time() < deadline:
+        tries += 1
+        try:
+            ans = dns_query_a(IOS_TUN_DNS, IOS_CHECK_NAME, timeout=3.0)
+            if ans["a"]:
+                addr = ans["a"][0]
+                break
+            err = "no address: %s" % ans
+        except OSError as e:
+            err = "%s: %s" % (type(e).__name__, e)
+        time.sleep(0.3)
+    if addr is None:
+        raise LabError("no DNS answer through the tun in 20 s (%d tries): %s" % (tries, err))
+    target = tcp_target or addr
+    deadline, warm_tcp, err = time.time() + 20, None, "not tried"
+    while time.time() < deadline:
+        try:
+            warm_tcp = flow_http_once(target)
+            break
+        except OSError as e:
+            err = "%s: %s" % (type(e).__name__, e)
+            time.sleep(0.5)
+    if warm_tcp is None:
+        raise LabError("no page through the tun at %s in 20 s: %s" % (target, err))
+    return {"warmup": {"dns_tries": tries, "page_address": addr, "tcp_first_byte_s": rnd(warm_tcp[1], 4)},
+            "dns": flow_dns_series(tag), "tcp": flow_tcp_series(target)}
+
+
+def flow_routes(tun):
+    for net in ("198.18.0.0/15", IOS_TUN_DNS + "/32"):
+        r = subprocess.run(["sudo", "-n", "ip", "route", "replace", net, "dev", tun], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise LabError("route %s into %s: %s" % (net, tun, r.stderr.strip()))
+
+
+def flow_drop_tun(tun):
+    if Path("/sys/class/net/%s" % tun).exists():
+        subprocess.run(["sudo", "-n", "ip", "link", "delete", tun], capture_output=True, check=False)
+
+
+def flow_wait_link(tun, front, rundir, log_name):
+    deadline = time.time() + 10
+    while not link_up(tun) and time.time() < deadline and front.alive():
+        time.sleep(0.1)
+    if not link_up(tun):
+        raise LabError("%s is not up:\n%s" % (tun, tail(rundir / log_name)))
+
+
+def flow_harness(ctx, rundir, config, sudo=False):
+    """The cores harness (-mode ios, as the iOS shape rows run it) on
+    `config`, once it says ready."""
+    cfg = rundir / "config.json"
+    write_json(cfg, config)
+    if not sudo and not wait_port_free(PORT_SOCKS):
+        raise LabError("port %d is still taken by the previous variant" % PORT_SOCKS)
+    proc = Proc([ctx["bin"] / "harness", "-core", "singbox", "-mode", "ios", "-stats", rundir / "stats.jsonl",
+                 "-ready", rundir / "ready.json", "-config", cfg], rundir / "core.log", cwd=rundir,
+                env=clean_env(), sudo=sudo)
+    ready = wait_file(rundir / "ready.json", 40, proc)
+    if ready is None:
+        proc.stop()
+        raise LabError("the harness never said ready:\n" + tail(rundir / "core.log"))
+    proc.pid = int(ready["pid"])
+    return proc
+
+
+def flow_hev(ctx, rundir, exe_name, yaml_text):
+    """hev as root, with its own tun up and the fake range and the resolver
+    routed into it."""
+    exe = ctx["bin"] / exe_name
+    if not exe.exists():
+        raise LabError("%s was not built (hev-build.log)" % exe)
+    cfg = rundir / "hev.yml"
+    cfg.write_text(yaml_text)
+    front = Proc([exe, cfg], rundir / "hev.log", cwd=rundir, env=clean_env(), sudo=True)
+    real = find_pid_by_argv(exe.name, str(cfg))
+    if real is None:
+        front.stop()
+        raise LabError("hev did not start:\n" + tail(rundir / "hev.log"))
+    front.pid = real
+    try:
+        flow_wait_link(FLOW_TUN_HEV, front, rundir, "hev.log")
+        flow_routes(FLOW_TUN_HEV)
+    except Exception:
+        front.stop()
+        raise
+    return front
+
+
+def hev_tweak(yaml_text, old, new):
+    expect(yaml_text.count(old) == 1, "hev yaml holds %r once" % old)
+    return yaml_text.replace(old, new)
+
+
+def flow_ios_socks(ctx, rundir):
+    """Phase 0's ios-socks-reality.json, as the ios-shape hev row runs it."""
+    c, _, notes = ios_socks_shape("ios-socks-reality.json", "127.0.0.1", ctx["pub"], rundir)
+    return c, notes
+
+
+def run_flow_singbox_hev(ctx, rundir, v):
+    """sing-box behind hev: V1, V2, V3, V8, V9."""
+    config, notes = flow_ios_socks(ctx, rundir)
+    if v.get("no_sniff"):
+        rules = config["route"]["rules"]
+        kept = [r for r in rules if r != {"action": "sniff"}]
+        expect(len(kept) == len(rules) - 1, "exactly one {action: sniff} rule in the route")
+        config["route"]["rules"] = kept
+        notes.append("route rule {\"action\":\"sniff\"} removed; rules now %s" % json.dumps(kept))
+    if v.get("no_login"):
+        expect(config["inbounds"][0].pop("users", None), "the socks inbound had users")
+        notes.append("the socks inbound's users removed, and hev's username and password lines with them")
+    arrangement = ios_hev_socks(config)
+    expect(arrangement is not None, "TunArrangement finds the SOCKS inbound")
+    port, login = arrangement
+    expect((login is None) == bool(v.get("no_login")), "the login follows the variant")
+    yaml_text = hev_config(port, login=login, name=FLOW_TUN_HEV, ipv4=IOS_TUN_ADDRESS)
+    if v.get("pipeline"):
+        yaml_text = hev_tweak(yaml_text, "  udp: 'udp'\n", "  udp: 'udp'\n  pipeline: true\n")
+        notes.append("hev's socks5 section adds `pipeline: true`")
+    proc = flow_harness(ctx, rundir, config)
+    front = None
+    try:
+        if not wait_port(port, 20, proc):
+            raise LabError("the harness's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        front = flow_hev(ctx, rundir, v.get("hev", FLOW_HEV_MORE), yaml_text)
+        res = flow_measure(v["id"].lower())
+    finally:
+        if front is not None:
+            front.stop()
+        proc.stop()
+        flow_drop_tun(FLOW_TUN_HEV)
+    res["notes"] = notes
+    return res
+
+
+def run_flow_pysocks_hev(ctx, rundir, v):
+    """hev in front of the python SOCKS5 server (`lab.py flow-socks`), no
+    sing-box: V5, V6."""
+    server = Proc([sys.executable, Path(__file__).resolve(), "flow-socks", "--port", str(FLOW_PORT_PYSOCKS),
+                   "--login", "%s:%s" % FLOW_LOGIN, "--page-port", str(PORT_PAGE)],
+                  rundir / "pysocks.log", cwd=rundir, env=clean_env())
+    front = None
+    try:
+        if not wait_port(FLOW_PORT_PYSOCKS, 15, server):
+            raise LabError("the python SOCKS server did not listen:\n" + tail(rundir / "pysocks.log"))
+        yaml_text = hev_config(FLOW_PORT_PYSOCKS, login=FLOW_LOGIN, name=FLOW_TUN_HEV, ipv4=IOS_TUN_ADDRESS)
+        notes = ["hev at the pin with HevTunnel.configuration and a login, in front of `lab.py flow-socks`: a "
+                 "threaded python SOCKS5 server (TCP_NODELAY on its side, as Go sets it) that checks the login, "
+                 "sends every CONNECT to the page and answers every datagram to port 53 itself with an A record"]
+        if v.get("udp_mode") == "tcp":
+            yaml_text = hev_tweak(yaml_text, "  udp: 'udp'\n", "  udp: 'tcp'\n")
+            notes.append("hev `udp: 'tcp'`: UDP in TCP (hev's FWD_UDP command, 0x05, framed datagrams on the "
+                         "control connection), which the python server speaks and sing-box does not")
+        front = flow_hev(ctx, rundir, FLOW_HEV_MORE, yaml_text)
+        res = flow_measure(v["id"].lower(), tcp_target=FLOW_PY_TCP_TARGET)
+    finally:
+        if front is not None:
+            front.stop()
+        server.stop()
+        flow_drop_tun(FLOW_TUN_HEV)
+    res["notes"] = notes
+    return res
+
+
+def run_flow_gvisor(ctx, rundir, v):
+    """V7: sing-box on its gVisor tun, ios-tun-reality.json, as the ios-shape
+    gVisor row runs it."""
+    config, _, notes = ios_tun_shape("ios-tun-reality.json", "127.0.0.1", ctx["pub"], rundir, FLOW_TUN_GVISOR)
+    proc = flow_harness(ctx, rundir, config, sudo=True)
+    try:
+        flow_wait_link(FLOW_TUN_GVISOR, proc, rundir, "core.log")
+        flow_routes(FLOW_TUN_GVISOR)
+        res = flow_measure("v7")
+    finally:
+        proc.stop()
+        flow_drop_tun(FLOW_TUN_GVISOR)
+    res["notes"] = notes
+    return res
+
+
+def socks5_open(port, login, mode, cmd, dst_ip, dst_port, timeout=5.0):
+    """A SOCKS5 client handshake on loopback, one step at a time: the method
+    offer, the login, the request. `mode`: 'plain' (no socket option, no
+    flag), 'nodelay' (TCP_NODELAY), 'msg_more' (MSG_MORE on the method offer
+    and the login, the flags hev at the pin sends them with). Returns the
+    socket, the reply's address and the times since the start of connect()."""
+    t0 = time.perf_counter()
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        times = {"tcp_connect_s": time.perf_counter() - t0}
+        if mode == "nodelay":
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        more = socket.MSG_MORE if mode == "msg_more" else 0
+        method = 2 if login else 0
+        if s.send(bytes([5, 1, method]), more) != 3:
+            raise OSError("short write of the method offer")
+        rep = recv_exact(s, 2)
+        times["method_reply_s"] = time.perf_counter() - t0
+        if rep != bytes([5, method]):
+            raise OSError("method reply %r" % rep)
+        if login:
+            u, p = login[0].encode(), login[1].encode()
+            creds = bytes([1, len(u)]) + u + bytes([len(p)]) + p
+            if s.send(creds, more) != len(creds):
+                raise OSError("short write of the login")
+            rep = recv_exact(s, 2)
+            times["auth_reply_s"] = time.perf_counter() - t0
+            if rep != b"\x01\x00":
+                raise OSError("login reply %r" % rep)
+        s.sendall(bytes([5, cmd, 0, 1]) + socket.inet_aton(dst_ip) + struct.pack(">H", dst_port))
+        head = recv_exact(s, 4)
+        if head[1] != 0:
+            raise OSError("request reply %r" % head)
+        if head[3] == 1:
+            raw = recv_exact(s, 6)
+            bnd = (socket.inet_ntoa(raw[:4]), struct.unpack(">H", raw[4:])[0])
+        elif head[3] == 4:
+            raw = recv_exact(s, 18)
+            bnd = (socket.inet_ntop(socket.AF_INET6, raw[:16]), struct.unpack(">H", raw[16:])[0])
+        else:
+            raise OSError("request reply address type %d" % head[3])
+        times["request_reply_s"] = time.perf_counter() - t0
+        return s, bnd, times, t0
+    except BaseException:
+        s.close()
+        raise
+
+
+def socks5_udp_header(ip, port):
+    return b"\0\0\0\x01" + socket.inet_aton(ip) + struct.pack(">H", port)
+
+
+def socks5_udp_payload(data):
+    atype = data[3]
+    off = 4 + {1: 4, 4: 16}.get(atype, 1 + (data[4] if len(data) > 4 else 0)) + 2
+    return data[off:]
+
+
+def flow_socks_udp_once(port, login, mode, name):
+    """V4, UDP: a fresh association to sing-box's socks inbound, one DNS query
+    to the tun's resolver through it, as hev would send it."""
+    s, bnd, times, t0 = socks5_open(port, login, mode, 3, "0.0.0.0", 0)
+    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        u.settimeout(3.0)
+        if bnd[0] in ("0.0.0.0", "::"):
+            bnd = ("127.0.0.1", bnd[1])
+        qid, query = dns_a_query(name)
+        t1 = time.perf_counter()
+        u.sendto(socks5_udp_header(IOS_TUN_DNS, 53) + query, bnd)
+        while True:
+            data, _ = u.recvfrom(4096)
+            payload = socks5_udp_payload(data)
+            if len(payload) >= 12 and struct.unpack(">H", payload[:2])[0] == qid:
+                break
+        t2 = time.perf_counter()
+        rcode, addrs = dns_a_answer(payload)
+        if not addrs:
+            raise OSError("no A record (rcode %d)" % rcode)
+        times["datagram_to_answer_s"] = t2 - t1
+        times["total_s"] = t2 - t0
+        return times, addrs[0]
+    finally:
+        u.close()
+        s.close()
+
+
+def flow_socks_tcp_once(port, login, mode, addr):
+    """V4, TCP: a fresh CONNECT to the page's fake address through sing-box's
+    socks inbound, then the GET."""
+    s, _, times, t0 = socks5_open(port, login, mode, 1, addr, 80)
+    try:
+        s.sendall(("GET /bytes?n=%d HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n"
+                   % (FLOW_GET_BYTES, IOS_CHECK_NAME)).encode())
+        first = s.recv(1)
+        times["first_byte_s"] = time.perf_counter() - t0
+        if not first:
+            raise OSError("closed before the first byte")
+
+        http_read_page(Prefixed(s, first), FLOW_GET_BYTES)
+        return times
+    finally:
+        s.close()
+
+
+FLOW_V4_MODES = (
+    ("plain", "no socket option, no flag (Nagle on)"),
+    ("nodelay", "TCP_NODELAY on the client socket"),
+    ("msg_more", "MSG_MORE on the method offer and the login, as hev at the pin sends them"),
+)
+
+
+def flow_steps(rows, keys):
+    return {k: flow_summary([r[k] for r in rows if k in r]) for k in keys}
+
+
+def run_flow_direct(ctx, rundir, v):
+    """V4: no hev and no tun. A python SOCKS5 client on the runner talks to
+    sing-box's socks inbound (ios-socks-reality.json, its login) directly,
+    once per mode in FLOW_V4_MODES."""
+    config, notes = flow_ios_socks(ctx, rundir)
+    port, login = ios_hev_socks(config)
+    expect(login is not None, "ios-socks-reality.json has a login")
+    proc = flow_harness(ctx, rundir, config)
+    modes = {}
+    try:
+        if not wait_port(port, 20, proc):
+            raise LabError("the harness's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        deadline, fake, err = time.time() + 20, None, "not tried"
+        while time.time() < deadline:
+            try:
+                _, fake = flow_socks_udp_once(port, login, "nodelay", IOS_CHECK_NAME)
+                break
+            except OSError as e:
+                err = "%s: %s" % (type(e).__name__, e)
+                time.sleep(0.3)
+        if fake is None:
+            raise LabError("no DNS answer through sing-box's socks inbound in 20 s: %s" % err)
+        flow_socks_tcp_once(port, login, "nodelay", fake)
+        for mode, what in FLOW_V4_MODES:
+            udp, ufails = flow_series(FLOW_N, lambda i: flow_socks_udp_once(
+                port, login, mode, "v4-%s-%d.flow.lab.test" % (mode, i))[0])
+            tcp, tfails = flow_series(FLOW_N, lambda i: flow_socks_tcp_once(port, login, mode, fake))
+            modes[mode] = {
+                "what": what,
+                "udp": {"associations": FLOW_N, "answered": len(udp), "failures": ufails[:5],
+                        "steps": flow_steps(udp, ("tcp_connect_s", "method_reply_s", "auth_reply_s", "request_reply_s",
+                                                  "datagram_to_answer_s", "total_s")),
+                        "total_s": [round(r["total_s"], 4) for r in udp]},
+                "tcp": {"connections": FLOW_N, "ok": len(tcp), "target": fake, "failures": tfails[:5],
+                        "steps": flow_steps(tcp, ("tcp_connect_s", "method_reply_s", "auth_reply_s", "request_reply_s",
+                                                  "first_byte_s")),
+                        "first_byte_s": [round(r["first_byte_s"], 4) for r in tcp]},
+            }
+    finally:
+        proc.stop()
+    notes.append("times count from the start of connect() to 127.0.0.1:%d; the UDP total ends at the DNS answer, the "
+                 "TCP one at the first byte of the page" % port)
+    return {"modes": modes, "notes": notes}
+
+
+FLOW_VARIANTS = (
+    {"id": "V1", "run": run_flow_singbox_hev,
+     "name": "hev (pin) + sing-box SOCKS, login: the ios-shape hev row",
+     "what": "ios-socks-reality.json as the ios-shape hev row runs it, hev at the pin with HevTunnel.configuration"},
+    {"id": "V2", "run": run_flow_singbox_hev, "no_sniff": True,
+     "name": "V1 without the route rule {action: sniff}", "what": "V1 with sing-box's sniff rule removed"},
+    {"id": "V3", "run": run_flow_singbox_hev, "no_login": True,
+     "name": "V1 without the SOCKS login (both sides)", "what": "V1 with no users in sing-box and no login in hev"},
+    {"id": "V4", "run": run_flow_direct,
+     "name": "no hev: python SOCKS5 client -> sing-box SOCKS, login",
+     "what": "a fresh association (UDP) or CONNECT (TCP) per exchange, straight to sing-box's socks inbound"},
+    {"id": "V5", "run": run_flow_pysocks_hev,
+     "name": "hev (pin), login -> python SOCKS5 server (no sing-box)",
+     "what": "hev alone: a trivial SOCKS5 server that answers DNS itself"},
+    {"id": "V6", "run": run_flow_pysocks_hev, "udp_mode": "tcp",
+     "name": "V5 with hev udp 'tcp' (UDP in TCP)", "what": "hev's FWD_UDP; sing-box does not speak it"},
+    {"id": "V7", "run": run_flow_gvisor,
+     "name": "sing-box gVisor tun: the ios-shape gVisor row (control)",
+     "what": "ios-tun-reality.json on sing-box's own gVisor tun"},
+    {"id": "V8", "run": run_flow_singbox_hev, "pipeline": True,
+     "name": "V1 with hev `pipeline: true`",
+     "what": "hev's pipelined handshake: offer, login and request in one write, where MSG_MORE is meant"},
+    {"id": "V9", "run": run_flow_singbox_hev, "hev": FLOW_HEV_NOMORE,
+     "name": "V1 with hev built without MSG_MORE (as for iOS)",
+     "what": "the pin with MSG_MORE dropped from the two handshake writes (hev-build.sh): Darwin's build, where "
+             "MSG_MORE is the fallback 0, and upstream b43fa85's standard handshake"},
+)
+
+
+def flow_cell(summary):
+    if not summary or summary.get("median_s") is None:
+        return "-", "-"
+    return "%.4f" % summary["median_s"], "%.4f" % summary["p90_s"]
+
+
+def flow_table(results):
+    """Two tables: every variant's DNS and TCP figures, then V4's steps."""
+    head = ("id", "variant", "DNS ok", "DNS med", "DNS p90", "TCP ok", "conn med", "conn p90", "1st med", "1st p90")
+    lines = []
+    for r in results:
+        if r.get("error"):
+            lines.append((r["id"], r["name"], "FAILED: " + r["error"].splitlines()[0][:150]))
+            continue
+        if "modes" in r:
+            for mode, m in r["modes"].items():
+                u, t = m["udp"], m["tcp"]
+                lines.append(("%s %s" % (r["id"], mode), r["name"], "%d/%d" % (u["answered"], u["associations"]),
+                              *flow_cell(u["steps"]["total_s"]), "%d/%d" % (t["ok"], t["connections"]),
+                              *flow_cell(t["steps"]["tcp_connect_s"]), *flow_cell(t["steps"]["first_byte_s"])))
+            continue
+        d, t = r["dns"], r["tcp"]
+        lines.append((r["id"], r["name"], "%d/%d" % (d["answered"], d["queries"]), *flow_cell(d),
+                      "%d/%d" % (t["ok"], t["connections"]), *flow_cell(t["connect"]), *flow_cell(t["first_byte"])))
+    steps_head = ("V4 mode", "proto", "connect", "method reply", "auth reply", "request reply", "dgram->answer / 1st byte")
+    steps = []
+    for r in results:
+        for mode, m in (r.get("modes") or {}).items():
+            for proto, last in (("udp", "datagram_to_answer_s"), ("tcp", "first_byte_s")):
+                st = m[proto]["steps"]
+                steps.append((mode, proto) + tuple("%s / %s" % flow_cell(st.get(k)) for k in (
+                    "tcp_connect_s", "method_reply_s", "auth_reply_s", "request_reply_s", last)))
+    return head, lines, steps_head, steps
+
+
+def flow_print(results):
+    head, lines, steps_head, steps = flow_table(results)
+    print("\nudp-flow: seconds, median and p90 (nearest rank) over %d each; DNS = one A query to %s on a new UDP "
+          "socket (V4: connect to answer); conn/1st = TCP connect and first byte of a %d-byte GET, both from the "
+          "start of connect" % (FLOW_N, IOS_TUN_DNS, FLOW_GET_BYTES))
+    for row in [head] + lines:
+        if len(row) == 3:
+            print("%-11s %-58s %s" % row)
+        else:
+            print("%-11s %-58s %7s %8s %8s %7s %9s %9s %8s %8s" % row)
+    if steps:
+        print("\nV4 steps, median / p90 seconds from the start of connect():")
+        print("%-9s %-5s %-17s %-17s %-17s %-17s %s" % steps_head)
+        for row in steps:
+            print("%-9s %-5s %-17s %-17s %-17s %-17s %s" % row)
+
+
+def flow_markdown(results):
+    head, lines, steps_head, steps = flow_table(results)
+    out = ["## UDP flow latency (lab.py udp-flow)", "",
+           "Seconds, median and p90 over %d each. DNS: one A query to %s on a new UDP socket (V4: connect to "
+           "answer). TCP: connect and first byte of a %d-byte GET from the start of connect." % (
+               FLOW_N, IOS_TUN_DNS, FLOW_GET_BYTES), "",
+           "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for row in lines:
+        row = row if len(row) == len(head) else row + ("",) * (len(head) - len(row))
+        out.append("| " + " | ".join(str(c).replace("|", "/") for c in row) + " |")
+    if steps:
+        out += ["", "V4 steps (median / p90 from the start of connect):", "",
+                "| " + " | ".join(steps_head) + " |", "|" + "---|" * len(steps_head)]
+        out += ["| " + " | ".join(row) + " |" for row in steps]
+    return "\n".join(out) + "\n"
+
+
+def cmd_udp_flow(a):
+    if not sys.platform.startswith("linux"):
+        raise LabError("udp-flow runs on Linux only (root via sudo, tuns)")
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    b = Path(a.bin).resolve()
+    budget = Budget(a.budget_min)
+    for port in (PORT_PAGE, PORT_DEST, PORT_REALITY, PORT_XHTTP, PORT_WEBTUNNEL, PORT_SOCKS, FLOW_PORT_PYSOCKS):
+        if not wait_port_free(port, 15):
+            raise LabError("port %d is still taken" % port)
+    for tun in (FLOW_TUN_HEV, FLOW_TUN_GVISOR):
+        flow_drop_tun(tun)
+    servers = Servers(out, b / "loadgen", b / "xray-26.4.25" / "xray")
+    doc = {"what": "where a new UDP flow's time goes behind hev, against sing-box's gVisor tun",
+           "queries_and_connections_each": FLOW_N, "resolver": IOS_TUN_DNS, "get_bytes": FLOW_GET_BYTES,
+           "runner": " ".join(os.uname()), "variants": []}
+    for name in ("hev.versions.txt", "hev-nomore.versions.txt"):
+        try:
+            doc[name] = (b / name).read_text()
+        except OSError:
+            doc[name] = None
+    results = doc["variants"]
+    try:
+        servers.start()
+        doc["server"] = servers.version
+        ctx = {"bin": b, "pub": servers.pub}
+        for v in FLOW_VARIANTS:
+            base = {"id": v["id"], "name": v["name"], "what": v["what"]}
+            if not budget.allows(25):
+                results.append(dict(base, error="skipped: out of the %.1f min budget" % a.budget_min))
+                continue
+            rundir = out / "runs" / v["id"].lower()
+            rundir.mkdir(parents=True, exist_ok=True)
+            log("udp-flow:", v["id"], v["name"])
+            t0 = time.time()
+            try:
+                res = dict(base, **v["run"](ctx, rundir, v))
+            except Exception as e:
+                traceback.print_exc()
+                res = dict(base, error="%s: %s" % (type(e).__name__, e))
+            res["seconds"] = rnd(time.time() - t0, 1)
+            results.append(res)
+            write_json(out / "udp-flow.json", doc)
+            flow_print([res])
+    finally:
+        servers.stop()
+        for tun in (FLOW_TUN_HEV, FLOW_TUN_GVISOR):
+            flow_drop_tun(tun)
+        write_json(out / "udp-flow.json", doc)
+    flow_print(results)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(flow_markdown(results))
+    return 0
+
+
+def dns_fake_answer(query, addr):
+    """An answer to `query`: one A record `addr` for an A question, none for
+    any other type."""
+    qid = struct.unpack(">H", query[:2])[0]
+    end = dns_skip_name(query, 12) + 4
+    qtype = struct.unpack(">H", query[end - 4:end - 2])[0]
+    answer = b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 600, 4) + socket.inet_aton(addr) if qtype == 1 else b""
+    return struct.pack(">HHHHHH", qid, 0x8180, 1, 1 if answer else 0, 0, 0) + query[12:end] + answer
+
+
+def cmd_flow_socks(a):
+    """The python SOCKS5 server of udp-flow's V5 and V6 (threads, standard
+    library): the login when one is given; CONNECT to the page whatever the
+    destination; UDP ASSOCIATE (RFC 1928, a UDP relay on 127.0.0.1) and hev's
+    FWD_UDP (0x05, UDP in TCP: [datlen u16][hdrlen u8][address][data] on the
+    control connection); every datagram to port 53 answered here with an A
+    record from 198.18.1.0 on."""
+    login = tuple(a.login.split(":", 1)) if a.login else None
+    lock, counter = threading.Lock(), [0]
+
+    def next_addr():
+        with lock:
+            counter[0] += 1
+            i = counter[0]
+        return "198.18.%d.%d" % (1 + (i // 250) % 200, 1 + i % 250)
+
+    def answer(payload):
+        if len(payload) < 17:
+            return None
+        return dns_fake_answer(payload, next_addr())
+
+    def pump(src, dst):
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    def relay_udp(c):
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        u.bind(("127.0.0.1", 0))
+        c.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", u.getsockname()[1]))
+        try:
+            while True:
+                r, _, _ = select.select([c, u], [], [], 30)
+                if not r:
+                    return
+                if c in r and not c.recv(1):
+                    return
+                if u in r:
+                    data, peer = u.recvfrom(65535)
+                    atype = data[3]
+                    alen = {1: 4, 4: 16}.get(atype, 1 + data[4])
+                    hdr = data[:4 + alen + 2]
+                    if struct.unpack(">H", hdr[-2:])[0] == 53:
+                        resp = answer(data[len(hdr):])
+                        if resp:
+                            u.sendto(b"\0\0\0" + hdr[3:] + resp, peer)
+        finally:
+            u.close()
+
+    def relay_udp_in_tcp(c):
+        c.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+        c.settimeout(30)
+        while True:
+            try:
+                datlen, hdrlen = struct.unpack(">HB", recv_exact(c, 3))
+                addr = recv_exact(c, hdrlen - 3)
+                data = recv_exact(c, datlen)
+            except OSError:
+                return
+            if struct.unpack(">H", addr[-2:])[0] == 53:
+                resp = answer(data)
+                if resp:
+                    c.sendall(struct.pack(">HB", len(resp), 3 + len(addr)) + addr + resp)
+
+    def handle(c):
+        try:
+            c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            c.settimeout(60)
+            ver, nm = recv_exact(c, 2)
+            methods = recv_exact(c, nm)
+            want = 2 if login else 0
+            if ver != 5 or want not in methods:
+                c.sendall(b"\x05\xff")
+                return
+            c.sendall(bytes([5, want]))
+            if login:
+                _, ulen = recv_exact(c, 2)
+                user = recv_exact(c, ulen)
+                plen = recv_exact(c, 1)[0]
+                pw = recv_exact(c, plen)
+                ok = (user.decode(errors="replace"), pw.decode(errors="replace")) == login
+                c.sendall(b"\x01\x00" if ok else b"\x01\x01")
+                if not ok:
+                    return
+            _, cmd, _, atype = recv_exact(c, 4)
+            recv_exact(c, {1: 4, 4: 16}.get(atype) or recv_exact(c, 1)[0])
+            recv_exact(c, 2)
+            if cmd == 1:
+                up = socket.create_connection(("127.0.0.1", a.page_port), timeout=10)
+                up.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                up.settimeout(60)
+                c.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", up.getsockname()[1]))
+                t = threading.Thread(target=pump, args=(up, c), daemon=True)
+                t.start()
+                pump(c, up)
+                t.join(65)
+                up.close()
+            elif cmd == 3:
+                relay_udp(c)
+            elif cmd == 5:
+                relay_udp_in_tcp(c)
+            else:
+                c.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+        except (OSError, ValueError, IndexError, struct.error):
+            pass
+        finally:
+            c.close()
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", a.port))
+    srv.listen(512)
+    print("flow-socks on 127.0.0.1:%d, login %s, page 127.0.0.1:%d" % (a.port, "on" if login else "off", a.page_port),
+          flush=True)
+    while True:
+        c, _ = srv.accept()
+        threading.Thread(target=handle, args=(c,), daemon=True).start()
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -2995,6 +3802,14 @@ def main(argv=None):
     t.add_argument("paths", nargs="+")
     t.add_argument("--json-out")
     sub.add_parser("shapes-check")
+    f = sub.add_parser("udp-flow", help="where a new UDP flow's time goes behind hev (Linux, passwordless sudo)")
+    f.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray, harness, hev-socks5-tunnel[-nomore]")
+    f.add_argument("--out", required=True)
+    f.add_argument("--budget-min", type=float, default=4.5)
+    fs = sub.add_parser("flow-socks", help="udp-flow's python SOCKS5 server (runs until killed)")
+    fs.add_argument("--port", type=int, required=True)
+    fs.add_argument("--login", help="username:password")
+    fs.add_argument("--page-port", type=int, default=PORT_PAGE)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "desktop":
@@ -3003,6 +3818,10 @@ def main(argv=None):
             return cmd_android(a)
         if a.cmd == "table":
             return cmd_table(a)
+        if a.cmd == "udp-flow":
+            return cmd_udp_flow(a)
+        if a.cmd == "flow-socks":
+            return cmd_flow_socks(a)
         return cmd_shapes_check(a)
     finally:
         # Whatever a failure left running (servers, a core) goes with the script.
