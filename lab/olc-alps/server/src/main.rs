@@ -159,8 +159,10 @@ fn certificate() -> Result<(X509, PKey<boring::pkey::Private>), boring::error::E
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let at = |secs: u64| libc::time_t::try_from(secs).unwrap_or(libc::time_t::MAX);
-    b.set_not_before(&Asn1Time::from_unix(at(now.saturating_sub(86_400)))?)?;
-    b.set_not_after(&Asn1Time::from_unix(at(now + 7 * 86_400))?)?;
+    let not_before: Asn1Time = Asn1Time::from_unix(at(now.saturating_sub(86_400)))?;
+    let not_after: Asn1Time = Asn1Time::from_unix(at(now + 7 * 86_400))?;
+    b.set_not_before(&not_before)?;
+    b.set_not_after(&not_after)?;
     let mut name = X509NameBuilder::new()?;
     name.append_entry_by_text("CN", "alps.test")?;
     let name = name.build();
@@ -185,6 +187,7 @@ fn context(cert: &X509, key: &PKey<boring::pkey::Private>) -> Result<SslContext,
 }
 
 /// A stream that first replays the bytes already read from it.
+#[derive(Debug)]
 struct Replay {
     head: Vec<u8>,
     at: usize,
