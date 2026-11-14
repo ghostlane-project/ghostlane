@@ -52,6 +52,27 @@ class XrayConfigIosCoreTest {
     private fun JsonObject.rules() = obj("routing")["rules"]!!.jsonArray.map { it.jsonObject }
     private fun JsonObject.dnsRules() = outbounds().single { it.str("tag") == "dns-out" }.obj("settings")["rules"]!!.jsonArray.map { it.jsonObject }
 
+    /** The types a `qType` string names, as the core reads it: numbers and ranges, comma-separated. */
+    private fun qTypes(spec: String): Set<Int> = spec.split(',').flatMapTo(mutableSetOf()) { part ->
+        val bounds = part.split('-').map { it.trim().toInt() }
+        bounds.first()..bounds.last()
+    }
+
+    /**
+     * The `dns` outbound's last rule: every type but A (1), AAAA (28) and
+     * HTTPS (65) is asked, unchanged, of the resolver at the far end of the
+     * line, through the line itself, `out`. A and AAAA stay fake and HTTPS
+     * refused whatever the rules before it say.
+     */
+    private fun assertForwardsTheRestThroughTheLine(config: JsonObject, rule: JsonObject, what: String) {
+        assertEquals(setOf("action", "qType", "address", "port", "outboundTag"), rule.keys, what)
+        assertEquals("forward", rule.str("action"), what)
+        assertEquals((2..65535).toSet() - setOf(28, 65), qTypes(rule.str("qType")), what)
+        assertEquals("1.1.1.1", rule.str("address"), what)
+        assertEquals(53, rule.int("port"), what)
+        assertEquals(config.out().str("tag"), rule.str("outboundTag"), what)
+    }
+
     @Test fun everyFixtureIsTheLineItsLinkSaysAndTheCoreTakesIt() {
         for (line in IosCoreLine.entries) {
             val parsed = spec(line)
@@ -107,7 +128,7 @@ class XrayConfigIosCoreTest {
         assertEquals("none", build(IosCoreLine.RealityVision, verbose = true).obj("log").str("access"))
     }
 
-    @Test fun globalAnswersEveryNameWithAFakeAddressAndRefusesHttps() {
+    @Test fun globalFakesAddressesRefusesHttpsAndForwardsTheRestThroughTheLine() {
         for (line in IosCoreLine.entries) {
             val config = build(line)
             val dns = config.obj("dns")
@@ -120,10 +141,12 @@ class XrayConfigIosCoreTest {
             val dnsOut = config.outbounds()[1]
             assertEquals("dns", dnsOut.str("protocol"))
             assertNull(dnsOut.obj("settings")["rewriteAddress"])
-            val rule = config.dnsRules().single()
-            assertEquals("return", rule.str("action"))
-            assertEquals(65, rule.int("qType"))
-            assertEquals(5, rule.int("rCode"))
+            assertEquals(2, config.dnsRules().size, "$line")
+            val (https, forward) = config.dnsRules()
+            assertEquals("return", https.str("action"))
+            assertEquals(65, https.int("qType"))
+            assertEquals(5, https.int("rCode"))
+            assertForwardsTheRestThroughTheLine(config, forward, "$line")
 
             assertEquals("AsIs", config.obj("routing").str("domainStrategy"))
             val hijack = config.rules().single()
@@ -152,12 +175,16 @@ class XrayConfigIosCoreTest {
             val dnsOut = config.outbounds()[2].obj("settings")
             assertEquals(SingBoxConfig.DIRECT_DNS_PLACEHOLDER, dnsOut.str("rewriteAddress"))
             assertEquals(53, dnsOut.int("rewritePort"))
-            val (names, https) = config.dnsRules()
+            // The first rule that matches wins: a Russian name of any type is
+            // asked underneath before the forward rule, last, can claim it.
+            assertEquals(3, config.dnsRules().size, "$line")
+            val (names, https, forward) = config.dnsRules()
             assertEquals("direct", names.str("action"))
             assertEquals(lists.domains, names["domain"]!!.jsonArray.strings())
             assertNull(names["qType"], "every type of a Russian name, as sing-box sends them to dns-direct")
             assertEquals("return", https.str("action"))
             assertEquals(65, https.int("qType")); assertEquals(5, https.int("rCode"))
+            assertForwardsTheRestThroughTheLine(config, forward, "$line")
 
             val rules = config.rules()
             assertEquals(5, rules.size)
@@ -479,6 +506,27 @@ class XrayConfigIosCoreTest {
         })
     }
 
+    @Test fun theRestIsAskedOfTheResolverTheGoEnginesAskThroughTheLine() {
+        // Phase 0 asks `dns-remote` through `out` for what no rule claims:
+        // sing-box on every line but XHTTP, Go's Xray on XHTTP. core.json
+        // asks the same server through the same outbound.
+        val xhttp = spec(IosCoreLine.XhttpReality) as OutboundSpec.Vless
+        val go = Json.parseToJsonElement(XrayConfig.buildXhttp(xhttp, answersDns = true, login = login)).jsonObject
+        val goRemote = go.obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }.single { it.str("tag") == "dns-remote" }
+        assertEquals(listOf("dns-remote"), go.rules().single { it.str("outboundTag") == "out" }["inboundTag"]!!.jsonArray.strings())
+        for (line in IosCoreLine.entries) for (routing in routings) {
+            val forward = build(line, routing).dnsRules().last()
+            assertEquals(goRemote.str("address"), forward.str("address"), "$line $routing")
+            assertEquals(goRemote.int("port"), forward.int("port"), "$line $routing")
+            if (line == IosCoreLine.XhttpReality) continue
+            val sbRemote = phase0(line, routing).obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }
+                .single { it.str("tag") == "dns-remote" }
+            assertEquals(sbRemote.str("server"), forward.str("address"), "$line $routing")
+            assertEquals(sbRemote.str("detour"), forward.str("outboundTag"), "$line $routing")
+            assertNull(sbRemote["server_port"], "sing-box's default, 53")
+        }
+    }
+
     @Test fun fingerprintsAreSingBoxsNamesTheCoreKnows() {
         assertEquals("chrome", IosCore.fingerprint(null, reality = true))
         assertEquals("chrome", IosCore.fingerprint("", reality = true))
@@ -581,6 +629,24 @@ class XrayConfigIosCoreTest {
         for (answersDns in listOf(false, true)) {
             val config = XrayConfig.buildXhttp(xhttp, answersDns = answersDns, login = login)
             assertTrue("fakeIp" !in config && "h2StreamReceiveWindow" !in config && "routeOnly" !in config)
+        }
+    }
+
+    @Test fun theForwardRuleIsCoreJsonsAlone() {
+        // Go's Xray refuses a `dns` rule action it does not know, so the
+        // configs the Go engines run never carry one: XHTTP's xray.json and
+        // Phase 0's sing-box, under either routing.
+        val forward = "\"action\":\"forward\""
+        val xhttp = spec(IosCoreLine.XhttpReality) as OutboundSpec.Vless
+        for (answersDns in listOf(false, true)) {
+            assertTrue(forward !in XrayConfig.buildXhttp(xhttp, answersDns = answersDns, login = login))
+        }
+        assertTrue(forward !in XrayConfig.buildXhttp(xhttp, routing = bypass, geodata = lists, login = login))
+        for (line in IosCoreLine.entries) for (routing in routings) {
+            if (line != IosCoreLine.XhttpReality) {
+                assertTrue(forward !in SingBoxConfig.buildIosSocks(spec(line), login, routing = routing), "$line $routing")
+            }
+            assertTrue(forward in text(line, routing), "$line $routing")
         }
     }
 }
