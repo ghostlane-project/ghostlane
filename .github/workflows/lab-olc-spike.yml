@@ -47,7 +47,7 @@ env:
   # Moving the pin is a change to this file (and so a run).
   SPIKE_REPO: "https://github.com/ghostlane-project/xray-rust"
   SPIKE_REF: "gl/olc-spike"
-  SPIKE_COMMIT: "08d356d9751386d7fccd45fa83449548b1ec37cb"
+  SPIKE_COMMIT: "e47a162abaef8d2f72f03f0d9e1d0f8a6860ba67"
   # The olcRTC engine at the exits' pin.
   ENGINE_REPO: "https://github.com/ghostlane-project/olcrtc"
   ENGINE_COMMIT: "2d4266af3947f4d9940efafb0d5aabb6207f6659"
@@ -178,10 +178,12 @@ jobs:
             echo "### First DTLS ClientHello"
             python3 -I $w hello out/chrome/chrome.pcap out/probe-a-*.out out/loopback-*.log
             echo "### Compare"
+            # :TX is what str0m sent, :RX what pion (the fake SFU) sent it.
             python3 -I $w compare chrome=out/chrome/chrome.pcap \
-              str0m-chrome-boring=out/probe-a-boringauto-client-chrome.out \
-              str0m-chrome-dimpl=out/probe-a-dimpl12-client-chrome.out \
-              pion=out/probe-a-dimpl12-server.out
+              fork-chrome-boring=out/probe-a-boringauto-client-chrome.out:TX \
+              fork-chrome-dimpl=out/probe-a-dimpl12-client-chrome.out:TX \
+              upstream-is-dimpl=out/probe-a-dimpl12-server.out:TX \
+              pion=out/probe-a-dimpl12-server.out:RX
           } 2>&1 | tee out/wire.txt
 
       - name: Summary
