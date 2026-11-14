@@ -167,7 +167,9 @@ else fail "rust-core-pins.sh derives its tag and URL from a full commit and a bu
 # 11. A packaging fix at the same commit gets a tag of its own.
 if (
     unset XRAY_RUST_COMMIT
-    export RUST_CORE_IOS_BUILD=2
+    # The subshell is the point: the build number is changed for this case only.
+    # shellcheck disable=SC2031
+    RUST_CORE_IOS_BUILD=2
     # shellcheck source=scripts/rust-core-pins.sh
     . "${root}/scripts/rust-core-pins.sh"
     [ "${RUST_CORE_IOS_TAG}" = "rust-core-ios-${XRAY_RUST_COMMIT:0:12}-b2" ]

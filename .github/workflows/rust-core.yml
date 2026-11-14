@@ -41,8 +41,19 @@ on:
   push:
     branches:
       - 'feat/rust-core*'
+    # Named one by one: scripts/*rust-core* would also match
+    # check-rust-core-configs.sh, which PR Checks runs for the app's configs.
     paths:
-      - 'scripts/*rust-core*'
+      - 'scripts/rust-core-pins.sh'
+      - 'scripts/rust-core-checkout.sh'
+      - 'scripts/test-rust-core-checkout.sh'
+      - 'scripts/build-rust-core-ios.sh'
+      - 'scripts/build-rust-core-cli.sh'
+      - 'scripts/fetch-rust-core-ios.sh'
+      - 'scripts/test-fetch-rust-core-ios.sh'
+      - 'scripts/rust-core-upstream-ci.py'
+      - 'scripts/rust-core-upstream-skips.txt'
+      - 'scripts/rust-core-interop.py'
       - 'scripts/xray-servers.txt'
       - 'scripts/fetch-xray-servers.sh'
       - '.github/workflows/rust-core.yml'
