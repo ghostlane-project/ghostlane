@@ -444,7 +444,7 @@ Everything below is for building the app yourself; the downloads above need none
 | Platform | Modes | What carries the packets | Engines |
 | --- | --- | --- | --- |
 | Android | TUN, proxy | `VpnService` + `hev-socks5-tunnel` | sing-box and Xray as packaged native binaries, olcRTC bound in-process |
-| iOS | System VPN | sing-box's own tun for Reality and Hysteria2; `hev-socks5-tunnel` in front of Xray and olcRTC | all three in one `Cores.xcframework` inside the extension |
+| iOS | System VPN | `hev-socks5-tunnel` in front of every engine: sing-box (Reality, Hysteria2, WebTunnel), Xray (xhttp), olcRTC | all three in one `Cores.xcframework` inside the extension |
 | macOS | TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
 | Windows | TUN, proxy | supervised sing-box TUN + Wintun, which in a session that starts on a core's line answers every name itself and refuses port 53 beside the tunnel (`strict_route`); OS proxy settings otherwise | as macOS |
 | Linux | TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | as macOS |
@@ -458,7 +458,9 @@ network it was enabled on is pinned by its gateway, and what it costs is in
 iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB. sing-box
 owning the tun in front of a second Go engine buffers every connection twice and
 serves it with twice the goroutines; a speed test killed the extension outright.
-The measurements and what replaced it are in `docs/ios-one-go-runtime.md`.
+sing-box's gVisor tun alone cost about 20 MB more than the same sing-box behind
+`hev-socks5-tunnel`, so its own lines moved behind it too. The measurements and
+what replaced it are in `docs/ios-one-go-runtime.md`.
 
 ### Requirements
 

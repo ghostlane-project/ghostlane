@@ -7,8 +7,9 @@ import os
 /// It used to run inside the app instead, as a SOCKS proxy on loopback that
 /// other apps had to be pointed at by hand and that survived backgrounding only
 /// by playing silent audio to stop iOS suspending the process. Here it is a
-/// transport like any other: sing-box owns the tun and reaches this engine over
-/// a loopback SOCKS port, the same arrangement xhttp already uses for Xray.
+/// transport like any other: hev-socks5-tunnel owns the tun (since 1.0.428)
+/// and reaches this engine over a loopback SOCKS port, the same arrangement
+/// xhttp uses for Xray and sing-box's own transports use for sing-box.
 ///
 /// The engine is one `MobileRuntime` for the life of the extension process;
 /// the log writer is still a package-level hook. This stays a namespace: the
@@ -254,9 +255,10 @@ enum OlcrtcEngine {
 /// Keeps olcRTC's own sockets off our tun.
 ///
 /// The engine dials from inside the extension, where the default route points
-/// at the tun sing-box owns — so a socket left to the system's judgement comes
-/// straight back to us. This is the same pin sing-box needs for its outbounds,
-/// and deliberately the same implementation.
+/// at our own tun (hev-socks5-tunnel's), so a socket left to the system's
+/// judgement could come straight back to us. The pin is
+/// `LibboxPlatform.pinToPhysicalInterface`, the same code libbox's platform
+/// control runs, deliberately one implementation.
 private final class InterfaceProtector: NSObject, MobileSocketProtectorProtocol, @unchecked Sendable {
     func protect(_ fd: Int) -> Bool {
         LibboxPlatform.pinToPhysicalInterface(Int32(fd))

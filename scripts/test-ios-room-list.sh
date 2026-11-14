@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Compiles RoomList.swift and RoomMemoryRecord.swift with their test and runs
 # it, then DeviceHeaders.swift with its own: what the room keeper reads of a
-# list, and how its refresh names the device and reads a host's refusal.
+# list, and how its refresh names the device and reads a host's refusal. Then
+# scripts/test-ios-tun-arrangement.sh, from here because both CI jobs that
+# run this script are the ones that have to run it too: the extension's
+# (TunArrangement.swift) and the shared Kotlin's (the configs it reads).
 # `xcrun` on a Mac; any swift.org toolchain's swiftc elsewhere
 # (SWIFTC=/path/to/swiftc).
 set -euo pipefail
@@ -30,3 +33,6 @@ $swiftc \
   "$root/iosApp/Tests/DeviceHeadersTests.swift" \
   -o "$test_dir/device-headers-tests"
 "$test_dir/device-headers-tests" "$root"
+
+# What owns the tun, decided from the configs the app writes.
+"$root/scripts/test-ios-tun-arrangement.sh"
