@@ -8,7 +8,9 @@ name: Lab - core footprint
 # Beside the Go rows, the desktop jobs measure a Rust core, xray-rust, built
 # from GitHub at a pinned release (lab/footprint/rust-core-build.sh), and on
 # Linux sing-box behind hev-socks5-tunnel at the app's pin
-# (lab/footprint/hev-build.sh), on the same runner against the same servers.
+# (lab/footprint/hev-build.sh), on the same runner against the same servers,
+# plus the iOS shape rows: the iPhone's sing-box configs on the gVisor tun and
+# Phase 0's behind hev, checked for DNS, a name and UDP before the load.
 #
 # Runs on a push to lab/core-footprint and nothing else: never on main, never
 # on a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`

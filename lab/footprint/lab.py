@@ -33,6 +33,8 @@ import base64
 import ctypes
 import difflib
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -101,6 +103,25 @@ TUN_HEV = "pklab1"
 HEV_TUN_IPV4 = "172.19.0.5"
 HEV_MTU = 9000
 HEV_CORE = "hev + cores harness: sing-box"
+# The iOS shape rows (Phase 0, uncommitted branch feat/ios-singbox-behind-hev):
+# the app's own iOS sing-box configs, sing-box behind hev and sing-box on its
+# gVisor tun. Tuns of their own, so they never meet the two rows above. The
+# tun's address and resolver are the extension's (LibboxPlatform.Tun.address,
+# Tun.dns; checked against LibboxBridge.swift); the name is any name, since
+# the lab's servers send every destination to the page.
+IOS_SHAPE_HEV = "ios-shape sing-box+hev"
+IOS_SHAPE_TUN = "ios-shape sing-box gVisor tun"
+TUN_IOS_HEV = "pklab3"
+TUN_IOS_GVISOR = "pklab2"
+IOS_TUN_ADDRESS = "172.19.0.1"
+IOS_TUN_DNS = "172.19.0.2"
+IOS_CHECK_NAME = "page.lab.test"
+IOS_CHECK_BYTES = 65536
+IOS_UDP_EXCHANGES = 8
+# SingBoxConfig.DIRECT_DNS_PLACEHOLDER / DirectResolver.placeholder and fallback.
+DIRECT_DNS_PLACEHOLDER = "198.51.100.53"
+DIRECT_DNS_FALLBACK = "77.88.8.8"
+RULES_DIR = REPO / "sharedUI" / "src" / "commonMain" / "composeResources" / "files" / "rules"
 # The ClientHello tap: a relay on this port in front of a server port.
 PORT_TAP = 20550
 
@@ -713,20 +734,380 @@ HEV_MISC = ("task-stack-size: 24576", "tcp-buffer-size: 4096", "max-session-coun
             "read-write-timeout: 60000", "udp-read-write-timeout: 30000", "log-file: stderr", "log-level: warn")
 
 
-def hev_config(port):
-    """The iPhone's hev configuration for a SOCKS without login (Xray's),
-    plus the two lines a process that opens its own tun needs and the
-    extension's handed-in descriptor makes unnecessary: the interface's name
-    and address."""
+def hev_config(port, login=None, name=TUN_HEV, ipv4=HEV_TUN_IPV4):
+    """The iPhone's hev configuration (HevTunnel.configuration) for a SOCKS
+    on `port`, with the login lines it writes when `login` is a (username,
+    password) pair and without them when it is None, plus the two lines a
+    process that opens its own tun needs and the extension's handed-in
+    descriptor makes unnecessary: the interface's name and address."""
     swift = (REPO / "iosApp" / "PacketTunnel" / "HevTunnel.swift").read_text()
     for line in HEV_MISC + ("address: 127.0.0.1", "udp: 'udp'"):
         expect('"  %s"' % line in swift, "HevTunnel.swift no longer writes %r" % line)
     expect('"  mtu: \\(mtu)"' in swift and '"  port: \\(socks.port)"' in swift, "HevTunnel.swift mtu and port lines")
     bridge = (REPO / "iosApp" / "PacketTunnel" / "LibboxBridge.swift").read_text()
     expect(re.search(r"static let mtu = %d\b" % HEV_MTU, bridge) is not None, "LibboxPlatform.Tun.mtu")
+    login_lines = ""
+    if login is not None:
+        for key, var in (("username", "username"), ("password", "password")):
+            expect(r'''"  %s: '\(yamlQuoted(%s))'"''' % (key, var) in swift,
+                   "HevTunnel.swift no longer writes the %s line" % key)
+        expect("replacingOccurrences(of: \"'\", with: \"''\")" in swift, "HevTunnel.yamlQuoted")
+        login_lines = "".join("  %s: '%s'\n" % (key, value.replace("'", "''"))
+                              for key, value in zip(("username", "password"), login))
     return ("tunnel:\n  name: %s\n  mtu: %d\n  ipv4: %s\n"
-            "socks5:\n  port: %d\n  address: 127.0.0.1\n  udp: 'udp'\n"
-            "misc:\n%s") % (TUN_HEV, HEV_MTU, HEV_TUN_IPV4, port, "".join("  %s\n" % m for m in HEV_MISC))
+            "socks5:\n  port: %d\n  address: 127.0.0.1\n  udp: 'udp'\n%s"
+            "misc:\n%s") % (name, HEV_MTU, ipv4, port, login_lines, "".join("  %s\n" % m for m in HEV_MISC))
+
+
+# ---------------------------------------------------------------- the iOS shape (Phase 0)
+#
+# Phase 0 moves the iPhone's sing-box lines (Reality, Hysteria2, WebTunnel)
+# behind hev: sing-box listens on a loopback SOCKS port with a login and still
+# answers DNS with fake addresses; hev owns the tun. The configs are Phase 0's
+# own (shapes/ios-socks.provenance.txt says where they come from); the
+# baseline is sing-box on its gVisor tun with the committed ios-tun shapes.
+
+
+def ios_socks_copy(name):
+    """A Phase 0 copy from shapes/, refused unless its sha256 is the one the
+    provenance file names: the copies are copied, never edited."""
+    listed = {}
+    for line in (SHAPES / "ios-socks.provenance.txt").read_text().splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and not line.startswith("#") and re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+            listed[parts[1]] = parts[0]
+    expect(name in listed, "shapes/ios-socks.provenance.txt does not list %s" % name)
+    raw = (SHAPES / name).read_bytes()
+    got = hashlib.sha256(raw).hexdigest()
+    if got != listed[name]:
+        raise LabError("shapes/%s has sha256 %s, but its provenance names %s: copy it again from the Phase 0 "
+                       "branch, do not edit it" % (name, got, listed[name]))
+    return json.loads(raw)
+
+
+# copy in shapes/ -> (its buildTun twin in reference-configs/, the reference whose
+# first outbound the copy carries instead of the twin's, or None)
+IOS_SOCKS = {
+    "ios-socks-reality.json": ("ios-tun-reality.json", None),
+    "ios-socks-hysteria2.json": ("ios-tun-reality.json", "bypass-tun-hysteria2.json"),
+    "bypass-ios-socks-reality.json": ("bypass-tun-reality.json", None),
+}
+
+
+def rules_normalized(value):
+    """SingBoxConfigDumpTest.normalizedReference: a local rule-set path
+    becomes @rules/<file>, so a fresh dump compares with a reference."""
+    if isinstance(value, dict):
+        return {k: ("@rules/" + v.replace("\\", "/").rsplit("/", 1)[-1]
+                    if k == "path" and isinstance(v, str) and v.endswith(".srs") else rules_normalized(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [rules_normalized(v) for v in value]
+    return value
+
+
+def ios_socks_drift(copy, twin, outbound_source=None):
+    """Where a Phase 0 copy differs from buildTun's shape for the same line,
+    apart from the inbound (Phase 0's SingBoxConfigTest: everything but the
+    inbounds equals buildTun, in the same key order). [] when nowhere."""
+    a, b = dict(rules_normalized(copy)), dict(rules_normalized(twin))
+    problems = []
+    if list(a) != list(b):
+        problems.append("top-level keys %s, buildTun's %s" % (list(a), list(b)))
+    a.pop("inbounds", None)
+    b.pop("inbounds", None)
+    if outbound_source is not None:
+        want = [rules_normalized(outbound_source)["outbounds"][0]]
+        if a.pop("outbounds", None) != want:
+            problems.append("outbounds are not the first outbound of the Hysteria2 reference")
+        b.pop("outbounds", None)
+    for key in sorted(set(a) | set(b)):
+        if a.get(key) != b.get(key):
+            problems.append("%s differs" % key)
+    inbounds = copy.get("inbounds") or []
+    if not (len(inbounds) == 1 and inbounds[0].get("type") == "socks" and inbounds[0].get("listen") == "127.0.0.1"
+            and inbounds[0].get("listen_port") == PORT_SOCKS and len(inbounds[0].get("users") or []) == 1
+            and inbounds[0]["users"][0].get("username") and inbounds[0]["users"][0].get("password")):
+        problems.append("the inbound is not one loopback socks on %d with one login: %s" % (PORT_SOCKS, inbounds))
+    return problems
+
+
+def ios_hev_socks(config):
+    """TunArrangement.singBoxSocks (iosApp/PacketTunnel/TunArrangement.swift
+    on the Phase 0 branch) in Python: None when sing-box is to own the tun (a
+    tun inbound anywhere, or no socks inbound); else (port, login) for hev,
+    the login a (username, password) pair or None, since half of one is sent
+    as none; the port 10810 when the config names none."""
+    inbounds = config.get("inbounds") or []
+    if any(i.get("type") == "tun" for i in inbounds):
+        return None
+    socks = next((i for i in inbounds if i.get("type") == "socks"), None)
+    if socks is None:
+        return None
+    user = (socks.get("users") or [{}])[0]
+    username, password = user.get("username") or None, user.get("password") or None
+    port = socks.get("listen_port")
+    port = port if isinstance(port, int) and 1 <= port <= 65535 else 10810
+    return port, ((username, password) if username and password else None)
+
+
+def runner_resolvers():
+    for path in ("/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"):
+        try:
+            found = [ln.split()[1] for ln in Path(path).read_text().splitlines()
+                     if ln.startswith("nameserver") and len(ln.split()) > 1]
+        except OSError:
+            continue
+        if found:
+            return found
+    return []
+
+
+def direct_resolver_pick(servers):
+    """DirectResolver.pick (iosApp/PacketTunnel/DirectResolver.swift): the
+    first IPv4 that is not loopback, else the first IPv6 that is neither
+    link-local nor ::1, else a zoned link-local IPv6, else Yandex DNS."""
+    unzoned = [s.split("%", 1)[0] for s in servers]
+    for h in unzoned:
+        if "." in h and ":" not in h and not h.startswith("127."):
+            return h
+    for h in unzoned:
+        if ":" in h and not h.lower().startswith("fe80:") and h != "::1":
+            return h
+    for h in servers:
+        if h.lower().startswith("fe80:") and "%" in h:
+            return h
+    return DIRECT_DNS_FALLBACK
+
+
+def ios_extension_constants():
+    """The tun address, resolver and placeholder the lab mirrors, as the
+    extension's sources on this branch spell them."""
+    bridge = (REPO / "iosApp" / "PacketTunnel" / "LibboxBridge.swift").read_text()
+    expect('static let address = "%s"' % IOS_TUN_ADDRESS in bridge, "LibboxPlatform.Tun.address")
+    expect('static let mask = "255.255.255.252"' in bridge, "LibboxPlatform.Tun.mask")
+    expect('static let dns = ["%s"]' % IOS_TUN_DNS in bridge, "LibboxPlatform.Tun.dns")
+    resolver = (REPO / "iosApp" / "PacketTunnel" / "DirectResolver.swift").read_text()
+    expect('static let placeholder = "%s"' % DIRECT_DNS_PLACEHOLDER in resolver, "DirectResolver.placeholder")
+    expect('static let fallback = "%s"' % DIRECT_DNS_FALLBACK in resolver, "DirectResolver.fallback")
+
+
+def ios_lab_server(c, server, pub):
+    """The lab's server in place of the reference's: address, port, keys and
+    names. Returns which line it is."""
+    out = c["outbounds"][0]
+    expect(out.get("tag") == "out" and c["route"].get("final") == "out", "the line's outbound is route.final")
+    if out["type"] == "vless":
+        expect(out.get("flow") == "xtls-rprx-vision" and out["tls"]["reality"]["enabled"], "ios vless-reality outbound")
+        out.update(server=server, server_port=PORT_REALITY, uuid=UUID)
+        out["tls"]["server_name"] = SNI_REALITY
+        out["tls"]["reality"].update(public_key=pub, short_id=SHORT_ID)
+        return "vless-reality-vision"
+    expect(out["type"] == "hysteria2" and out["obfs"]["type"] == "salamander", "ios hysteria2 outbound")
+    expect(out["tls"].get("insecure") is True, "ios hysteria2 insecure")
+    out.update(server=server, server_port=PORT_HY2, password=HY2_AUTH)
+    out["obfs"]["password"] = HY2_OBFS
+    out["tls"]["server_name"] = SNI_HY2
+    return "hysteria2-salamander"
+
+
+def ios_runner_fields(c, rundir):
+    """What only the runner can fill in, as the extension fills it on a
+    phone: the cache file's place (libbox's working directory there), the
+    direct resolver (DirectResolver.substitute over the runner's own
+    resolvers), the rule-sets' files (the app's bundled .srs). Returns notes."""
+    ios_extension_constants()
+    cache = c.get("experimental", {}).get("cache_file", {})
+    expect(cache.get("enabled") is True and cache.get("store_fakeip") is True and "path" not in cache,
+           "cache_file enabled with store_fakeip and no path")
+    cache["path"] = str(rundir / "cache.db")
+    placeholders = [s for s in c["dns"]["servers"] if s.get("server") == DIRECT_DNS_PLACEHOLDER]
+    expect(len(placeholders) == 1, "exactly one direct resolver placeholder")
+    resolvers = runner_resolvers()
+    placeholders[0]["server"] = direct_resolver_pick(resolvers)
+    notes = ["the direct resolver placeholder %s became %s (DirectResolver.pick over the runner's %s)"
+             % (DIRECT_DNS_PLACEHOLDER, placeholders[0]["server"], resolvers or "no resolvers")]
+    for rs in c.get("route", {}).get("rule_set", []):
+        expect(rs.get("type") == "local" and str(rs.get("path", "")).startswith("@rules/"), "local @rules/ rule-set")
+        path = RULES_DIR / rs["path"][len("@rules/"):]
+        if not path.is_file():
+            raise LabError("rule-set %s: %s is not in the tree" % (rs.get("tag"), rel(path)))
+        rs["path"] = str(path)
+    if c.get("route", {}).get("rule_set"):
+        notes.append("rule-sets from %s, the files the app bundles" % rel(RULES_DIR))
+    return notes
+
+
+def ios_socks_shape(name, server, pub, rundir):
+    """Phase 0's iOS SOCKS shape for one line, ready for this runner. Refuses
+    a copy that drifted from the committed tun reference beside it."""
+    copy = ios_socks_copy(name)
+    twin_name, out_name = IOS_SOCKS[name]
+    drift = ios_socks_drift(copy, load_json(REFS / twin_name), load_json(REFS / out_name) if out_name else None)
+    expect(not drift, "shapes/%s against reference-configs/%s: %s" % (name, twin_name, "; ".join(drift)))
+    expect(ios_hev_socks(copy) is not None, "TunArrangement would give sing-box the tun for %s" % name)
+    line = ios_lab_server(copy, server, pub)
+    return copy, line, ios_runner_fields(copy, rundir)
+
+
+def ios_tun_shape(name, server, pub, rundir, tun_name):
+    """The baseline: sing-box on its gVisor tun, the committed reference for
+    the line (ios-tun-reality.json, bypass-tun-reality.json), or for
+    Hysteria2 in Global, which has none, ios-tun-reality.json carrying the
+    Hysteria2 outbound of bypass-tun-hysteria2.json: buildTun's shape for it,
+    as Phase 0's ios-socks-hysteria2.json is built. auto_route off and a
+    named interface: the lab routes only what the checks and loads use."""
+    if name == "hysteria2":
+        c = load_json(REFS / "ios-tun-reality.json")
+        c["outbounds"] = [load_json(REFS / "bypass-tun-hysteria2.json")["outbounds"][0]]
+    else:
+        c = load_json(REFS / name)
+    tun = c["inbounds"][0]
+    expect(len(c["inbounds"]) == 1 and tun["type"] == "tun" and tun.get("stack") == "gvisor", "ios tun inbound")
+    expect(tun.get("address") == ["%s/30" % IOS_TUN_ADDRESS] and tun.get("mtu") == HEV_MTU, "ios tun address and mtu")
+    expect(ios_hev_socks(c) is None, "TunArrangement would put hev in front of %s" % name)
+    tun["auto_route"] = False
+    tun["interface_name"] = tun_name
+    line = ios_lab_server(c, server, pub)
+    return c, line, ios_runner_fields(c, rundir)
+
+
+def ios_routes(config):
+    """What the kernel sends into the tun for an iOS shape row: sing-box's
+    fake-IP range and the tun's resolver (on a phone the default route)."""
+    fake = [s["inet4_range"] for s in config["dns"]["servers"] if s.get("type") == "fakeip"]
+    expect(len(fake) == 1, "one fakeip server")
+    return [fake[0], IOS_TUN_DNS + "/32"]
+
+
+def page_pattern(n):
+    """The page's bytes (loadgen main.go `pattern`, xorshift32): a body that
+    equals them came from the page, through the core and the server."""
+    out = bytearray(n)
+    x = 2463534242
+    for i in range(n):
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        out[i] = x & 0xFF
+    return bytes(out)
+
+
+def dns_skip_name(data, off):
+    while True:
+        n = data[off]
+        if n == 0:
+            return off + 1
+        if n & 0xC0 == 0xC0:
+            return off + 2
+        off += 1 + n
+
+
+def dns_query_a(server, name, timeout=2.0):
+    """One A query over UDP, on a socket of its own (as the system resolver
+    asks): {rcode, a: [addresses], rtt_s}. Raises OSError on silence."""
+    qid = int.from_bytes(os.urandom(2), "big")
+    query = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+    for label in name.rstrip(".").split("."):
+        query += bytes([len(label)]) + label.encode("ascii")
+    query += b"\0" + struct.pack(">HH", 1, 1)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        t0 = time.time()
+        s.sendto(query, (server, 53))
+        while True:
+            data, _ = s.recvfrom(4096)
+            if len(data) >= 12 and struct.unpack(">H", data[:2])[0] == qid:
+                break
+        rtt = time.time() - t0
+    _, flags, qd, an, _, _ = struct.unpack(">HHHHHH", data[:12])
+    off = 12
+    for _ in range(qd):
+        off = dns_skip_name(data, off) + 4
+    addrs = []
+    for _ in range(an):
+        off = dns_skip_name(data, off)
+        rtype, _, _, rdlen = struct.unpack(">HHIH", data[off:off + 10])
+        off += 10
+        if rtype == 1 and rdlen == 4:
+            addrs.append(socket.inet_ntoa(data[off:off + 4]))
+        off += rdlen
+    return {"rcode": flags & 0xF, "a": addrs, "rtt_s": round(rtt, 3)}
+
+
+def ios_shape_checks(fake_range, seconds=20):
+    """Before any load, what a phone needs of the shape: (1) the tun's
+    resolver answers an A query with a fake address; (2) HTTP to that name
+    brings the page's own bytes; (3) UDP crosses the tun both ways: check 1
+    and IOS_UDP_EXCHANGES more queries, each on a socket (a UDP session) of
+    its own, each answered with a fake address of its own. The lab has no
+    UDP echo; DNS is the UDP a phone sends most. Returns the checks and the
+    fake address the loads go to (None when check 1 failed)."""
+    net = ipaddress.ip_network(fake_range)
+    checks = {"resolver": IOS_TUN_DNS, "name": IOS_CHECK_NAME, "fake_ip_range": fake_range}
+    deadline = time.time() + seconds
+    answer, err, tries = None, "not tried", 0
+    while time.time() < deadline:
+        tries += 1
+        try:
+            answer = dns_query_a(IOS_TUN_DNS, IOS_CHECK_NAME)
+            break
+        except OSError as e:
+            err = "%s: %s" % (type(e).__name__, e)
+            time.sleep(0.3)
+    fake = None
+    if answer is not None:
+        fake = next((a for a in answer["a"] if ipaddress.ip_address(a) in net), None)
+    checks["dns"] = {
+        "ok": fake is not None, "tries": tries, "answer": answer,
+        "detail": ("%s A %s (rcode %d, %.3f s, try %d)" % (IOS_CHECK_NAME, fake, answer["rcode"], answer["rtt_s"], tries))
+        if fake else ("no fake address: %s" % (answer if answer is not None else err))}
+    if fake is None:
+        checks["http"] = {"ok": False, "detail": "not tried: no address for the name"}
+        checks["udp"] = {"ok": False, "detail": "no DNS answer through the tun: %s" % err if answer is None else
+                         "an answer came back over UDP, but not a fake address"}
+        return checks, None
+    # 2. HTTP to the name, at the address sing-box handed out, with its Host.
+    http_res, err = None, "not tried"
+    t0 = time.time()
+    while time.time() < deadline + 10:
+        conn = http.client.HTTPConnection(fake, 80, timeout=15)
+        try:
+            conn.request("GET", "/bytes?n=%d" % IOS_CHECK_BYTES, headers={"Host": IOS_CHECK_NAME, "Connection": "close"})
+            resp = conn.getresponse()
+            body = resp.read()
+            http_res = {"status": resp.status, "bytes": len(body), "page_bytes": body == page_pattern(IOS_CHECK_BYTES)}
+            break
+        except (OSError, http.client.HTTPException) as e:
+            err = "%s: %s" % (type(e).__name__, e)
+            time.sleep(0.5)
+        finally:
+            conn.close()
+    ok = bool(http_res) and http_res["status"] == 200 and http_res["page_bytes"]
+    checks["http"] = {"ok": ok, "result": http_res, "seconds": round(time.time() - t0, 3),
+                      "detail": ("GET http://%s/bytes?n=%d at %s: %s, %d bytes, %s" % (
+                          IOS_CHECK_NAME, IOS_CHECK_BYTES, fake, http_res["status"], http_res["bytes"],
+                          "the page's own bytes" if http_res["page_bytes"] else "NOT the page's bytes"))
+                      if http_res else "failed: %s" % err}
+    # 3. More UDP sessions, one socket each.
+    seen, fails = {fake}, []
+    for i in range(IOS_UDP_EXCHANGES):
+        name = "udp-%d.lab.test" % i
+        try:
+            a = dns_query_a(IOS_TUN_DNS, name)
+            got = [x for x in a["a"] if ipaddress.ip_address(x) in net]
+            if not got:
+                fails.append("%s: %s" % (name, a))
+            seen.update(got[:1])
+        except OSError as e:
+            fails.append("%s: %s" % (name, e))
+    good = 1 + IOS_UDP_EXCHANGES - len(fails)
+    checks["udp"] = {"ok": not fails and len(seen) == 1 + IOS_UDP_EXCHANGES, "exchanges": 1 + IOS_UDP_EXCHANGES,
+                     "answered": good, "distinct_fake_addresses": len(seen), "failures": fails[:4],
+                     "detail": "%d of %d DNS exchanges over UDP, each on its own socket, %d distinct fake addresses%s"
+                               % (good, 1 + IOS_UDP_EXCHANGES, len(seen),
+                                  ("; first failure %s" % fails[0]) if fails else "")}
+    return checks, fake
 
 
 def find_pid_by_argv(exe_name, needle, seconds=8):
@@ -916,18 +1297,20 @@ def parse_loadgen(stdout, stderr):
     return {"ok": False, "error": (stderr or stdout or "no output").strip()[-400:]}
 
 
-def transfer_argv(op, nbytes, socks, timeout_s, flows=None):
+def transfer_argv(op, nbytes, socks, timeout_s, flows=None, target=THROUGH):
     """get/put: one transfer of nbytes. burst-get/burst-put: `flows` transfers
-    at once, nbytes each, one connection each."""
+    at once, nbytes each, one connection each. `target` is the address the
+    URLs name: TEST-NET-3 everywhere but the iOS shape rows, which go to a
+    fake address sing-box handed out."""
     if op == "get":
-        argv = ["get", "-url", "http://%s/bytes?n=%d" % (THROUGH, nbytes), "-expect", str(nbytes)]
+        argv = ["get", "-url", "http://%s/bytes?n=%d" % (target, nbytes), "-expect", str(nbytes)]
     elif op == "put":
-        argv = ["put", "-url", "http://%s/sink" % THROUGH, "-bytes", str(nbytes)]
+        argv = ["put", "-url", "http://%s/sink" % target, "-bytes", str(nbytes)]
     elif op == "burst-get":
         argv = ["burst", "-op", "get", "-n", str(flows), "-each", str(nbytes),
-                "-url", "http://%s/bytes?n=%d" % (THROUGH, nbytes)]
+                "-url", "http://%s/bytes?n=%d" % (target, nbytes)]
     elif op == "burst-put":
-        argv = ["burst", "-op", "put", "-n", str(flows), "-each", str(nbytes), "-url", "http://%s/sink" % THROUGH]
+        argv = ["burst", "-op", "put", "-n", str(flows), "-each", str(nbytes), "-url", "http://%s/sink" % target]
     else:
         raise LabError("unknown transfer %r" % op)
     argv += ["-timeout", "%ds" % timeout_s]
@@ -940,19 +1323,19 @@ class LocalHost:
     def __init__(self, loadgen):
         self.loadgen = loadgen
 
-    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None):
-        argv = [str(self.loadgen)] + transfer_argv(op, nbytes, socks, timeout_s, flows)
+    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None, target=THROUGH):
+        argv = [str(self.loadgen)] + transfer_argv(op, nbytes, socks, timeout_s, flows, target)
         try:
             cp = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s + 30, env=clean_env())
             return parse_loadgen(cp.stdout, cp.stderr)
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "loadgen did not return"}
 
-    def probe(self, socks, seconds=30):
+    def probe(self, socks, seconds=30, target=THROUGH):
         deadline = time.time() + seconds
         last = {"ok": False, "error": "not tried"}
         while time.time() < deadline:
-            last = self.loadgen_run("get", 1000, socks, 8)
+            last = self.loadgen_run("get", 1000, socks, 8, target=target)
             if last.get("ok"):
                 return last
             time.sleep(0.5)
@@ -990,14 +1373,14 @@ def transfer_figures(row, down, up, rows, wins, cpu_key="cpu"):
     return [e for e in errors if e]
 
 
-def run_burst(host, socks, timeout_s=150):
+def run_burst(host, socks, timeout_s=150, target=THROUGH):
     """The burst phase: BURST_FLOWS downloads at once, a pause, BURST_FLOWS
     uploads at once, a short tail. Returns the two results and the window
     (start, end) the figures are read over, tail included."""
     b0 = time.time()
-    bdown = host.loadgen_run("burst-get", BURST_EACH_DOWN, socks, timeout_s, BURST_FLOWS)
+    bdown = host.loadgen_run("burst-get", BURST_EACH_DOWN, socks, timeout_s, BURST_FLOWS, target=target)
     time.sleep(PAUSE_S)
-    bup = host.loadgen_run("burst-put", BURST_EACH_UP, socks, timeout_s, BURST_FLOWS)
+    bup = host.loadgen_run("burst-put", BURST_EACH_UP, socks, timeout_s, BURST_FLOWS, target=target)
     time.sleep(BURST_TAIL_S)
     return bdown, bup, (b0, time.time())
 
@@ -1064,7 +1447,11 @@ class Spec:
         self.scenario = kw["scenario"]
         self.settings = kw["settings"]
         self.argv = kw.get("argv")          # exec
-        self.config = kw.get("config")      # dict
+        # A dict, or a function of the run directory returning (dict, notes):
+        # built inside the run, so a shape that fails fails its own row.
+        self.config = kw.get("config")
+        self.tun_name = kw.get("tun_name")  # harness-tun / harness-hev: a tun other than the kind's own
+        self.ios_shape = kw.get("ios_shape", False)  # the iOS shape checks, routes and fake-address loads
         self.harness_core = kw.get("harness_core")
         self.mode = kw.get("mode")
         self.socks = kw.get("socks", "127.0.0.1:%d" % PORT_SOCKS)
@@ -1101,9 +1488,13 @@ def run_desktop_spec(spec, ctx):
     if (spec.socks or spec.kind == "harness-hev") and not wait_port_free(PORT_SOCKS):
         raise LabError("port %d is still taken by the previous run" % PORT_SOCKS)
     cfg_path = None
-    if spec.config is not None:
+    config = spec.config
+    if callable(config):
+        config, cfg_notes = config(rundir)
+        notes += cfg_notes
+    if config is not None:
         cfg_path = rundir / "config.json"
-        write_json(cfg_path, spec.config)
+        write_json(cfg_path, config)
     if spec.xrs_check:
         for name, aux in spec.aux_checks.items():
             aux_path = rundir / ("aux-%s.json" % re.sub(r"[^a-z0-9]+", "-", name.lower()))
@@ -1118,6 +1509,15 @@ def run_desktop_spec(spec, ctx):
                 rundir / "config-check.json", "; ".join(check_notes) or "no diagnostics"))
     sudo = spec.kind == "harness-tun"
     tun_dev = {"harness-tun": TUN_NAME, "harness-hev": TUN_HEV}.get(spec.kind)
+    if tun_dev and spec.tun_name:
+        tun_dev = spec.tun_name
+    if spec.ios_shape:
+        # A tun an earlier iOS shape row left behind would hold the same
+        # address; neither should exist between rows.
+        for stale in (TUN_IOS_HEV, TUN_IOS_GVISOR):
+            if Path("/sys/class/net/%s" % stale).exists():
+                notes.append("deleted a stale %s before the run" % stale)
+                subprocess.run(["sudo", "-n", "ip", "link", "delete", stale], capture_output=True, check=False)
     if spec.kind == "exec":
         argv = [a if a != "{config}" else str(cfg_path) for a in spec.argv]
     else:
@@ -1146,8 +1546,20 @@ def run_desktop_spec(spec, ctx):
         if spec.kind == "harness-hev":
             # hev in front of the harness's SOCKS, as root: it opens its own tun.
             hev_cfg = rundir / "hev.yml"
-            hev_cfg.write_text(hev_config(PORT_SOCKS))
-            if not wait_port(PORT_SOCKS, 20, proc):
+            hev_port = PORT_SOCKS
+            if spec.ios_shape:
+                # The extension's decision and the hev it starts: the port and
+                # the login TunArrangement.singBoxSocks reads from the config.
+                arrangement = ios_hev_socks(config)
+                if arrangement is None:
+                    raise LabError("TunArrangement.singBoxSocks finds no SOCKS inbound for hev in %s" % cfg_path)
+                hev_port, login = arrangement
+                row["extra"]["arrangement"] = {"case": "singBoxBehindHev", "port": hev_port,
+                                               "login": "username %r and a password" % login[0] if login else None}
+                hev_cfg.write_text(hev_config(hev_port, login=login, name=tun_dev, ipv4=IOS_TUN_ADDRESS))
+            else:
+                hev_cfg.write_text(hev_config(PORT_SOCKS))
+            if not wait_port(hev_port, 20, proc):
                 raise LabError("the harness's SOCKS port never opened:\n" + tail(rundir / "core.log"))
             front = Proc([ctx["hev"], hev_cfg], rundir / "hev.log", cwd=rundir, env=clean_env(), sudo=True)
             real = find_pid_by_argv(Path(ctx["hev"]).name, str(hev_cfg))
@@ -1155,24 +1567,47 @@ def run_desktop_spec(spec, ctx):
                 raise LabError("hev did not start:\n" + tail(rundir / "hev.log"))
             front.pid = real
             deadline = time.time() + 10
-            while not link_up(TUN_HEV) and time.time() < deadline and front.alive():
+            while not link_up(tun_dev) and time.time() < deadline and front.alive():
                 time.sleep(0.1)
-            if not link_up(TUN_HEV):
-                raise LabError("hev did not bring up %s:\n%s" % (TUN_HEV, tail(rundir / "hev.log")))
+            if not link_up(tun_dev):
+                raise LabError("hev did not bring up %s:\n%s" % (tun_dev, tail(rundir / "hev.log")))
             row["version"] += ", " + ctx.get("hev_version", "hev-socks5-tunnel")
+        elif spec.ios_shape:
+            row["extra"]["arrangement"] = {"case": "singBoxTun" if ios_hev_socks(config) is None else "singBoxBehindHev"}
         t_ready = time.time()
         row["extra"]["start_to_ready_s"] = rnd(t_ready - t_launch, 2)
         if tun_dev:
-            r = subprocess.run(["sudo", "-n", "ip", "route", "replace", THROUGH.rsplit(".", 1)[0] + ".0/24",
-                                "dev", tun_dev], capture_output=True, text=True)
-            if r.returncode != 0:
-                raise LabError("route into %s: %s" % (tun_dev, r.stderr.strip()))
-        probe = host.probe(spec.socks, 40)
+            nets = ios_routes(config) if spec.ios_shape else [THROUGH.rsplit(".", 1)[0] + ".0/24"]
+            for net in nets:
+                r = subprocess.run(["sudo", "-n", "ip", "route", "replace", net, "dev", tun_dev],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise LabError("route %s into %s: %s" % (net, tun_dev, r.stderr.strip()))
+        target = THROUGH
+        t_probe = t_ready
+        if spec.ios_shape:
+            checks, fake = ios_shape_checks(ios_routes(config)[0])
+            t_probe = time.time()
+            checks["seconds"] = rnd(t_probe - t_ready, 2)
+            write_json(rundir / "ios-checks.json", checks)
+            row["extra"]["ios_checks"] = checks
+            summary = "; ".join("check %s %s: %s" % (k, "ok" if checks[k]["ok"] else "FAILED", checks[k]["detail"])
+                                for k in ("dns", "http", "udp"))
+            if not all(checks[k]["ok"] for k in ("dns", "http", "udp")):
+                err = LabError("the iOS shape checks failed before any load: %s\ncore.log:\n%s%s" % (
+                    summary, tail(rundir / "core.log"), ("\nhev.log:\n" + tail(rundir / "hev.log")) if front else ""))
+                err.extra = {"ios_checks": checks, "arrangement": row["extra"].get("arrangement")}
+                raise err
+            notes.append(summary)
+            notes.append("every load goes to %s's fake address, http://%s/, so each connection is a fake-IP lookup "
+                         "in sing-box" % (IOS_CHECK_NAME, fake))
+            target = fake
+        probe = host.probe(spec.socks, 40, target=target)
         if not probe.get("ok"):
             raise LabError("no byte crossed the core in 40 s (%s):\n%s%s" % (
                 probe.get("error"), tail(rundir / "core.log"),
                 ("\nhev:\n" + tail(rundir / "hev.log")) if front else ""))
-        row["extra"]["first_bytes_s"] = rnd(time.time() - t_ready, 2)
+        row["extra"]["first_bytes_s"] = rnd(time.time() - t_probe, 2)
         read = pair_reader(reader, proc.pid, front.pid) if front else (lambda: reader.read(proc.pid))
         sampler = Sampler(read, PERIOD_S)
         sampler.start()
@@ -1180,15 +1615,15 @@ def run_desktop_spec(spec, ctx):
         time.sleep(IDLE_SETTLE_S)
         idle_win = (t0 + IDLE_SETTLE_S / 2, time.time())
         h0 = time.time()
-        down = host.loadgen_run("get", DOWN_BYTES, spec.socks, 240)
+        down = host.loadgen_run("get", DOWN_BYTES, spec.socks, 240, target=target)
         h1 = time.time()
         time.sleep(PAUSE_S)
         h2 = time.time()
-        up = host.loadgen_run("put", UP_BYTES, spec.socks, 180)
+        up = host.loadgen_run("put", UP_BYTES, spec.socks, 180, target=target)
         h3 = time.time()
         time.sleep(IDLE_AFTER_S)
         t_idle_end = time.time()
-        bdown, bup, bwin = run_burst(host, spec.socks)
+        bdown, bup, bwin = run_burst(host, spec.socks, target=target)
         try:
             final = read()
         except Exception:
@@ -1606,6 +2041,7 @@ def size_row(platform, name, path, what):
 def failed_row(platform, spec_core, scenario, settings, err):
     row = base_row(platform, spec_core, "", scenario, settings, "")
     row["notes"] = "FAILED: %s" % err
+    row["extra"].update(getattr(err, "extra", None) or {})
     return row
 
 
@@ -1706,6 +2142,55 @@ def cmd_desktop(a):
         else:
             missing.append((hev_spec, "hev-socks5-tunnel was not built (hev-build.log in this artifact): %s missing; %s"
                             % (hev_bin, tail(out / "hev-build.log", 8).replace("\n", " | ") or "no build log")))
+
+        # Phase 0's iOS shape, line by line: sing-box on its gVisor tun (the
+        # committed ios-tun / bypass-tun shape, what the iPhone runs today),
+        # then sing-box on SOCKS behind hev (Phase 0's own configs, copied
+        # into shapes/). The same server, the same checks, the same load.
+        ios_common = [ios_note, "the cores harness: the patched sing-box 1.13.14 (scripts/patched-singbox.sh) linked "
+                      "as Cores.xcframework links it, run like `sing-box run` (box.New), not through libbox's command "
+                      "server; root via sudo where it opens a tun"]
+        ios_lines = (
+            ("vless-reality-vision", "ios-socks-reality.json", "ios-tun-reality.json", "ios-tun-reality.json"),
+            ("hysteria2-salamander", "ios-socks-hysteria2.json", "hysteria2",
+             "ios-tun-reality.json with the Hysteria2 outbound of bypass-tun-hysteria2.json (no Global Hysteria2 tun "
+             "reference is committed; it is buildTun's shape, and Phase 0's ios-socks-hysteria2.json is that with the "
+             "SOCKS inbound)"),
+            ("bypass russia, vless-reality-vision", "bypass-ios-socks-reality.json", "bypass-tun-reality.json",
+             "bypass-tun-reality.json"),
+        )
+        for scenario, socks_name, tun_name, tun_said in ios_lines:
+            def tun_config(rundir, tun_name=tun_name):
+                c, _, cfg_notes = ios_tun_shape(tun_name, loop, servers.pub, rundir, TUN_IOS_GVISOR)
+                return c, cfg_notes
+
+            def socks_config(rundir, socks_name=socks_name):
+                c, _, cfg_notes = ios_socks_shape(socks_name, loop, servers.pub, rundir)
+                return c, cfg_notes
+
+            routed = ("the kernel routes the fake-IP range 198.18.0.0/15 and the tun resolver %s/32 into the tun "
+                      "(on a phone the default route goes there)" % IOS_TUN_DNS)
+            specs.append(Spec(
+                kind="harness-tun", core=IOS_SHAPE_TUN, harness_core="singbox", mode="ios", settings="ios-limits",
+                scenario=scenario, socks=None, config=tun_config, tun_name=TUN_IOS_GVISOR, ios_shape=True,
+                notes=ios_common + ["the baseline, today's iPhone shape: sing-box owns a gVisor tun (TunArrangement "
+                                    "singBoxTun) with %s, auto_route off and a named interface, the lab server's "
+                                    "address, keys and names" % tun_said, routed, srv_note]))
+            ios_hev = Spec(
+                kind="harness-hev", core=IOS_SHAPE_HEV, harness_core="singbox", mode="ios", settings="ios-limits",
+                scenario=scenario, socks=None, config=socks_config, tun_name=TUN_IOS_HEV, ios_shape=True,
+                notes=ios_common + [
+                    "Phase 0's shape (TunArrangement singBoxBehindHev): shapes/%s, copied from the uncommitted branch "
+                    "feat/ios-singbox-behind-hev (shapes/ios-socks.provenance.txt), sing-box on 127.0.0.1:%d with its "
+                    "login and the lab server's address, keys and names; hev-socks5-tunnel at the iPhone's pin in front, "
+                    "as root, with HevTunnel.configuration for the port and login TunArrangement.singBoxSocks reads "
+                    "from that config, plus a tun name and the tun's address %s (LibboxPlatform.Tun.address); the two "
+                    "processes are sampled together and summed" % (socks_name, PORT_SOCKS, IOS_TUN_ADDRESS),
+                    routed, srv_note])
+            if hev_bin.exists():
+                specs.append(ios_hev)
+            else:
+                missing.append((ios_hev, "hev-socks5-tunnel was not built (hev-build.log in this artifact)"))
 
     # xray-rust: one binary, two runtime profiles, the four lines.
     xrs_dir = Path(a.xray_rust).resolve() if a.xray_rust else None
@@ -1902,8 +2387,8 @@ class DeviceHost:
     def __init__(self, adb):
         self.adb = adb
 
-    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None):
-        argv = [DEV_DIR + "/loadgen"] + transfer_argv(op, nbytes, socks, timeout_s, flows)
+    def loadgen_run(self, op, nbytes, socks, timeout_s, flows=None, target=THROUGH):
+        argv = [DEV_DIR + "/loadgen"] + transfer_argv(op, nbytes, socks, timeout_s, flows, target)
         t0 = time.time()
         code, out, err = self.adb.sh(" ".join(shlex.quote(x) for x in argv), timeout=timeout_s + 40)
         res = parse_loadgen(out, err)
@@ -2385,6 +2870,17 @@ def markdown(rows):
                 r["platform"], r["core"], r["scenario"].replace("client hello: ", ""), e.get("ja4"),
                 ", ".join(e.get("key_shares") or []), ", ".join(e.get("alpn") or []) or "none",
                 e.get("client_hello_bytes"), "yes" if e.get("ech_bytes") else "no", len(e.get("extensions") or [])))
+    checked = [r for r in rows if r.get("extra", {}).get("ios_checks")]
+    if checked:
+        lines += ["", "iOS shape checks, before any load: (1) an A query to the tun's resolver %s, (2) HTTP to that "
+                      "name at the address it got, (3) more UDP exchanges, each on a socket of its own:" % IOS_TUN_DNS,
+                  "", "| platform | core | scenario | (1) DNS through the tun | (2) HTTP to the name | (3) UDP |",
+                  "|---|---|---|---|---|---|"]
+        for r in checked:
+            c = r["extra"]["ios_checks"]
+            lines.append("| %s | %s | %s | %s |" % (r["platform"], r["core"], r["scenario"], " | ".join(
+                "%s: %s" % ("ok" if c.get(k, {}).get("ok") else "FAILED", c.get(k, {}).get("detail", "-"))
+                for k in ("dns", "http", "udp"))))
     failed = [r for r in rows if str(r.get("notes", "")).startswith(("FAILED", "skipped"))]
     if failed:
         lines += ["", "Not measured:", ""]
@@ -2448,6 +2944,27 @@ def cmd_shapes_check(a):
         print("DIFFERS  %s vs %s" % (rel(fresh), rel(lab)))
         for line in difflib.unified_diff(want, got, "lab", "app", lineterm="", n=2):
             print("    " + line)
+    # Phase 0's iOS SOCKS copies: their builder is not on this branch, so each
+    # is held, apart from its inbound, to the builder's fresh tun dump of the
+    # same line (Phase 0's SingBoxConfigTest holds the two equal there).
+    for name, (twin_name, out_name) in IOS_SOCKS.items():
+        twin = build / "singbox-configs" / twin_name
+        source = build / "singbox-configs" / out_name if out_name else None
+        absent = [p for p in (twin, source) if p is not None and not p.exists()]
+        if absent:
+            print("MISSING  %s (did the dump test run?)" % ", ".join(rel(p) for p in absent))
+            bad += 1
+            continue
+        try:
+            drift = ios_socks_drift(ios_socks_copy(name), load_json(twin), load_json(source) if source else None)
+        except (LabError, OSError, ValueError) as e:
+            drift = [str(e)]
+        if drift:
+            bad += 1
+            print("DIFFERS  %s vs %s, apart from the inbound: %s" % (rel(SHAPES / name), rel(twin), "; ".join(drift)))
+        else:
+            print("same     %s == %s, apart from the inbound%s" % (
+                rel(SHAPES / name), rel(twin), (" (outbound: %s's first)" % rel(source)) if source else ""))
     return 1 if bad else 0
 
 
@@ -2463,7 +2980,8 @@ def main(argv=None):
     d.add_argument("--platform", required=True)
     d.add_argument("--engine-src")
     d.add_argument("--tun", action="store_true",
-                   help="also the gVisor tun run and the hev run, with BIN/hev-socks5-tunnel (Linux, passwordless sudo)")
+                   help="also the gVisor tun run, the hev run and the iOS shape rows, with BIN/hev-socks5-tunnel "
+                        "(Linux, passwordless sudo)")
     d.add_argument("--xray-rust", help="a directory with xray-rust and xray-rust.build.json (rust-core-build.sh); "
                                        "its rows fail by name when the binary is missing")
     d.add_argument("--budget-min", type=float, default=24)

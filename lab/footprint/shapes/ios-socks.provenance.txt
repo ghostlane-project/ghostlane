@@ -1,0 +1,26 @@
+# Phase 0's iOS sing-box shapes: sing-box on a loopback SOCKS port with a
+# login, hev-socks5-tunnel owning the tun in front of it
+# (SingBoxConfig.buildIosSocks, TunArrangement.singBoxBehindHev).
+#
+# Copied byte for byte on 2026-11-14 from the uncommitted Phase 0 branch
+# feat/ios-singbox-behind-hev (a worktree from main 9e93be0b, nothing
+# committed or pushed when copied), from
+# sharedUI/src/jvmTest/resources/reference-configs/<file> there. Each is the
+# matching ios-tun / bypass-tun reference with the tun inbound replaced by the
+# SOCKS one; ios-socks-hysteria2.json is ios-tun-reality.json with the
+# Hysteria2 outbound of bypass-tun-hysteria2.json. Phase 0's implementer wrote
+# them with a script from the committed references, not by running the Kotlin
+# builder; its SingBoxConfigDumpTest is to hold them equal to the builder.
+#
+# lab.py reads these copies only through this file: a copy whose sha256 is
+# not the one below is refused, so change a copy only by copying it again
+# (and the line here with it). Everything the runner needs (the lab server's
+# address, port, keys and names, cache_file.path, the direct resolver
+# placeholder, the rule-set paths) is replaced in code, by lab.py
+# ios_socks_shape. `lab.py shapes-check` holds each copy, apart from its
+# inbound, equal to the builder's fresh tun dump on this branch.
+#
+# sha256                                                            file                           source (feat/ios-singbox-behind-hev)
+c76578790f3b7dec2839962deba75ee2e406625f19588bec7c82095d2b8c879f  ios-socks-reality.json         sharedUI/src/jvmTest/resources/reference-configs/ios-socks-reality.json
+5d358ecc19ab4311960466c7cc2b19caf0d7fcbdad6986f38541591a7c43c322  ios-socks-hysteria2.json       sharedUI/src/jvmTest/resources/reference-configs/ios-socks-hysteria2.json
+0bc0683b3caa117e15020113ab15f32e4cb35a237017c9165a84d6e78152521e  bypass-ios-socks-reality.json  sharedUI/src/jvmTest/resources/reference-configs/bypass-ios-socks-reality.json

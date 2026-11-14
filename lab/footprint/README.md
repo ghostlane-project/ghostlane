@@ -6,7 +6,10 @@ app builds them, and each runs against servers the job starts on the same
 runner. Beside them, in the same table, a Rust core (xray-rust) on the same
 lines, and on Linux sing-box behind hev-socks5-tunnel, for planning a possible
 rewrite of the network cores against the iPhone extension's ceiling of about
-50 MB. Nothing gates on this; it is a measurement for planning.
+50 MB. Also on Linux, the iOS shape rows: the iPhone's own sing-box configs,
+today's (sing-box on its gVisor tun) and Phase 0's (sing-box on SOCKS behind
+hev), each checked for DNS, a name and UDP through the tun before it is
+loaded. Nothing gates on this; it is a measurement for planning.
 
 ## Running it
 
@@ -22,7 +25,7 @@ Each job prints a compact table in its log and uploads its results:
 
 | artifact | job |
 |---|---|
-| `lab-footprint-linux-x86_64` | ubuntu-latest (x86_64), with the gVisor tun run and the hev run |
+| `lab-footprint-linux-x86_64` | ubuntu-latest (x86_64), with the gVisor tun run, the hev run and the iOS shape rows |
 | `lab-footprint-macos-arm64` | macos-latest (Apple silicon), the stand-in for an iPhone |
 | `lab-footprint-android` | ubuntu-latest with KVM, an x86_64 Android 11 (API 30) emulator |
 | `lab-footprint-all` | every `results.json` merged; the run's summary page has the same table |
@@ -83,6 +86,21 @@ Reality block, the httpupgrade transport), plus `insecure` for the lab's
 self-signed certificate (`lab.py` `singbox_webtunnel`). On Android the app
 builds its own WebTunnel config from the link.
 
+The iOS shape rows' Phase 0 configs are not on this branch's app yet: they
+are copied byte for byte from the uncommitted branch
+`feat/ios-singbox-behind-hev` into `shapes/` (`ios-socks-reality.json`,
+`ios-socks-hysteria2.json`, `bypass-ios-socks-reality.json`), and
+`shapes/ios-socks.provenance.txt` says where from, when, and pins each copy's
+sha256, which `lab.py` checks before it reads one. `lab.py` also refuses a
+copy that differs, apart from its inbound, from the committed tun reference
+of the same line, and the `shapes` job holds each copy, apart from its
+inbound, to the builder's fresh tun dump. What the runner needs is replaced in
+code (`lab.py` `ios_socks_shape`, `ios_tun_shape`): the lab server's address,
+port, keys and names; `cache_file.path`, into the run directory; the direct
+resolver placeholder, by `DirectResolver.pick` over the runner's resolvers, as
+the extension does; and Bypass Russia's `@rules/` paths, to the `.srs` files
+the app bundles (`sharedUI/src/commonMain/composeResources/files/rules/`).
+
 xray-rust reads Xray-style JSON (a documented subset: `docs/config-compatibility.md`
 at the tag). Its client configs are the same lines in that form, with the
 app's Xray SOCKS inbound (`shapes/vless-xhttp.json`): the XHTTP line is the
@@ -139,6 +157,30 @@ Rows:
   Swift writes something else) plus a tun name and address. Its memory columns
   are hev and the harness summed; `extra.hev_*` and `extra.harness_*` hold each
   process alone; the Go runtime columns are the harness's.
+- **ios-shape sing-box gVisor tun** and **ios-shape sing-box+hev** (Linux,
+  root via sudo): three lines each, Reality Vision, Hysteria2 and Reality
+  under Bypass Russia, in the cores harness (`ios-limits`). The gVisor rows
+  are the iPhone today: `ios-tun-reality.json` and `bypass-tun-reality.json`,
+  and for Hysteria2 in Global, which has no committed tun reference,
+  `ios-tun-reality.json` with the Hysteria2 outbound of
+  `bypass-tun-hysteria2.json`; auto_route off and a named tun. The hev rows
+  are Phase 0: the copied SOCKS configs, sing-box on 127.0.0.1:10810 with its
+  login, and hev at the iPhone's pin in front with `HevTunnel.configuration`
+  for the port and login that `TunArrangement.singBoxSocks` reads from the
+  config (`lab.py` `ios_hev_socks`), plus a tun name and the tun's address
+  172.19.0.1 (`LibboxPlatform.Tun.address`). In both, the kernel routes the
+  fake-IP range 198.18.0.0/15 and the tun's resolver 172.19.0.2 into the tun.
+  Before any load, three checks: (1) an A query for `page.lab.test` to
+  172.19.0.2 through the tun gets an address in 198.18.0.0/15; (2) HTTP to
+  that name at that address brings the page's own bytes (65536 of them,
+  compared with loadgen's pattern), which only the Reality or Hysteria2 server
+  can have redirected there; (3) eight more UDP exchanges, each a query for a
+  new name on a socket of its own, each answered with a fake address of its
+  own (the lab has no UDP echo; behind hev these cross hev's SOCKS5 UDP
+  relay). A failed check fails the row before the load, with the logs. Then
+  the run as above, with every transfer to the fake address of
+  `page.lab.test`, so each connection is a fake-IP lookup in sing-box. The
+  summary has a table of the checks.
 - **xray-rust vX.Y.Z (exec)** (desktops): the four lines through the CLI,
   under two settings. `cli defaults` is the binary as it starts (2 Tokio
   workers, runtime profile Default, which on a desktop target is the
@@ -173,6 +215,7 @@ Rows:
 | `extra` | macOS `phys_footprint` (idle, steady, lifetime peak), PSS, per-direction CPU, Go GC cycles, the limit and GC percent in force, MemoryWatch releases; for xray-rust the build record and the core version `config check` reported; for the hev row each process alone |
 | `fp-pk` / `macOS phys_footprint` | macOS only: the table's `fp-pk` is the lifetime peak `phys_footprint`, and the summary's column gives idle / steady / peak / burst; the figure jetsam holds an iPhone extension to, so the headline on macOS |
 | `extra.burst_*` | the burst: peak memory over it (`burst_peak_mb`, same metric as the row; macOS `burst_peak_phys_footprint_mb`), aggregate Mbit/s each way, transfers that finished whole, CPU s per GB; harness rows also the Go runtime's peak goroutines, `sys - rel` and heap over it. The table's `burst` and `b-gor` columns are `burst_peak_mb` and `burst_go_goroutines_peak` |
+| `extra.ios_checks` | the iOS shape rows: each check's `ok`, its `detail` and its figures (also `runs/<row>/ios-checks.json`); `extra.arrangement` is what `TunArrangement` would decide for the config |
 | `notes` | how the row deviates from the app; `FAILED:` or `skipped:` when a run did not happen, with the reason |
 
 Memory is MiB (2^20). The macOS CPU times are checked against `ps` each run,
@@ -214,12 +257,21 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
   the app's.
 - The emulator is x86_64 behind QEMU's user-mode network, not an ARM phone on
   a radio; the APK is a debug build (not minified).
-- Client inbounds carry no SOCKS login; the app's Android configs carry one.
+- Client inbounds carry no SOCKS login, except the ios-shape hev rows'; the
+  app's Android configs carry one.
+- The iOS shape rows route only the fake-IP range and the tun's resolver into
+  the tun, not a default route, and nothing pins sing-box's own sockets
+  (no iOS config sets `auto_detect_interface`, so that is the phone's case
+  too). sing-box starts through `box.New`, not libbox's command server, and
+  hev opens its own tun where the extension hands it a descriptor. Their
+  Phase 0 configs are copies from an uncommitted branch, checked against this
+  branch's references, not against Phase 0's builder.
 - One run per cell. Run the workflow again for a second sample.
 - No olcRTC line through the cores harness or the Android app: those need a
   meeting service. The soak is the only olcRTC row, and it holds two peers.
-- hev runs only in front of sing-box's Reality line on Linux, not in front
-  of libXray (the iPhone's XHTTP) and not on macOS (no root tun there). No
+- hev runs only in front of sing-box on Linux (Reality in the hev row; Reality,
+  Hysteria2 and Bypass Russia in the iOS shape rows), not in front of libXray
+  (the iPhone's XHTTP) and not on macOS (no root tun there). No
   sing-box front behind Xray (Android's XHTTP under Rules; the app's default
   routing is Global, `RoutingSettings.kt`), no desktop JVM, no macOS tunnel
   daemon, no CLI.
@@ -233,7 +285,8 @@ most every 5 s, checked four times a second). `-mode plain` applies none of it.
 - `loadgen/`: the page, the TLS site, the transfers, keys and certificates
   (standard library only; the same static linux/amd64 build runs on the
   runner and under `adb shell`).
-- `shapes/`: the XHTTP client shapes; `xray-assets.txt`: the Xray archives
+- `shapes/`: the XHTTP client shapes, and Phase 0's iOS SOCKS shapes with
+  `ios-socks.provenance.txt`; `xray-assets.txt`: the Xray archives
   and their sha256; `engine-src.sh`, `engine-build.sh`: the engine at the pin.
 - `rust-core-build.sh`: xray-rust at the workflow's pins; `hev-build.sh`:
   hev-socks5-tunnel at `scripts/hev-pins.sh`'s commit.
