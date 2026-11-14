@@ -17,16 +17,14 @@ import kotlin.test.assertTrue
 /**
  * `core.json` ([XrayConfig.buildIosCore]): the Rust core's config on iOS, for
  * each line it runs, under Global and Bypass Russia. The lists are stand-ins
- * here; the JVM dump test writes the configs with the bundled ones, and
- * `scripts/check-rust-core-configs.sh` has the core's own parser read those.
+ * here; the JVM dump test writes the reference configs (once more with the
+ * bundled lists), and `scripts/check-rust-core-configs.sh` has the core's own
+ * parser read those.
  */
 class XrayConfigIosCoreTest {
     private val login = IosCoreFixtures.login
 
-    private val lists = XrayGeodata.Lists(
-        domains = listOf("domain:sberbank.ru", "full:ozon.ru", "domain:ru"),
-        cidrs = listOf("5.8.0.0/19", "77.88.0.0/18"),
-    )
+    private val lists = IosCoreFixtures.lists
 
     private val bypass = Routing.BypassRussia("unused-on-the-rust-core", DirectDns.Placeholder)
 
@@ -273,6 +271,9 @@ class XrayConfigIosCoreTest {
         val tls = stream.obj("tlsSettings")
         assertEquals("wt.example.com", tls.str("serverName"))
         assertEquals("chrome", tls.str("fingerprint"))
+        // The link's browser offer: the core keeps exactly this list on an
+        // upgrade handshake and sends `http/1.1` alone for anything else.
+        assertEquals(listOf("h2", "http/1.1"), tls["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
         // A certificate is checked, always: the core refuses to waive it.
         assertNull(tls["allowInsecure"])
         assertNull(stream["realitySettings"])
@@ -290,6 +291,36 @@ class XrayConfigIosCoreTest {
         assertNull(stream.obj("wsSettings")["host"])
         assertEquals("/", stream.obj("wsSettings").str("path"))
         assertNull(stream.obj("tlsSettings")["serverName"])
+        // No alpn in the link, none written: the core's own `http/1.1`.
+        assertNull(stream.obj("tlsSettings")["alpn"])
+    }
+
+    @Test fun proofKitsWebTunnelLinkOffersABrowsersAlpn() {
+        // The line exactly as ProofKit's subscription writes it.
+        val link = "vless://33333333-3333-3333-3333-333333333333@198.51.100.7:443?encryption=none&security=tls" +
+            "&sni=wt.example.com&host=wt.example.com&type=httpupgrade&path=%2Fs3cr3t&fp=chrome" +
+            "&alpn=h2%2Chttp%2F1.1#DE%20%C2%B7%20WebTunnel"
+        val spec = assertNotNull(LinkParser.parse(link)) as OutboundSpec.Vless
+        assertEquals(listOf("h2", "http/1.1"), spec.alpn)
+        assertEquals(IosEngineChoice(IosEngine.RUST, IosCoreLine.WebTunnelHttpUpgrade), IosCore.choose(spec, allRust))
+        val tls = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream().obj("tlsSettings")
+        assertEquals(listOf("h2", "http/1.1"), tls["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // Phase 0 offers the same.
+        val sb = Json.parseToJsonElement(SingBoxConfig.buildIosSocks(spec, login)).jsonObject.outbounds().first()
+        assertEquals(listOf("h2", "http/1.1"), sb.obj("tls")["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test fun alpnIsReadForUpgradeHandshakesOnly() {
+        // Reality has no ALPN of the link's to offer, and gRPC's is the core's.
+        for (link in listOf(
+            IosCoreFixtures.links.getValue(IosCoreLine.RealityVision) + "&alpn=h2%2Chttp%2F1.1",
+            IosCoreFixtures.links.getValue(IosCoreLine.RealityGrpc) + "&alpn=h2",
+        )) {
+            val spec = assertNotNull(LinkParser.parse(link)) as OutboundSpec.Vless
+            assertEquals(emptyList<String>(), spec.alpn, link)
+            val stream = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream()
+            assertNull(stream["tlsSettings"], link)
+        }
     }
 
     @Test fun hysteria2WithSalamanderAndThePinVerified() {
@@ -312,12 +343,18 @@ class XrayConfigIosCoreTest {
         val mask = stream.obj("finalmask")["udp"]!!.jsonArray.single().jsonObject
         assertEquals("salamander", mask.str("type"))
         assertEquals("OBFSPW", mask.obj("settings").str("password"))
+        // Salamander hides the QUIC handshake, so ChromeParrot would hide
+        // nothing and replace the core's windows with Chrome's 6 and 15 MiB.
+        val quic = stream.obj("finalmask").obj("quicParams")
+        assertEquals(setOf("disableChromeParrot"), quic.keys)
+        assertEquals("true", quic.str("disableChromeParrot"))
     }
 
     @Test fun hysteria2WithoutObfsHasNoMask() {
         val link = "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&pinSHA256=${IosCoreFixtures.PIN}#plain"
         val spec = assertNotNull(LinkParser.parse(link))
         val stream = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream()
+        // No mask and no quicParams: the hello is on the wire, the parrot stays on.
         assertNull(stream["finalmask"])
     }
 
@@ -402,6 +439,7 @@ class XrayConfigIosCoreTest {
                     val security = stream.obj(if (tls["reality"] != null) "realitySettings" else "tlsSettings")
                     assertEquals(tls.str("server_name"), security.str("serverName"), "$line")
                     assertEquals(tls.obj("utls").str("fingerprint"), security.str("fingerprint"), "$line")
+                    assertEquals(tls["alpn"], security["alpn"], "$line alpn")
                     tls["reality"]?.jsonObject?.let { reality ->
                         assertEquals(reality.str("public_key"), security.str("publicKey"))
                         assertEquals(reality.str("short_id"), security.str("shortId"))

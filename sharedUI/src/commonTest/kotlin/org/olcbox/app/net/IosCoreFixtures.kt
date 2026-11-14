@@ -14,6 +14,16 @@ object IosCoreFixtures {
     /** The pair the iOS shapes are written with in tests; the app generates its own. */
     val login = SocksLogin("ios-tun-user", "ios-tun-password")
 
+    /**
+     * Stand-ins for the Russian lists, one of each spelling the bundled ones
+     * use (`domain:`, `full:`, IPv4 ranges), so a line's Bypass Russia config
+     * stays small and does not move when the bundled lists are refreshed.
+     */
+    val lists = XrayGeodata.Lists(
+        domains = listOf("domain:sberbank.ru", "full:ozon.ru", "domain:ru"),
+        cidrs = listOf("5.8.0.0/19", "77.88.0.0/18"),
+    )
+
     val links: Map<IosCoreLine, String> = mapOf(
         IosCoreLine.RealityVision to
             "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
@@ -26,11 +36,13 @@ object IosCoreFixtures {
         IosCoreLine.WebTunnelWs to
             "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:443" +
             "?security=tls&encryption=none&sni=wt.example.com&fp=chrome" +
-            "&type=ws&path=%2Fv&host=wt.example.com#NL-webtunnel",
+            "&type=ws&path=%2Fv&host=wt.example.com&alpn=h2%2Chttp%2F1.1#NL-webtunnel",
+        // ProofKit's WebTunnel line as its subscription writes it
+        // (coordinator/src/routes/subscription.rs), with a test address.
         IosCoreLine.WebTunnelHttpUpgrade to
             "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:443" +
-            "?security=tls&encryption=none&sni=wt.example.com&fp=chrome" +
-            "&type=httpupgrade&path=%2Fu&host=wt.example.com#NL-webtunnel-hu",
+            "?encryption=none&security=tls&sni=wt.example.com&host=wt.example.com" +
+            "&type=httpupgrade&path=%2Fu&fp=chrome&alpn=h2%2Chttp%2F1.1#NL-webtunnel-hu",
         IosCoreLine.Hysteria2 to
             "hysteria2://PASSWORD123@127.0.0.1:443" +
             "?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&pinSHA256=$PIN#RU-hy2",

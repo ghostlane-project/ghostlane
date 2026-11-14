@@ -547,6 +547,34 @@ class SingBoxConfigTest {
         assertEquals("tls.example.org", tls["server_name"]!!.jsonPrimitive.content)
     }
 
+    private fun singBoxTls(link: String): JsonObject =
+        obj(SingBoxConfig.build(assertNotNull(LinkParser.parse(link), link)))["outbounds"]!!.jsonArray
+            .first { it.jsonObject["tag"]?.jsonPrimitive?.content == "out" }.jsonObject["tls"]!!.jsonObject
+
+    /**
+     * ProofKit's WebTunnel line asks for a browser's ALPN, `h2, http/1.1`:
+     * sing-box, given none, offers `http/1.1` alone on an upgrade handshake,
+     * the fingerprint the line avoids. Written for exactly that list on
+     * WebSocket and HTTP upgrade, as Xray keeps it; nothing else is written,
+     * so a server that would pick h2 for another list keeps today's handshake.
+     */
+    @Test fun webTunnelLinksOfferABrowsersAlpn() {
+        val proofKit = "vless://u@198.51.100.7:443?encryption=none&security=tls&sni=wt.example.com" +
+            "&host=wt.example.com&type=httpupgrade&path=%2Fs3cr3t&fp=chrome&alpn=h2%2Chttp%2F1.1#WebTunnel"
+        assertEquals(listOf("h2", "http/1.1"), strings(singBoxTls(proofKit), "alpn"))
+        val ws = "vless://u@198.51.100.7:443?security=tls&sni=wt.example.com&type=ws&path=%2Fv&alpn=h2,http/1.1#ws"
+        assertEquals(listOf("h2", "http/1.1"), strings(singBoxTls(ws), "alpn"))
+        for (other in listOf(
+            "vless://u@198.51.100.7:443?security=tls&sni=wt.example.com&type=ws&path=%2Fv#none",
+            "vless://u@198.51.100.7:443?security=tls&sni=wt.example.com&type=ws&path=%2Fv&alpn=h2#h2-only",
+            "vless://u@198.51.100.7:443?security=tls&sni=wt.example.com&type=httpupgrade&path=%2Fu&alpn=http%2F1.1,h2#reversed",
+            "vless://u@1.2.3.4:443?security=reality&pbk=PBK&sid=ab&sni=www.microsoft.com&type=tcp&alpn=h2%2Chttp%2F1.1#reality",
+            "vless://u@1.2.3.4:443?security=tls&sni=t.example.org&type=grpc&serviceName=s&alpn=h2#grpc",
+        )) {
+            assertNull(singBoxTls(other)["alpn"], other)
+        }
+    }
+
     @Test
     fun desktopTunExcludesTheServerSoTheCoreDoesNotRouteThroughItself() {
         val json = SingBoxConfig.buildDesktopTun(

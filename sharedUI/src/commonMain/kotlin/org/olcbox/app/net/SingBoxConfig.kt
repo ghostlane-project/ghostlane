@@ -1108,6 +1108,9 @@ object SingBoxConfig {
         }
     }
 
+    /** A browser's ALPN offer, which ProofKit's WebTunnel links ask for. */
+    internal val BROWSER_ALPN = listOf("h2", "http/1.1")
+
     private val SINGBOX_FINGERPRINTS = setOf(
         "chrome", "firefox", "edge", "safari", "360", "qq", "ios", "android", "random", "randomized",
         "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk",
@@ -1148,6 +1151,18 @@ object SingBoxConfig {
                 if (!spec.plain) putJsonObject("tls") {
                     put("enabled", true); put("server_name", spec.sni)
                     if (spec.insecure && spec.publicKey.isBlank()) put("insecure", true)
+                    // sing-box offers `http/1.1` alone on WebSocket and HTTP
+                    // upgrade when given no ALPN, the fingerprint ProofKit's
+                    // WebTunnel links avoid by asking for a browser's
+                    // `h2, http/1.1`. Written for exactly that list, as Xray
+                    // and xray-rust keep it; any other stays unwritten, since
+                    // sing-box would offer it as given and a server that picks
+                    // h2 would end the upgrade.
+                    if (spec.alpn == BROWSER_ALPN && spec.publicKey.isBlank() &&
+                        (spec.transport is TransportSpec.Ws || spec.transport is TransportSpec.HttpUpgrade)
+                    ) {
+                        putJsonArray("alpn") { BROWSER_ALPN.forEach { add(it) } }
+                    }
                     putJsonObject("utls") { put("enabled", true); put("fingerprint", singBoxFingerprint(spec.fingerprint)) }
                     // Same rule as XrayConfig: a link without a public key is
                     // VLESS over ordinary TLS, and `TransportKind.Tls` exists to

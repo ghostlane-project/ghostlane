@@ -9,7 +9,8 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
  * copied from `crates/xray-config/src/surface.rs` of ghostlane-project/xray-rust
- * (branch `ghostlane`, 4a61b057). The parser refuses a whole config over one
+ * at 7259d7b2 (the `ghostlane` branch's 4a61b057 with rustls from our fork; no
+ * parser change between them). The parser refuses a whole config over one
  * field it does not list (`reject_unknown_fields`), so a builder that grows a
  * field the core does not know fails here, before a phone fails to connect.
  *
@@ -78,6 +79,12 @@ object XrayRustSurface {
     val FINALMASK = setOf("tcp", "udp", "quicParams")
     val FINALMASK_ENTRY = setOf("type", "settings")
     val SALAMANDER = setOf("password", "packetSize")
+    val QUIC_PARAMS = setOf(
+        "congestion", "debug", "bbrProfile", "brutalUp", "brutalDown", "udpHop", "initStreamReceiveWindow",
+        "maxStreamReceiveWindow", "initConnectionReceiveWindow", "maxConnectionReceiveWindow", "maxIdleTimeout",
+        "keepAlivePeriod", "disablePathMTUDiscovery", "maxIncomingStreams", "disableChromeParrot", "disableGSO",
+        "disableStatelessReset", "brutalDisableLossCompensation",
+    )
     val ROUTING = setOf("domainStrategy", "rules", "balancers")
     val ROUTING_RULE = setOf(
         "type", "inboundTag", "network", "port", "domain", "domains", "ip", "sourceIP", "source", "sourcePort",
@@ -172,9 +179,8 @@ object XrayRustSurface {
                                 }
                                 check(mask["settings"], "$maskAt.settings", SALAMANDER)
                             }
-                            listOf("tcp", "quicParams").forEach { other ->
-                                if ((value as? JsonObject)?.get(other) != null) found.add("$at.finalmask.$other is not checked here")
-                            }
+                            (value as? JsonObject)?.get("quicParams")?.let { check(it, "$at.finalmask.quicParams", QUIC_PARAMS) }
+                            if ((value as? JsonObject)?.get("tcp") != null) found.add("$at.finalmask.tcp is not checked here")
                         }
                         value is JsonObject || value is JsonArray -> found.add("$at.$key is not checked here")
                         else -> Unit

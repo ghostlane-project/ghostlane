@@ -403,6 +403,12 @@ object IosCore {
                     // empty `server_name`.
                     if (spec.sni.isNotBlank()) put("serverName", spec.sni)
                     put("fingerprint", hello)
+                    // The link's ALPN as it gives it, which Xray's own client
+                    // writes too. On WebSocket and HTTP upgrade the core keeps
+                    // exactly `h2, http/1.1` (a browser's offer, ProofKit's
+                    // WebTunnel links) and turns any other list, or none, into
+                    // `http/1.1` alone, the fingerprint those links avoid.
+                    if (spec.alpn.isNotEmpty()) putJsonArray("alpn") { spec.alpn.forEach { add(it) } }
                 }
             }
         }
@@ -414,6 +420,13 @@ object IosCore {
      * no ALPN (h3 is its default). A published pin is verified: sing-box
      * cannot pin and skips verification for such a server ([SingBoxConfig]),
      * the core checks the certificate against the pin instead.
+     *
+     * Under Salamander, ChromeParrot is off (`quicParams.disableChromeParrot`):
+     * the parrot shapes the QUIC handshake like Chrome's and with it replaces
+     * the core's receive windows by Chrome's 6 and 15 MiB, while Salamander
+     * hides that handshake on the wire, so it would cost the extension memory
+     * and hide nothing. Every ProofKit Hysteria2 line carries Salamander.
+     * Without it the hello is visible, and the parrot stays on.
      */
     private fun JsonObjectBuilder.putHysteria2(spec: OutboundSpec.Hysteria2) {
         put("protocol", "hysteria")
@@ -440,6 +453,7 @@ object IosCore {
                             putJsonObject("settings") { put("password", obfs) }
                         }
                     }
+                    putJsonObject("quicParams") { put("disableChromeParrot", true) }
                 }
             }
         }
