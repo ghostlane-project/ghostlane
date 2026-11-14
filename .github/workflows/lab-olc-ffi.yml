@@ -39,7 +39,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "6c3bc31eb402e3dd3c77d046613237f604bcf0dd"
+  XRS_COMMIT: "a4917347288ee3808c4284659dea7dfa364d3550"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -180,9 +180,10 @@ jobs:
           [ -n "${T1_CONFIG:-}" ] && touch "$T1_CONFIG.stop"
           for _ in $(seq 1 20); do pgrep -f 'TestT1Host' > /dev/null || break; sleep 1; done
           pkill -f 'TestT1Host'
-          srv=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["server_log"])' "$T1_CONFIG" 2>/dev/null)
-          [ -n "$srv" ] && [ -f "$srv" ] && cp "$srv" out/server.log
+          # The host copies the server's log out of its TempDir as it stops.
+          [ -f "$T1_CONFIG.server.log" ] && cp "$T1_CONFIG.server.log" out/server.log
           tail -20 out/t1-host.log
+          [ -f out/server.log ] && tail -30 out/server.log
           exit 0
 
       - uses: actions/upload-artifact@v7
