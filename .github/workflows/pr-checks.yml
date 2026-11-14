@@ -338,7 +338,8 @@ jobs:
           GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/android-arm64" android
           GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/upstream-android-arm64" upstream
           bash scripts/build-singbox.sh "$sb/upstream" upstream
-          python3 - "$sb" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          # Into the log as well: a step summary cannot be read through the API.
+          python3 - "$sb" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import os, sys
           sb = sys.argv[1]
           mib = lambda name: os.path.getsize(os.path.join(sb, name)) / 1048576
