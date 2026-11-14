@@ -142,11 +142,13 @@ jobs:
           # without Gradle, on a change to what that job builds or reads: the
           # extension and its tests, the project file, the privacy manifest it
           # checks, the scripts of its tests, and what it links, the prebuilt
-          # frameworks and their pins. Not on a change to this file alone, as
-          # above; the shared Kotlin its tests read runs them in apple-compile.
+          # frameworks and their pins, and hev's build with its lwIP patch
+          # (built here while its tag is unpublished). Not on a change to this
+          # file alone, as above; the shared Kotlin its tests read runs them
+          # in apple-compile.
           # A here-string: a pipe into grep -q can end in SIGPIPE under
           # pipefail once grep has its match.
-          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-(room-list|tun-arrangement)\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-(room-list|tun-arrangement|hev-config)\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins|build-hev-ios)\.sh$|^scripts/patches/hev-' <<< "$changed"; then
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -574,7 +576,8 @@ jobs:
     # The iPhone's packet tunnel extension, which nothing else compiles before
     # a release build dispatched by hand. It links no Kotlin: Cores (sing-box,
     # Xray, olcRTC) and hev-socks5-tunnel come prebuilt from this repository's
-    # releases, fetched by the target's own first build phase. So a Mac builds
+    # releases, fetched by the target's own first build phase (hev is built
+    # here while its tag is unpublished; see its step). So a Mac builds
     # it with neither Gradle nor a signing identity, and runs the tests of its
     # Foundation-only parts beside it. On a change to it, and on request.
     #
@@ -619,6 +622,44 @@ jobs:
               print("::error::PrivacyInfo.xcprivacy is not among the resources of the iosApp target")
               sys.exit(1)
           PY
+      # hev-socks5-tunnel's framework for the tag scripts/hev-pins.sh names
+      # (its commit, build number and lwIP patch). A published tag is a
+      # download, as in a release. A tag not published yet (a change to the
+      # pin, to scripts/build-hev-ios.sh or to the patch, before the
+      # hev-socks5-tunnel workflow is dispatched from main) is built here from
+      # the pin, so the change is compiled, linked into the extension and its
+      # pools reported before anything is published. This job publishes
+      # nothing. Either way the framework lands in fetch-hev-ios.sh's own
+      # cache, kept between runs by the tag, and the target's build phase
+      # finds it in place, stamped. About two minutes when built.
+      - name: hev-socks5-tunnel's tag
+        id: hev
+        run: |
+          set -euo pipefail
+          . scripts/hev-pins.sh
+          echo "tag=${HEV_TAG}" >> "$GITHUB_OUTPUT"
+      - name: Keep the hev framework by its tag
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/hev-cache
+          key: hev-ios-${{ steps.hev.outputs.tag }}-${{ hashFiles('scripts/build-hev-ios.sh') }}
+      - name: The hev framework, published or built from the pin
+        env:
+          HEV_CACHE_DIR: ${{ runner.temp }}/hev-cache
+        run: |
+          set -euo pipefail
+          . scripts/hev-pins.sh
+          dest="$PWD/sharedUI/build/generated/hev/ios"
+          if bash scripts/fetch-hev-ios.sh "$dest"; then
+            exit 0
+          fi
+          echo "== ${HEV_TAG} is not published: built here from the pin, and not published =="
+          echo "hev-socks5-tunnel: ${HEV_TAG} is not published; built here from ${HEV_COMMIT} with scripts/patches/hev-lwipopts-ios.patch." >> "$GITHUB_STEP_SUMMARY"
+          git clone --quiet --recursive https://github.com/heiher/hev-socks5-tunnel.git "$RUNNER_TEMP/hev"
+          git -C "$RUNNER_TEMP/hev" checkout --quiet --recurse-submodules "$HEV_COMMIT"
+          git -C "$RUNNER_TEMP/hev" submodule update --init --recursive --quiet
+          bash scripts/build-hev-ios.sh "$RUNNER_TEMP/hev" "$HEV_CACHE_DIR/$HEV_TAG"
+          bash scripts/fetch-hev-ios.sh "$dest"
       # The target, not its scheme: an extension's scheme builds its host app
       # too, and the app's first phase runs Gradle.
       - name: Build the extension, unsigned

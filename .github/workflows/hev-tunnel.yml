@@ -2,8 +2,16 @@ name: hev-socks5-tunnel
 
 # The tun2socks the NetworkExtension puts in front of Xray and olcRTC on iOS,
 # as one XCFramework of static libraries. Changes only when scripts/hev-pins.sh
-# does, and macOS runners bill at 10x, so this never runs on push: build once
-# per pin, publish, and let every other build download the result.
+# or the lwIP options patch it names (scripts/patches/hev-lwipopts-ios.patch,
+# whose digest is in the tag) does, and macOS runners bill at 10x, so this
+# never runs on push: build once per pin, publish, and let every other build
+# download the result. Until then PR Checks builds an unpublished tag's
+# framework in its own job (ios-extension) and publishes nothing.
+#
+# Publishing is `publish` (default true) on whatever ref the dispatch names:
+# the release is created at the default branch's head, but its asset is
+# built from the dispatched ref. Dispatch it from main once the change is
+# merged, or with publish off from a branch.
 on:
   workflow_dispatch:
     inputs:
@@ -23,7 +31,7 @@ env:
   # A copy of scripts/hev-pins.sh, checked against it below: a job-level
   # cache key cannot be computed from a sourced shell file.
   HEV_COMMIT: 941c758101385d145c66210ac88991daaf27d4b6
-  HEV_BUILD: "1"
+  HEV_BUILD: "2"
 
 jobs:
   build:
@@ -51,7 +59,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: dist/frameworks
-          key: hev-socks5-tunnel-${{ env.HEV_COMMIT }}-b${{ env.HEV_BUILD }}-${{ hashFiles('scripts/build-hev-ios.sh', 'scripts/hev-pins.sh') }}
+          key: hev-socks5-tunnel-${{ env.HEV_COMMIT }}-b${{ env.HEV_BUILD }}-${{ hashFiles('scripts/build-hev-ios.sh', 'scripts/hev-pins.sh', 'scripts/patches/hev-lwipopts-ios.patch') }}
 
       - name: Checkout hev-socks5-tunnel at the pin
         if: steps.cache.outputs.cache-hit != 'true'
@@ -101,5 +109,5 @@ jobs:
           . scripts/hev-pins.sh
           tag="${HEV_TAG}"
           gh release view "$tag" >/dev/null 2>&1 || \
-            gh release create "$tag" --prerelease --notes "hev-socks5-tunnel ${HEV_COMMIT} as one XCFramework of static libraries (iOS, iOS simulator, macOS), for the NetworkExtension in front of Xray and olcRTC."
+            gh release create "$tag" --prerelease --notes "hev-socks5-tunnel ${HEV_COMMIT} with scripts/patches/hev-lwipopts-ios.patch (${HEV_PATCH_ID}) applied to its lwIP options, as one XCFramework of static libraries (iOS, iOS simulator, macOS), for the NetworkExtension in front of Xray, olcRTC and sing-box."
           gh release upload "$tag" dist/*.zip --clobber

@@ -1,0 +1,99 @@
+--- a/third-part/lwip/src/ports/include/lwipopts.h
++++ b/third-part/lwip/src/ports/include/lwipopts.h
+@@ -525,4 +525,96 @@
+ #define LWIP_ASSERT_CORE_LOCKED()  sys_check_core_locking()
+ #endif
+ 
++/*
++   ------------------------------------------------------------
++   ---------- Ghostlane: the iOS packet tunnel's sizes ----------
++   ------------------------------------------------------------
++   Added by Ghostlane's scripts/patches/hev-lwipopts-ios.patch, which
++   scripts/build-hev-ios.sh applies to HevSocks5Tunnel.xcframework (iOS,
++   simulator and macOS slices) and to nothing else. They replace the values
++   above, which are sized for a router, not for an extension the system
++   kills at about 50 MB.
++
++   Every MEMP pool is a static array, and memp_init writes a free-list link
++   into each element at start (core/memp.c, memp_init_pool), so a pool is
++   resident in full before the first packet. Sizes are per element on LP64.
++   The counts follow the extension's max-session-count of 256
++   (iosApp/PacketTunnel/HevTunnel.swift): when a new session reaches it,
++   hev ends the least recently active one, so at most 255 are live, and hev
++   aborts a session's pcb when the session ends (hev-socks5-session-tcp.c),
++   so no pcb outlives its session in TIME_WAIT.
++
++   Pools, before -> after:
++     TCP_PCB   4096 x 256 B = 1,048,576 -> 1024 x 256 B = 262,144
++     UDP_PCB   1024 x  96 B =    98,304 ->  512 x  96 B =  49,152
++     TCP_SEG   8192 x  32 B =   262,144 -> 2048 x  32 B =  65,536
++     PBUF      8192 x  24 B =   196,608 -> 2048 x  24 B =  49,152
++     PBUF_POOL   32 x 8272 B =  264,704 ->    5 x 8272 B =  41,360
++     (TCP_PCB_LISTEN 16 x 88 B = 1,408, unchanged)
++     all six   1,871,744 B -> 468,752 B, 1,402,992 B less at start.
++*/
++
++/* One pcb per live TCP session plus connections still in their handshake:
++   four times the 255 live sessions. When the pool is empty tcp_alloc first
++   takes the oldest TIME_WAIT, LAST_ACK or CLOSING pcb, then drops the SYN
++   (every pcb has the same priority), and the app retries. */
++#undef MEMP_NUM_TCP_PCB
++#define MEMP_NUM_TCP_PCB                1024
++
++/* One pcb per UDP session (lwIP's pretend mode makes one per flow,
++   core/udp.c): twice the 255 live sessions. When empty, a new flow's
++   datagram is dropped. */
++#undef MEMP_NUM_UDP_PCB
++#define MEMP_NUM_UDP_PCB                512
++
++/* Segments and PBUF_ROM/REF pbufs: hev writes a download into lwIP without
++   copying, out of its tcp-buffer-size ring (4096 B on the session's stack),
++   and frees ring space only as the app acknowledges, so a session queues at
++   most about 4 KiB in a few segments; a received segment takes one only when
++   it arrives out of order. 2048 is eight of each per live session. A
++   tcp_write that finds either pool empty fails, and hev ends that session's
++   download, so they stay well above use. MEMP_NUM_TCP_SEG must also be at
++   least TCP_SND_QUEUELEN (512 below) for lwIP's sanity check. */
++#undef MEMP_NUM_TCP_SEG
++#define MEMP_NUM_TCP_SEG                2048
++#undef MEMP_NUM_PBUF
++#define MEMP_NUM_PBUF                   2048
++
++/* Nothing hev runs takes a pbuf from this pool: the tun is read into
++   PBUF_RAM pbufs (hev-tunnel.h), and outside netif drivers hev does not use
++   (slip, ppp, 6LoWPAN, tap, pcap) lwIP's only PBUF_POOL allocation is
++   SO_REUSE_RXTOALL's copy (core/udp.c), which is off. It is still
++   32 x 8272 B written at start. 5 is the least that lwIP's sanity check
++   accepts for TCP_WND below:
++   5 x (PBUF_POOL_BUFSIZE 8248 - headers 76) = 40,860 >= 32,764. */
++#undef PBUF_POOL_SIZE
++#define PBUF_POOL_SIZE                  5
++
++/* The window lwIP offers the app, 8 -> 4 segments: 65,528 -> 32,764 B.
++   It is what hev may hold of an upload that the engine behind has not read
++   yet: hev calls tcp_recved only after its writev to the SOCKS socket, and
++   each segment held keeps the whole MTU-sized pbuf the tun was read into
++   (9000 B + header, about 9 KiB), so a stalled upload holds about 36 KiB per
++   session instead of 72 KiB. Four whole segments rather than 32,768, so the
++   window never ends in a sliver the app would send on its own.
++   Throughput: lwIP acknowledges every second segment at once (tcp_ack in
++   tcp_priv.h) and sends a window update as soon as hev's write frees
++   TCP_WND_UPDATE_THRESHOLD = min(TCP_WND / 4, 4 * TCP_MSS) = 8,191 B, one
++   segment, so the 250 ms delayed-ACK timer (tcp_fasttmr) never paces a
++   flowing transfer; on the loopback hop 32 KiB per round trip is about
++   260 Mbit/s per flow even at 1 ms. Checks: TCP_WND <= 0xffff without
++   window scaling, >= TCP_MSS, <= the pbuf pool above. */
++#undef TCP_WND
++#define TCP_WND                         (4 * TCP_MSS)
++
++/* The send buffer follows at 4 segments, 32,764 B. It costs nothing by
++   itself here: a session's download in lwIP is bounded by hev's 4096 B ring
++   (above), whatever this is. It must stay >= tcp-buffer-size (hev-config.c
++   cuts the ring to TCP_SND_BUF) and >= 2 * TCP_MSS (sanity check). hev's
++   TCP_SND_QUEUELEN above follows it: (128 * 32,764 + 8,190) / 8,191 = 512
++   (>= 2 * TCP_SND_BUF / TCP_MSS = 8); TCP_SNDLOWAT = 16,383 < 32,764 and
++   < 0xffff - 4 * TCP_MSS = 32,771; TCP_SNDQUEUELOWAT = 256 < 512. */
++#undef TCP_SND_BUF
++#define TCP_SND_BUF                     (4 * TCP_MSS)
++
+ #endif /* LWIP_LWIPOPTS_H */
