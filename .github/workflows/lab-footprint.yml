@@ -186,10 +186,11 @@ jobs:
           path: ${{ runner.temp }}/xray-rust
           key: ${{ steps.xrs-cache.outputs.cache-primary-key }}
 
-      # The hev row needs root and a tun, so it runs where --tun runs. A failed
-      # build fails only that row, with the tail of hev-build.log.
+      # The hev rows need root and a tun, so they run where --tun runs; the
+      # Mac builds it too, with Apple's clang, for udp-flow. A failed build
+      # fails only those rows, with the tail of hev-build.log.
       - name: Build hev-socks5-tunnel at scripts/hev-pins.sh's commit (the iPhone's pin, make clean exec)
-        if: contains(matrix.lab_flags, '--tun')
+        if: contains(matrix.lab_flags, '--tun') || runner.os == 'macOS'
         continue-on-error: true
         timeout-minutes: 6
         run: |
@@ -205,14 +206,16 @@ jobs:
           python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
             --engine-src "$ENGINE" --xray-rust "$XRS" --budget-min 34 ${{ matrix.lab_flags }}
 
-      # Where a new UDP flow's time goes behind hev (lab.py udp-flow, Linux,
-      # root): the ios-shape hev row taken apart one change at a time, 20 DNS
+      # Where a new UDP flow's time goes behind hev (lab.py udp-flow, root):
+      # the ios-shape hev row taken apart one change at a time, 20 DNS
       # queries on new sockets and 20 fresh TCP connections per variant, beside
-      # the gVisor tun. After Measure, with servers and tuns of its own, so no
-      # row moves; its table is in this step's log and the summary, its JSON in
-      # udp-flow/udp-flow.json of this job's artifact. A failure fails only it.
+      # the gVisor tun. On the Mac too: Apple's clang and Darwin's TCP, the
+      # nearest a runner gets to the iPhone's hev. After Measure, with servers
+      # and tuns of its own, so no row moves; its table is in this step's log
+      # and the summary, its JSON in udp-flow/udp-flow.json of this job's
+      # artifact. A failure fails only it.
       - name: UDP flow latency (hev against the gVisor tun)
-        if: ${{ !cancelled() && contains(matrix.lab_flags, '--tun') }}
+        if: ${{ !cancelled() && (contains(matrix.lab_flags, '--tun') || runner.os == 'macOS') }}
         continue-on-error: true
         timeout-minutes: 8
         run: |
@@ -224,7 +227,8 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: |
-          for f in "$BIN/harness.versions.txt" "$BIN/hev.versions.txt" "$XRS/xray-rust.build.json"; do
+          for f in "$BIN/harness.versions.txt" "$BIN/hev.versions.txt" "$BIN/hev-nomore.versions.txt" \
+                   "$BIN/hev-nomore.identical.txt" "$BIN/msg_more.txt" "$XRS/xray-rust.build.json"; do
             [ -f "$f" ] && cp "$f" "$OUT/"
           done
           python3 lab/footprint/lab.py table "$OUT"

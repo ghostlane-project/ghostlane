@@ -257,8 +257,22 @@ byte, both counted from the start of the connect.
 | V9 | V1 with `hev-socks5-tunnel-nomore`: the pin with `MSG_MORE` dropped from the two handshake writes that pass it (`hev-build.sh` builds it second). That is the iPhone's build, since Darwin has no `MSG_MORE` and hev-socks5-core falls back to 0, and upstream's b43fa85 outside pipeline mode |
 
 The table is in the step's log and the job summary; `udp-flow/udp-flow.json`
-in the Linux artifact has every figure, `udp-flow/runs/<id>/` the configs and
-logs. It starts its own servers and its own tuns (`pklab4`, `pklab5`).
+in each desktop artifact has every figure, `udp-flow/runs/<id>/` the configs
+and logs. It starts its own servers and its own tuns (`pklab4`, `pklab5` on
+Linux; `utun77`, `utun78` on the Mac).
+
+Run 43538233589 (Linux) found the cause: hev-socks5-core f5c97b0, in the pin,
+sends the method offer and the login with `MSG_MORE`, and Linux holds each of
+those writes for about 200 ms. The same step runs on the Mac, where Apple's
+clang builds the pin the way it builds the iPhone's copy: there `msg_more.txt`
+records that `<sys/socket.h>` (the Mac's and the iPhone SDK's) has no
+`MSG_MORE`, `hev-nomore.identical.txt` that the build without it is byte for
+byte the pin's, and V1 is the measurement of Darwin's TCP behind hev. V4 has
+no `msg_more` mode there.
+
+Since then the Linux hev rows of Measure (the hev row and the ios-shape hev
+rows) run `hev-socks5-tunnel-nomore` when it was built, so they stand for the
+iPhone's code path; each row's notes name the binary.
 
 ## What it cannot tell
 

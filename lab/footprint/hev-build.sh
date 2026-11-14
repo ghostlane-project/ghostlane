@@ -52,6 +52,24 @@ install -m 0755 "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel"
 cat "${out}/hev.versions.txt"
 ls -l "${out}/hev-socks5-tunnel"
 
+# Whether this OS has MSG_MORE at all (and, on a Mac, the iPhone SDK), and the
+# fallback hev's SOCKS5 client takes without it: lab.py udp-flow keeps the
+# answer beside its figures. Never fails the build.
+client_c="${src}/src/core/src/hev-socks5-client.c"
+probe='#include <sys/socket.h>\n#ifdef MSG_MORE\nPK_MORE_DEFINED MSG_MORE\n#else\nPK_MORE_UNDEFINED\n#endif\n'
+(
+  set +e
+  echo "MSG_MORE in <sys/socket.h>, $(uname -s) $(uname -m), $("${CC:-cc}" --version 2>&1 | head -n 1):"
+  printf "${probe}" | "${CC:-cc}" -E -x c - 2>&1 | grep PK_MORE
+  if [ "$(uname -s)" = Darwin ] && xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+    echo "MSG_MORE in the iPhone SDK's <sys/socket.h>, iphoneos $(xcrun --sdk iphoneos --show-sdk-version), arm64:"
+    printf "${probe}" | xcrun --sdk iphoneos clang -arch arm64 -E -x c - 2>&1 | grep PK_MORE
+  fi
+  echo "hev's fallback, ${client_c#"${src}/"}:"
+  grep -n -A2 'ifndef MSG_MORE' "${client_c}"
+) > "${out}/msg_more.txt" 2>&1 || true
+cat "${out}/msg_more.txt"
+
 # A second binary for lab.py udp-flow (V9) only: the same tree with MSG_MORE
 # dropped from the two writes of the SOCKS5 handshake that pass it
 # (hev-socks5-core f5c97b0, in the pin, sends the method offer and the login
@@ -60,17 +78,19 @@ ls -l "${out}/hev-socks5-tunnel"
 # makes it 0), and what upstream's b43fa85 (2026-11-06) does outside pipeline
 # mode. The pinned binary above is installed first and stays as built; a
 # failure here costs only the V9 row.
-client_c="${src}/src/core/src/hev-socks5-client.c"
+# (perl, not sed -i: BSD sed on a Mac reads -i's next word as a suffix.)
 if [ "$(grep -c 'MSG_WAITALL | MSG_MORE' "${client_c}")" = 2 ]; then
-  sed -i 's/MSG_WAITALL | MSG_MORE/MSG_WAITALL/' "${client_c}"
-  if ( cd "${src}" && make clean exec ) \
-    && ! cmp -s "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel"; then
+  perl -pi -e 's/MSG_WAITALL \| MSG_MORE/MSG_WAITALL/' "${client_c}"
+  if ! ( cd "${src}" && make clean exec ); then
+    echo "the MSG_MORE-free build failed; no hev-socks5-tunnel-nomore" >&2
+  elif cmp -s "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel"; then
+    echo "on $(uname -s) the pin built without MSG_MORE is byte for byte the pin's own build: MSG_MORE is 0 here, so V9 is V1" \
+      | tee "${out}/hev-nomore.identical.txt"
+  else
     install -m 0755 "${src}/bin/hev-socks5-tunnel" "${out}/hev-socks5-tunnel-nomore"
     echo "hev-socks5-tunnel-nomore: ${got} with MSG_MORE dropped from the two handshake writes in ${client_c#"${src}/"}" \
       > "${out}/hev-nomore.versions.txt"
     ls -l "${out}/hev-socks5-tunnel-nomore"
-  else
-    echo "the MSG_MORE-free build failed or came out identical; no hev-socks5-tunnel-nomore" >&2
   fi
 else
   echo "${client_c} does not hold the two MSG_MORE writes; no hev-socks5-tunnel-nomore" >&2

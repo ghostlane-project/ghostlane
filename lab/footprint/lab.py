@@ -5,7 +5,7 @@
     lab.py android      --bin DIR --device-bin DIR --apk FILE --out DIR
     lab.py table        FILE_OR_DIR...        prints (and adds to the job summary) one table
     lab.py shapes-check                       the lab's client shapes against the app's builders
-    lab.py udp-flow     --bin DIR --out DIR   where a new UDP flow's time goes behind hev (Linux, root)
+    lab.py udp-flow     --bin DIR --out DIR   where a new UDP flow's time goes behind hev (Linux, macOS; root)
 
 Every run is one core on one config, between servers this script starts on
 the same machine: one Xray 26.4.25 process (the version scripts/xray-servers.txt
@@ -1130,6 +1130,15 @@ def find_pid_by_argv(exe_name, needle, seconds=8):
     holds needle: the real process behind `sudo` (which keeps a monitor
     process of its own between them when use_pty is set)."""
     deadline = time.time() + seconds
+    while time.time() < deadline and sys.platform == "darwin":
+        # No /proc: ps's full command lines (macOS paths hold no spaces here).
+        r = subprocess.run(["ps", "-axww", "-o", "pid=", "-o", "command="], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].isdigit() and int(parts[0]) > 1 and \
+                    parts[1].endswith(exe_name) and needle in parts[2:]:
+                return int(parts[0])
+        time.sleep(0.1)
     while time.time() < deadline:
         for entry in os.listdir("/proc"):
             if not entry.isdigit() or int(entry) <= 1:
@@ -2134,7 +2143,19 @@ def cmd_desktop(a):
         # The same line with hev owning the tun and sing-box on SOCKS behind
         # it: the shape the iPhone already uses for XHTTP and olcRTC, and the
         # one Android uses for every sing-box line.
-        hev_bin = b / "hev-socks5-tunnel"
+        # The iPhone's code path: Apple's clang builds the pin with MSG_MORE
+        # 0 (Darwin has none), so these rows run the pin built without it
+        # (hev-build.sh) when it was built. The pin as Linux builds it corks
+        # the SOCKS5 handshake's two writes for about 200 ms each: every new
+        # flow paid about 0.42 s in run 43532557527's rows (lab.py udp-flow,
+        # run 43538233589), the phone does not.
+        hev_bin = b / "hev-socks5-tunnel-nomore"
+        hev_which = ("the pin built without MSG_MORE on the two handshake writes (hev-socks5-tunnel-nomore, "
+                     "hev-build.sh), as Apple's clang builds the iPhone's copy")
+        if not hev_bin.exists():
+            hev_bin = b / "hev-socks5-tunnel"
+            hev_which = ("the pin as Linux builds it, MSG_MORE on the two handshake writes (no MSG_MORE-free build "
+                         "in this run): every new flow waits about 0.42 s, which the iPhone does not")
         hev_spec = Spec(kind="harness-hev", core=HEV_CORE, harness_core="singbox", mode="ios",
                         settings="ios-limits", scenario="hev tun, vless-reality-vision", socks=None,
                         config=singbox_reality(loop, servers.pub),
@@ -2147,12 +2168,14 @@ def cmd_desktop(a):
                                "the kernel routes 203.0.113.0/24 into hev's tun; on a phone hev is a thread of the "
                                "extension, here a process of its own, so the two are sampled together and summed",
                                srv_note])
+        hev_spec.notes.append("hev binary: " + hev_which)
         if hev_bin.exists():
             ctx["hev"] = hev_bin
+            vfile = "hev-nomore.versions.txt" if hev_bin.name.endswith("-nomore") else "hev.versions.txt"
             try:
-                ctx["hev_version"] = (b / "hev.versions.txt").read_text().splitlines()[0]
+                ctx["hev_version"] = (b / vfile).read_text().splitlines()[0]
             except (OSError, IndexError):
-                ctx["hev_version"] = "hev-socks5-tunnel (version file missing)"
+                ctx["hev_version"] = "%s (version file missing)" % hev_bin.name
             specs.append(hev_spec)
         else:
             missing.append((hev_spec, "hev-socks5-tunnel was not built (hev-build.log in this artifact): %s missing; %s"
@@ -2201,7 +2224,7 @@ def cmd_desktop(a):
                     "as root, with HevTunnel.configuration for the port and login TunArrangement.singBoxSocks reads "
                     "from that config, plus a tun name and the tun's address %s (LibboxPlatform.Tun.address); the two "
                     "processes are sampled together and summed" % (socks_name, PORT_SOCKS, IOS_TUN_ADDRESS),
-                    routed, srv_note])
+                    routed, "hev binary: " + hev_which, srv_note])
             if hev_bin.exists():
                 specs.append(ios_hev)
             else:
@@ -2995,8 +3018,11 @@ def cmd_shapes_check(a):
 # directory, and the workflow runs it after Measure, so no row moves.
 
 FLOW_N = 20
-FLOW_TUN_HEV = "pklab4"
-FLOW_TUN_GVISOR = "pklab5"
+# On macOS (the runner nearest the iPhone: Darwin's TCP and Apple's clang) a
+# tun is a utun with a number; it goes, routes and all, with its process.
+FLOW_DARWIN = sys.platform == "darwin"
+FLOW_TUN_HEV = "utun77" if FLOW_DARWIN else "pklab4"
+FLOW_TUN_GVISOR = "utun78" if FLOW_DARWIN else "pklab5"
 FLOW_PORT_PYSOCKS = 10830
 FLOW_LOGIN = ("flow-user", "flow-pass")
 FLOW_GET_BYTES = 1024
@@ -3169,21 +3195,40 @@ def flow_measure(tag, tcp_target=None):
 
 def flow_routes(tun):
     for net in ("198.18.0.0/15", IOS_TUN_DNS + "/32"):
-        r = subprocess.run(["sudo", "-n", "ip", "route", "replace", net, "dev", tun], capture_output=True, text=True)
+        if FLOW_DARWIN:
+            kind = ["-host", net[:-3]] if net.endswith("/32") else ["-net", net]
+            subprocess.run(["sudo", "-n", "route", "-n", "delete"] + kind, capture_output=True, check=False)
+            r = subprocess.run(["sudo", "-n", "route", "-n", "add"] + kind + ["-interface", tun],
+                               capture_output=True, text=True)
+        else:
+            r = subprocess.run(["sudo", "-n", "ip", "route", "replace", net, "dev", tun], capture_output=True, text=True)
         if r.returncode != 0:
-            raise LabError("route %s into %s: %s" % (net, tun, r.stderr.strip()))
+            raise LabError("route %s into %s: %s" % (net, tun, (r.stderr or r.stdout).strip()))
+    if FLOW_DARWIN:
+        r = subprocess.run(["route", "-n", "get", IOS_TUN_DNS], capture_output=True, text=True)
+        if "interface: %s" % tun not in r.stdout:
+            raise LabError("route get %s does not name %s: %s" % (IOS_TUN_DNS, tun, r.stdout.strip()))
 
 
 def flow_drop_tun(tun):
+    if FLOW_DARWIN:
+        return  # a utun and its routes go with the process that opened it
     if Path("/sys/class/net/%s" % tun).exists():
         subprocess.run(["sudo", "-n", "ip", "link", "delete", tun], capture_output=True, check=False)
 
 
+def flow_link_up(tun):
+    if not FLOW_DARWIN:
+        return link_up(tun)
+    r = subprocess.run(["ifconfig", tun], capture_output=True, text=True)
+    return r.returncode == 0 and "<UP" in r.stdout
+
+
 def flow_wait_link(tun, front, rundir, log_name):
     deadline = time.time() + 10
-    while not link_up(tun) and time.time() < deadline and front.alive():
+    while not flow_link_up(tun) and time.time() < deadline and front.alive():
         time.sleep(0.1)
-    if not link_up(tun):
+    if not flow_link_up(tun):
         raise LabError("%s is not up:\n%s" % (tun, tail(rundir / log_name)))
 
 
@@ -3210,6 +3255,9 @@ def flow_hev(ctx, rundir, exe_name, yaml_text):
     routed into it."""
     exe = ctx["bin"] / exe_name
     if not exe.exists():
+        same = ctx["bin"] / "hev-nomore.identical.txt"
+        if exe_name == FLOW_HEV_NOMORE and same.exists():
+            raise LabError("not run: " + same.read_text().strip())
         raise LabError("%s was not built (hev-build.log)" % exe)
     cfg = rundir / "hev.yml"
     cfg.write_text(yaml_text)
@@ -3429,7 +3477,7 @@ FLOW_V4_MODES = (
     ("plain", "no socket option, no flag (Nagle on)"),
     ("nodelay", "TCP_NODELAY on the client socket"),
     ("msg_more", "MSG_MORE on the method offer and the login, as hev at the pin sends them"),
-)
+)[:3 if hasattr(socket, "MSG_MORE") else 2]  # Darwin has no MSG_MORE
 
 
 def flow_steps(rows, keys):
@@ -3580,8 +3628,8 @@ def flow_markdown(results):
 
 
 def cmd_udp_flow(a):
-    if not sys.platform.startswith("linux"):
-        raise LabError("udp-flow runs on Linux only (root via sudo, tuns)")
+    if not (sys.platform.startswith("linux") or FLOW_DARWIN):
+        raise LabError("udp-flow runs on Linux and macOS only (root via sudo, tuns)")
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     b = Path(a.bin).resolve()
@@ -3595,7 +3643,10 @@ def cmd_udp_flow(a):
     doc = {"what": "where a new UDP flow's time goes behind hev, against sing-box's gVisor tun",
            "queries_and_connections_each": FLOW_N, "resolver": IOS_TUN_DNS, "get_bytes": FLOW_GET_BYTES,
            "runner": " ".join(os.uname()), "variants": []}
-    for name in ("hev.versions.txt", "hev-nomore.versions.txt"):
+    if FLOW_DARWIN:
+        doc["darwin"] = ("macOS arm64: Apple's clang built the pin (no MSG_MORE on this OS, so hev's fallback makes it "
+                         "0, as for the iPhone), Darwin's TCP on lo0; V4 has no msg_more mode here")
+    for name in ("hev.versions.txt", "hev-nomore.versions.txt", "hev-nomore.identical.txt", "msg_more.txt"):
         try:
             doc[name] = (b / name).read_text()
         except OSError:
@@ -3802,7 +3853,7 @@ def main(argv=None):
     t.add_argument("paths", nargs="+")
     t.add_argument("--json-out")
     sub.add_parser("shapes-check")
-    f = sub.add_parser("udp-flow", help="where a new UDP flow's time goes behind hev (Linux, passwordless sudo)")
+    f = sub.add_parser("udp-flow", help="where a new UDP flow's time goes behind hev (Linux, macOS; passwordless sudo)")
     f.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray, harness, hev-socks5-tunnel[-nomore]")
     f.add_argument("--out", required=True)
     f.add_argument("--budget-min", type=float, default=4.5)
