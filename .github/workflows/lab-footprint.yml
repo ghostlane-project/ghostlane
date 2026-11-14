@@ -485,11 +485,13 @@ jobs:
       # Run 43560510824 ran all five setups with 5 s after each burst. b and c
       # (malloc_zone_pressure_relief) released nothing: on macOS 26 the
       # default zone is xzone malloc, whose pressure_relief is libmalloc's
-      # malloc_zone_pressure_relief_fallback (returns 0). So the follow-up
-      # runs a, d and e, each with 60 s of idle after the last burst, long
-      # enough for the kernel's deferred reclaim (10 s sampling on macOS).
-      LAB_ALLOC_SETUPS: "a,d,e"
-      LAB_ALLOC_TAIL_S: "60"
+      # malloc_zone_pressure_relief_fallback (returns 0). Run 43563973488 ran
+      # a, d and e with 60 s of idle after the last burst. xzone malloc on iOS
+      # runs without the kernel's deferred reclaim ring by default, so this
+      # run compares a with f (MallocLargeCache=0, the iOS settings), with
+      # 20 s of idle after the last burst.
+      LAB_ALLOC_SETUPS: "a,f"
+      LAB_ALLOC_TAIL_S: "20"
     steps:
       - name: Checkout
         uses: actions/checkout@v7

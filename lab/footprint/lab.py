@@ -5806,7 +5806,10 @@ def cmd_heap_profile(a):
 #      quiet 250 ms (under 2.5 ms of CPU) that follows a busy one;
 #   d  mimalloc 3 (the mimalloc crate) as the global allocator, purging freed
 #      memory at once (MIMALLOC_PURGE_DELAY=0);
-#   e  the same with mimalloc's default purge delay (1000 ms).
+#   e  the same with mimalloc's default purge delay (1000 ms);
+#   f  the system allocator with MallocLargeCache=0: xzone malloc without
+#      deferred reclaim, as iOS runs it by default (empty chunks are madvised
+#      when freed; on macOS they wait in the kernel's reclaim ring).
 # A run: start, 3 s idle, a burst (32 downloads of 4 MB at once, 2 s, 32
 # uploads of 2 MB at once), 5 s, the same burst again, 5 s, footprint and
 # vmmap of the process, then the single transfers (500 MB down, 2 s, 100 MB
@@ -5832,7 +5835,18 @@ ALLOC_SETUPS = (
      ("lab: allocator mimalloc", "option 'purge_delay': 1000 "),
      "mimalloc 3 as the global allocator with its default purge delay (1000 ms; purges run from inside later "
      "allocator calls)"),
+    ("f", "system, iOS reclaim settings", {"MallocLargeCache": "0"},
+     ("lab: allocator system", "lab: relief none"),
+     "the system allocator with MallocLargeCache=0, which xzone malloc reads on release systems: no deferred "
+     "reclaim for tiny, small or large blocks and no huge cache, as xzone malloc is set up by default on iOS "
+     "(libmalloc-812 xzone_malloc.h:107-115); empty chunks are madvised when freed instead of waiting in the "
+     "kernel's reclaim ring"),
 )
+# Every alloc row sets MallocReportConfig=1: libmalloc then prints its config
+# (xzone or magazine, and xzone's deferred reclaim switches) to stderr, and the
+# row keeps these lines of it.
+ALLOC_MALLOC_CONFIG_KEYS = ("Enable Xzone Malloc", "Xzone Enablement Reason", "Defer Tiny", "Defer Small",
+                            "Defer Large", "Huge Cache Size", "Reclaim Buffer Count")
 ALLOC_SETTLE_S = 3.0
 ALLOC_BURSTS = 2
 ALLOC_MARKS = (0.5, 1.0, 2.0, 5.0)
@@ -5841,8 +5855,9 @@ ALLOC_POLL_S = 0.02
 # snapshot, and the footprint is read at these marks (seconds after the
 # burst's last upload). On macOS 26 the default allocator is xzone malloc,
 # which hands freed pages to the kernel's deferred reclaim ring; the kernel
-# samples the ring every 10 s on macOS (1 s on iOS) and trims what stayed
-# unused (xnu osfmk/vm/vm_reclaim.c), so a 5 s window cannot show it.
+# looks at the ring at most every 10 s on macOS, and only when malloc updates
+# it, then trims what stayed unused (xnu osfmk/vm/vm_reclaim.c), so a 5 s
+# window cannot show it. iOS runs xzone without the ring by default (setup f).
 ALLOC_TAIL_MARKS = (5, 10, 15, 20, 30, 40, 60, 90)
 
 
@@ -5895,6 +5910,7 @@ def alloc_run(ctx, line, setup, run_no):
         raise LabError("port %d is still taken" % PORT_SOCKS)
     env = dict(xrs_mobile_env(), **env_add)
     env["XRS_LAB_RELIEF_LOG"] = str(rundir / "relief.jsonl")
+    env["MallocReportConfig"] = "1"
     row["env_full"] = {k: v for k, v in env.items()}
     proc = Proc([binary, "run", "-config", cfg_path], rundir / "core.log", cwd=rundir, env=clean_env(env))
     poll, rows, notes = None, [], []
@@ -5912,6 +5928,11 @@ def alloc_run(ctx, line, setup, run_no):
                 " / ".join(repr(e) for e in absent), tail(rundir / "core.log", 40)))
         row["core_said"] = [ln for ln in said.splitlines() if ln.startswith("lab: ") or "mimalloc: v" in ln
                             or "'purge_delay'" in ln or "'purge_decommits'" in ln][:8]
+        row["malloc_config"] = {}
+        for ln in said.splitlines():
+            key, _, value = ln.strip().partition(": ")
+            if key in ALLOC_MALLOC_CONFIG_KEYS and key not in row["malloc_config"]:
+                row["malloc_config"][key] = value.strip()
         poll = FastPoll(lambda: reader.read(proc.pid), "fp", period=ALLOC_POLL_S)
         poll.start()
         t_settle = time.time()
@@ -6083,6 +6104,13 @@ def alloc_markdown(doc):
            "over both bursts; malloc live / dirty = vmmap's malloc zones 5 s after the second burst (the system "
            "zones only: mimalloc's memory is not in them); relief = malloc_zone_pressure_relief calls over the "
            "whole run, MiB they released, their CPU ms." % doc.get("version"), ""]
+    said = []
+    for s in doc.get("setups") or []:
+        cfg = next((r.get("malloc_config") for r in doc["rows"] if r.get("setup") == s["key"] and r.get("malloc_config")),
+                   None)
+        said.append("- %s %s: %s" % (s["key"], s["name"], "; ".join("%s %s" % kv for kv in cfg.items())
+                                     if cfg else "libmalloc printed no config"))
+    out += ["libmalloc's config as the core reported it (MallocReportConfig=1):", ""] + said + [""]
     for line in doc.get("lines") or []:
         out += ["### " + line, "", "| " + " | ".join(ALLOC_HEAD) + " |", "|" + "---|" * len(ALLOC_HEAD)]
         for r in doc["rows"]:
@@ -6121,7 +6149,8 @@ def cmd_alloc_rows(a):
     if unknown:
         raise LabError("--setups: no setup %s (there are %s)" % (", ".join(unknown), ", ".join(x[0] for x in ALLOC_SETUPS)))
     setups = [x for x in ALLOC_SETUPS if x[0] in wanted]
-    doc = {"what": "phys_footprint of xray-rust under five allocator setups (lab_alloc.rs in the lab's patch)",
+    doc = {"what": "phys_footprint of xray-rust under allocator setups (lab_alloc.rs in the lab's patch, and "
+                   "libmalloc's own MallocLargeCache switch)",
            "platform": a.platform, "runner": " ".join(os.uname()), "version": xrs_version_text(info),
            "xray_rust_build": info, "mobile_env": xrs_mobile_env(),
            "setups": [{"key": k, "name": n, "env": e, "what": w} for k, n, e, _, w in setups],

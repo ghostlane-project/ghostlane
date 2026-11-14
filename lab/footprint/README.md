@@ -438,9 +438,9 @@ footprint never comes down after a burst, and that a second burst starts
 from the first one's peak and goes higher. `lab.py alloc-rows` (macOS, the
 `alloc` job) measures what giving that memory back costs and saves. It runs
 one build, `gl/xhttp-upload-memory` with `lab-allocator-switch.patch`, in the
-mobile profile, under five setups that environment variables choose
-(`lab_alloc.rs`; the core prints what is in force and the lab refuses a run
-whose log does not say it):
+mobile profile, under six setups that environment variables choose
+(`lab_alloc.rs`, and libmalloc's own `MallocLargeCache` for f; the core
+prints what is in force and the lab refuses a run whose log does not say it):
 
 | setup | what |
 |---|---|
@@ -449,6 +449,7 @@ whose log does not say it):
 | c | the system allocator; the same call once when traffic stops (`XRS_LAB_RELIEF=idle`): a thread reads the process's CPU time every 250 ms and calls it after a 250 ms window under 2.5 ms of CPU that follows a busy one, so 250 to 500 ms after the last byte; the next busy window arms it again. The CLI has no signal of its own for "the burst is over" |
 | d | mimalloc 3 as the global allocator (`XRS_LAB_ALLOC=mimalloc`), `MIMALLOC_PURGE_DELAY=0`: freed arena memory is purged (decommitted with `MADV_FREE_REUSABLE` on macOS) at once (mimalloc's `purge_delay`, default 1000 ms; the core prints mimalloc's options, which the lab checks) |
 | e | mimalloc 3 with its default purge delay (1000 ms; purges run from inside later allocator calls) |
+| f | the system allocator with `MallocLargeCache=0`, which xzone malloc reads on release systems: no deferred reclaim for tiny, small or large blocks and no huge cache. That is how xzone malloc is set up by default on iOS (libmalloc-812 `src/xzone_malloc/xzone_malloc.h`, `XZM_DEFERRED_RECLAIM_ENABLED_DEFAULT` false and `XZM_HUGE_CACHE_SIZE_DEFAULT` 0 under `MALLOC_TARGET_IOS`): empty chunks are madvised when freed instead of waiting in the kernel's reclaim ring. The nearest the Mac gets to iOS's allocator |
 
 A run: start the core, wait for a byte through it, 3 s idle; the burst (32
 downloads of 4 MB at once, 2 s, 32 uploads of 2 MB at once), 5 s; the same
@@ -472,10 +473,17 @@ Run 43560510824 ran all five setups with no tail: b and c gave nothing back,
 because on macOS 26 the default zone is xzone malloc, whose `pressure_relief`
 is libmalloc's `malloc_zone_pressure_relief_fallback`, which returns 0
 (libmalloc-812, `src/xzone_malloc/xzone_malloc.c`); every call took about
-1 µs. xzone malloc hands freed pages to the kernel's deferred reclaim ring,
-which XNU samples every 10 s on macOS (1 s on iOS) and trims by what stayed
-unused (`osfmk/vm/vm_reclaim.c`), so the follow-up runs a, d and e with 60 s
-of idle after the last burst.
+1 µs. xzone malloc on macOS hands freed pages to the kernel's deferred reclaim
+ring, which XNU looks at no more than every 10 s on macOS, and only when
+malloc updates the ring, and trims by what stayed unused
+(`osfmk/vm/vm_reclaim.c`), so run 43563973488 ran a, d and e with 60 s of
+idle after the last burst. iOS's xzone malloc has that ring off by default,
+so the next run compares a with f, the same allocator set up as on iOS.
+
+Every alloc row sets `MallocReportConfig=1`: libmalloc prints its config
+to stderr (whether xzone malloc is on and why, and xzone's deferred reclaim
+switches), the row keeps those lines as `malloc_config`, and the job
+summary lists them per setup.
 
 A commit whose message holds `[lab alloc only]` runs the alloc job and the
 shapes job alone (the desktop jobs and the summary are skipped).
