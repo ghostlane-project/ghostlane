@@ -1,0 +1,185 @@
+name: Lab - olcRTC signalling TLS, Chrome's ALPS
+
+# A measurement, not a check: milestone M4 of the olcRTC client port to Rust
+# (round R3, item 2). Chrome's hello offers ALPS (application_settings) for
+# h2; a server that accepts it (Google's, BoringSSL) then waits for the
+# client's own ALPS in the client's EncryptedExtensions. This job, all on
+# loopback:
+#   (a) runs a BoringSSL TLS 1.3 server with ALPN h2/http1.1 and ALPS for h2
+#       (lab/olc-alps/server), which logs each client's ClientHello, the
+#       ALPS it offered and the ALPS bytes it sent;
+#   (b) points Chrome stable at it (a page load, a fetch(), a WebSocket):
+#       the reference;
+#   (c) dials it with the olcRTC client's own Chrome-shaped TLS
+#       (olc_net::shaped_tls over shaped-rustls) at the xray-rust commit
+#       pinned below, a fetch (h2) and a WebSocket's dial, and sets the two
+#       side by side (lab/olc-alps/analyze.py);
+#   (d) when the commit has it, runs xray-rust's own offline ALPS test, and
+#       the same test on the commit's parent's non-test files, which must
+#       fail (RED).
+# Chrome runs with every name but alps.test unresolvable, so it reaches
+# nothing but the lab server.
+#
+# Runs on a push to lab/olc-alps or by hand, never on main, never on a pull
+# request, no schedule. It reads no secret and contacts no carrier and no
+# public TLS server (GitHub and crates.io for the build only).
+on:
+  push:
+    branches:
+      - lab/olc-alps
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-alps
+  cancel-in-progress: true
+
+env:
+  # The client: ghostlane-project/xray-rust, fetched by its hash. Moving the
+  # pin is a change to this file (and so a run).
+  XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
+  XRS_COMMIT: "e123098551eeb7e9c77d7f6ab0364ce49a81a8dd"
+  # What the probe of (c) must do at that commit: "fail" (rustls without
+  # ALPS: the RED) or "ok".
+  PROBE_EXPECT: "fail"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  alps:
+    name: ALPS against BoringSSL, beside Chrome
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch the client
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 2 origin "$XRS_COMMIT"
+          git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake >/dev/null
+          (cd xrs && cargo --version); cmake --version | head -1
+          google-chrome --version | tee out/chrome-version.txt
+          echo "127.0.0.1 alps.test" | sudo tee -a /etc/hosts
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+            lab/olc-alps/server/target
+          key: olc-alps-${{ env.XRS_COMMIT }}
+          restore-keys: olc-alps-
+
+      - name: Build the ALPS server
+        run: |
+          set -euo pipefail
+          cargo +"$RUST_TOOLCHAIN" build --release --manifest-path lab/olc-alps/server/Cargo.toml > out/server-build.log 2>&1 \
+            || { tail -60 out/server-build.log; exit 1; }
+          cp lab/olc-alps/server/Cargo.lock out/server-Cargo.lock
+
+      - name: Build the probe
+        working-directory: xrs
+        run: |
+          set -euo pipefail
+          cp "$GITHUB_WORKSPACE/lab/olc-alps/probe/alps_probe.rs" olc/olc-net/examples/alps_probe.rs 2>/dev/null \
+            || { mkdir -p olc/olc-net/examples && cp "$GITHUB_WORKSPACE/lab/olc-alps/probe/alps_probe.rs" olc/olc-net/examples/; }
+          cargo build --locked -p olc-net --features shaped-tls --example alps_probe > "$GITHUB_WORKSPACE/out/probe-build.log" 2>&1 \
+            || { tail -60 "$GITHUB_WORKSPACE/out/probe-build.log"; exit 1; }
+
+      - name: Serve, then Chrome and the probe
+        run: |
+          set +e -uo pipefail
+          o=$PWD/out
+          lab/olc-alps/server/target/release/alps-lab-server --log "$o/server.jsonl" \
+            --port 8443 --port 8444 --port 8445 --port 8446 --port 8448 > "$o/server.err" 2>&1 &
+          echo $! > "$o/server.pid"
+          sleep 1
+          cat > "$o/ws.html" <<'EOF'
+          <!doctype html><title>ws</title><script>
+          const w = new WebSocket("wss://alps.test:8444/ws");
+          w.onerror = () => { document.title = "ws error"; };
+          </script>
+          EOF
+          cat > "$o/fetch.html" <<'EOF'
+          <!doctype html><title>fetch</title><script>
+          fetch("https://alps.test:8448/f", {mode: "no-cors"}).then(() => { document.title = "fetched"; }, () => { document.title = "fetch error"; });
+          </script>
+          EOF
+          chrome() { # name url...
+            local name=$1; shift
+            local d; d=$(mktemp -d)
+            timeout 60 google-chrome --headless --no-sandbox --disable-gpu --ignore-certificate-errors \
+              --user-data-dir="$d" --no-first-run --no-default-browser-check --disable-background-networking \
+              --disable-component-update --disable-sync --disable-default-apps --disable-extensions \
+              --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE alps.test" \
+              --virtual-time-budget=5000 --dump-dom "$@" > "$o/chrome-$name.html" 2> "$o/chrome-$name.err"
+            echo "chrome $name rc=$? $(head -c 200 "$o/chrome-$name.html" | tr '\n' ' ')"
+            rm -rf "$d"
+          }
+          for i in 1 2 3; do chrome "navigation-$i" https://alps.test:8443/; done
+          chrome websocket "file://$o/ws.html"
+          chrome fetch "file://$o/fetch.html"
+          (cd xrs && timeout 120 cargo run -q --locked -p olc-net --features shaped-tls --example alps_probe -- alps.test 8445 8446) \
+            > "$o/probe.log" 2>&1
+          echo "probe rc=$?"
+          cat "$o/probe.log"
+          sleep 1
+          kill "$(cat "$o/server.pid")" 2>/dev/null
+          wait 2>/dev/null
+          echo "server lines: $(wc -l < "$o/server.jsonl")"
+          true
+
+      - name: Compare
+        run: |
+          set -euo pipefail
+          python3 lab/olc-alps/analyze.py out/server.jsonl out/compare.json > out/compare.md
+          cat out/compare.md
+          grep -h '^RESULT' out/probe.log out/compare.md > out/results.txt || true
+          echo "RESULT chrome $(cat out/chrome-version.txt)" >> out/results.txt
+          ok=1
+          if [ "$PROBE_EXPECT" = fail ]; then
+            grep -q '^RESULT probe fetch FAILED' out/probe.log || { echo "the probe's fetch did not fail"; ok=0; }
+          else
+            grep -q '^RESULT probe fetch ok' out/probe.log || { echo "the probe's fetch failed"; ok=0; }
+            grep -q '^RESULT probe websocket ok' out/probe.log || { echo "the probe's websocket failed"; ok=0; }
+          fi
+          echo "RESULT probe expectation $PROBE_EXPECT: $([ $ok = 1 ] && echo met || echo MISSED)" | tee -a out/results.txt
+          [ $ok = 1 ]
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## ALPS lab'
+            echo '```'
+            cat out/results.txt 2>/dev/null
+            echo '```'
+            cat out/compare.md 2>/dev/null
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-alps
+          path: out/
+          retention-days: 7
