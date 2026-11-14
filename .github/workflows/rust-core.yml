@@ -1,0 +1,325 @@
+name: Rust core
+
+# xray-rust, the Rust core that is to carry Reality, WebTunnel, Hysteria2 and
+# XHTTP in the iPhone's tunnel extension with no Go runtime loaded (OpenSpec
+# change ghostlane-rust-core), built from our fork at the pin in
+# scripts/rust-core-pins.sh:
+#   - XrayRust.xcframework for the iPhone and its simulator, the way
+#     hev-tunnel.yml builds HevSocks5Tunnel.xcframework, published to a
+#     release tag on request so the extension's build fetches it
+#     (scripts/fetch-rust-core-ios.sh) without a macOS runner;
+#   - the fork's own tests of the crates we patch;
+#   - the Linux CLI, which checks every config the app writes for the core
+#     (scripts/check-rust-core-configs.sh, once that exists).
+#
+# Only on the Rust core's own branches and by hand: none of this is the
+# shipped app yet, and nothing on main runs it.
+#
+# Caches hold what was built, keyed by the pinned commit, never Cargo's target
+# directory: the repository's caches are near their 10 GB, and several GB of
+# target per platform would evict main's Go and Gradle caches. A push that
+# does not move the pin restores the framework and the CLI in seconds; a new
+# pin builds from scratch (about an hour on the Mac).
+on:
+  push:
+    branches:
+      - 'feat/rust-core*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Attach XrayRust-ios.zip to the rust-core-ios-<commit12> release tag (never replaces one already there)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push supersedes a build of the same branch; a run by hand, which
+  # may publish, is never cancelled.
+  group: rust-core-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  scripts:
+    name: The scripts, offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck and bash -n
+        run: |
+          set -euo pipefail
+          shellcheck --version
+          files=(scripts/rust-core-pins.sh scripts/rust-core-checkout.sh scripts/build-rust-core-ios.sh
+                 scripts/fetch-rust-core-ios.sh scripts/test-fetch-rust-core-ios.sh)
+          shellcheck -x "${files[@]}"
+          for f in "${files[@]}"; do bash -n "$f"; done
+
+      - name: What fetch-rust-core-ios.sh accepts and refuses
+        run: bash scripts/test-fetch-rust-core-ios.sh
+
+  ios:
+    name: XrayRust.xcframework
+    runs-on: macos-latest
+    # A build from scratch: three targets, each a thin-LTO release of the
+    # whole core. A cache hit takes a few minutes.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Xcode the extension is built with (release.yml, pr-checks.yml).
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+
+      # Read from scripts/rust-core-pins.sh in a step, so the cache key below
+      # comes from the one file and no copy of the pin can drift.
+      - name: Pins
+        id: pins
+        run: |
+          set -euo pipefail
+          (
+            unset XRAY_RUST_REPO XRAY_RUST_COMMIT XRAY_RUST_TOOLCHAIN
+            . scripts/rust-core-pins.sh
+            echo "repo=${XRAY_RUST_REPO}"
+            echo "commit=${XRAY_RUST_COMMIT}"
+            echo "toolchain=${XRAY_RUST_TOOLCHAIN}"
+          ) >> "$GITHUB_OUTPUT"
+          echo "xcode=$(xcodebuild -version | sed -n 's/^Build version //p')" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+
+      - name: Cache the built framework
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: dist/rust-core-ios
+          key: rust-core-ios-${{ steps.pins.outputs.commit }}-rust${{ steps.pins.outputs.toolchain }}-xcode${{ steps.pins.outputs.xcode }}-${{ hashFiles('scripts/build-rust-core-ios.sh', 'scripts/rust-core-checkout.sh') }}
+
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-rust-core-ios.sh dist/rust-core-ios
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          (cd dist/rust-core-ios && zip -qry ../XrayRust-ios.zip XrayRust.xcframework rust-core-ios.build.json)
+          echo "sha256=$(shasum -a 256 dist/XrayRust-ios.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "bytes=$(wc -c < dist/XrayRust-ios.zip | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Report what was produced
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          ZIP_SHA256: ${{ steps.package.outputs.sha256 }}
+          ZIP_BYTES: ${{ steps.package.outputs.bytes }}
+        run: |
+          set -euo pipefail
+          python3 -I - dist/rust-core-ios/rust-core-ios.build.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os, sys
+          r = json.load(open(sys.argv[1]))
+          mib = lambda b: "%.1f MiB" % (b / 1048576)
+          print("### XrayRust.xcframework")
+          print()
+          print("%s at `%s`, %s, %s, iphoneos SDK %s, minimum iOS %s%s." % (
+              r["repo"], r["commit"], r["rustc"], r["xcode"], r["iphoneos_sdk"], r["minimum_ios"],
+              " (from the cache: built by run %s)" % r["built_by_run"] if os.environ.get("CACHE_HIT") == "true" else ""))
+          print()
+          print("| | bytes | size | build |")
+          print("|---|---:|---:|---:|")
+          for name, s in r["slices"].items():
+              print("| slice `%s` (%s) | %d | %s | |" % (name, " ".join(s["archs"]), s["bytes"], mib(s["bytes"])))
+          for name, t in r["targets"].items():
+              print("| target `%s` | %d | %s | %d s |" % (name, t["bytes"], mib(t["bytes"]), t["seconds"]))
+          b = int(os.environ["ZIP_BYTES"])
+          print("| `XrayRust-ios.zip` | %d | %s | |" % (b, mib(b)))
+          print()
+          print("`XrayRust-ios.zip` sha256 `%s` (this run's zip; a published one has its own)." % os.environ["ZIP_SHA256"])
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-core-ios
+          path: dist/XrayRust-ios.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # The release asset outlives the artifact, so the extension's build fetches
+  # a known framework months later without a macOS runner. On a Linux runner,
+  # with the only write token in this workflow. The tag and the asset name come
+  # from rust-core-pins.sh. A published asset is never replaced: its sha256 is
+  # pinned, and a second upload would break every fetch of the first.
+  publish:
+    needs: ios
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    name: Publish to the rust-core-ios tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-core-ios
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          unset XRAY_RUST_REPO XRAY_RUST_COMMIT XRAY_RUST_TOOLCHAIN
+          # shellcheck source=scripts/rust-core-pins.sh
+          . scripts/rust-core-pins.sh
+          tag="${RUST_CORE_IOS_TAG}" asset="${RUST_CORE_IOS_ASSET}"
+          test -f "dist/${asset}"
+          if gh release view "${tag}" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "${asset}"; then
+            echo "::error::${tag} already holds ${asset}. A published asset is never replaced; move XRAY_RUST_COMMIT to publish another build."
+            exit 1
+          fi
+          gh release view "${tag}" >/dev/null 2>&1 || \
+            gh release create "${tag}" --prerelease --target "${GITHUB_SHA}" --title "${tag}" \
+              --notes "xray-rust ${XRAY_RUST_COMMIT} (${XRAY_RUST_REPO}, MPL-2.0) as XrayRust.xcframework: the xray-ffi static library for iOS and the iOS simulator, with its C header and module map, for the tunnel extension. Built by run ${GITHUB_RUN_ID}; fetched and checked by scripts/fetch-rust-core-ios.sh."
+          gh release upload "${tag}" "dist/${asset}"
+          sha="$(sha256sum "dist/${asset}" | cut -d' ' -f1)"
+          {
+            echo "### Published ${asset} to ${tag}"
+            echo
+            echo "Pin it in scripts/rust-core-pins.sh:"
+            echo
+            echo '```'
+            echo "RUST_CORE_IOS_SHA256=\"${sha}\""
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  tests:
+    name: xray-rust tests of the crates we patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out xray-rust at the pin
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" | tail -n 1)"
+          unset XRAY_RUST_TOOLCHAIN
+          . scripts/rust-core-pins.sh
+          echo "XRS=${src}" >> "$GITHUB_ENV"
+          echo "XRS_TOOLCHAIN=${XRAY_RUST_TOOLCHAIN}" >> "$GITHUB_ENV"
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$XRS_TOOLCHAIN" --profile minimal --no-self-update
+          rustc "+$XRS_TOOLCHAIN" -V
+
+      # Upstream's own test command (its ci.yml, job rust) narrowed to the
+      # crates our patches touch: the core, the C ABI, the protocols, the
+      # transports and the config parser. Line tables only: every integration
+      # test (over a hundred) is a binary of its own with the whole core in
+      # it, and full debug info in each costs disk and link time; a backtrace
+      # still has its lines.
+      - name: cargo test --locked --all-targets
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_RETRY: "5"
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          RUST_BACKTRACE: "1"
+        run: |
+          set -euo pipefail
+          df -h "$RUNNER_TEMP" | tail -n 1
+          cd "$XRS"
+          cargo "+$XRS_TOOLCHAIN" test --locked --all-targets \
+            -p xray-core-rs -p xray-ffi -p xray-proxy -p xray-transport -p xray-config
+          df -h "$RUNNER_TEMP" | tail -n 1
+
+  cli:
+    name: xray-rust CLI (Linux) and the app's configs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pins
+        id: pins
+        run: |
+          set -euo pipefail
+          (
+            unset XRAY_RUST_REPO XRAY_RUST_COMMIT XRAY_RUST_TOOLCHAIN
+            . scripts/rust-core-pins.sh
+            echo "commit=${XRAY_RUST_COMMIT}"
+            echo "toolchain=${XRAY_RUST_TOOLCHAIN}"
+          ) >> "$GITHUB_OUTPUT"
+
+      - name: Cache the built CLI
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: dist/rust-core-cli
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.pins.outputs.commit }}-rust${{ steps.pins.outputs.toolchain }}-${{ hashFiles('scripts/rust-core-checkout.sh') }}
+
+      # The project's own CLI build (its README: `cargo build --locked -p
+      # xray-cli`) with --release, the profile the iOS library is built with.
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          TOOLCHAIN: ${{ steps.pins.outputs.toolchain }}
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_RETRY: "5"
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" | tail -n 1)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update
+          start="$(date +%s)"
+          (cd "$src" && cargo "+$TOOLCHAIN" build --locked --release -p xray-cli)
+          seconds=$(( $(date +%s) - start ))
+          install -D -m 0755 "$src/target/release/xray-rust" dist/rust-core-cli/xray-rust
+          B_COMMIT="$(git -C "$src" rev-parse HEAD)" B_RUSTC="$(rustc "+$TOOLCHAIN" -V)" \
+          B_SECONDS="$seconds" B_BYTES="$(wc -c < dist/rust-core-cli/xray-rust)" B_RUN="$GITHUB_RUN_ID" \
+          python3 -I -c '
+          import json, os, sys
+          e = os.environ
+          json.dump({"commit": e["B_COMMIT"], "rustc": e["B_RUSTC"],
+                     "cargo": "cargo build --locked --release -p xray-cli",
+                     "bytes": int(e["B_BYTES"]), "build_seconds": int(e["B_SECONDS"]),
+                     "built_by_run": e["B_RUN"]}, open(sys.argv[1], "w"), indent=1)
+          ' dist/rust-core-cli/xray-rust.build.json
+
+      - name: The CLI runs and checks a config
+        run: |
+          set -euo pipefail
+          cat dist/rust-core-cli/xray-rust.build.json
+          cli=dist/rust-core-cli/xray-rust
+          "$cli" config example socks-direct > "$RUNNER_TEMP/example.json"
+          "$cli" config check -config "$RUNNER_TEMP/example.json"
+          echo '{"inbounds": [{"protocol": "no-such-protocol", "port": 1080}]}' > "$RUNNER_TEMP/bad.json"
+          if "$cli" config check -config "$RUNNER_TEMP/bad.json"; then
+            echo "::error::the CLI accepted a config with an unknown protocol"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-core-cli-linux-x86_64
+          path: dist/rust-core-cli/
+          if-no-files-found: error
+          retention-days: 30
+
+      # scripts/check-rust-core-configs.sh comes with the app's writer for the
+      # core (another branch): every reference config the app writes for the
+      # core, through `xray-rust config check`.
+      - name: The app's configs for the core
+        run: |
+          set -euo pipefail
+          if [ -f scripts/check-rust-core-configs.sh ]; then
+            bash scripts/check-rust-core-configs.sh "$PWD/dist/rust-core-cli/xray-rust"
+          else
+            echo "::notice::scripts/check-rust-core-configs.sh is not on this branch yet; no app config was checked."
+          fi
