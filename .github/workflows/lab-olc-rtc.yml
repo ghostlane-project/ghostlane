@@ -14,7 +14,9 @@ name: Lab - olcRTC client, Chrome's DTLS
 #   - a release build of olc-client with the feature, run through the olcRTC
 #     engine's fake SaluteJazz SFU (pion) against the Go engine at the exits'
 #     pin (olc/interop/fakeroom.sh): the gate's S0-S5 beside the Go client,
-#     the relay-only gate, and the TestRust* set.
+#     the relay-only gate, and the TestRust* set with the client's log (its
+#     DTLS line names what BoringSSL negotiated with pion); then the gate
+#     again with the same client on str0m's own DTLS, for the memory.
 # Every RESULT line, the gate's cells and the memory lines land in the job
 # summary and the artifacts.
 #
@@ -143,18 +145,24 @@ jobs:
         run: |
           set -euo pipefail
           o=$GITHUB_WORKSPACE/out
+          mkdir -p "$GITHUB_WORKSPACE/bin/boring" "$GITHUB_WORKSPACE/bin/dimpl"
           cargo build --locked --release -p olc-client --features "$BIN_FEATURES" > "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
-          b=target/release/olc-client
-          echo "RESULT binary $(stat -c %s "$b") bytes, BoringSSL strings: $(strings -a "$b" | grep -c -i boringssl)" | tee "$o/result-binary.txt"
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/boring/"
+          # The same client with str0m's own DTLS (dimpl), as the box builds it.
+          cargo build --locked --release -p olc-client --features "${BIN_FEATURES#olc-client/boring,}" >> "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/dimpl/"
+          for d in boring dimpl; do
+            b=$GITHUB_WORKSPACE/bin/$d/olc-client
+            echo "RESULT binary $d $(stat -c %s "$b") bytes, BoringSSL strings: $(strings -a "$b" | grep -c -i boringssl)"
+          done | tee "$o/result-binary.txt"
 
       - name: Fake room, the gate beside the Go client
         if: ${{ !cancelled() }}
         run: |
           set +e -uo pipefail
-          bin=$PWD/xrs/target/release/olc-client
-          [ -x "$bin" ] || { echo "no binary"; exit 1; }
-          run() { # name set flags...
-            local name=$1; shift
+          [ -x bin/boring/olc-client ] && [ -x bin/dimpl/olc-client ] || { echo "no binary"; exit 1; }
+          run() { # name dtls set flags...
+            local name=$1 bin=$PWD/bin/$2/olc-client; shift 2
             bash xrs/olc/interop/fakeroom.sh "$bin" "$@" > "out/fakeroom-$name.log" 2>&1
             local rc=$?
             a=xrs/olc/interop/.work/gate-artifacts/fakeroom
@@ -167,14 +175,21 @@ jobs:
             echo "== $name rc=$rc"
             grep -hE 'cell |client memory|client ready in|^(--- |ok |FAIL)' "out/fakeroom-$name.log" | grep -v '^    --- ' | head -40
             echo "DTLS lines: $(cat "out/fakeroom-$name.log" out/fakeroom-$name-artifacts/*/*.log 2>/dev/null | grep -c 'webrtc: DTLS ')"
-            cat "out/fakeroom-$name.log" out/fakeroom-$name-artifacts/*/*.log 2>/dev/null | grep -h 'webrtc: DTLS ' | sed 's/^.*webrtc: DTLS /webrtc: DTLS /' | sort | uniq -c | head -6
+            cat "out/fakeroom-$name.log" out/fakeroom-$name-artifacts/*/*.log 2>/dev/null | grep -h 'webrtc: DTLS ' \
+              | sed -E 's/^.*webrtc: DTLS /webrtc: DTLS /; s/, [0-9]+ ms as the / as the /' | sort | uniq -c | head -6
+            grep -hE 'channel "_lossy" open \(publisher=true\)|session [0-9a-f-]+ opened' "out/fakeroom-$name.log" \
+              | grep -E '^\s+[0-9:.]+ ' | sed -E 's/^\s+([0-9:.]+) [0-9/]+ [0-9:]+ /\1 /' | cut -c1-80 | head -14
             return $rc
           }
-          fails=0
           {
-            run gate gate -olcrtc.gate-flavours=rust,cli || fails=$((fails + 1))
-            run gate-relay gate-relay -olcrtc.gate-flavours=rust,cli || fails=$((fails + 1))
-            run rust rust || fails=$((fails + 1))
+            run gate boring gate -olcrtc.gate-flavours=rust,cli
+            run gate-relay boring gate-relay -olcrtc.gate-flavours=rust,cli
+            # The client's log in the test output, the DTLS line included.
+            export OLCRTC_GATE_RUST_TRACE=1
+            run rust boring rust
+            unset OLCRTC_GATE_RUST_TRACE
+            # The same gate with str0m's own DTLS, for the memory beside it.
+            run gate-dimpl dimpl gate -olcrtc.gate-flavours=rust,cli
           } 2>&1 | tee out/fakeroom-summary.txt
           ! grep -q '^== .* rc=[1-9]' out/fakeroom-summary.txt
 
