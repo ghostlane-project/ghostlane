@@ -1,0 +1,379 @@
+name: Lab - olcRTC stack spike
+
+# A measurement, not a check: milestone M2 of the olcRTC client port to Rust
+# (the stack spike). It proves or refutes the WebRTC stack the port plans on
+# (str0m in RTP mode, a BoringSSL DTLS provider, aws-lc-rs and ring beside
+# it) before any carrier work. The probes live in the xray-rust fork under
+# olc/spike/ on gl/olc-spike (each a script in olc/spike/scripts/); this
+# workflow runs them at the commit pinned below:
+#   - linux: the probes' unit tests and the `is` fork's, the DTLS loopback
+#     with each provider and version, probe (a) (str0m against the olcRTC
+#     engine's fake SaluteJazz SFU, echoing through the engine's own Session)
+#     in four variants, and a capture of Chrome's own STUN binding requests and
+#     DTLS ClientHello beside pion's and str0m's (scripts/wire.py);
+#   - ios: probe (d), BoringSSL + aws-lc-rs + ring in one iOS binary: the
+#     symbol check, a C link with and without -all_load, and runs in the
+#     iOS simulator (and on the macOS host) with the memory gauges.
+# Every RESULT/MEM line lands in the job summary and the artifacts.
+#
+# Runs on a push to lab/olc-spike or by hand, never on main, never on a pull
+# request, no schedule. A push reads no secret; only a run by hand with
+# `carriers` ticked reads the two room links of probes (b) and (c), and only in
+# the carriers job. (PR Checks, whose `push:` has no filter, starts on the same
+# push; its scope job decides what it runs.)
+on:
+  push:
+    branches:
+      - lab/olc-spike
+  workflow_dispatch:
+    inputs:
+      carriers:
+        description: >-
+          Also run probes (b) and (c) against live MTS Link and VK Calls rooms. Reads
+          the repository secrets OLC_SPIKE_MTSLINK_ROOM and OLC_SPIKE_VKCALLS_ROOM (one
+          room link each); a probe whose secret is empty is skipped.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-spike
+  cancel-in-progress: true
+
+env:
+  # The spike: ghostlane-project/xray-rust gl/olc-spike, fetched by its hash.
+  # Moving the pin is a change to this file (and so a run).
+  SPIKE_REPO: "https://github.com/ghostlane-project/xray-rust"
+  SPIKE_REF: "gl/olc-spike"
+  SPIKE_COMMIT: "2c40a05d7e848ef34a2a23035dc6264c7082bba1"
+  # The olcRTC engine at the exits' pin.
+  ENGINE_REPO: "https://github.com/ghostlane-project/olcrtc"
+  ENGINE_COMMIT: "2d4266af3947f4d9940efafb0d5aabb6207f6659"
+  GO_VERSION: "1.26.5"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    name: Probes on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Fetch the spike and the engine
+        run: |
+          set -euo pipefail
+          fetch() { # dir repo commit
+            git init -q "$1"
+            git -C "$1" remote add origin "$2"
+            git -C "$1" fetch -q --depth 1 origin "$3" || git -C "$1" fetch -q origin
+            git -C "$1" checkout -q "$3"
+            echo "$1 at $(git -C "$1" rev-parse HEAD)"
+          }
+          fetch xrs "$SPIKE_REPO" "$SPIKE_COMMIT"
+          fetch engine "$ENGINE_REPO" "$ENGINE_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake tcpdump time >/dev/null
+          cargo --version; go version; cmake --version | head -1
+          (google-chrome --version || true)
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/olc/spike/target
+          key: olc-spike-linux-${{ env.SPIKE_COMMIT }}
+          restore-keys: olc-spike-linux-
+
+      - name: Unit tests (probe, the is fork, the BoringSSL provider)
+        working-directory: xrs/olc/spike
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cargo test --release -p olc-spike-probe -p is -p olc-spike-dtls-boring > "$GITHUB_WORKSPACE/out/unit-tests.log" 2>&1
+          rc=$?
+          cp Cargo.lock "$GITHUB_WORKSPACE/out/Cargo.lock" 2>/dev/null || true
+          grep -E '^test |test result|^error|^warning' "$GITHUB_WORKSPACE/out/unit-tests.log" | head -150
+          [ $rc -eq 0 ] || tail -60 "$GITHUB_WORKSPACE/out/unit-tests.log"
+          exit $rc
+
+      - name: Build the probes (dimpl only, and with BoringSSL)
+        working-directory: xrs/olc/spike
+        run: |
+          set -euo pipefail
+          cargo build --release -p olc-spike-probe --bins
+          mkdir -p "$GITHUB_WORKSPACE/bin/dimpl" "$GITHUB_WORKSPACE/bin/boring"
+          cp target/release/sfu-probe target/release/loopback target/release/sdp-bridge "$GITHUB_WORKSPACE/bin/dimpl/"
+          cargo build --release -p olc-spike-probe --features boring --bins
+          cp target/release/sfu-probe target/release/loopback target/release/sdp-bridge "$GITHUB_WORKSPACE/bin/boring/"
+          cargo build --release -p olc-spike-ios-link
+          cp target/release/ios-link target/release/libolc_spike_ios_link.a "$GITHUB_WORKSPACE/bin/"
+          ls -l "$GITHUB_WORKSPACE"/bin/*/ "$GITHUB_WORKSPACE"/bin/ | tee "$GITHUB_WORKSPACE/out/binaries.txt"
+
+      - name: DTLS loopback (each provider and version)
+        run: |
+          set -uo pipefail
+          for v in dimpl:12 dimpl:13 dimpl:auto boring:12 boring:13 boring:auto; do
+            p=${v%%:*} ver=${v##*:}
+            log="out/loopback-$p-$ver.log"
+            /usr/bin/time -v "bin/$p/loopback" --dtls "$p" --version "$ver" --bytes 16777216 > "$log" 2>&1
+            echo "rc=$?" >> "$log"
+            echo "== $p $ver: $(grep -h '^RESULT' "$log" || grep -h 'FAIL' "$log" | head -1) $(grep -h 'Maximum resident' "$log")"
+          done | tee out/loopback-summary.txt
+
+      - name: All three crypto libraries in one Linux binary
+        run: |
+          set -uo pipefail
+          /usr/bin/time -v bin/ios-link > out/ios-link-linux.log 2>&1; echo "rc=$?" >> out/ios-link-linux.log
+          grep -E '^RESULT|^HANDSHAKE|^TLS_OK|^FAIL|^rc=|Maximum resident' out/ios-link-linux.log || true
+          xrs/olc/spike/scripts/ios-symbols.sh bin/libolc_spike_ios_link.a | tee out/symbols-linux.txt
+
+      - name: Probe (a), str0m against the engine's fake SFU
+        run: |
+          set -uo pipefail
+          run() { # name binary flags...
+            local name=$1 bin=$2; shift 2
+            OLC_SPIKE_OUT="$PWD/out/probe-a-$name.out" xrs/olc/spike/scripts/probe-a.sh engine "$bin" "$@" \
+              > "out/probe-a-$name.test.log" 2>&1
+            echo "rc=$?" >> "out/probe-a-$name.test.log"
+            echo "== $name ($*): $(grep -h '^RESULT' "out/probe-a-$name.out" 2>/dev/null || tail -3 "out/probe-a-$name.test.log" | tr '\n' ' ')"
+          }
+          {
+            run dimpl12-server bin/dimpl/sfu-probe --dtls dimpl --version 12
+            run dimpl12-client-chrome bin/dimpl/sfu-probe --dtls dimpl --version 12 --role client --stun chrome
+            run boring12-client-chrome bin/boring/sfu-probe --dtls boring --version 12 --role client --stun chrome
+            run boringauto-client-chrome bin/boring/sfu-probe --dtls boring --version auto --role client --stun chrome
+          } | tee out/probe-a-summary.txt
+
+      - name: Chrome's own STUN and DTLS, captured
+        run: |
+          set -uo pipefail
+          xrs/olc/spike/scripts/chrome-capture.sh out/chrome > out/chrome-capture.log 2>&1
+          echo "rc=$?" >> out/chrome-capture.log
+          cat out/chrome-capture.log
+
+      - name: Wire shapes side by side (Chrome, pion, str0m)
+        run: |
+          set -uo pipefail
+          w=xrs/olc/spike/scripts/wire.py
+          {
+            echo "### STUN binding requests"
+            python3 -I $w stun out/chrome/chrome.pcap out/probe-a-*.out
+            echo "### First DTLS ClientHello"
+            python3 -I $w hello out/chrome/chrome.pcap out/probe-a-*.out out/loopback-*.log
+            echo "### Compare"
+            python3 -I $w compare chrome=out/chrome/chrome.pcap \
+              str0m-chrome-boring=out/probe-a-boringauto-client-chrome.out \
+              str0m-chrome-dimpl=out/probe-a-dimpl12-client-chrome.out \
+              pion=out/probe-a-dimpl12-server.out
+          } 2>&1 | tee out/wire.txt
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## olc spike, Linux'
+            echo '```'
+            cat out/loopback-summary.txt out/probe-a-summary.txt 2>/dev/null
+            grep -h '^RESULT\|^SYMBOLS\|^DUP ' out/ios-link-linux.log out/symbols-linux.txt 2>/dev/null
+            grep -h 'OLC_SPIKE' out/chrome/chrome.log 2>/dev/null | sed 's/.*OLC_SPIKE/OLC_SPIKE/' | head -12
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the bridge (for the carriers job)
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-spike-bridge
+          path: bin/dimpl/sdp-bridge
+          retention-days: 3
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-spike-linux
+          path: out/
+          retention-days: 14
+
+  ios:
+    name: Probe (d) on iOS
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    steps:
+      - name: Fetch the spike
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$SPIKE_REPO"
+          git -C xrs fetch -q --depth 1 origin "$SPIKE_COMMIT" || git -C xrs fetch -q origin
+          git -C xrs checkout -q "$SPIKE_COMMIT"
+          git -C xrs log -1 --format='%H %s'
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
+            --target aarch64-apple-ios --target aarch64-apple-ios-sim
+          cargo --version; xcodebuild -version; cmake --version | head -1
+          echo "LIBCLANG_PATH=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/olc/spike/target
+          key: olc-spike-macos-${{ env.SPIKE_COMMIT }}
+          restore-keys: olc-spike-macos-
+
+      - name: Build for the macOS host, the simulator and the device
+        working-directory: xrs/olc/spike
+        run: |
+          set -uo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          for t in aarch64-apple-darwin aarch64-apple-ios-sim aarch64-apple-ios; do
+            if cargo build --release -p olc-spike-ios-link --target "$t" > "$GITHUB_WORKSPACE/out/build-$t.log" 2>&1; then
+              echo "BUILD_OK $t $(stat -f %z target/$t/release/libolc_spike_ios_link.a) bytes (.a), $(stat -f %z target/$t/release/ios-link) bytes (bin)"
+            else
+              echo "BUILD_FAIL $t"; grep -E '^error|error:' "$GITHUB_WORKSPACE/out/build-$t.log" | head -20
+            fi
+          done | tee "$GITHUB_WORKSPACE/out/build-summary.txt"
+
+      - name: Symbols
+        run: |
+          set -uo pipefail
+          for t in aarch64-apple-ios-sim aarch64-apple-ios; do
+            a=xrs/olc/spike/target/$t/release/libolc_spike_ios_link.a
+            [ -f "$a" ] || continue
+            echo "== $t"
+            xrs/olc/spike/scripts/ios-symbols.sh "$a"
+          done | tee out/symbols.txt
+
+      - name: Run on the macOS host
+        run: |
+          set -uo pipefail
+          b=xrs/olc/spike/target/aarch64-apple-darwin/release/ios-link
+          [ -x "$b" ] || exit 0
+          /usr/bin/time -l "$b" > out/host.log 2>&1; echo "rc=$?" >> out/host.log
+          grep -E '^RESULT|^HANDSHAKE|^TLS_OK|^FAIL|^rc=|maximum resident|peak memory footprint' out/host.log
+
+      - name: Link into a C program and run in the simulator
+        run: |
+          set -uo pipefail
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          for rt in sorted(d, reverse=True):
+              if "iOS" in rt:
+                  for dev in d[rt]:
+                      if dev["name"].startswith("iPhone"):
+                          print(dev["udid"]); sys.exit(0)
+          ')
+          echo "simulator: $udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b > /dev/null
+          s=xrs/olc/spike/target/aarch64-apple-ios-sim/release
+          if [ -f "$s/libolc_spike_ios_link.a" ]; then
+            xrs/olc/spike/scripts/ios-link.sh aarch64-apple-ios-sim "$s/libolc_spike_ios_link.a" out/sim "$udid" | tee out/sim-link.txt
+            xcrun simctl spawn "$udid" "$s/ios-link" > out/sim-rust-bin.log 2>&1; echo "rc=$?" >> out/sim-rust-bin.log
+            grep -E '^RESULT|^HANDSHAKE|^TLS_OK|^FAIL|^rc=' out/sim-rust-bin.log
+          fi
+          d=xrs/olc/spike/target/aarch64-apple-ios/release
+          if [ -f "$d/libolc_spike_ios_link.a" ]; then
+            xrs/olc/spike/scripts/ios-link.sh aarch64-apple-ios "$d/libolc_spike_ios_link.a" out/device | tee out/device-link.txt
+          fi
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## olc spike, iOS'
+            echo '```'
+            cat out/build-summary.txt out/symbols.txt out/sim-link.txt out/device-link.txt 2>/dev/null | grep -v '^DUP_MEMBERS'
+            grep -h '^RESULT\|^rc=' out/host.log out/sim-rust-bin.log 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-spike-ios
+          path: out/
+          retention-days: 14
+
+  carriers:
+    name: Probes (b) and (c), live rooms
+    # By hand only, with the box ticked: these join real MTS Link and VK Calls
+    # rooms as a guest, with the room links the owner put in the secrets.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.carriers }}
+    needs: linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Fetch the spike and the engine
+        run: |
+          set -euo pipefail
+          for d in xrs:$SPIKE_REPO:$SPIKE_COMMIT engine:$ENGINE_REPO:$ENGINE_COMMIT; do
+            dir=${d%%:*}; rest=${d#*:}; commit=${rest##*:}; repo=${rest%:*}
+            git init -q "$dir"; git -C "$dir" remote add origin "$repo"
+            git -C "$dir" fetch -q --depth 1 origin "$commit"; git -C "$dir" checkout -q "$commit"
+          done
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: The bridge
+        uses: actions/download-artifact@v8
+        with:
+          name: olc-spike-bridge
+          path: bin
+
+      - name: Probe (b), MTS Link
+        env:
+          OLC_SPIKE_MTSLINK_ROOM: ${{ secrets.OLC_SPIKE_MTSLINK_ROOM }}
+        run: |
+          set -uo pipefail
+          chmod +x bin/sdp-bridge; mkdir -p out
+          if [ -z "$OLC_SPIKE_MTSLINK_ROOM" ]; then echo "no OLC_SPIKE_MTSLINK_ROOM secret: skipped"; exit 0; fi
+          OLC_SPIKE_OUT=$PWD/out/probe-b.out xrs/olc/spike/scripts/probe-b-mtslink.sh engine bin/sdp-bridge \
+            --dtls dimpl --version 12 --stun chrome 2>&1 | tee out/probe-b.test.log
+
+      - name: Probe (c), VK Calls
+        env:
+          OLC_SPIKE_VKCALLS_ROOM: ${{ secrets.OLC_SPIKE_VKCALLS_ROOM }}
+        run: |
+          set -uo pipefail
+          chmod +x bin/sdp-bridge; mkdir -p out
+          if [ -z "$OLC_SPIKE_VKCALLS_ROOM" ]; then echo "no OLC_SPIKE_VKCALLS_ROOM secret: skipped"; exit 0; fi
+          OLC_SPIKE_OUT=$PWD/out/probe-c.out xrs/olc/spike/scripts/probe-c-vkcalls.sh engine bin/sdp-bridge \
+            --dtls dimpl --version 12 --stun chrome --role client 2>&1 | tee out/probe-c.test.log
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-spike-carriers
+          path: out/
+          retention-days: 14
