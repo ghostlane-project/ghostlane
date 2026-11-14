@@ -7,6 +7,7 @@
     lab.py shapes-check                       the lab's client shapes against the app's builders
     lab.py udp-flow     --bin DIR --out DIR   where a new UDP flow's time goes behind hev (Linux, macOS; root)
     lab.py heap-profile --bin DIR --out DIR   where xray-rust's memory goes (heaptrack on Linux, footprint on macOS)
+    lab.py alloc-rows   --bin DIR --out DIR   phys_footprint under five allocator setups (macOS)
 
 Every run is one core on one config, between servers this script starts on
 the same machine: one Xray 26.4.25 process (the version scripts/xray-servers.txt
@@ -140,6 +141,10 @@ DEV_DIR = "/data/local/tmp/lab"
 # happens to set one would change every figure without saying so. (XRAY_* goes
 # too, which takes xray-rust's XRAY_TUN_PROFILE with it unless a row sets it.)
 SANITIZED = ("GOGC", "GOMEMLIMIT", "GODEBUG", "GOMAXPROCS", "TOKIO_WORKER_THREADS", "RUST_MIN_STACK")
+# The same for the allocators: mimalloc's options, the lab patch's switches
+# (xray-rust-patches/lab-allocator-switch.patch) and Apple's malloc settings
+# (MallocNanoZone and the rest), which a row sets only on purpose.
+SANITIZED_PREFIXES = ("XRAY_", "MIMALLOC_", "XRS_LAB_", "Malloc")
 
 
 class LabError(Exception):
@@ -151,7 +156,7 @@ def log(*parts):
 
 
 def clean_env(extra=None):
-    env = {k: v for k, v in os.environ.items() if k not in SANITIZED and not k.startswith("XRAY_")}
+    env = {k: v for k, v in os.environ.items() if k not in SANITIZED and not k.startswith(SANITIZED_PREFIXES)}
     if extra:
         env.update(extra)
     return env
@@ -732,38 +737,56 @@ def xrs_webtunnel(server, pin, port=PORT_WEBTUNNEL):
         "ALPN goes out); insecure becomes pinnedPeerCertSha256 of the lab's certificate"]
 
 
-# The XHTTP window rows (macOS, the mobile profile, gate 2.8): settings label,
-# whether the row runs the patched build, the xhttpSettings fields added to
-# the app's shape, and what that means. At v0.9.0 (commit 30928ad5):
-#   - h2StreamReceiveWindow, the one JSON field for it (65535..16777216 bytes,
-#     xray-config/src/parser/xhttp.rs:741-760, xray-transport/src/stream/xhttp/
-#     config.rs:19-25): a configured window is fixed on every host; unset, the
-#     mobile profile opens at 1 MiB and grows to 4 MiB (stream/xhttp/h2.rs:58-89);
-#   - the connection window, H2_CONNECTION_RECEIVE_WINDOW = 16 MiB, a constant
-#     (stream/xhttp/config.rs:17, used at h2.rs:46 and 332), per H2 connection,
-#     and xmux opens up to maxConnections = 3 of them by default
-#     (xray-config/src/model.rs:1135);
-#   - packet-up's upload: scMaxEachPostBytes (the app writes 200000) sizes each
-#     flow's pipe (tokio duplex), its read buffer and the POST body in flight
-#     (stream/xhttp/transport.rs:895-902, 1013-1015, 1076-1080).
-XHTTP_WINDOW_ROWS = (
-    ("mob s1M", False, {"h2StreamReceiveWindow": 1048576},
-     "h2StreamReceiveWindow 1048576: each XHTTP H2 stream's receive window fixed at 1 MiB (a configured window does "
-     "not grow); connection window 16 MiB as pinned, up to 3 connections"),
-    ("mob s256K", False, {"h2StreamReceiveWindow": 262144},
-     "h2StreamReceiveWindow 262144: each stream's window fixed at 256 KiB, so 32 streams can hold at most 8 MiB "
-     "unread; about 17 Mbit/s per flow at 120 ms RTT (window x 8 / RTT), which loopback does not show"),
-    ("mob s64K", False, {"h2StreamReceiveWindow": 65535},
-     "h2StreamReceiveWindow 65535, the field's minimum (HTTP/2's default window): at most 2 MiB unread for 32 "
-     "streams; about 4.4 Mbit/s per flow at 120 ms RTT, which loopback does not show"),
-    ("mob c4M (p)", True, {},
-     "patched build: H2_CONNECTION_RECEIVE_WINDOW 16 MiB -> 4 MiB (lab/footprint/xray-rust-patches/"
-     "h2-connection-window-4mib.patch), stream window unset (the mobile profile's 1 MiB growing to 4 MiB): at most "
-     "4 MiB unread per H2 connection, 12 MiB over xmux's 3, while one flow keeps a window of up to 4 MiB"),
-    ("mob s256K p100K", False, {"h2StreamReceiveWindow": 262144, "scMaxEachPostBytes": 100000},
-     "h2StreamReceiveWindow 262144 and scMaxEachPostBytes 100000 (the app writes 200000): the upload half's "
-     "buffers halved too; a wire change (POST size), so the Go rows, at 200000, are not its twin"),
-)
+# The relay buffer rows: policy.levels."0".bufferSize in KiB, the field the
+# core reads for a relay's read size (xray-core-rs/src/policy.rs
+# effective_policy_for_level, relay_buffer_size: KiB, clamped to 1 KiB..1 MiB;
+# a VLESS outbound takes its user's level, 0 here; unset, 128 KiB). In the
+# fork a read past the first 4 KiB goes into a 128 KiB buffer lent by a
+# process-wide pool whatever the cap (policy/relay_buffer.rs, LENT_BUFFER_SIZE;
+# a cap above 128 KiB grows a buffer of its own instead), so the cap bounds
+# what one read takes, not the buffer it reads into.
+RELAY_KIB = (16, 32, 64)
+RELAY_LINES = ("vless-reality-vision", WEBTUNNEL)
+ONE_WORKER_LINES = ("vless-xhttp-reality packet-up", WEBTUNNEL)
+
+
+def with_relay_buffer(cfg, kib):
+    out = json.loads(json.dumps(cfg))
+    out["policy"] = {"levels": {"0": {"bufferSize": kib}}}
+    return out
+
+
+def xrs_build(dir_):
+    """A rust-core-build.sh output directory: (binary, build record, ref,
+    commit). The ref is the record's `ref` (a branch or a tag), or its `tag`
+    when an older script wrote it."""
+    if not dir_:
+        return None, {}, "?", "?"
+    d = Path(dir_).resolve()
+    try:
+        info = load_json(d / "xray-rust.build.json")
+    except (OSError, ValueError):
+        info = {}
+    return d / "xray-rust", info, str(info.get("ref") or info.get("tag") or "?"), str(info.get("commit") or "?")
+
+
+def xrs_version_text(info):
+    ref = info.get("ref") or info.get("tag") or "?"
+    repo = re.sub(r"^https://github.com/|\.git$", "", str(info.get("repo") or "?"))
+    patches = ", ".join("%s (sha256 %s)" % (Path(q.get("file", "?")).name, str(q.get("sha256"))[:12])
+                        for q in info.get("patches") or [])
+    return "xray-rust %s %s at %s, %s, cargo --release [%s]%s%s" % (
+        repo, ref, str(info.get("commit") or "?")[:12], info.get("rustc", "rustc ?"), info.get("profile_release", "?"),
+        (" + " + " ".join(info.get("profile_overrides") or [])) if info.get("profile_overrides") else "",
+        (" + lab patches: " + patches) if patches else "")
+
+
+def xrs_build_note(info):
+    here_run = os.environ.get("GITHUB_RUN_ID", "local")
+    if str(info.get("built_by_run")) == here_run:
+        return "built in this run in %s s" % info.get("build_seconds")
+    return ("restored from the actions cache: built by run %s from the same commit, toolchain and lab patches"
+            % info.get("built_by_run"))
 
 
 def xrs_check(xrs, cfg_path, report_path):
@@ -2674,124 +2697,119 @@ def cmd_desktop(a):
             else:
                 missing.append((ios_hev, "hev-socks5-tunnel was not built (hev-build.log in this artifact)"))
 
-    # xray-rust: one binary, two runtime profiles, the four lines.
-    xrs_dir = Path(a.xray_rust).resolve() if a.xray_rust else None
-    xrs_specs, xrs_bin, xrs_version, xrs_core = [], None, "", ""
-    if xrs_dir is not None:
-        xrs_bin = xrs_dir / "xray-rust"
-        try:
-            xrs_info = load_json(xrs_dir / "xray-rust.build.json")
-        except (OSError, ValueError):
-            xrs_info = {}
-        xrs_tag = xrs_info.get("tag") or os.environ.get("XRAY_RUST_TAG", "unknown")
-        xrs_core = "xray-rust %s (exec)" % xrs_tag
-        xrs_version = "xray-rust %s %s, %s, cargo --release [%s]" % (
-            xrs_tag, (xrs_info.get("commit") or os.environ.get("XRAY_RUST_COMMIT", "?"))[:12],
-            xrs_info.get("rustc", "rustc ?"), xrs_info.get("profile_release", "?"))
-        here_run = os.environ.get("GITHUB_RUN_ID", "local")
-        build_note = ("built in this run in %s s" % xrs_info.get("build_seconds")
-                      if str(xrs_info.get("built_by_run")) == here_run else
-                      "binary restored from the actions cache: built by run %s from the same tag, commit, toolchain "
-                      "and build script" % xrs_info.get("built_by_run"))
-        hy2_pin = cert_sha256(servers.dir / "hy2.crt")
-        try:
-            wt_pin = cert_sha256(servers.dir / "webtunnel.crt")
-        except (OSError, LabError):
-            wt_pin = "0" * 64
-        workers = max(2, min(6, os.cpu_count() or 2))
-        profiles = (
-            ("cli defaults", None,
-             ["xray-rust's CLI as it starts: 2 Tokio workers (crates/xray-cli/src/main.rs), runtime profile Default, "
-              "which on a desktop target is the Standard transport memory class (H2 stream windows a fixed 4 MiB)"]),
-            ("mobile profile", {"XRAY_TUN_PROFILE": "mobile", "TOKIO_WORKER_THREADS": str(workers)},
-             ["the library's profile on a phone: XRAY_TUN_PROFILE=mobile (TunRuntimeProfile::Mobile, which the "
-              "Android VpnService adapter passes and which iOS's Default resolves to: the Constrained transport "
-              "memory class, XHTTP H2 stream windows opening at 1 MiB and growing for a reader that keeps up, "
-              "DNS 16 operations), and %d Tokio workers, as xray-ffi sizes its runtime here (available "
-              "parallelism clamped to 2..6; a 6-core phone gets 6)" % workers]),
-        )
-        lines = (
-            ("vless-reality-vision", xrs_reality(loop, servers.pub), False),
-            ("hysteria2-salamander", xrs_hy2(loop, hy2_pin), False),
-            ("vless-xhttp-reality packet-up", xrs_xhttp(loop, servers.pub), False),
-            (WEBTUNNEL, xrs_webtunnel(loop, wt_pin), True),
-        )
-        for prof, env, prof_notes in profiles:
-            for scenario, (cfg, cfg_notes), wt in lines:
-                aux = {}
-                if prof == "cli defaults" and scenario.startswith("vless-xhttp"):
-                    aux = {"the iPhone's answers-dns XHTTP shape": xray_xhttp(loop, servers.pub, answers_dns=True)}
-                xrs_specs.append(Spec(
-                    kind="exec", core=xrs_core, argv=[xrs_bin, "run", "-config", "{config}"], settings=prof, env=env,
-                    scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt, xrs_check=xrs_bin,
-                    aux_checks=aux, extra={"xray_rust_build": xrs_info},
-                    notes=prof_notes + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
-        # Gate 2.8 (tasks.md): XHTTP at or below Go's phys_footprint peak with
-        # iOS limits. The mobile profile with the receive windows set lower,
-        # through the one JSON field xray-rust has for them, and through the
-        # connection window, a constant, patched (rust-core-build.sh with
-        # XRS_PATCHES). macOS only: phys_footprint is what iOS counts.
-        win_specs, win_patched = [], []
-        if is_mac:
-            mobile_env, mobile_notes = profiles[1][1], profiles[1][2]
-            p_bin = Path(a.xray_rust_patched).resolve() / "xray-rust" if a.xray_rust_patched else None
-            try:
-                p_info = load_json(p_bin.parent / "xray-rust.build.json") if p_bin else {}
-            except (OSError, ValueError):
-                p_info = {}
-            p_patches = ", ".join("%s (sha256 %s)" % (q.get("file"), str(q.get("sha256"))[:12])
-                                  for q in p_info.get("patches") or []) or "none recorded"
-            for settings, patched, fields, what in XHTTP_WINDOW_ROWS:
-                cfg, cfg_notes = xrs_xhttp(loop, servers.pub)
-                cfg["outbounds"][0]["streamSettings"]["xhttpSettings"].update(fields)
-                binary = p_bin if patched else xrs_bin
-                info = p_info if patched else xrs_info
-                notes = mobile_notes + [what, "xhttpSettings here: %s" % json.dumps(
-                    cfg["outbounds"][0]["streamSettings"]["xhttpSettings"], sort_keys=True)] + cfg_notes
-                if patched:
-                    notes.append("xray-rust at %s with the lab's patches applied by rust-core-build.sh: %s; built by "
-                                 "run %s" % (xrs_tag, p_patches, p_info.get("built_by_run")))
+    if not a.go_rows:
+        # --no-go-rows: the Go rows, the tun, hev and iOS shape rows, the idle
+        # harness and the olcRTC soaks stay out (their figures are known from
+        # earlier runs); xray-rust's rows and the ClientHellos run as before.
+        specs, missing = [], []
+
+    # xray-rust. The main rows are the fork (--xray-rust): two runtime
+    # profiles on the four lines, then two passes of the mobile profile, the
+    # relay buffer rows and the one-worker rows, so each of those has two runs
+    # side by side. The fork's XHTTP upload fix (--xray-rust-up) adds its
+    # XHTTP mobile row to each pass and runs XHTTP's one-worker rows. v0.9.0
+    # (--xray-rust-baseline) runs once per line in the mobile profile, as the
+    # historical baseline. The ClientHello rows run the build
+    # --xray-rust-hello names.
+    main_bin, main_info, main_ref, _ = xrs_build(a.xray_rust)
+    base_bin, base_info, base_ref, _ = xrs_build(a.xray_rust_baseline)
+    hello_bin, hello_info, hello_ref, _ = xrs_build(a.xray_rust_hello)
+    up_bin, up_info, up_ref, _ = xrs_build(a.xray_rust_up)
+    main_core = "xray-rust %s (exec)" % main_ref
+    base_core = "xray-rust %s (exec)" % base_ref
+    hello_core = "xray-rust %s (exec)" % hello_ref
+    up_core = "xray-rust %s (exec)" % up_ref
+    xrs_specs = []
+    hy2_pin = cert_sha256(servers.dir / "hy2.crt")
+    try:
+        wt_pin = cert_sha256(servers.dir / "webtunnel.crt")
+    except (OSError, LabError):
+        wt_pin = "0" * 64
+    workers = max(2, min(6, os.cpu_count() or 2))
+    mobile_env = {"XRAY_TUN_PROFILE": "mobile", "TOKIO_WORKER_THREADS": str(workers)}
+    one_env = dict(mobile_env, TOKIO_WORKER_THREADS="1")
+    cli_notes = ["xray-rust's CLI as it starts: 2 Tokio workers (crates/xray-cli/src/main.rs), runtime profile Default, "
+                 "which on a desktop target is the Standard transport memory class (H2 stream windows a fixed 4 MiB)"]
+    mobile_notes = ["the library's profile on a phone: XRAY_TUN_PROFILE=mobile (TunRuntimeProfile::Mobile, which the "
+                    "Android VpnService adapter passes and which iOS's Default resolves to: the Constrained transport "
+                    "memory class, XHTTP H2 stream windows opening at 1 MiB and growing for a reader that keeps up, "
+                    "DNS 16 operations), and %d Tokio workers, as xray-ffi sizes its runtime here (available "
+                    "parallelism clamped to 2..6; a 6-core phone gets 6)" % workers]
+    one_notes = ["the mobile profile with TOKIO_WORKER_THREADS=1 instead of %d: Tokio's multi-thread runtime with one "
+                 "worker (crates/xray-cli/src/main.rs leaves the variable to Tokio); xray-ffi, which the extension "
+                 "links, sets its worker count itself (available parallelism clamped to 2..6) and reads no variable, "
+                 "so one worker on a phone needs a change there" % workers]
+    lines = (
+        ("vless-reality-vision", xrs_reality(loop, servers.pub), False),
+        ("hysteria2-salamander", xrs_hy2(loop, hy2_pin), False),
+        ("vless-xhttp-reality packet-up", xrs_xhttp(loop, servers.pub), False),
+        (WEBTUNNEL, xrs_webtunnel(loop, wt_pin), True),
+    )
+    by_line = {scenario: (cfg, cfg_notes, wt) for scenario, (cfg, cfg_notes), wt in lines}
+
+    def xrs_spec(binary, info, core, scenario, settings, env, notes, config=None, extra=None, aux=None):
+        cfg, cfg_notes, wt = by_line[scenario]
+        return Spec(kind="exec", core=core, argv=[binary, "run", "-config", "{config}"], settings=settings, env=env,
+                    scenario=scenario, config=config if config is not None else cfg, version=xrs_version_text(info),
+                    needs_webtunnel=wt, xrs_check=binary, aux_checks=aux or {},
+                    extra=dict({"xray_rust_build": info}, **(extra or {})),
+                    notes=notes + cfg_notes + ["%s, %s" % (xrs_version_text(info), xrs_build_note(info)), srv_note])
+
+    def want(binary, ref, log_name, spec):
+        # A build that is not there fails its rows by name, with its log's tail.
+        if binary.exists():
+            xrs_specs.append(spec)
+        else:
+            missing.append((spec, "xray-rust %s was not built (%s in this artifact): %s" % (
+                ref, log_name, tail(out / log_name, 8).replace("\n", " | "))))
+
+    main_want = lambda spec: want(main_bin, main_ref, "xray-rust-main-build.log", spec)
+    up_want = lambda spec: want(up_bin, up_ref, "xray-rust-up-build.log", spec)
+    xhttp = "vless-xhttp-reality packet-up"
+    # Order: the CLI's defaults, the baseline, then the two passes.
+    if a.xray_rust:
+        for scenario in by_line:
+            aux = {}
+            if scenario.startswith("vless-xhttp"):
+                aux = {"the iPhone's answers-dns XHTTP shape": xray_xhttp(loop, servers.pub, answers_dns=True)}
+            main_want(xrs_spec(main_bin, main_info, main_core, scenario, "cli defaults", None, cli_notes, aux=aux))
+    if a.xray_rust_baseline:
+        for scenario in by_line:
+            want(base_bin, base_ref, "xray-rust-baseline-build.log",
+                 xrs_spec(base_bin, base_info, base_core, scenario, "mobile profile", mobile_env,
+                          mobile_notes + ["the historical baseline: the upstream release the lab measured before the "
+                                          "fork"]))
+    if a.xray_rust:
+        for run in (1, 2):
+            for scenario in by_line:
+                main_want(xrs_spec(main_bin, main_info, main_core, scenario, "mobile #%d" % run, mobile_env,
+                                   mobile_notes + ["run %d of 2; the relay buffer's default (128 KiB) and the "
+                                                   "one-worker rows' partner" % run], extra={"run": run}))
+            if a.xray_rust_up:
+                # The XHTTP upload fix (--xray-rust-up): the same row on its
+                # build, beside the main build's.
+                up_want(xrs_spec(up_bin, up_info, up_core, xhttp, "mobile #%d" % run, mobile_env,
+                                 mobile_notes + ["run %d of 2; the fork's XHTTP upload fix, the one-worker row's "
+                                                 "partner" % run], extra={"run": run}))
+            for scenario in RELAY_LINES:
+                for kib in RELAY_KIB:
+                    main_want(xrs_spec(
+                        main_bin, main_info, main_core, scenario, "mob buf%dK #%d" % (kib, run), mobile_env,
+                        mobile_notes + ["run %d of 2; policy.levels.\"0\".bufferSize %d (KiB): each relay read takes at "
+                                        "most %d KiB instead of the default 128 KiB; in this core a read past the first "
+                                        "4 KiB still lands in a 128 KiB buffer lent by a process-wide pool "
+                                        "(xray-core-rs/src/policy/relay_buffer.rs)" % (run, kib, kib)],
+                        config=with_relay_buffer(by_line[scenario][0], kib),
+                        extra={"run": run, "relay_buffer_kib": kib}))
+            for scenario in ONE_WORKER_LINES:
+                # XHTTP's one-worker row runs the upload fix when it is given:
+                # the build a phone would take.
+                if scenario == xhttp and a.xray_rust_up:
+                    up_want(xrs_spec(up_bin, up_info, up_core, scenario, "mob 1 worker #%d" % run, one_env,
+                                     one_notes + ["run %d of 2" % run], extra={"run": run, "tokio_worker_threads": 1}))
                 else:
-                    notes.append("xray-rust at %s, %s" % (xrs_tag, build_note))
-                spec = Spec(kind="exec", core=xrs_core, argv=[binary, "run", "-config", "{config}"],
-                            settings=settings, env=mobile_env, scenario="vless-xhttp-reality packet-up", config=cfg,
-                            version=xrs_version + (" + lab patches" if patched else ""), xrs_check=binary,
-                            extra={"xray_rust_build": info, "xhttp_window_row": {
-                                "patched": bool(patched), "xhttpSettings_added": fields}},
-                            notes=notes + [srv_note])
-                (win_patched if patched else win_specs).append(spec)
-            if win_patched and not (p_bin and p_bin.exists()):
-                reason = "the patched xray-rust was not built (xray-rust-patched-build.log in this artifact): " + \
-                    tail(out / "xray-rust-patched-build.log", 8).replace("\n", " | ")
-                missing += [(s, reason) for s in win_patched]
-                win_patched = []
-        # One Tokio worker: is a one-thread runtime enough in the extension?
-        # The mobile profile with TOKIO_WORKER_THREADS=1 on Reality Vision
-        # (the least CPU a byte) and Hysteria2 (the most), the same row as the
-        # mobile profile's above (its peak memory, CPU per GB and Mbit/s), and
-        # a thread census. xray-cli's main keeps Tokio's own reading of the
-        # variable (it sets 2 workers only when the variable is unset); the
-        # runtime is still Tokio's multi-thread one with one worker, not a
-        # current-thread runtime. After every other row, so none moves.
-        one_env = dict(profiles[1][1], TOKIO_WORKER_THREADS="1")
-        one_specs = []
-        for scenario, (cfg, cfg_notes), wt in lines[:2]:
-            one_specs.append(Spec(
-                kind="exec", core=xrs_core, argv=[xrs_bin, "run", "-config", "{config}"], settings="mobile 1 worker",
-                env=one_env, scenario=scenario, config=cfg, version=xrs_version, needs_webtunnel=wt,
-                xrs_check=xrs_bin, extra={"xray_rust_build": xrs_info, "tokio_worker_threads": 1},
-                notes=["the mobile profile (XRAY_TUN_PROFILE=mobile) with TOKIO_WORKER_THREADS=1 instead of %d: "
-                       "Tokio's multi-thread runtime with one worker (crates/xray-cli/src/main.rs leaves the "
-                       "variable to Tokio); xray-ffi, which the extension links, sets its worker count itself "
-                       "(available parallelism clamped to 2..6, crates/xray-ffi/src/lib.rs) and reads no variable, "
-                       "so one worker on a phone needs a change there" % workers]
-                + cfg_notes + ["xray-rust at %s, %s" % (xrs_tag, build_note), srv_note]))
-        xrs_specs += win_specs + win_patched + one_specs
-        if not xrs_bin.exists():
-            reason = "xray-rust was not built (xray-rust-build.log in this artifact): " + \
-                tail(out / "xray-rust-build.log", 8).replace("\n", " | ")
-            missing += [(s, reason) for s in xrs_specs if s not in win_patched]
-            xrs_specs = [s for s in xrs_specs if s in win_patched]
+                    main_want(xrs_spec(main_bin, main_info, main_core, scenario, "mob 1 worker #%d" % run, one_env,
+                                       one_notes + ["run %d of 2" % run], extra={"run": run, "tokio_worker_threads": 1}))
 
     def run_specs(batch):
         for spec in batch:
@@ -2816,7 +2834,7 @@ def cmd_desktop(a):
         for spec, reason in missing:
             add(failed_row(a.platform, spec.core, spec.scenario, spec.settings, reason))
         run_specs(specs)
-        for mode in ("ios", "plain"):
+        for mode in ("ios", "plain") if a.go_rows else ():
             if not budget.allows(30):
                 break
             try:
@@ -2824,7 +2842,7 @@ def cmd_desktop(a):
             except Exception as e:
                 traceback.print_exc()
                 add(failed_row(a.platform, "cores harness (no core started)", "idle", mode, e))
-        if ctx["engine_src"] and (b / "olcrtc-e2e.test").exists():
+        if a.go_rows and ctx["engine_src"] and (b / "olcrtc-e2e.test").exists():
             for transport in ("vp8channel", "datachannel"):
                 for settings in ("ios-limits", "go-defaults"):
                     if not budget.allows(SOAK_S + 120):
@@ -2843,14 +2861,21 @@ def cmd_desktop(a):
         # inside a QUIC Initial under Salamander, which this relay cannot read.
         sb_argv, xr_argv = [singbox, "run", "-c", "{config}"], [xray_client, "run", "-c", "{config}"]
         hellos = []
-        if xrs_bin is not None and xrs_bin.exists():
-            xa = [xrs_bin, "run", "-config", "{config}"]
-            hellos += [(xrs_core, xrs_version, "vless-reality-vision", lambda p: xrs_reality(loop, servers.pub, p)[0], xa, PORT_REALITY),
-                       (xrs_core, xrs_version, "vless-xhttp-reality packet-up", lambda p: xrs_xhttp(loop, servers.pub, p)[0], xa, PORT_XHTTP),
-                       (xrs_core, xrs_version, WEBTUNNEL, lambda p: xrs_webtunnel(loop, wt_pin, p)[0], xa, PORT_WEBTUNNEL)]
-        hellos += [("sing-box (exec)", sb_version, "vless-reality-vision", lambda p: singbox_reality(loop, servers.pub, p), sb_argv, PORT_REALITY),
-                   ("xray (exec)", xr_version, "vless-xhttp-reality packet-up", lambda p: xray_xhttp(loop, servers.pub, False, p), xr_argv, PORT_XHTTP),
-                   ("sing-box (exec)", sb_version, WEBTUNNEL, lambda p: singbox_webtunnel(loop, p), sb_argv, PORT_WEBTUNNEL)]
+        if a.xray_rust_hello and hello_bin.exists():
+            xa = [hello_bin, "run", "-config", "{config}"]
+            hv = xrs_version_text(hello_info)
+            hellos += [(hello_core, hv, "vless-reality-vision", lambda p: xrs_reality(loop, servers.pub, p)[0], xa, PORT_REALITY),
+                       (hello_core, hv, "vless-xhttp-reality packet-up", lambda p: xrs_xhttp(loop, servers.pub, p)[0], xa, PORT_XHTTP),
+                       (hello_core, hv, WEBTUNNEL, lambda p: xrs_webtunnel(loop, wt_pin, p)[0], xa, PORT_WEBTUNNEL)]
+        elif a.xray_rust_hello:
+            for line in ("vless-reality-vision", "vless-xhttp-reality packet-up", WEBTUNNEL):
+                add(failed_row(a.platform, hello_core, "client hello: " + line, "",
+                               "xray-rust %s was not built (xray-rust-hello-build.log in this artifact): %s" % (
+                                   hello_ref, tail(out / "xray-rust-hello-build.log", 8).replace("\n", " | "))))
+        if a.go_rows:
+            hellos += [("sing-box (exec)", sb_version, "vless-reality-vision", lambda p: singbox_reality(loop, servers.pub, p), sb_argv, PORT_REALITY),
+                       ("xray (exec)", xr_version, "vless-xhttp-reality packet-up", lambda p: xray_xhttp(loop, servers.pub, False, p), xr_argv, PORT_XHTTP),
+                       ("sing-box (exec)", sb_version, WEBTUNNEL, lambda p: singbox_webtunnel(loop, p), sb_argv, PORT_WEBTUNNEL)]
         for core, version, line, build, argv, upstream in hellos:
             if not budget.allows(30):
                 add(failed_row(a.platform, core, "client hello: " + line, "", "skipped: out of time budget"))
@@ -2903,13 +2928,15 @@ def cmd_desktop(a):
             ("xray (exec)", xray_client, "official Xray-core 26.7.11 release"),
             ("cores harness", b / "harness", "sing-box + libXray + olcRTC mobile in one binary, the Cores' tags, -s -w; "
                                              "a stand-in for one slice of Cores.xcframework, not its size"),
-            ("olcrtc (desktop)", b / "olcrtc", "desktopApp registerOlcRtcBuildTask recipe")):
+            ("olcrtc (desktop)", b / "olcrtc", "desktopApp registerOlcRtcBuildTask recipe")) if a.go_rows else ():
         add(size_row(a.platform, name, path, what))
-    if xrs_bin is not None:
-        add(size_row(a.platform, xrs_core.replace(" (exec)", ""), xrs_bin,
-                     "the xray-rust CLI (xray-cli), cargo --release with the workspace's [profile.release]; an app "
-                     "links the xray-ffi static library instead, whose size this is not"))
-    if a.tun:
+    for core, binary, info in ((main_core, main_bin, main_info), (base_core, base_bin, base_info),
+                               (hello_core, hello_bin, hello_info), (up_core, up_bin, up_info)):
+        if binary is not None:
+            add(size_row(a.platform, core.replace(" (exec)", ""), binary,
+                         "the xray-rust CLI (xray-cli), cargo --release with the workspace's [profile.release]: %s; an "
+                         "app links the xray-ffi static library instead, whose size this is not" % xrs_version_text(info)))
+    if a.tun and a.go_rows:
         add(size_row(a.platform, "hev-socks5-tunnel", b / "hev-socks5-tunnel",
                      "make clean exec at scripts/hev-pins.sh's commit (-O3, stripped); the iPhone links the same "
                      "tree as a static library"))
@@ -4398,9 +4425,9 @@ def cmd_flow_socks(a):
 # the backtrace's first frame in xray-rust's crates/ or vendor/. heaptrack's
 # own merge groups by the address of the malloc call, which in Rust is the
 # allocator shim, one place for nearly every allocation. The heaptrack run
-# ends with SIGTERM, which xray-rust does not catch (only Ctrl-C), so nothing
-# unwinds and heaptrack's "leaked" is the heap still live at that moment: for
-# the hold, what 32 idle connections keep.
+# ends with HEAP_STOP, a signal xray-rust does not catch, so nothing unwinds
+# and heaptrack's "leaked" is the heap still live at that moment: for the
+# hold, what 32 idle connections keep.
 #
 # macOS: phys_footprint split by `footprint` and `vmmap --summary`. A burst
 # half lasts 0.1 to 0.4 s here, less than either tool takes, so the first
@@ -4420,6 +4447,14 @@ HEAP_TRACES = 2000
 HEAP_FREEZE_AT = (0.95, 0.95, 0.85)
 HEAP_SOCKS = "127.0.0.1:%d" % PORT_SOCKS
 HEAP_LINES = ("vless-reality-vision", WEBTUNNEL, "hysteria2-salamander", "vless-xhttp-reality packet-up")
+HEAP_LINE_NAMES = {"reality": "vless-reality-vision", "webtunnel": WEBTUNNEL, "hysteria2": "hysteria2-salamander",
+                   "xhttp": "vless-xhttp-reality packet-up"}
+# How the heaptrack run stops the core: a signal it does not catch, so nothing
+# unwinds and heaptrack's "leaked" is the heap live at that moment. v0.9.0's
+# CLI caught only Ctrl-C, so SIGTERM did; the fork's CLI stops gracefully on
+# SIGTERM and SIGINT (crates/xray-cli/src/main.rs, shutdown_signal), which
+# would close the hold's connections first, so the lab sends SIGHUP.
+HEAP_STOP = signal.SIGHUP
 
 
 def xrs_mobile_env():
@@ -5042,7 +5077,7 @@ def heap_linux_plain(ctx, cfg_path, env, rundir, load):
 
 
 def heap_linux_heaptrack(ctx, cfg_path, env, rundir, load, slug):
-    """The line-tables build under heaptrack, stopped with SIGTERM once the
+    """The line-tables build under heaptrack, stopped with HEAP_STOP once the
     load is over (the hold's connections still open), then heaptrack_print."""
     exe = ctx["xrs"]
     for old in ctx["htdir"].glob(slug + ".*"):
@@ -5052,7 +5087,7 @@ def heap_linux_heaptrack(ctx, cfg_path, env, rundir, load, slug):
     pid, poll, t_base, killed = None, None, None, {}
 
     def kill():
-        os.kill(pid, signal.SIGTERM)
+        os.kill(pid, HEAP_STOP)
         killed["t"] = time.time()
 
     try:
@@ -5077,7 +5112,7 @@ def heap_linux_heaptrack(ctx, cfg_path, env, rundir, load, slug):
             poll.halt()
         if pid and not killed:
             try:
-                os.kill(pid, signal.SIGTERM)
+                os.kill(pid, HEAP_STOP)
             except ProcessLookupError:
                 pass
         try:
@@ -5660,23 +5695,22 @@ def cmd_heap_profile(a):
     except (OSError, ValueError):
         info = {}
     doc["xray_rust_build"] = info
-    doc["xray_rust_version"] = "xray-rust %s %s%s" % (info.get("tag", "?"), str(info.get("commit", "?"))[:12],
+    doc["xray_rust_version"] = "xray-rust %s %s%s" % (info.get("ref") or info.get("tag", "?"),
+                                                      str(info.get("commit", "?"))[:12],
                                                       " + line tables" if info.get("profile_overrides") else "")
     ctx = {"out": out, "bin": b, "loadgen": b / "loadgen", "host": LocalHost(b / "loadgen"), "platform": platform,
            "xrs": xrs, "xrs_version": doc["xray_rust_version"]}
-    lines = list(HEAP_LINES)
+    lines = [HEAP_LINE_NAMES[n] for n in a.lines.split(",")] if a.lines else list(HEAP_LINES)
     loads = ("burst", "hold")
     plan = [(line, "mobile profile", load) for line in lines for load in loads]
     why_not = None
     if not xrs.exists():
         why_not = "the xray-rust %s was not built: %s missing (%s)" % (
             "build" if is_mac else "build with line tables", xrs, tail(out.parent / (
-                "xray-rust-build.log" if is_mac else "xray-rust-lines-build.log"), 6).replace("\n", " | "))
+                "xray-rust-main-build.log" if is_mac else "xray-rust-lines-build.log"), 6).replace("\n", " | "))
     if is_mac:
         ctx["reader"] = MacReader()
         ctx["snapper"] = MacSnapper()
-        p_bin = Path(a.xray_rust_patched).resolve() / "xray-rust" if a.xray_rust_patched else None
-        plan += [("vless-xhttp-reality packet-up", settings, "burst") for settings, *_ in XHTTP_WINDOW_ROWS]
         for tool, argv in (("footprint", ["footprint", "--help"]), ("vmmap", ["vmmap", "--help"]),
                            ("sw_vers", ["sw_vers"])):
             try:
@@ -5717,7 +5751,6 @@ def cmd_heap_profile(a):
                  "hysteria2-salamander": lambda: xrs_hy2(loop, hy2_pin),
                  "vless-xhttp-reality packet-up": lambda: xrs_xhttp(loop, servers.pub),
                  WEBTUNNEL: lambda: xrs_webtunnel(loop, wt_pin)}
-        windows = {s: (patched, fields, what) for s, patched, fields, what in XHTTP_WINDOW_ROWS}
         for line, settings, load in plan:
             base = {"platform": platform, "line": line, "settings": settings, "load": load}
             if not budget.allows(150):
@@ -5731,16 +5764,7 @@ def cmd_heap_profile(a):
             try:
                 cfg, cfg_notes = build[line]()
                 if is_mac:
-                    binary = xrs
-                    if settings in windows:
-                        patched, fields, what = windows[settings]
-                        cfg["outbounds"][0]["streamSettings"]["xhttpSettings"].update(fields)
-                        cfg_notes = cfg_notes + [what]
-                        if patched:
-                            if not (p_bin and p_bin.exists()):
-                                raise LabError("the patched xray-rust was not built (xray-rust-patched-build.log)")
-                            binary = p_bin
-                    row = heap_mac_row(ctx, line, settings, load, binary, cfg, cfg_notes)
+                    row = heap_mac_row(ctx, line, settings, load, xrs, cfg, cfg_notes)
                 else:
                     row = heap_linux_row(ctx, line, load, cfg, cfg_notes)
             except Exception as e:
@@ -5764,6 +5788,352 @@ def cmd_heap_profile(a):
     return 0
 
 
+# ---------------------------------------------------------------- alloc-rows
+#
+# Which allocator setup keeps the footprint down (macOS, phys_footprint, what
+# jetsam holds the iPhone extension to). The heap profile found that after a
+# burst most of malloc's dirty pages are free but kept, that the footprint
+# never comes down, and that a second burst starts from the first one's peak.
+# These rows run one build, the fork's XHTTP upload fix with the lab's
+# allocator patch (xray-rust-patches/lab-allocator-switch.patch, applied by
+# rust-core-build.sh), in the mobile profile, under five setups chosen by
+# environment variables (crates/xray-cli/src/lab_alloc.rs in the patch):
+#   a  the system allocator as the CLI has it;
+#   b  the system allocator, and malloc_zone_pressure_relief(NULL, 0) from a
+#      thread every second for as long as the process runs;
+#   c  the system allocator, and the same call once when traffic stops: a
+#      thread reads the process's CPU time every 250 ms and calls it after a
+#      quiet 250 ms (under 2.5 ms of CPU) that follows a busy one;
+#   d  mimalloc 3 (the mimalloc crate) as the global allocator, purging freed
+#      memory at once (MIMALLOC_PURGE_DELAY=0);
+#   e  the same with mimalloc's default purge delay (1000 ms).
+# A run: start, 3 s idle, a burst (32 downloads of 4 MB at once, 2 s, 32
+# uploads of 2 MB at once), 5 s, the same burst again, 5 s, footprint and
+# vmmap of the process, then the single transfers (500 MB down, 2 s, 100 MB
+# up) for throughput and CPU per GB, 5 s. phys_footprint is polled every
+# ALLOC_POLL_S; the peak is the kernel's lifetime maximum, read after the
+# bursts. Every setup on every line runs twice, the setups interleaved.
+
+ALLOC_SETUPS = (
+    ("a", "system", {}, ("lab: allocator system", "lab: relief none"),
+     "the system allocator as the CLI has it (XRS_LAB_ALLOC, XRS_LAB_RELIEF unset)"),
+    ("b", "system + relief every 1 s", {"XRS_LAB_RELIEF": "interval", "XRS_LAB_RELIEF_MS": "1000"},
+     ("lab: allocator system", "lab: relief interval"),
+     "the system allocator; a thread calls malloc_zone_pressure_relief(NULL, 0) every 1000 ms while the process runs"),
+    ("c", "system + relief when traffic stops", {"XRS_LAB_RELIEF": "idle"},
+     ("lab: allocator system", "lab: relief idle"),
+     "the system allocator; a thread calls malloc_zone_pressure_relief(NULL, 0) once after a 250 ms window under "
+     "2.5 ms of process CPU that follows a busy one (250 to 500 ms after traffic stops), armed again by traffic"),
+    ("d", "mimalloc, purge at once", {"XRS_LAB_ALLOC": "mimalloc", "MIMALLOC_PURGE_DELAY": "0"},
+     ("lab: allocator mimalloc", "option 'purge_delay': 0 "),
+     "mimalloc 3 (crate mimalloc 0.1.52, libmimalloc-sys 0.1.49) as the global allocator, MIMALLOC_PURGE_DELAY=0: "
+     "freed arena memory is decommitted at once (MADV_FREE_REUSABLE on macOS)"),
+    ("e", "mimalloc, default purge", {"XRS_LAB_ALLOC": "mimalloc"},
+     ("lab: allocator mimalloc", "option 'purge_delay': 1000 "),
+     "mimalloc 3 as the global allocator with its default purge delay (1000 ms; purges run from inside later "
+     "allocator calls)"),
+)
+ALLOC_SETTLE_S = 3.0
+ALLOC_BURSTS = 2
+ALLOC_MARKS = (0.5, 1.0, 2.0, 5.0)
+ALLOC_POLL_S = 0.02
+
+
+def relief_summary(path, windows):
+    """The relief log (one JSON line per call): how many calls, what they
+    released and what they cost, overall and inside each named window."""
+    calls = []
+    try:
+        for line in Path(path).read_text().splitlines():
+            try:
+                calls.append(json.loads(line))
+            except ValueError:
+                pass
+    except OSError:
+        return None
+    if not calls:
+        return {"calls": 0}
+    out = {"calls": len(calls), "released_mb": mb(sum(c.get("released") or 0 for c in calls)),
+           "cpu_ms": rnd(sum(c.get("cpu_us") or 0 for c in calls) / 1000.0, 1),
+           "wall_ms": rnd(sum(c.get("wall_us") or 0 for c in calls) / 1000.0, 1),
+           "max_wall_ms": rnd(max(c.get("wall_us") or 0 for c in calls) / 1000.0, 1),
+           "largest_released_mb": mb(max(c.get("released") or 0 for c in calls))}
+    for name, (t0, t1) in windows.items():
+        inside = [c for c in calls if t0 <= c.get("t", 0) <= t1]
+        out[name] = {"calls": len(inside), "released_mb": mb(sum(c.get("released") or 0 for c in inside)),
+                     "cpu_ms": rnd(sum(c.get("cpu_us") or 0 for c in inside) / 1000.0, 1)}
+    out["first_calls"] = [{"t": c.get("t"), "why": c.get("why"), "released_mb": mb(c.get("released")),
+                           "cpu_ms": rnd((c.get("cpu_us") or 0) / 1000.0, 2),
+                           "in_use_mb": mb(c.get("in_use")), "allocated_mb": mb(c.get("allocated"))} for c in calls[:12]]
+    return out
+
+
+def alloc_run(ctx, line, setup, run_no):
+    key, name, env_add, expect_lines, what = setup
+    slug = re.sub(r"[^a-z0-9]+", "-", ("%s %s run%d" % (line, key, run_no)).lower()).strip("-")
+    rundir = ctx["out"] / "runs" / slug
+    rundir.mkdir(parents=True, exist_ok=True)
+    row = {"platform": ctx["platform"], "line": line, "setup": key, "setup_name": name, "run": run_no,
+           "version": ctx["version"], "env": dict(env_add), "notes": [what], "error": None}
+    cfg, cfg_notes = ctx["build"][line]()
+    row["notes"] += cfg_notes
+    cfg_path = rundir / "config.json"
+    write_json(cfg_path, cfg)
+    binary, reader, host = ctx["xrs"], ctx["reader"], ctx["host"]
+    ok, check_notes, _ = xrs_check(binary, cfg_path, rundir / "config-check.json")
+    row["notes"] += check_notes
+    if not ok:
+        raise LabError("xray-rust refused the config: " + ("; ".join(check_notes) or "no diagnostics"))
+    if not wait_port_free(PORT_SOCKS):
+        raise LabError("port %d is still taken" % PORT_SOCKS)
+    env = dict(xrs_mobile_env(), **env_add)
+    env["XRS_LAB_RELIEF_LOG"] = str(rundir / "relief.jsonl")
+    row["env_full"] = {k: v for k, v in env.items()}
+    proc = Proc([binary, "run", "-config", cfg_path], rundir / "core.log", cwd=rundir, env=clean_env(env))
+    poll, rows, notes = None, [], []
+    rec = {"bursts": []}
+    try:
+        if not wait_port(PORT_SOCKS, 30, proc):
+            raise LabError("xray-rust's SOCKS port never opened:\n" + tail(rundir / "core.log"))
+        probe = host.probe(HEAP_SOCKS, 40)
+        if not probe.get("ok"):
+            raise LabError("no byte crossed the core in 40 s (%s):\n%s" % (probe.get("error"), tail(rundir / "core.log")))
+        said = (rundir / "core.log").read_text(errors="replace")
+        absent = [e for e in expect_lines if e not in said]
+        if absent:
+            raise LabError("the core did not say %s, so the setup is not in force:\n%s" % (
+                " / ".join(repr(e) for e in absent), tail(rundir / "core.log", 40)))
+        row["core_said"] = [ln for ln in said.splitlines() if ln.startswith("lab: ") or "mimalloc: v" in ln
+                            or "'purge_delay'" in ln or "'purge_decommits'" in ln][:8]
+        poll = FastPoll(lambda: reader.read(proc.pid), "fp", period=ALLOC_POLL_S)
+        poll.start()
+        t_settle = time.time()
+        time.sleep(ALLOC_SETTLE_S)
+        rec["settle"] = (t_settle, time.time())
+        for n in range(1, ALLOC_BURSTS + 1):
+            b0 = time.time()
+            bdown = host.loadgen_run("burst-get", BURST_EACH_DOWN, HEAP_SOCKS, 150, BURST_FLOWS)
+            time.sleep(PAUSE_S)
+            up0 = time.time()
+            bup = host.loadgen_run("burst-put", BURST_EACH_UP, HEAP_SOCKS, 150, BURST_FLOWS)
+            b1 = time.time()
+            time.sleep(max(ALLOC_MARKS) + 0.1)
+            rec["bursts"].append({"b0": b0, "up0": up0, "b1": b1, "down": bdown, "up": bup})
+        rec["lifemax_bursts"] = reader.read(proc.pid).get("lifemax")
+        t_snap = time.time()
+        snap = mac_snapshot(ctx["snapper"], proc.pid, rundir, "after-bursts")
+        rec["snapshot"] = dict(snap["split"], seconds=rnd(time.time() - t_snap, 2),
+                               vmmap_physical_footprint_mb=mb((snap.get("vmmap") or {}).get("physical_footprint")))
+        time.sleep(1.0)
+        h0 = time.time()
+        down = host.loadgen_run("get", DOWN_BYTES, HEAP_SOCKS, 240)
+        h1 = time.time()
+        time.sleep(PAUSE_S)
+        h2 = time.time()
+        up = host.loadgen_run("put", UP_BYTES, HEAP_SOCKS, 180)
+        h3 = time.time()
+        time.sleep(max(ALLOC_MARKS) + 0.1)
+        rec.update(down=down, up=up, steady=(h0, h3), steady_windows=(window_of(down, (h0, h1)), window_of(up, (h2, h3))),
+                   end=time.time())
+        rec["final"] = reader.read(proc.pid)
+        rows = poll.halt()
+        poll = None
+        rows = reader.finish(rows, proc.pid, notes)
+    finally:
+        if poll is not None:
+            poll.halt()
+        proc.stop()
+    row["notes"] += notes
+    st = rec["settle"]
+    row["fp_idle_mb"] = mb(median_in(rows, "fp", st[0] + 1.0, st[1]))
+    row["fp_peak_bursts_mb"] = mb(rec.get("lifemax_bursts"))
+    row["fp_lifetime_peak_mb"] = mb((rec.get("final") or {}).get("lifemax"))
+    row["bursts"] = []
+    for b in rec["bursts"]:
+        moved = (b["down"].get("bytes") or 0) + (b["up"].get("bytes") or 0)
+        cpu = delta(rows, "cpu", b["b0"], b["b1"])
+        row["bursts"].append({
+            "fp_start_mb": mb(at_or_before(rows, "fp", b["b0"])),
+            "fp_peak_sampled_mb": mb(max_of(rows, "fp", b["b0"], b["b1"] + 0.5)),
+            "fp_down_half_peak_mb": mb(max_of(rows, "fp", b["b0"], b["up0"])),
+            "fp_up_half_peak_mb": mb(max_of(rows, "fp", b["up0"], b["b1"] + 0.5)),
+            "fp_after_mb": {str(m): mb(at_or_after(rows, "fp", b["b1"] + m)) for m in ALLOC_MARKS},
+            "mbps_down": rnd(b["down"].get("mbps")) if b["down"].get("ok") else None,
+            "mbps_up": rnd(b["up"].get("mbps")) if b["up"].get("ok") else None,
+            "ok_flows_down_up": [b["down"].get("ok_flows", 0), b["up"].get("ok_flows", 0)],
+            "cpu_s_per_gb": rnd(cpu_per_gb(cpu, moved), 2) if moved and cpu is not None else None,
+            "errors": [("burst download: " + b["down"].get("error", "")) if not b["down"].get("ok") else "",
+                       ("burst upload: " + b["up"].get("error", "")) if not b["up"].get("ok") else ""],
+        })
+    steady = base_row(ctx["platform"], "", "", "", "", "")
+    errors = transfer_figures(steady, rec.get("down") or {}, rec.get("up") or {}, rows, rec["steady_windows"])
+    row["steady"] = {"mbps_down": steady["mbps_down"], "mbps_up": steady["mbps_up"],
+                     "cpu_s_per_gb": steady["cpu_s_per_gb"],
+                     "cpu_s_per_gb_down": steady["extra"].get("cpu_s_per_gb_down"),
+                     "cpu_s_per_gb_up": steady["extra"].get("cpu_s_per_gb_up"),
+                     "fp_peak_mb": mb(max_of(rows, "fp", *rec["steady"])),
+                     "fp_after_mb": mb(at_or_after(rows, "fp", rec["steady"][1] + max(ALLOC_MARKS))),
+                     "errors": errors}
+    row["rss_peak_mb"] = mb(max_of(rows, "rss"))
+    row["snapshot_after_bursts"] = rec.get("snapshot")
+    windows = {"in_bursts": (rec["bursts"][0]["b0"], rec["bursts"][-1]["b1"] + max(ALLOC_MARKS)),
+               "in_steady": rec["steady"]}
+    for i, b in enumerate(rec["bursts"], 1):
+        windows["after_burst_%d" % i] = (b["b1"], b["b1"] + max(ALLOC_MARKS))
+    row["relief"] = relief_summary(rundir / "relief.jsonl", windows)
+    if row["relief"] and row["relief"].get("first_calls"):
+        ends = [b["b1"] for b in rec["bursts"]]
+        for c in row["relief"]["first_calls"]:
+            after = [c["t"] - e for e in ends if c.get("t") and c["t"] >= e]
+            c["s_after_burst_end"] = rnd(min(after), 2) if after else None
+    bad = [e for b in row["bursts"] for e in b.pop("errors") if e] + row["steady"].pop("errors")
+    if bad:
+        row["notes"] += bad
+    return row
+
+
+def alloc_cell(v, digits=1):
+    return "-" if v is None else ("%.*f" % (digits, v) if isinstance(v, float) else str(v))
+
+
+def alloc_line(r):
+    """One run as a table line's cells."""
+    b = r.get("bursts") or [{}, {}]
+    b1, b2 = (b + [{}, {}])[:2]
+    st = r.get("steady") or {}
+    rel = r.get("relief") or {}
+    sn = r.get("snapshot_after_bursts") or {}
+    mbps = lambda x: "%s/%s" % (alloc_cell(x.get("mbps_down"), 0), alloc_cell(x.get("mbps_up"), 0))
+    return [r["setup"] + " " + r.get("setup_name", ""), str(r.get("run")), alloc_cell(r.get("fp_idle_mb")),
+            alloc_cell(b1.get("fp_peak_sampled_mb")), alloc_cell((b1.get("fp_after_mb") or {}).get("5.0")),
+            alloc_cell(b2.get("fp_start_mb")), alloc_cell(b2.get("fp_peak_sampled_mb")),
+            alloc_cell((b2.get("fp_after_mb") or {}).get("5.0")), alloc_cell(r.get("fp_peak_bursts_mb")),
+            alloc_cell(sn.get("malloc_allocated_mb")), alloc_cell(sn.get("malloc_dirty_mb")),
+            mbps(b1) + " " + mbps(b2), "%s %s" % (alloc_cell(b1.get("cpu_s_per_gb"), 2), alloc_cell(b2.get("cpu_s_per_gb"), 2)),
+            mbps(st), alloc_cell(st.get("cpu_s_per_gb"), 2),
+            "%s/%s/%s" % (rel.get("calls", "-") if rel else "-", alloc_cell(rel.get("released_mb")) if rel else "-",
+                          alloc_cell(rel.get("cpu_ms")) if rel else "-")]
+
+
+ALLOC_HEAD = ("setup", "run", "idle", "b1 peak", "b1 +5s", "b2 start", "b2 peak", "b2 +5s", "peak (kernel)",
+              "malloc live", "malloc dirty", "burst Mbit/s b1 b2 (down/up)", "burst CPU s/GB b1 b2",
+              "steady Mbit/s down/up", "steady CPU s/GB", "relief calls/MiB/CPU ms")
+
+
+def alloc_text(doc):
+    out = ["\nalloc-rows, macOS phys_footprint (MiB) by allocator setup, %s, mobile profile" % doc.get("version")]
+    for line in doc.get("lines") or []:
+        out.append("\n  " + line)
+        out.append("  " + " | ".join(ALLOC_HEAD))
+        for r in doc["rows"]:
+            if r.get("line") != line:
+                continue
+            if r.get("error"):
+                out.append("  %s %s | %s | FAILED: %s" % (r.get("setup"), r.get("setup_name", ""), r.get("run"),
+                                                        str(r["error"]).splitlines()[0][:200]))
+                continue
+            out.append("  " + " | ".join(alloc_line(r)))
+    return "\n".join(out)
+
+
+def alloc_markdown(doc):
+    out = ["## Allocator rows (lab.py alloc-rows, macOS phys_footprint)", "",
+           "Build: %s. Mobile profile. MiB of phys_footprint; b1/b2 = the two bursts (32 downloads of 4 MB, then "
+           "32 uploads of 2 MB); +5s = 5 s after a burst's last upload ended; peak = the kernel's lifetime maximum "
+           "over both bursts; malloc live / dirty = vmmap's malloc zones 5 s after the second burst (the system "
+           "zones only: mimalloc's memory is not in them); relief = malloc_zone_pressure_relief calls over the "
+           "whole run, MiB they released, their CPU ms." % doc.get("version"), ""]
+    for line in doc.get("lines") or []:
+        out += ["### " + line, "", "| " + " | ".join(ALLOC_HEAD) + " |", "|" + "---|" * len(ALLOC_HEAD)]
+        for r in doc["rows"]:
+            if r.get("line") != line:
+                continue
+            if r.get("error"):
+                out.append("| %s %s | %s | FAILED: %s |" % (r.get("setup"), r.get("setup_name", ""), r.get("run"),
+                                                           str(r["error"]).splitlines()[0][:200].replace("|", "/")))
+                continue
+            out.append("| " + " | ".join(alloc_line(r)) + " |")
+        out.append("")
+    return "\n".join(out) + "\n"
+
+
+def cmd_alloc_rows(a):
+    if sys.platform != "darwin":
+        raise LabError("alloc-rows reads phys_footprint and malloc_zone_pressure_relief: macOS only")
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    b = Path(a.bin).resolve()
+    budget = Budget(a.budget_min)
+    binary, info, ref, commit = xrs_build(a.xray_rust)
+    doc = {"what": "phys_footprint of xray-rust under five allocator setups (lab_alloc.rs in the lab's patch)",
+           "platform": a.platform, "runner": " ".join(os.uname()), "version": xrs_version_text(info),
+           "xray_rust_build": info, "mobile_env": xrs_mobile_env(),
+           "setups": [{"key": k, "name": n, "env": e, "what": w} for k, n, e, _, w in ALLOC_SETUPS],
+           "procedure": "3 s idle; %d x (burst: %d downloads of %d B at once, %.0f s, %d uploads of %d B at once; "
+                        "then %.0f s); footprint + vmmap; 500 MB down, %.0f s, 100 MB up; %.0f s. phys_footprint "
+                        "polled every %.2f s" % (ALLOC_BURSTS, BURST_FLOWS, BURST_EACH_DOWN, PAUSE_S, BURST_FLOWS,
+                                                 BURST_EACH_UP, max(ALLOC_MARKS), PAUSE_S, max(ALLOC_MARKS),
+                                                 ALLOC_POLL_S),
+           "lines": [HEAP_LINE_NAMES[n] for n in a.lines.split(",")], "rows": []}
+    rows = doc["rows"]
+    if not (binary and binary.exists()):
+        doc["error"] = "the patched xray-rust was not built: %s" % tail(out.parent / "xray-rust-alloc-build.log", 8)
+        write_json(out / "alloc-rows.json", doc)
+        print(doc["error"], flush=True)
+        return 1
+    for port in (PORT_PAGE, PORT_DEST, PORT_REALITY, PORT_XHTTP, PORT_WEBTUNNEL, PORT_SOCKS):
+        if not wait_port_free(port, 15):
+            raise LabError("port %d is still taken" % port)
+    servers = Servers(out, b / "loadgen", b / "xray-26.4.25" / "xray")
+    ctx = {"out": out, "platform": a.platform, "xrs": binary, "version": doc["version"], "reader": MacReader(),
+           "snapper": MacSnapper(), "host": LocalHost(b / "loadgen")}
+    try:
+        servers.start()
+        doc["server"] = servers.version
+        loop = "127.0.0.1"
+        hy2_pin = cert_sha256(servers.dir / "hy2.crt")
+        try:
+            wt_pin = cert_sha256(servers.dir / "webtunnel.crt")
+        except (OSError, LabError):
+            wt_pin = "0" * 64
+        ctx["build"] = {"vless-reality-vision": lambda: xrs_reality(loop, servers.pub),
+                        "hysteria2-salamander": lambda: xrs_hy2(loop, hy2_pin),
+                        "vless-xhttp-reality packet-up": lambda: xrs_xhttp(loop, servers.pub),
+                        WEBTUNNEL: lambda: xrs_webtunnel(loop, wt_pin)}
+        for run_no in (1, 2):
+            for line in doc["lines"]:
+                for setup in ALLOC_SETUPS:
+                    base = {"platform": a.platform, "line": line, "setup": setup[0], "setup_name": setup[1],
+                            "run": run_no}
+                    if not budget.allows(120):
+                        rows.append(dict(base, error="skipped: out of the %.0f min budget" % a.budget_min))
+                        continue
+                    if line == WEBTUNNEL and servers.wt_error:
+                        rows.append(dict(base, error="the WebTunnel server: " + servers.wt_error))
+                        continue
+                    log("alloc-rows:", line, "|", setup[0], setup[1], "| run", run_no)
+                    t0 = time.time()
+                    try:
+                        row = alloc_run(ctx, line, setup, run_no)
+                    except Exception as e:
+                        traceback.print_exc()
+                        row = dict(base, error="%s: %s" % (type(e).__name__, e))
+                    row["seconds"] = rnd(time.time() - t0, 1)
+                    rows.append(row)
+                    write_json(out / "alloc-rows.json", doc)
+                    if not row.get("error"):
+                        print("  " + " | ".join(alloc_line(row)), flush=True)
+    finally:
+        servers.stop()
+        write_json(out / "alloc-rows.json", doc)
+    print(alloc_text(doc), flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(alloc_markdown(doc))
+    return 0
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -5778,10 +6148,16 @@ def main(argv=None):
     d.add_argument("--tun", action="store_true",
                    help="also the gVisor tun run, the hev run and the iOS shape rows, with BIN/hev-socks5-tunnel "
                         "(Linux, passwordless sudo)")
-    d.add_argument("--xray-rust", help="a directory with xray-rust and xray-rust.build.json (rust-core-build.sh); "
-                                       "its rows fail by name when the binary is missing")
-    d.add_argument("--xray-rust-patched", help="the same, built with the lab's patches (rust-core-build.sh with "
-                                               "XRS_PATCHES): the macOS XHTTP window rows that need a constant changed")
+    d.add_argument("--xray-rust", help="the main xray-rust build: a directory with xray-rust and "
+                                       "xray-rust.build.json (rust-core-build.sh); its rows fail by name when the "
+                                       "binary is missing")
+    d.add_argument("--xray-rust-baseline", help="the same for the historical baseline (v0.9.0): the mobile profile "
+                                                "once per line")
+    d.add_argument("--xray-rust-hello", help="the same for the ClientHello rows")
+    d.add_argument("--xray-rust-up", help="the same for the fork's XHTTP upload fix: its XHTTP mobile rows beside "
+                                          "the main build's, and XHTTP's one-worker rows")
+    d.add_argument("--no-go-rows", dest="go_rows", action="store_false",
+                   help="leave out the Go rows, the tun, hev and iOS shape rows, the idle harness and the olcRTC soaks")
     d.add_argument("--budget-min", type=float, default=24)
     n = sub.add_parser("android")
     n.add_argument("--bin", required=True, help="runner binaries: loadgen, xray-26.4.25/xray")
@@ -5802,12 +6178,21 @@ def main(argv=None):
     h.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray")
     h.add_argument("--out", required=True)
     h.add_argument("--platform", required=True)
-    h.add_argument("--xray-rust", help="the rows' build (macOS runs it)")
-    h.add_argument("--xray-rust-patched", help="the patched build (macOS: the XHTTP window row that needs it)")
+    h.add_argument("--xray-rust", help="the build macOS runs")
     h.add_argument("--xray-rust-lines", help="the build with line tables (Linux runs it; rust-core-build.sh "
                                              "XRS_LINE_TABLES=1)")
     h.add_argument("--heaptrack-out", help="where heaptrack's data and heaptrack_print's text go (Linux)")
+    h.add_argument("--lines", help="comma-separated, of %s (default: all)" % ", ".join(HEAP_LINE_NAMES))
     h.add_argument("--budget-min", type=float, default=24)
+    al = sub.add_parser("alloc-rows", help="phys_footprint under five allocator setups (macOS; the lab's allocator "
+                                           "patch)")
+    al.add_argument("--bin", required=True, help="loadgen, xray-26.4.25/xray")
+    al.add_argument("--out", required=True)
+    al.add_argument("--platform", required=True)
+    al.add_argument("--xray-rust", required=True, help="the build with xray-rust-patches/lab-allocator-switch.patch")
+    al.add_argument("--lines", default="reality,hysteria2,webtunnel,xhttp",
+                    help="comma-separated, of %s" % ", ".join(HEAP_LINE_NAMES))
+    al.add_argument("--budget-min", type=float, default=40)
     fs = sub.add_parser("flow-socks", help="udp-flow's python SOCKS5 server (runs until killed)")
     fs.add_argument("--port", type=int, required=True)
     fs.add_argument("--login", help="username:password")
@@ -5824,6 +6209,8 @@ def main(argv=None):
             return cmd_udp_flow(a)
         if a.cmd == "heap-profile":
             return cmd_heap_profile(a)
+        if a.cmd == "alloc-rows":
+            return cmd_alloc_rows(a)
         if a.cmd == "flow-socks":
             return cmd_flow_socks(a)
         return cmd_shapes_check(a)

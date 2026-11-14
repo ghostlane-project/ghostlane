@@ -1,0 +1,339 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 3522accf..efafe729 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1362,6 +1362,15 @@ dependencies = [
+  "cc",
+ ]
+ 
++[[package]]
++name = "libmimalloc-sys"
++version = "0.1.49"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
++dependencies = [
++ "cc",
++]
++
+ [[package]]
+ name = "litemap"
+ version = "0.8.2"
+@@ -1442,6 +1451,15 @@ dependencies = [
+  "autocfg",
+ ]
+ 
++[[package]]
++name = "mimalloc"
++version = "0.1.52"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
++dependencies = [
++ "libmimalloc-sys",
++]
++
+ [[package]]
+ name = "minimal-lexical"
+ version = "0.2.1"
+@@ -2972,6 +2990,7 @@ name = "xray-cli"
+ version = "0.10.0"
+ dependencies = [
+  "libc",
++ "mimalloc",
+  "serde_json",
+  "thiserror 2.0.21",
+  "tokio",
+diff --git a/crates/xray-cli/Cargo.toml b/crates/xray-cli/Cargo.toml
+index d7331b60..c4e58896 100644
+--- a/crates/xray-cli/Cargo.toml
++++ b/crates/xray-cli/Cargo.toml
+@@ -14,6 +14,8 @@ path = "src/main.rs"
+ 
+ [dependencies]
+ libc.workspace = true
++# Lab only: lab_alloc.rs's allocator switch (mimalloc 3).
++mimalloc = { version = "=0.1.52", default-features = false }
+ serde_json.workspace = true
+ thiserror.workspace = true
+ tokio.workspace = true
+diff --git a/crates/xray-cli/src/lab_alloc.rs b/crates/xray-cli/src/lab_alloc.rs
+new file mode 100644
+index 00000000..cc673c13
+--- /dev/null
++++ b/crates/xray-cli/src/lab_alloc.rs
+@@ -0,0 +1,259 @@
++//! Lab only, never shipped: Ghostlane's footprint lab
++//! (lab/footprint/xray-rust-patches/lab-allocator-switch.patch) adds this
++//! module to measure which allocator, and which way of giving freed memory
++//! back, keeps phys_footprint down. Every row of the lab runs the same
++//! binary; environment variables pick the setup.
++//!
++//! - `XRS_LAB_ALLOC=mimalloc`: every Rust allocation goes to mimalloc (the
++//!   `mimalloc` crate, which builds mimalloc 3); unset or anything else, to
++//!   the system allocator, as the CLI has it. The choice is read once, at the
++//!   process's first allocation, and never changes, so every block is freed
++//!   by the allocator that handed it out. mimalloc reads its own options
++//!   (`MIMALLOC_PURGE_DELAY` and the rest) from the environment.
++//! - `XRS_LAB_RELIEF=interval` (Apple): a thread calls
++//!   `malloc_zone_pressure_relief(NULL, 0)` every `XRS_LAB_RELIEF_MS`
++//!   milliseconds (1000 when unset) for as long as the process runs.
++//! - `XRS_LAB_RELIEF=idle` (Apple): a thread reads the process's CPU time
++//!   every 250 ms and makes the same call once when a 250 ms window in which
++//!   the process worked is followed by one in which it used under 2.5 ms of
++//!   CPU: 250 to 500 ms after traffic stops. The next busy window arms it
++//!   again.
++//! - `XRS_LAB_RELIEF_LOG=<path>`: one JSON line per call (wall clock, why,
++//!   bytes released, the call's wall and CPU time, and malloc's own
++//!   statistics just before it).
++//!
++//! `start()` prints one line saying what is in force, which the lab checks.
++
++use std::alloc::{GlobalAlloc, Layout, System};
++use std::sync::atomic::{AtomicU8, Ordering};
++
++const UNDECIDED: u8 = 0;
++const SYSTEM: u8 = 1;
++const MIMALLOC: u8 = 2;
++
++static CHOICE: AtomicU8 = AtomicU8::new(UNDECIDED);
++
++/// The global allocator: the system's or mimalloc, as `XRS_LAB_ALLOC` says.
++pub struct LabAllocator;
++
++#[inline]
++fn choice() -> u8 {
++    let chosen = CHOICE.load(Ordering::Relaxed);
++    if chosen != UNDECIDED {
++        return chosen;
++    }
++    decide()
++}
++
++#[cold]
++#[inline(never)]
++fn decide() -> u8 {
++    // getenv allocates nothing, so it is safe inside the allocator. Two
++    // threads that race here read the same variable and store the same value.
++    let value = unsafe { libc::getenv(c"XRS_LAB_ALLOC".as_ptr()) };
++    let chosen = if !value.is_null()
++        && unsafe { std::ffi::CStr::from_ptr(value) }.to_bytes() == b"mimalloc"
++    {
++        MIMALLOC
++    } else {
++        SYSTEM
++    };
++    CHOICE.store(chosen, Ordering::Relaxed);
++    chosen
++}
++
++unsafe impl GlobalAlloc for LabAllocator {
++    #[inline]
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        if choice() == MIMALLOC {
++            unsafe { mimalloc::MiMalloc.alloc(layout) }
++        } else {
++            unsafe { System.alloc(layout) }
++        }
++    }
++
++    #[inline]
++    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
++        if choice() == MIMALLOC {
++            unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) }
++        } else {
++            unsafe { System.alloc_zeroed(layout) }
++        }
++    }
++
++    #[inline]
++    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++        if choice() == MIMALLOC {
++            unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
++        } else {
++            unsafe { System.dealloc(ptr, layout) }
++        }
++    }
++
++    #[inline]
++    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
++        if choice() == MIMALLOC {
++            unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) }
++        } else {
++            unsafe { System.realloc(ptr, layout, new_size) }
++        }
++    }
++}
++
++extern "C" {
++    // mimalloc's own (exported by the static library the mimalloc crate
++    // links): prints its version and every option in force to stderr.
++    fn mi_options_print();
++}
++
++/// Says what is in force and starts the relief thread, if any. Called first
++/// thing in `main`.
++pub fn start() {
++    if choice() == MIMALLOC {
++        // One allocation first, so mimalloc has initialised and writes to
++        // stderr at once rather than into its delayed-output buffer.
++        drop(std::hint::black_box(Box::new([0u8; 64])));
++        eprintln!("lab: allocator mimalloc (XRS_LAB_ALLOC=mimalloc); its version and options follow");
++        unsafe { mi_options_print() };
++    } else {
++        eprintln!("lab: allocator system");
++    }
++    relief::start();
++}
++
++#[cfg(target_vendor = "apple")]
++mod relief {
++    use std::fs::File;
++    use std::io::Write;
++    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++
++    extern "C" {
++        // <malloc/malloc.h>: gives back the free pages of `zone` (every zone
++        // when NULL) until `goal` bytes are released (as many as it can when
++        // 0); returns the bytes released.
++        fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
++    }
++
++    const TICK: Duration = Duration::from_millis(250);
++    const QUIET: Duration = Duration::from_micros(2_500);
++
++    pub(super) fn start() {
++        let Ok(mode) = std::env::var("XRS_LAB_RELIEF") else {
++            eprintln!("lab: relief none");
++            return;
++        };
++        let mut log = std::env::var_os("XRS_LAB_RELIEF_LOG").and_then(|path| {
++            std::fs::OpenOptions::new()
++                .create(true)
++                .append(true)
++                .open(path)
++                .ok()
++        });
++        let builder = std::thread::Builder::new().name("lab-relief".into());
++        let spawned = match mode.as_str() {
++            "interval" => {
++                let period = Duration::from_millis(
++                    std::env::var("XRS_LAB_RELIEF_MS")
++                        .ok()
++                        .and_then(|value| value.parse().ok())
++                        .unwrap_or(1000),
++                );
++                eprintln!(
++                    "lab: relief interval, malloc_zone_pressure_relief(NULL, 0) every {} ms",
++                    period.as_millis()
++                );
++                builder.spawn(move || interval(period, &mut log))
++            }
++            "idle" => {
++                eprintln!(
++                    "lab: relief idle, malloc_zone_pressure_relief(NULL, 0) once after a {} ms window under {} us of CPU that follows a busy one",
++                    TICK.as_millis(),
++                    QUIET.as_micros()
++                );
++                builder.spawn(move || idle(&mut log))
++            }
++            other => {
++                eprintln!("lab: relief none (XRS_LAB_RELIEF={other} is neither interval nor idle)");
++                return;
++            }
++        };
++        spawned.expect("spawn the lab's relief thread");
++    }
++
++    fn interval(period: Duration, log: &mut Option<File>) {
++        loop {
++            std::thread::sleep(period);
++            relieve(log, "interval");
++        }
++    }
++
++    fn idle(log: &mut Option<File>) {
++        let mut armed = false;
++        let mut last = process_cpu();
++        loop {
++            std::thread::sleep(TICK);
++            let now = process_cpu();
++            let used = now.saturating_sub(last);
++            last = now;
++            if used >= QUIET {
++                armed = true;
++            } else if armed {
++                armed = false;
++                relieve(log, "idle");
++                // The call's own CPU time is not traffic.
++                last = process_cpu();
++            }
++        }
++    }
++
++    fn relieve(log: &mut Option<File>, why: &str) {
++        let mut stats: libc::malloc_statistics_t = unsafe { std::mem::zeroed() };
++        unsafe { libc::malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
++        let wall = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .unwrap_or_default()
++            .as_secs_f64();
++        let cpu0 = thread_cpu();
++        let t0 = Instant::now();
++        let released = unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
++        let took = t0.elapsed();
++        let cpu = thread_cpu().saturating_sub(cpu0);
++        if let Some(file) = log {
++            let _ = writeln!(
++                file,
++                "{{\"t\":{wall:.3},\"why\":\"{why}\",\"released\":{released},\"wall_us\":{},\"cpu_us\":{},\"in_use\":{},\"allocated\":{}}}",
++                took.as_micros(),
++                cpu.as_micros(),
++                stats.size_in_use,
++                stats.size_allocated
++            );
++        }
++    }
++
++    fn thread_cpu() -> Duration {
++        let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
++        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
++        Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
++    }
++
++    fn process_cpu() -> Duration {
++        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
++        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
++        timeval(usage.ru_utime) + timeval(usage.ru_stime)
++    }
++
++    fn timeval(tv: libc::timeval) -> Duration {
++        Duration::new(tv.tv_sec as u64, (tv.tv_usec as u32).saturating_mul(1000))
++    }
++}
++
++#[cfg(not(target_vendor = "apple"))]
++mod relief {
++    pub(super) fn start() {
++        if let Ok(mode) = std::env::var("XRS_LAB_RELIEF") {
++            eprintln!("lab: relief none (XRS_LAB_RELIEF={mode} works only on Apple targets)");
++        } else {
++            eprintln!("lab: relief none");
++        }
++    }
++}
+diff --git a/crates/xray-cli/src/main.rs b/crates/xray-cli/src/main.rs
+index 61b3a53e..b8e74589 100644
+--- a/crates/xray-cli/src/main.rs
++++ b/crates/xray-cli/src/main.rs
+@@ -1,4 +1,12 @@
++// Lab only (Ghostlane's footprint lab): the allocator switch and the relief
++// thread, chosen by environment variables (lab_alloc.rs).
++mod lab_alloc;
++
++#[global_allocator]
++static GLOBAL: lab_alloc::LabAllocator = lab_alloc::LabAllocator;
++
+ fn main() {
++    lab_alloc::start();
+     let mut builder = tokio::runtime::Builder::new_multi_thread();
+     // Multiplexed transports share connection state. Extra workers add lock
+     // handoffs; keep a bounded default while preserving Tokio's explicit override.

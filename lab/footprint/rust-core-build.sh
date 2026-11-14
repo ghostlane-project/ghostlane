@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # rust-core-build.sh <dest-dir>
 #
-# Builds xray-rust (https://github.com/aimalygin/xray-rust, MPL-2.0), the Rust
-# client core the footprint lab sets beside the Go cores, from GitHub at the
-# pinned release tag. The pins come from the environment (the workflow's
-# `env:`), and the build refuses a checkout that disagrees with them:
+# Builds xray-rust, the Rust client core the footprint lab measures, from
+# GitHub at a pinned commit of a named ref. The lab builds Ghostlane's fork
+# (https://github.com/ghostlane-project/xray-rust, MPL-2.0) at its branches,
+# and once the upstream release it measured before the fork
+# (https://github.com/aimalygin/xray-rust v0.9.0) as the historical baseline.
+# The pins come from the environment (the workflow's `env:`):
 #
-#   XRAY_RUST_TAG        the newest release when the lab was written (v0.9.0,
-#                        published 2026-11-03, read through the GitHub API)
-#   XRAY_RUST_COMMIT     the commit that tag names
-#   XRAY_RUST_TOOLCHAIN  the channel the tag's rust-toolchain.toml asks for
+#   XRS_REPO       the repository to fetch from
+#   XRS_REF        the branch or tag the build stands for
+#   XRS_COMMIT     the commit built: fetched by its hash, so the build is the
+#                  same whatever the ref says now
+#   XRS_TOOLCHAIN  the channel that commit's rust-toolchain.toml asks for
+#
+# The build refuses a checkout whose rust-toolchain.toml asks for another
+# channel. When the ref no longer names the commit (a branch moved on), it
+# still builds the pinned commit, prints a notice, and the build record keeps
+# both (`commit`, `ref_head_at_build`); moving a pin is a change to the
+# workflow.
 #
 # The recipe is the project's own CLI build (README "Quick start": `cargo
 # build --locked -p xray-cli`) with --release, which selects the workspace's
@@ -25,11 +34,10 @@
 # goes to stdout, and to $XRS_BUILD_LOG as well when that is set.
 #
 # XRS_PATCHES (optional): patch files, space-separated, relative to the
-# working directory, applied with `git apply` to the checked-out tag before
-# the build. The lab uses it only for a setting that xray-rust holds as a
-# constant (lab/footprint/xray-rust-patches/); the pin itself never moves,
-# and the build record names each patch and its sha256. Unset, the build is
-# the tag as published.
+# working directory, applied with `git apply` to the checked-out commit
+# before the build: lab-only code (lab/footprint/xray-rust-patches/), never
+# a change to the pin. The build record names each patch and its sha256.
+# Unset, the build is the commit as published.
 #
 # XRS_LINE_TABLES=1 (optional): the same build with line tables kept, for the
 # heap profile (lab.py heap-profile, heaptrack on Linux):
@@ -43,10 +51,10 @@
 set -euo pipefail
 
 dest="${1:?usage: rust-core-build.sh <dest-dir>}"
-tag="${XRAY_RUST_TAG:?XRAY_RUST_TAG is not set}"
-commit="${XRAY_RUST_COMMIT:?XRAY_RUST_COMMIT is not set}"
-want_chan="${XRAY_RUST_TOOLCHAIN:?XRAY_RUST_TOOLCHAIN is not set}"
-repo="${XRAY_RUST_REPO:-https://github.com/aimalygin/xray-rust.git}"
+repo="${XRS_REPO:?XRS_REPO is not set}"
+ref="${XRS_REF:?XRS_REF is not set}"
+commit="${XRS_COMMIT:?XRS_COMMIT is not set}"
+want_chan="${XRS_TOOLCHAIN:?XRS_TOOLCHAIN is not set}"
 patches="${XRS_PATCHES:-}"
 work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/xray-rust-build-$(basename "${dest}")"
 
@@ -59,17 +67,33 @@ rm -rf "${work}"
 mkdir -p "${work}"
 src="${work}/src"
 
-echo "== clone ${repo} at ${tag} =="
-git clone --quiet --depth 1 --branch "${tag}" "${repo}" "${src}"
+echo "== fetch ${repo} at ${commit} (${ref}) =="
+git init --quiet "${src}"
+git -C "${src}" remote add origin "${repo}"
+git -C "${src}" fetch --quiet --depth 1 --no-tags origin "${commit}"
+git -C "${src}" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
 got="$(git -C "${src}" rev-parse HEAD)"
 if [ "${got}" != "${commit}" ]; then
-  echo "tag ${tag} is at ${got}, but the lab pins ${commit}; re-read the release before moving the pin" >&2
+  echo "fetched ${got}, but the lab pins ${commit}" >&2
   exit 1
+fi
+# What the ref names now: a branch's head, or a tag's commit (peeled).
+heads="$(git -C "${src}" ls-remote origin "refs/heads/${ref}" "refs/tags/${ref}" "refs/tags/${ref}^{}" || true)"
+ref_head="$(printf '%s\n' "${heads}" | awk '$2 ~ /\^\{\}$/ {print $1; exit}')"
+if [ -z "${ref_head}" ]; then
+  ref_head="$(printf '%s\n' "${heads}" | awk 'NF {print $1; exit}')"
+fi
+if [ -z "${ref_head}" ]; then
+  echo "::warning::${repo} has no branch or tag named ${ref}; building the pinned ${commit}"
+elif [ "${ref_head}" != "${commit}" ]; then
+  echo "::notice::${ref} in ${repo} is now at ${ref_head}; this build is the pinned ${commit}"
+else
+  echo "${ref} names ${commit}"
 fi
 
 chan="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "${src}/rust-toolchain.toml")"
 if [ "${chan}" != "${want_chan}" ]; then
-  echo "rust-toolchain.toml at ${tag} asks for '${chan}', the workflow pins '${want_chan}'" >&2
+  echo "rust-toolchain.toml at ${commit} asks for '${chan}', the workflow pins '${want_chan}'" >&2
   exit 1
 fi
 
@@ -83,6 +107,7 @@ for pf in ${patches}; do
 done
 if [ -n "${patch_paths}" ]; then
   git -C "${src}" --no-pager diff --stat
+  git -C "${src}" status --short
 fi
 
 echo "== toolchain ${chan} =="
@@ -91,7 +116,7 @@ rustc_v="$(rustc "+${chan}" -V)"
 host="$(rustc "+${chan}" -vV | sed -n 's/^host: //p')"
 echo "${rustc_v} (${host})"
 
-echo "== [profile.release] at ${tag} =="
+echo "== [profile.release] at ${commit} =="
 profile="$(awk '/^\[profile\.release\]/{on=1; next} /^\[/{on=0} on && NF' "${src}/Cargo.toml" | tr '\n' ';' | sed 's/;$//')"
 echo "${profile}"
 
@@ -118,15 +143,16 @@ echo "built ${bin}: ${bytes} bytes in ${seconds} s"
 mkdir -p "${dest}"
 install -m 0755 "${bin}" "${dest}/xray-rust"
 # Values go through the environment: the profile text carries quotes.
-B_REPO="${repo}" B_TAG="${tag}" B_COMMIT="${commit}" B_CHAN="${chan}" B_RUSTC="${rustc_v}" \
-B_HOST="${host}" B_PROFILE="${profile}" B_SECONDS="${seconds}" B_BYTES="${bytes}" \
+B_REPO="${repo}" B_REF="${ref}" B_COMMIT="${commit}" B_REF_HEAD="${ref_head}" B_CHAN="${chan}" \
+B_RUSTC="${rustc_v}" B_HOST="${host}" B_PROFILE="${profile}" B_SECONDS="${seconds}" B_BYTES="${bytes}" \
 B_RUN="${GITHUB_RUN_ID:-local}" B_PATCHES="${patch_paths}" B_OVERRIDES="${overrides}" python3 -I -c '
 import hashlib, json, os, sys
 e = os.environ
 patches = [{"file": f, "sha256": hashlib.sha256(open(f, "rb").read()).hexdigest()} for f in e["B_PATCHES"].split()]
 overrides = e["B_OVERRIDES"].split()
 json.dump({
-    "repo": e["B_REPO"], "tag": e["B_TAG"], "commit": e["B_COMMIT"],
+    "repo": e["B_REPO"], "ref": e["B_REF"], "tag": e["B_REF"], "commit": e["B_COMMIT"],
+    "ref_head_at_build": e["B_REF_HEAD"] or None,
     "toolchain": e["B_CHAN"], "rustc": e["B_RUSTC"], "host": e["B_HOST"],
     "cargo": " ".join(overrides + ["cargo build --locked --release -p xray-cli"]),
     "profile_release": e["B_PROFILE"],

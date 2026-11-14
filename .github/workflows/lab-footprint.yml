@@ -1,21 +1,20 @@
 name: Lab - core footprint
 
-# A measurement, not a check: what the Go cores the app ships cost in memory,
+# A measurement, not a check: what the client cores cost in memory,
 # throughput and CPU, measured on GitHub's runners against servers each job
 # starts on the runner itself. lab/footprint/README.md says what is measured,
 # how, and how to read the tables and lab-footprint-* artifacts.
 #
-# Beside the Go rows, the desktop jobs measure a Rust core, xray-rust, built
-# from GitHub at a pinned release (lab/footprint/rust-core-build.sh), and on
-# Linux sing-box behind hev-socks5-tunnel at the app's pin
-# (lab/footprint/hev-build.sh), on the same runner against the same servers,
-# plus the iOS shape rows: the iPhone's sing-box configs on the gVisor tun and
-# Phase 0's behind hev, checked for DNS, a name and UDP before the load.
-#
-# After the rows, `lab.py heap-profile` takes xray-rust's memory apart: on
-# Linux the heap by allocation site (heaptrack, a build with line tables)
-# beside RSS by kind, on macOS phys_footprint by category (footprint, vmmap)
-# with the core stopped near its peak.
+# The desktop jobs measure the Rust core, xray-rust, as Ghostlane's fork
+# (https://github.com/ghostlane-project/xray-rust) builds it at pinned
+# commits of named branches (lab/footprint/rust-core-build.sh), with
+# upstream's v0.9.0 kept as the historical baseline; the alloc job measures
+# phys_footprint on macOS under five allocator setups (lab.py alloc-rows);
+# on Linux, after the rows, heaptrack takes the XHTTP upload fix's heap apart
+# by allocation site (lab.py heap-profile). The Go cores' rows (sing-box,
+# libXray, the cores harness, hev, the olcRTC soaks, udp-flow) and the
+# Android emulator job are off while LAB_GO_ROWS is "0": their figures are
+# known from earlier runs (README "What a run measures now").
 #
 # Runs on a push to lab/core-footprint and nothing else: never on main, never
 # on a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
@@ -39,26 +38,45 @@ env:
   SINGBOX_VERSION: "1.13.14"
   XRAY_VERSION: "26.7.11"
   ANDROID_NDK_VERSION: "28.2.13676358"
+  # "1" brings back the Go rows, their builds and udp-flow (the desktop jobs);
+  # the Android job is switched off by its own `if:`.
+  LAB_GO_ROWS: "0"
+  # xray-rust. Each build is the commit pinned here, fetched by its hash;
+  # rust-core-build.sh says so when the branch has moved on since, and
+  # refuses a checkout whose rust-toolchain.toml asks for another channel
+  # than XRS_TOOLCHAIN. Moving a pin is a change to this file.
+  XRS_TOOLCHAIN: "1.96.0"
+  XRS_FORK: "https://github.com/ghostlane-project/xray-rust"
+  # `ghostlane`: the fork's main branch, upstream's head (merge of upstream
+  # PR #294, the 0.10.0 candidate). The main rows.
+  XRS_MAIN_REF: "ghostlane"
+  XRS_MAIN_COMMIT: "4a61b057e97042396ec1a03fa8a0699919c42d64"
+  # `gl/xhttp-upload-memory`: ghostlane plus the XHTTP packet-up upload
+  # buffers fix. XHTTP's rows beside the main ones, the allocator rows and
+  # the heap profile.
+  XRS_UP_REF: "gl/xhttp-upload-memory"
+  XRS_UP_COMMIT: "08ed966825c6b0723eae8e92c4f106572c7349c7"
+  # `gl/chrome-156-hello`: the fork's Chrome 156 ClientHello profile. The
+  # ClientHello parity rows only.
+  XRS_HELLO_REF: "gl/chrome-156-hello"
+  XRS_HELLO_COMMIT: "00b80ddbd7dc0e945a6fb1416440892413c3aea6"
+  # The historical baseline: upstream's v0.9.0 release, which the lab
+  # measured before the fork (published 2026-11-03).
+  XRS_BASE_REPO: "https://github.com/aimalygin/xray-rust"
+  XRS_BASE_REF: "v0.9.0"
+  XRS_BASE_COMMIT: "30928ad51b4a434546cf143f8e385a8746523172"
 
 jobs:
   desktop:
     name: Cores on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
-    # About 50 minutes when xray-rust is built, about 40 when the cache has it.
-    # The ceiling covers the worst case with room for Table and Upload: about
-    # 5 min of Go builds, the 30 min xray-rust build twice (on the Mac with the
-    # patched one, on Linux with line tables), hev's 6, Measure's 40, udp-flow's
-    # 8, heaptrack's install and the heap profile's 35.
-    timeout-minutes: 160
-    env:
-      # xray-rust (https://github.com/aimalygin/xray-rust): its newest release
-      # when the lab was extended (GET /repos/aimalygin/xray-rust/releases/latest,
-      # published 2026-11-03), the commit the tag names, and the channel its
-      # rust-toolchain.toml asks for. rust-core-build.sh refuses a checkout that
-      # disagrees with any of the three.
-      XRAY_RUST_TAG: "v0.9.0"
-      XRAY_RUST_COMMIT: "30928ad51b4a434546cf143f8e385a8746523172"
-      XRAY_RUST_TOOLCHAIN: "1.96.0"
+    # About 45 minutes when the xray-rust builds are new, about 25 when the
+    # cache has them. The ceiling covers the worst case with room for Table
+    # and Upload: four xray-rust builds of about 5 min each (five on Linux,
+    # with line tables), Measure's 40 and, on Linux, heaptrack's install and
+    # the heap profile's 20 (and, with LAB_GO_ROWS=1, the Go builds' 40 and
+    # udp-flow's 8).
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -100,8 +118,10 @@ jobs:
             echo "BIN=${RUNNER_TEMP}/lab-bin"
             echo "OUT=${RUNNER_TEMP}/lab-out"
             echo "ENGINE=${RUNNER_TEMP}/olcrtc"
-            echo "XRS=${RUNNER_TEMP}/xray-rust"
-            echo "XRS_P=${RUNNER_TEMP}/xray-rust-patched"
+            echo "XRS_MAIN=${RUNNER_TEMP}/xray-rust-main"
+            echo "XRS_UP=${RUNNER_TEMP}/xray-rust-up"
+            echo "XRS_HELLO=${RUNNER_TEMP}/xray-rust-hello"
+            echo "XRS_BASE=${RUNNER_TEMP}/xray-rust"
             echo "XRS_L=${RUNNER_TEMP}/xray-rust-lines"
             echo "HT=${RUNNER_TEMP}/lab-heaptrack"
           } >> "$GITHUB_ENV"
@@ -134,129 +154,205 @@ jobs:
           done
           test -x "$BIN/xray-26.4.25/xray" && test -x "$BIN/xray-26.7.11/xray"
 
+      # The Go rows' builds, only when LAB_GO_ROWS is 1 (see the workflow's env).
       - name: Build sing-box (scripts/build-singbox.sh, the desktop recipe)
+        if: env.LAB_GO_ROWS == '1'
         timeout-minutes: 15
         run: bash scripts/build-singbox.sh "$BIN/sing-box" && "$BIN/sing-box" version
 
       - name: Build the cores harness (scripts/build-cores-ios.sh's module, tags and flags)
+        if: env.LAB_GO_ROWS == '1'
         timeout-minutes: 20
         run: bash lab/footprint/harness/build.sh "$BIN"
 
       - name: Check out and build the olcRTC engine at the pin
+        if: env.LAB_GO_ROWS == '1'
         timeout-minutes: 15
         run: |
           set -euo pipefail
           bash lab/footprint/engine-src.sh "$ENGINE"
           bash lab/footprint/engine-build.sh "$ENGINE" "$BIN"
 
-      # Informational: the build follows the pin above, never this answer. An
-      # unauthenticated read (no token), so a rate limit only loses the notice.
-      - name: Newest xray-rust release against the pin
-        timeout-minutes: 2
+      # xray-rust, each build in a directory and a cache entry of its own. The
+      # cache holds the finished binary and its build record, keyed by the
+      # commit, the toolchain and rust-core-build.sh; an entry an older
+      # rust-core-build.sh wrote for the same commit and toolchain is reused
+      # (restore-keys), so a change to the script alone rebuilds nothing. The
+      # build step builds only what the cache did not give; the rows say which
+      # run built each binary. A failed or timed-out build fails only its own
+      # rows, by name, with the tail of its log.
+      #
+      # The fork at `ghostlane` (XRS_MAIN_*): the main rows.
+      - name: Restore xray-rust ghostlane from the cache
+        id: xrs-main-cache
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-main
+          key: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_MAIN_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_MAIN_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-
+
+      - name: Build xray-rust ghostlane (the main rows)
+        id: xrs-main-build
+        if: steps.xrs-main-cache.outputs.cache-hit != 'true'
         continue-on-error: true
+        timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_FORK }}
+          XRS_REF: ${{ env.XRS_MAIN_REF }}
+          XRS_COMMIT: ${{ env.XRS_MAIN_COMMIT }}
         run: |
           set -euo pipefail
-          mkdir -p "$OUT"
-          curl -fsS --retry 2 -H 'Accept: application/vnd.github+json' \
-            https://api.github.com/repos/aimalygin/xray-rust/releases/latest -o "${RUNNER_TEMP}/xrs-latest.json"
-          latest="$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["tag_name"], d["published_at"])' "${RUNNER_TEMP}/xrs-latest.json")"
-          echo "newest release: ${latest}; pinned: ${XRAY_RUST_TAG} ${XRAY_RUST_COMMIT}" | tee "$OUT/xray-rust-latest.txt"
-          [ "${latest%% *}" = "${XRAY_RUST_TAG}" ] \
-            || echo "::notice::xray-rust ${latest%% *} is out; this run builds the pinned ${XRAY_RUST_TAG}"
+          if [ -x "$XRS_MAIN/xray-rust" ]; then cat "$XRS_MAIN/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-main-build.log" bash lab/footprint/rust-core-build.sh "$XRS_MAIN"
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
-      # The cache holds the finished binary and its build record, keyed by
-      # everything that decides them; a hit skips the build, and the rows say
-      # which run built it.
-      - name: Restore xray-rust from the cache
-        id: xrs-cache
+      - name: Save xray-rust ghostlane to the cache
+        if: steps.xrs-main-build.outputs.built == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-main
+          key: ${{ steps.xrs-main-cache.outputs.cache-primary-key }}
+
+      # The fork's XHTTP upload fix (XRS_UP_*): XHTTP's mobile rows beside the
+      # main build's and XHTTP's one-worker rows.
+      - name: Restore xray-rust gl/xhttp-upload-memory from the cache
+        id: xrs-up-cache
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-up
+          key: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-
+
+      - name: Build xray-rust gl/xhttp-upload-memory (XHTTP's rows beside the main ones)
+        id: xrs-up-build
+        if: steps.xrs-up-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_FORK }}
+          XRS_REF: ${{ env.XRS_UP_REF }}
+          XRS_COMMIT: ${{ env.XRS_UP_COMMIT }}
+        run: |
+          set -euo pipefail
+          if [ -x "$XRS_UP/xray-rust" ]; then cat "$XRS_UP/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-up-build.log" bash lab/footprint/rust-core-build.sh "$XRS_UP"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save xray-rust gl/xhttp-upload-memory to the cache
+        if: steps.xrs-up-build.outputs.built == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-up
+          key: ${{ steps.xrs-up-cache.outputs.cache-primary-key }}
+
+      # The fork's Chrome 156 profile (XRS_HELLO_*): the ClientHello rows only.
+      - name: Restore xray-rust gl/chrome-156-hello from the cache
+        id: xrs-hello-cache
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-hello
+          key: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_HELLO_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-${{ matrix.platform }}-fork-${{ env.XRS_HELLO_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-
+
+      - name: Build xray-rust gl/chrome-156-hello (the ClientHello rows)
+        id: xrs-hello-build
+        if: steps.xrs-hello-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_FORK }}
+          XRS_REF: ${{ env.XRS_HELLO_REF }}
+          XRS_COMMIT: ${{ env.XRS_HELLO_COMMIT }}
+        run: |
+          set -euo pipefail
+          if [ -x "$XRS_HELLO/xray-rust" ]; then cat "$XRS_HELLO/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-hello-build.log" bash lab/footprint/rust-core-build.sh "$XRS_HELLO"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save xray-rust gl/chrome-156-hello to the cache
+        if: steps.xrs-hello-build.outputs.built == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-hello
+          key: ${{ steps.xrs-hello-cache.outputs.cache-primary-key }}
+
+      # The historical baseline, upstream's v0.9.0 (XRS_BASE_*). Its path and
+      # key keep the form earlier runs saved it under (a cache entry restores
+      # only to the path it was saved from), so their builds are reused.
+      - name: Restore xray-rust v0.9.0 from the cache
+        id: xrs-base-cache
         uses: actions/cache/restore@v6
         timeout-minutes: 5
         with:
           path: ${{ runner.temp }}/xray-rust
-          key: xray-rust-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          key: xray-rust-${{ matrix.platform }}-${{ env.XRS_BASE_REF }}-${{ env.XRS_BASE_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-${{ matrix.platform }}-${{ env.XRS_BASE_REF }}-${{ env.XRS_BASE_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-
 
-      # A failed or timed-out build fails only the xray-rust rows, by name,
-      # with the tail of xray-rust-build.log; the Go rows still run.
-      - name: Build xray-rust at the pinned release (cargo --release, the project's toolchain)
-        id: xrs-build
-        if: steps.xrs-cache.outputs.cache-hit != 'true'
+      - name: Build xray-rust v0.9.0 (the historical baseline)
+        id: xrs-base-build
+        if: steps.xrs-base-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_BASE_REPO }}
+          XRS_REF: ${{ env.XRS_BASE_REF }}
+          XRS_COMMIT: ${{ env.XRS_BASE_COMMIT }}
         run: |
           set -euo pipefail
-          mkdir -p "$OUT"
-          XRS_BUILD_LOG="$OUT/xray-rust-build.log" bash lab/footprint/rust-core-build.sh "$XRS"
+          if [ -x "$XRS_BASE/xray-rust" ]; then cat "$XRS_BASE/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-baseline-build.log" bash lab/footprint/rust-core-build.sh "$XRS_BASE"
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
-      - name: Save xray-rust to the cache
-        if: steps.xrs-build.outcome == 'success'
+      - name: Save xray-rust v0.9.0 to the cache
+        if: steps.xrs-base-build.outputs.built == 'true'
         continue-on-error: true
         uses: actions/cache/save@v6
         timeout-minutes: 5
         with:
           path: ${{ runner.temp }}/xray-rust
-          key: ${{ steps.xrs-cache.outputs.cache-primary-key }}
-
-      # The XHTTP window rows (gate 2.8, macOS only) include one setting that
-      # xray-rust holds as a constant, the H2 connection window: the same tag,
-      # commit and toolchain with lab/footprint/xray-rust-patches/ applied by
-      # rust-core-build.sh (XRS_PATCHES), in a directory and a cache entry of
-      # its own, so the pinned binary above stays the tag as published. A
-      # failed build fails only the patched rows, by name.
-      - name: Restore the patched xray-rust from the cache
-        id: xrs-p-cache
-        if: runner.os == 'macOS'
-        uses: actions/cache/restore@v6
-        timeout-minutes: 5
-        with:
-          path: ${{ runner.temp }}/xray-rust-patched
-          key: xray-rust-patched-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh', 'lab/footprint/xray-rust-patches/*.patch') }}
-
-      - name: Build xray-rust with the lab's patches (the XHTTP connection-window rows)
-        id: xrs-p-build
-        if: runner.os == 'macOS' && steps.xrs-p-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          set -euo pipefail
-          mkdir -p "$OUT"
-          XRS_PATCHES="lab/footprint/xray-rust-patches/h2-connection-window-4mib.patch" \
-            XRS_BUILD_LOG="$OUT/xray-rust-patched-build.log" bash lab/footprint/rust-core-build.sh "$XRS_P"
-
-      - name: Save the patched xray-rust to the cache
-        if: runner.os == 'macOS' && steps.xrs-p-build.outcome == 'success'
-        continue-on-error: true
-        uses: actions/cache/save@v6
-        timeout-minutes: 5
-        with:
-          path: ${{ runner.temp }}/xray-rust-patched
-          key: ${{ steps.xrs-p-cache.outputs.cache-primary-key }}
+          key: ${{ steps.xrs-base-cache.outputs.cache-primary-key }}
 
       # The heap profile (Linux) needs a file and a line for every frame: the
-      # same tag, commit, toolchain and profile with line tables kept
-      # (rust-core-build.sh XRS_LINE_TABLES=1), in a directory and a cache
-      # entry of its own; the rows never run it. A failed build fails only the
-      # heap profile's Linux rows, by name.
-      - name: Restore xray-rust with line tables from the cache
+      # XHTTP upload fix's commit, toolchain and profile with line tables kept
+      # (rust-core-build.sh XRS_LINE_TABLES=1); the rows never run it. A
+      # failed build fails only the heap profile's rows, by name.
+      - name: Restore xray-rust gl/xhttp-upload-memory with line tables from the cache
         id: xrs-l-cache
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v6
         timeout-minutes: 5
         with:
           path: ${{ runner.temp }}/xray-rust-lines
-          key: xray-rust-lines-${{ matrix.platform }}-${{ env.XRAY_RUST_TAG }}-${{ env.XRAY_RUST_COMMIT }}-rust${{ env.XRAY_RUST_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          key: xray-rust-lines-${{ matrix.platform }}-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-lines-${{ matrix.platform }}-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-
 
-      - name: Build xray-rust with line tables (the heap profile's binary)
+      - name: Build xray-rust gl/xhttp-upload-memory with line tables (the heap profile's binary)
         id: xrs-l-build
         if: runner.os == 'Linux' && steps.xrs-l-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_FORK }}
+          XRS_REF: ${{ env.XRS_UP_REF }}
+          XRS_COMMIT: ${{ env.XRS_UP_COMMIT }}
+          XRS_LINE_TABLES: "1"
         run: |
           set -euo pipefail
-          mkdir -p "$OUT"
-          XRS_LINE_TABLES=1 XRS_BUILD_LOG="$OUT/xray-rust-lines-build.log" bash lab/footprint/rust-core-build.sh "$XRS_L"
+          if [ -x "$XRS_L/xray-rust" ]; then cat "$XRS_L/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-lines-build.log" bash lab/footprint/rust-core-build.sh "$XRS_L"
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
       - name: Save xray-rust with line tables to the cache
-        if: runner.os == 'Linux' && steps.xrs-l-build.outcome == 'success'
+        if: runner.os == 'Linux' && steps.xrs-l-build.outputs.built == 'true'
         continue-on-error: true
         uses: actions/cache/save@v6
         timeout-minutes: 5
@@ -265,10 +361,10 @@ jobs:
           key: ${{ steps.xrs-l-cache.outputs.cache-primary-key }}
 
       # The hev rows need root and a tun, so they run where --tun runs; the
-      # Mac builds it too, with Apple's clang, for udp-flow. A failed build
-      # fails only those rows, with the tail of hev-build.log.
+      # Mac builds it too, with Apple's clang, for udp-flow. Go rows only. A
+      # failed build fails only those rows, with the tail of hev-build.log.
       - name: Build hev-socks5-tunnel at scripts/hev-pins.sh's commit (the iPhone's pin, make clean exec)
-        if: contains(matrix.lab_flags, '--tun') || runner.os == 'macOS'
+        if: env.LAB_GO_ROWS == '1' && (contains(matrix.lab_flags, '--tun') || runner.os == 'macOS')
         continue-on-error: true
         timeout-minutes: 6
         run: |
@@ -276,24 +372,25 @@ jobs:
           mkdir -p "$OUT"
           bash lab/footprint/hev-build.sh "$BIN" 2>&1 | tee "$OUT/hev-build.log"
 
+      # The rows: xray-rust (the fork's main rows, its XHTTP fix's, the
+      # relay buffer and one-worker rows, the v0.9.0 baseline), then the
+      # ClientHellos. The Go rows only with LAB_GO_ROWS=1.
       - name: Measure
-        timeout-minutes: 40
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           if [ -n "${{ matrix.lab_flags }}" ]; then sudo -n true; fi
+          go_args=(--no-go-rows)
+          if [ "${LAB_GO_ROWS}" = "1" ]; then go_args=(--engine-src "$ENGINE"); fi
           python3 lab/footprint/lab.py desktop --bin "$BIN" --out "$OUT" --platform "${{ matrix.platform }}" \
-            --engine-src "$ENGINE" --xray-rust "$XRS" --xray-rust-patched "$XRS_P" --budget-min 34 ${{ matrix.lab_flags }}
+            --xray-rust "$XRS_MAIN" --xray-rust-up "$XRS_UP" --xray-rust-hello "$XRS_HELLO" \
+            --xray-rust-baseline "$XRS_BASE" --budget-min 34 "${go_args[@]}" ${{ matrix.lab_flags }}
 
       # Where a new UDP flow's time goes behind hev (lab.py udp-flow, root):
-      # the ios-shape hev row taken apart one change at a time, 20 DNS
-      # queries on new sockets and 20 fresh TCP connections per variant, beside
-      # the gVisor tun. On the Mac too: Apple's clang and Darwin's TCP, the
-      # nearest a runner gets to the iPhone's hev. After Measure, with servers
-      # and tuns of its own, so no row moves; its table is in this step's log
-      # and the summary, its JSON in udp-flow/udp-flow.json of this job's
-      # artifact. A failure fails only it.
+      # the ios-shape hev row taken apart one change at a time. Go rows only
+      # (its figures are known from run 43538233589). A failure fails only it.
       - name: UDP flow latency (hev against the gVisor tun)
-        if: ${{ !cancelled() && (contains(matrix.lab_flags, '--tun') || runner.os == 'macOS') }}
+        if: ${{ !cancelled() && env.LAB_GO_ROWS == '1' && (contains(matrix.lab_flags, '--tun') || runner.os == 'macOS') }}
         continue-on-error: true
         timeout-minutes: 8
         run: |
@@ -302,7 +399,7 @@ jobs:
           python3 lab/footprint/lab.py udp-flow --bin "$BIN" --out "$OUT/udp-flow"
 
       # heaptrack from Ubuntu's archive, after the rows so Measure's runner is
-      # the same as before. A failure fails only the heap profile's Linux rows.
+      # the same as before. A failure fails only the heap profile.
       - name: Install heaptrack (the heap profile, Linux)
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
@@ -313,35 +410,36 @@ jobs:
             || { sudo apt-get update -q && sudo apt-get install -y --no-install-recommends heaptrack; }
           dpkg-query -W heaptrack | tee "$OUT/heaptrack.version.txt"
 
-      # Where xray-rust's memory goes (lab.py heap-profile): the mobile profile
-      # on the four lines, the burst and 32 connections held idle for 20 s. On
-      # Linux heaptrack's heap by allocation site beside RSS by kind (a run
-      # without heaptrack); on macOS phys_footprint by category, the core
-      # stopped near its peak, plus the XHTTP window rows' bursts. After every
-      # row, with servers of its own, so no row moves; its tables are in this
-      # step's log and the summary, its JSON in heap-profile/heap-profile.json
-      # of this job's artifact, heaptrack's files in lab-heaptrack-linux-x86_64.
-      # A failure fails only it.
-      - name: Heap profile (where xray-rust's memory goes)
-        if: ${{ !cancelled() }}
+      # Where the XHTTP upload fix's memory goes (lab.py heap-profile, Linux):
+      # heaptrack's heap by allocation site beside RSS by kind, the mobile
+      # profile on XHTTP, the burst and 32 connections held idle for 20 s.
+      # After every row, with servers of its own, so no row moves; its tables
+      # are in this step's log and the summary, its JSON in
+      # heap-profile/heap-profile.json of this job's artifact, heaptrack's
+      # files in lab-heaptrack-linux-x86_64. (The macOS heap profile ran in
+      # run 43553887055; the allocator rows below take its place.) A failure
+      # fails only it.
+      - name: Heap profile (XHTTP with the upload fix, heaptrack)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         continue-on-error: true
-        timeout-minutes: 35
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           python3 lab/footprint/lab.py heap-profile --bin "$BIN" --out "$OUT/heap-profile" \
-            --platform "${{ matrix.platform }}" --xray-rust "$XRS" --xray-rust-patched "$XRS_P" \
-            --xray-rust-lines "$XRS_L" --heaptrack-out "$HT" --budget-min 27
+            --platform "${{ matrix.platform }}" --xray-rust-lines "$XRS_L" --heaptrack-out "$HT" \
+            --lines xhttp --budget-min 18
 
       - name: Table
         if: always()
         timeout-minutes: 2
         run: |
           for f in "$BIN/harness.versions.txt" "$BIN/hev.versions.txt" "$BIN/hev-nomore.versions.txt" \
-                   "$BIN/hev-nomore.identical.txt" "$BIN/msg_more.txt" "$XRS/xray-rust.build.json"; do
+                   "$BIN/hev-nomore.identical.txt" "$BIN/msg_more.txt"; do
             [ -f "$f" ] && cp "$f" "$OUT/"
           done
-          [ -f "$XRS_P/xray-rust.build.json" ] && cp "$XRS_P/xray-rust.build.json" "$OUT/xray-rust-patched.build.json"
-          [ -f "$XRS_L/xray-rust.build.json" ] && cp "$XRS_L/xray-rust.build.json" "$OUT/xray-rust-lines.build.json"
+          for v in main:"$XRS_MAIN" up:"$XRS_UP" hello:"$XRS_HELLO" baseline:"$XRS_BASE" lines:"$XRS_L"; do
+            [ -f "${v#*:}/xray-rust.build.json" ] && cp "${v#*:}/xray-rust.build.json" "$OUT/xray-rust-${v%%:*}.build.json"
+          done
           python3 lab/footprint/lab.py table "$OUT"
 
       - name: Upload results
@@ -357,7 +455,7 @@ jobs:
       # heaptrack's data files and heaptrack_print's text, apart from the
       # results (the summary job downloads lab-footprint-* only). Open a data
       # file with heaptrack_gui or heaptrack_print beside the binary with line
-      # tables: same tag, commit, toolchain and rust-core-build.sh.
+      # tables: same commit, toolchain and rust-core-build.sh.
       - name: Upload heaptrack's files
         if: always() && runner.os == 'Linux'
         timeout-minutes: 5
@@ -368,8 +466,127 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+  # Which allocator setup keeps the iOS extension's phys_footprint down
+  # (lab.py alloc-rows, macOS): the fork's XHTTP upload fix with the lab's
+  # allocator patch (lab/footprint/xray-rust-patches/lab-allocator-switch.patch,
+  # applied by rust-core-build.sh), one binary, five setups chosen by
+  # environment variables, four lines, each run twice. A job of its own so it
+  # runs beside the desktop rows on another Mac.
+  alloc:
+    name: Allocator rows on macos-arm64
+    runs-on: macos-latest
+    # The build's 5 minutes (none from the cache), the rows' 45, and room.
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        timeout-minutes: 3
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        timeout-minutes: 5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Paths
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          {
+            echo "BIN=${RUNNER_TEMP}/lab-bin"
+            echo "OUT=${RUNNER_TEMP}/lab-out"
+            echo "XRS_ALLOC=${RUNNER_TEMP}/xray-rust-alloc"
+          } >> "$GITHUB_ENV"
+          echo "cores: $(sysctl -n hw.ncpu)"
+          uname -a
+          sw_vers
+
+      - name: Build loadgen
+        timeout-minutes: 5
+        working-directory: lab/footprint/loadgen
+        run: |
+          set -euo pipefail
+          mkdir -p "$BIN" "$OUT"
+          CGO_ENABLED=0 go build -trimpath -o "$BIN/loadgen" .
+
+      - name: Fetch Xray 26.4.25 (the server)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          want="$(awk '$1=="26.4.25" && $2=="Xray-macos-arm64-v8a.zip" {print $3}' lab/footprint/xray-assets.txt)"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/xray-server.zip" \
+            "https://github.com/XTLS/Xray-core/releases/download/v26.4.25/Xray-macos-arm64-v8a.zip"
+          got="$(shasum -a 256 "${RUNNER_TEMP}/xray-server.zip" | cut -d' ' -f1)"
+          [ "${got}" = "${want}" ] || { echo "::error::Xray 26.4.25: sha256 ${got}, pinned ${want}" >&2; exit 1; }
+          mkdir -p "$BIN/xray-26.4.25"
+          unzip -o -q "${RUNNER_TEMP}/xray-server.zip" -d "$BIN/xray-26.4.25"
+          chmod +x "$BIN/xray-26.4.25/xray"
+          "$BIN/xray-26.4.25/xray" version | head -n 1
+
+      - name: Restore the allocator build from the cache
+        id: xrs-a-cache
+        uses: actions/cache/restore@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-alloc
+          key: xray-rust-alloc-macos-arm64-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/xray-rust-patches/lab-allocator-switch.patch') }}-${{ hashFiles('lab/footprint/rust-core-build.sh') }}
+          restore-keys: xray-rust-alloc-macos-arm64-fork-${{ env.XRS_UP_COMMIT }}-rust${{ env.XRS_TOOLCHAIN }}-${{ hashFiles('lab/footprint/xray-rust-patches/lab-allocator-switch.patch') }}-
+
+      - name: Build xray-rust gl/xhttp-upload-memory with the lab's allocator patch
+        id: xrs-a-build
+        if: steps.xrs-a-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          XRS_REPO: ${{ env.XRS_FORK }}
+          XRS_REF: ${{ env.XRS_UP_REF }}
+          XRS_COMMIT: ${{ env.XRS_UP_COMMIT }}
+          XRS_PATCHES: lab/footprint/xray-rust-patches/lab-allocator-switch.patch
+        run: |
+          set -euo pipefail
+          if [ -x "$XRS_ALLOC/xray-rust" ]; then cat "$XRS_ALLOC/xray-rust.build.json"; exit 0; fi
+          XRS_BUILD_LOG="$OUT/xray-rust-alloc-build.log" bash lab/footprint/rust-core-build.sh "$XRS_ALLOC"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save the allocator build to the cache
+        if: steps.xrs-a-build.outputs.built == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        timeout-minutes: 5
+        with:
+          path: ${{ runner.temp }}/xray-rust-alloc
+          key: ${{ steps.xrs-a-cache.outputs.cache-primary-key }}
+
+      - name: Allocator rows
+        timeout-minutes: 55
+        run: |
+          set -euo pipefail
+          python3 lab/footprint/lab.py alloc-rows --bin "$BIN" --out "$OUT/alloc-rows" --platform macos-arm64 \
+            --xray-rust "$XRS_ALLOC" --budget-min 48
+
+      - name: Keep the build record
+        if: always()
+        timeout-minutes: 1
+        run: |
+          [ -f "$XRS_ALLOC/xray-rust.build.json" ] && cp "$XRS_ALLOC/xray-rust.build.json" "$OUT/xray-rust-alloc.build.json"
+          ls -la "$OUT"
+
+      - name: Upload results
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-alloc-macos-arm64
+          path: ${{ env.OUT }}
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Off while the lab measures xray-rust (its rows are the Go cores'; set
+  # `if:` back to true with LAB_GO_ROWS "1"). A job's `if:` cannot read env.
   android:
     name: Android emulator (x86_64, API 30)
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 80
     steps:
