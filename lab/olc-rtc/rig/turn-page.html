@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TURN capture</title>
+<!-- Lab only (lab-olc-rtc.yml, turn-capture): a relay-only peer connection
+     whose ICE servers are the loopback capture servers named in the
+     fragment, e.g. #turns:turn.olc.test:5349?transport=tcp. Nothing here
+     reaches past the runner. -->
+<script>
+const urls = decodeURIComponent(location.hash.slice(1)).split(',').filter(Boolean);
+const pc = new RTCPeerConnection({
+  iceServers: [{urls, username: 'olcuser', credential: 'olcpass'}],
+  iceTransportPolicy: 'relay',
+});
+pc.createDataChannel('x');
+pc.onicecandidateerror = e => console.log('candidate error', e.url, e.errorCode, e.errorText);
+pc.onicegatheringstatechange = () => console.log('gathering', pc.iceGatheringState);
+pc.createOffer().then(o => pc.setLocalDescription(o)).then(() => console.log('offer set', urls.join(' ')));
+</script>

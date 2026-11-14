@@ -20,6 +20,10 @@ name: Lab - olcRTC client, Chrome's DTLS
 # Every RESULT line, the gate's cells and the memory lines land in the job
 # summary and the artifacts.
 #
+# A second job (turn-capture) records, on loopback only, what Chrome stable
+# sends a TURN server: the TLS ClientHello of a turns: allocation and the
+# Allocate requests answering an RFC 8489 challenge and a classic one.
+#
 # Runs on a push to lab/olc-rtc or by hand, never on main, never on a pull
 # request, no schedule. It reads no secret and contacts no carrier. (PR
 # Checks, whose `push:` has no filter, starts on the same push; its scope job
@@ -209,5 +213,64 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: olc-rtc-linux
+          path: out/
+          retention-days: 7
+
+  turn-capture:
+    # What Chrome stable sends a TURN server, on loopback only: the TLS
+    # ClientHello of a turns: allocation (for olc-rtc's TURN over TLS, which
+    # stays off until its hello is this one) and the Allocate requests that
+    # answer an RFC 8489 401 (PASSWORD-ALGORITHMS, the nonce cookie) and a
+    # classic one. lab/olc-rtc/rig/turn_capture.py serves and reports; the
+    # page is a relay-only peer connection. No carrier, no secret.
+    name: Chrome's TURN requests (loopback)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: lab/olc-rtc/rig
+      - name: Capture
+        run: |
+          set -euo pipefail
+          o=$PWD/out/turn; mkdir -p "$o"
+          rig=$PWD/lab/olc-rtc/rig
+          echo '127.0.0.1 turn.olc.test' | sudo tee -a /etc/hosts >/dev/null
+          google-chrome --version | tee "$o/chrome-version.txt"
+          python3 -I "$rig/turn_capture.py" serve "$o" > "$o/serve.log" 2>&1 &
+          srv=$!
+          trap 'kill $srv 2>/dev/null || true' EXIT
+          sleep 1
+          chrome() { # name urls
+            local d; d=$(mktemp -d)
+            timeout -s KILL 25 google-chrome --headless=new --no-sandbox --no-first-run \
+              --no-default-browser-check --user-data-dir="$d" --enable-logging=stderr --v=0 \
+              "file://$rig/turn-page.html#$2" > "$o/chrome-$1.log" 2>&1 || true
+            rm -rf "$d"
+            echo "== $1: $(grep -ciE 'turn|candidate|offer set|gathering' "$o/chrome-$1.log") page lines"
+          }
+          for k in 1 2 3; do
+            chrome "tls-$k" 'turns:turn.olc.test:5349?transport=tcp,turns:turn.olc.test:5350?transport=tcp'
+          done
+          chrome udp-rfc8489 'turn:turn.olc.test:3478?transport=udp'
+          chrome udp-classic 'turn:turn.olc.test:3479?transport=udp'
+          chrome tcp-rfc8489 'turn:turn.olc.test:3480?transport=tcp'
+          kill $srv || true
+          python3 -I "$rig/turn_capture.py" report "$o" | tee "$o/report.txt"
+          ls "$o"/hello-*.bin >/dev/null 2>&1 || { echo "no TLS hello was captured"; exit 1; }
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Chrome's TURN requests, $(cat out/turn/chrome-version.txt 2>/dev/null)"
+            echo '```'
+            cat out/turn/report.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-rtc-turn-capture
           path: out/
           retention-days: 7
