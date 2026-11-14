@@ -12,8 +12,9 @@ not yet run on a device.
 - `scripts/hev-pins.sh`, `scripts/build-hev-ios.sh`,
   `.github/workflows/hev-tunnel.yml`, `scripts/fetch-hev-ios.sh`: the
   framework is built once per pin on a macOS runner and published as
-  `HevSocks5Tunnel-ios.zip` at tag `hev-socks5-tunnel-<12hex>-b<N>`; every
-  other build downloads it, like Cores.
+  `HevSocks5Tunnel-ios.zip` at tag `hev-socks5-tunnel-<12hex>-b<N>`
+  (since 2026-11-14 `…-b<N>-l<8hex>`, the last part the digest of the lwIP
+  patch, below); every other build downloads it, like Cores.
 - Xcode: the PacketTunnel target links `-lhev-socks5-tunnel` from the
   xcframework slice (LIBRARY_SEARCH_PATHS per SDK) and imports the module
   from the slice's `Headers/HevSocks5Tunnel` (SWIFT_INCLUDE_PATHS per SDK);
@@ -26,6 +27,31 @@ not yet run on a device.
 - DNS on those paths: the tun advertises OpenDNS (208.67.222.222,
   208.67.220.220), reached through the SOCKS engine as UDP. 172.19.0.2 was
   an address only sing-box answered.
+
+## hev's memory (2026-11-14)
+
+What hev holds in the extension, cut on two sides; the arithmetic is in the
+comments of each file, and `scripts/test-ios-hev-config.sh`
+(HevTunnelConfigurationTests, in the ios-extension job) holds them together.
+
+- `HevTunnel.swift`, `misc`: `udp-copy-buffer-nums: 2`, so the 24,576-byte
+  task stack written is the one hev uses. Without it hev's ten 1,500-byte UDP
+  buffers put its floor at 35,480 and it raised the stack to that without a
+  word: 64 KiB mapped per session instead of 48. `max-session-count` 768 ->
+  256 (an LRU cap: at most 255 live, the least recently active ended).
+- `scripts/patches/hev-lwipopts-ios.patch`, applied by `build-hev-ios.sh`
+  (a `-D` cannot work: hev's lwipopts.h defines every option without
+  `#ifndef`): lwIP's static pools, all written at start, from 1,871,744 to
+  468,752 bytes (pcbs, segments and pbufs for 256 sessions; the unused
+  PBUF_POOL to lwIP's minimum), and TCP_WND = TCP_SND_BUF = 4 x MSS
+  (32,764) from 8 x MSS, which halves what a stalled upload holds per TCP
+  session (the window, in 9 KiB pbufs). The send buffer saves nothing: hev
+  writes a download without copying from its 4 KiB ring.
+- The tag carries the patch's digest, so the published framework changes with
+  it. Until the new tag is published (the `hev-socks5-tunnel` workflow,
+  dispatched from main with publish on), PR Checks builds it from the pin in
+  the ios-extension job, and a release build's fetch phase fails naming the
+  tag.
 
 ## What the user has to do
 

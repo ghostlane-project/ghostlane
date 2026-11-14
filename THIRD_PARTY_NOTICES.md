@@ -18,14 +18,17 @@ these carry obligations the MIT licence does not.
 | [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its sing-box rule-sets, bundled unmodified (`files/rules/refilter-*.srs`, pinned in `scripts/rule-sets.lock`). |
 
 Their sources are the upstream repositories above, at the versions pinned in
-`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Two components are modified,
-and both patches are published in `scripts/patches/`, as their licences require:
-sing-box carries `sing-box-reality-hello.patch` (since 2026-11-11: a Reality
-hello keeps its post-quantum key share and announces the version current Xray
-servers accept), applied to the pinned module by `scripts/patched-singbox.sh`
-for every platform's build, so the pinned upstream source plus that patch is
-the source of every sing-box we ship; Xray-core carries
-`xray-core-h2-window.patch`.
+`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Three components are
+modified, and every patch is published in `scripts/patches/` (sing-box's and
+Xray-core's as their licences require): sing-box carries
+`sing-box-reality-hello.patch` (since 2026-11-11: a Reality hello keeps its
+post-quantum key share and announces the version current Xray servers accept),
+applied to the pinned module by `scripts/patched-singbox.sh` for every
+platform's build, so the pinned upstream source plus that patch is the source
+of every sing-box we ship; Xray-core carries `xray-core-h2-window.patch`; and
+the iOS build of hev-socks5-tunnel carries `hev-lwipopts-ios.patch` (since
+2026-11-14: the sizes of its lwIP's static pools and TCP window, for the
+tunnel extension's memory), applied by `scripts/build-hev-ios.sh`.
 
 ## What ships inside the Linux CLI
 
