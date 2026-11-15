@@ -11,7 +11,10 @@
 #   - TrimTest twice, each in a process of its own (the burst, trim() and
 #     mallopt's purges, the core inside the app's process);
 #   - TrimProcessTest twice (the same, the core in a process of its own:
-#     olc-ffi-client in its control mode).
+#     olc-ffi-client in its control mode);
+#   - by LAB_RUNS only: CallSequenceTest again (calls1-9) and ControlTest
+#     (control1-9).
+# A run that fails keeps the system's tombstones (<name>.tombstones.txt).
 # The room's 127.0.0.1 becomes 10.0.2.2, the emulator's way to this host's
 # loopback; the origin and the echo are dialed by the server, on this host.
 # Each run's am output and logcat land in <out dir>; the RESULT and MEM lines
@@ -73,6 +76,8 @@ run() {
   } >> "$out/results.txt"
   echo "== $name: $verdict"
   if [ "$verdict" != passed ]; then
+    # A native crash's whole tombstone (every thread), as the system kept it.
+    adb shell dumpsys dropbox --print SYSTEM_TOMBSTONE > "$out/$name.tombstones.txt" 2>&1 || true
     grep -A12 'INSTRUMENTATION_STATUS: stack=' "$out/$name.am.txt" | head -40
     tail -20 "$out/$name.am.txt"
     grep -E ' (E|F)/(AndroidRuntime|DEBUG|libc|olcrtc|TestRunner)' "$out/$name.logcat.txt" | tail -40
@@ -98,11 +103,17 @@ rust() {
 
 : > "$out/results.txt"
 cat "$out/device.txt" >> "$out/results.txt"
-# LAB_RUNS picks the runs (the 16 KiB-page emulator runs rust and calls alone).
+# LAB_RUNS picks the runs. The 16 KiB-page emulator runs rust, then
+# CallSequenceTest three times (calls1-3) between three of ControlTest
+# (control1-3: the Kotlin side's readings and GC churn without the core), for
+# the SIGSEGV in ART's JIT code that its CallSequenceTest process died of once
+# (run 43681797712).
 for r in ${LAB_RUNS:-rust calls trim1 trim2 proc1 proc2}; do
   case "$r" in
     rust) rust ;;
     calls) run calls CallSequenceTest ;;
+    calls[0-9]) run "$r" CallSequenceTest ;;
+    control[0-9]) run "$r" ControlTest ;;
     trim1) run trim1 TrimTest -e run 1 ;;
     trim2) run trim2 TrimTest -e run 2 ;;
     proc1) run proc1 TrimProcessTest -e run 1 ;;

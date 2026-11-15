@@ -53,7 +53,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "68314fa4363e8096cdfd57a16b485db67112530b"
+  XRS_COMMIT: "638a0cb9e83deba9edb6c8f6d093377804f2b12d"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   # androidApp/build.gradle.kts ndkVersion (and the release workflow's).
@@ -214,12 +214,15 @@ jobs:
           ram-size: 4096M
           script: bash lab/olc-ffi/android/run-emulator-tests.sh out/emulator
 
-      - name: The relief tests and CallSequenceTest on the 16 KiB-page image
+      - name: The relief tests, CallSequenceTest and the control on the 16 KiB-page image
         if: ${{ !cancelled() && steps.t1wait.outcome == 'success' }}
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          LAB_RUNS: rust calls
+          # CallSequenceTest's process died once here of a SIGSEGV in ART's
+          # JIT code (run 43681797712): three of it, between three of the
+          # control without the core (ControlTest).
+          LAB_RUNS: rust calls1 control1 calls2 control2 calls3 control3
         with:
           api-level: ${{ env.EMULATOR_API }}
           arch: x86_64
