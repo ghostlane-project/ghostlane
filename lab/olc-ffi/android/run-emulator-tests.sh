@@ -49,8 +49,24 @@ done
   echo "allocator: $(adb shell getprop ro.malloc.impl | tr -d '\r') (empty = the build's default)"
 } | tee "$out/device.txt"
 
-adb install -r -t "$app" > "$out/install.txt" 2>&1 || { cat "$out/install.txt"; exit 1; }
-adb install -r -t "$test_apk" >> "$out/install.txt" 2>&1 || { cat "$out/install.txt"; exit 1; }
+# The package service can still be starting when the emulator reports a
+# boot (run 43686357448: "Failure calling service package: Broken pipe"):
+# each install is tried five times, 15 s apart, after the boot completes.
+install() {
+  local apk=$1 try
+  for try in 1 2 3 4 5; do
+    adb wait-for-device
+    timeout 120 adb shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+    if adb install -r -t "$apk" >> "$out/install.txt" 2>&1; then return 0; fi
+    echo "install of $(basename "$apk") failed (try $try)" >> "$out/install.txt"
+    sleep 15
+  done
+  cat "$out/install.txt"
+  return 1
+}
+: > "$out/install.txt"
+install "$app" || exit 1
+install "$test_apk" || exit 1
 adb logcat -G 16M > /dev/null 2>&1 || true
 
 rc=0
