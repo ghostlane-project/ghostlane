@@ -40,10 +40,10 @@ env:
   # The client: ghostlane-project/xray-rust, fetched by its hash. Moving the
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
-  XRS_COMMIT: "e123098551eeb7e9c77d7f6ab0364ce49a81a8dd"
+  XRS_COMMIT: "72a18cd3a34a4088c2f53aae8d83a9fa4c04973d"
   # What the probe of (c) must do at that commit: "fail" (rustls without
   # ALPS: the RED) or "ok".
-  PROBE_EXPECT: "fail"
+  PROBE_EXPECT: "ok"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: "0"
@@ -148,12 +148,47 @@ jobs:
           echo "server lines: $(wc -l < "$o/server.jsonl")"
           true
 
+      - name: xray-rust's offline ALPS test, GREEN and RED
+        working-directory: xrs
+        run: |
+          set -euo pipefail
+          o=$GITHUB_WORKSPACE/out
+          if [ ! -f olc/olc-net/tests/alps_fetch.rs ]; then
+            echo "RESULT offline-test absent at this commit" | tee "$o/offline.txt"
+            exit 0
+          fi
+          rm -f olc/olc-net/examples/alps_probe.rs
+          t="cargo test --locked -p olc-net --features alps-test-server --test alps_fetch"
+          timeout 1800 $t > "$o/offline-green.log" 2>&1 && green=ok || green=FAILED
+          tail -30 "$o/offline-green.log"
+          timeout 1800 cargo clippy --locked -p olc-net --features alps-test-server --all-targets \
+            -- -D warnings -W clippy::perf -W clippy::suspicious > "$o/offline-clippy.log" 2>&1 && clippy=ok || clippy=FAILED
+          tail -30 "$o/offline-clippy.log"
+          # RED: the same test with what it tests taken back to the commit's
+          # parent (shaped-rustls without ALPS, xray-transport before it).
+          parent_rev=$(git show HEAD^:Cargo.toml | sed -n 's/^rustls = { git = "https:\/\/github.com\/ghostlane-project\/shaped-rustls", rev = "\([0-9a-f]*\)" }$/\1/p')
+          rev=$(sed -n 's/^rustls = { git = "https:\/\/github.com\/ghostlane-project\/shaped-rustls", rev = "\([0-9a-f]*\)" }$/\1/p' Cargo.toml)
+          echo "rustls rev $rev, parent's $parent_rev"
+          [ -n "$parent_rev" ] && [ -n "$rev" ] && [ "$parent_rev" != "$rev" ]
+          git checkout -q HEAD^ -- Cargo.toml crates/xray-transport/src
+          sed -i "s/$rev/$parent_rev/g" Cargo.lock
+          git status --short | tee "$o/offline-red-tree.txt"
+          timeout 1800 $t > "$o/offline-red.log" 2>&1 && red=passed || red=failed
+          grep -E "^test |panicked|^test result" "$o/offline-red.log" | head -20
+          git checkout -q HEAD -- Cargo.toml Cargo.lock crates/xray-transport/src
+          {
+            echo "RESULT offline-test green $green"
+            echo "RESULT offline-test clippy $clippy"
+            echo "RESULT offline-test red (parent's rustls and xray-transport) $red"
+          } | tee "$o/offline.txt"
+          [ "$green" = ok ] && [ "$clippy" = ok ] && [ "$red" = failed ]
+
       - name: Compare
         run: |
           set -euo pipefail
           python3 lab/olc-alps/analyze.py out/server.jsonl out/compare.json > out/compare.md
           cat out/compare.md
-          grep -h '^RESULT' out/probe.log out/compare.md > out/results.txt || true
+          grep -h '^RESULT' out/probe.log out/compare.md out/offline.txt > out/results.txt || true
           echo "RESULT chrome $(cat out/chrome-version.txt)" >> out/results.txt
           ok=1
           if [ "$PROBE_EXPECT" = fail ]; then
