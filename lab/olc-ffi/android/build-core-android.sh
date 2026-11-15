@@ -18,8 +18,10 @@
 #     <lab>/src/main/kotlin.
 # The .so files land in <lab>/src/main/jniLibs/<abi>/ (both are the default
 # source directories, ignored by git); the readelf output and the stripped
-# copies in <lab>/core/. Lines starting BUILD,
-# ALIGN, SIZE and SIGNATURE are the job summary's.
+# copies in <lab>/core/, with ghostlane-runtime's unit tests for the
+# emulator (core/ghostlane-runtime-tests) and clippy's output for the
+# Android target. Lines starting BUILD, ALIGN, SIZE, DRIVER, TESTS, CLIPPY
+# and SIGNATURE are the job summary's.
 set -euo pipefail
 
 src="$(cd "${1:?usage: build-core-android.sh <xray-rust checkout> <lab dir>}" && pwd)"
@@ -82,6 +84,28 @@ done
 (cd "$src" && cargo build --locked --release -p olc-ffi --bin olc-ffi-client --target x86_64-linux-android)
 cp "$src/target/x86_64-linux-android/release/olc-ffi-client" "$out/x86_64/libolcffidriver.so"
 echo "DRIVER x86_64: olc-ffi-client $(wc -c < "$out/x86_64/libolcffidriver.so" | tr -d ' ') bytes, as lib/x86_64/libolcffidriver.so"
+
+# ghostlane-runtime's unit tests for the emulator (run-emulator-tests.sh
+# runs relief's there: the allocator's Android branch), as built for the
+# x86_64 target; the compiler's output in core/tests-build.log.
+(cd "$src" && cargo test --locked -p ghostlane-runtime --target x86_64-linux-android --no-run --message-format=json \
+  2> "$lab/core/tests-build.log") \
+  | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable' \
+  > "$lab/core/tests.txt"
+[ "$(wc -l < "$lab/core/tests.txt")" -eq 1 ] || { cat "$lab/core/tests.txt" "$lab/core/tests-build.log" >&2; exit 1; }
+cp "$(cat "$lab/core/tests.txt")" "$lab/core/ghostlane-runtime-tests"
+echo "TESTS x86_64: ghostlane-runtime's unit tests, $(wc -c < "$lab/core/ghostlane-runtime-tests" | tr -d ' ') bytes; warnings: $(grep -c '^warning' "$lab/core/tests-build.log" || true)"
+
+# Clippy as the fork runs it (-D warnings), for the Android target: the
+# host's clippy never sees the code under cfg(target_os = "android").
+if (cd "$src" && cargo clippy --locked -p ghostlane-runtime -p olc-ffi --target x86_64-linux-android --all-targets -- -D warnings) \
+  > "$lab/core/clippy-android.log" 2>&1; then
+  echo "CLIPPY x86_64-linux-android: ghostlane-runtime and olc-ffi, all targets, no warning"
+else
+  echo "CLIPPY x86_64-linux-android: warnings or errors"
+  grep -E '^(warning|error)' -A8 "$lab/core/clippy-android.log" | head -60
+  exit 1
+fi
 
 # The Kotlin bindings, from the x86_64 build's static archive.
 (cd "$src" && cargo build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)

@@ -4,6 +4,8 @@
 # Runs the lab's instrumented tests on the booted emulator, against the T1
 # host on this runner ($T1_CONFIG, written by zz_t1_host_test.go): installs
 # the lab app and its test APK, then
+#   - ghostlane-runtime's relief unit tests, natively (adb shell; the
+#     allocator's Android branch: footprint and trim);
 #   - CallSequenceTest once (the API, the callbacks, the SOCKS fetch, UDP
 #     ASSOCIATE, ten stop/starts, Go's error texts, memoryStats);
 #   - TrimTest twice, each in a process of its own (the burst, trim() and
@@ -77,11 +79,29 @@ run() {
   fi
 }
 
+# ghostlane-runtime's relief tests, natively on the emulator (adb's shell
+# runs what is pushed to /data/local/tmp).
+rust() {
+  local bin="$here/core/ghostlane-runtime-tests"
+  [ -f "$bin" ] || { echo "== rust: no $bin" >> "$out/results.txt"; rc=1; return; }
+  adb push "$bin" /data/local/tmp/ghostlane-runtime-tests > /dev/null
+  adb shell chmod 755 /data/local/tmp/ghostlane-runtime-tests
+  timeout 300 adb shell /data/local/tmp/ghostlane-runtime-tests relief --test-threads=1 --nocapture > "$out/rust.txt" 2>&1
+  local verdict=passed
+  grep -q '^test result: ok' "$out/rust.txt" || { verdict=FAILED; rc=1; }
+  {
+    echo "== rust (ghostlane-runtime relief, native): $verdict"
+    grep -E '^test |^test result|trim after|relief:|panicked|assert' "$out/rust.txt"
+  } >> "$out/results.txt"
+  echo "== rust: $verdict"
+}
+
 : > "$out/results.txt"
 cat "$out/device.txt" >> "$out/results.txt"
-# LAB_RUNS picks the runs (the 16 KiB-page emulator runs the calls alone).
-for r in ${LAB_RUNS:-calls trim1 trim2 proc1 proc2}; do
+# LAB_RUNS picks the runs (the 16 KiB-page emulator runs rust and calls alone).
+for r in ${LAB_RUNS:-rust calls trim1 trim2 proc1 proc2}; do
   case "$r" in
+    rust) rust ;;
     calls) run calls CallSequenceTest ;;
     trim1) run trim1 TrimTest -e run 1 ;;
     trim2) run trim2 TrimTest -e run 2 ;;

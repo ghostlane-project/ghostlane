@@ -25,7 +25,11 @@ name: Lab - olcRTC FFI on Android
 #     mallopt's purges, twice with the core in the app's process and twice
 #     with it in a process of its own (xray-rust's olc-ffi-client in its
 #     control mode, packaged as lib/x86_64/libolcffidriver.so);
-#   - CallSequenceTest runs once more on the 16 KiB-page emulator image.
+#   - ghostlane-runtime's unit tests run natively on the emulator first
+#     (relief's: the allocator's Android branch), and clippy runs for the
+#     Android target (the host's never sees that branch);
+#   - the relief tests and CallSequenceTest run once more on the 16 KiB-page
+#     emulator image.
 # Every RESULT/MEM line lands in the job summary; the logs in the artifact.
 #
 # Emulator only: no device, no store track, no live carrier room, no secret.
@@ -49,7 +53,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "41b98b0b3dbf45e51dfd1c0a96fdaf2ee1856086"
+  XRS_COMMIT: "0ddc2931770fb4b8d88c1c7732d174a8e4283feb"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   # androidApp/build.gradle.kts ndkVersion (and the release workflow's).
@@ -103,7 +107,7 @@ jobs:
       - name: Toolchains
         run: |
           set -euo pipefail
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-linux-android --target x86_64-linux-android
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target aarch64-linux-android --target x86_64-linux-android
           rustup default "$RUST_TOOLCHAIN"
           cargo --version; go version; java -version 2>&1 | head -1
           ls "$ANDROID_HOME/ndk"
@@ -138,11 +142,11 @@ jobs:
           set -uo pipefail
           bash lab/olc-ffi/android/build-core-android.sh xrs lab/olc-ffi/android > out/build-core.log 2>&1
           rc=$?
-          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|BINDINGS|SIGNATURE)|^error' out/build-core.log
+          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)|^error' out/build-core.log
           {
             echo '### The Rust core'
             echo '```'
-            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|BINDINGS|SIGNATURE)' out/build-core.log
+            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)' out/build-core.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           cp lab/olc-ffi/android/core/readelf-*.txt out/ 2> /dev/null
@@ -210,12 +214,12 @@ jobs:
           ram-size: 4096M
           script: bash lab/olc-ffi/android/run-emulator-tests.sh out/emulator
 
-      - name: CallSequenceTest on the 16 KiB-page image
+      - name: The relief tests and CallSequenceTest on the 16 KiB-page image
         if: ${{ !cancelled() && steps.t1wait.outcome == 'success' }}
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          LAB_RUNS: calls
+          LAB_RUNS: rust calls
         with:
           api-level: ${{ env.EMULATOR_API }}
           arch: x86_64
