@@ -54,7 +54,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-rtc-turns"
-  XRS_COMMIT: "b8d4145fc73d6a67f9791a0f217145331f1d4bde"
+  XRS_COMMIT: "38e2c5679c5c97c17d2fd554adde9524d626ecc2"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -192,6 +192,141 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: olc-turns-unit
+          path: out/
+          retention-days: 7
+
+  e2e:
+    name: TURN over TLS end to end (pion over TLS, relay-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Fetch the client
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out bin
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake >/dev/null
+          cargo --version; go version; cmake --version | head -1
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-turns-e2e-${{ env.XRS_COMMIT }}
+          restore-keys: olc-turns-e2e-
+
+      - name: Build the clients (test roots, shipped, test roots with the check broken)
+        working-directory: xrs
+        run: |
+          set -euo pipefail
+          o=$GITHUB_WORKSPACE/out; b=$GITHUB_WORKSPACE/bin
+          build() { # name features
+            cargo build --locked --release -p olc-client --features "$2" >> "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+            cp target/release/olc-client "$b/$1"
+          }
+          build olc-client-shipped "$BIN_FEATURES"
+          build olc-client-testroots "$BIN_FEATURES,olc-client/turns-test-roots"
+          # The shipped binary has no test-root reader: its strings lack the variable.
+          echo "RESULT strings: shipped $(strings -a "$b/olc-client-shipped" | grep -c OLC_TURNS_TEST_ROOT) testroots $(strings -a "$b/olc-client-testroots" | grep -c OLC_TURNS_TEST_ROOT) mentions of OLC_TURNS_TEST_ROOT" | tee "$o/result-strings.txt"
+          [ "$(strings -a "$b/olc-client-shipped" | grep -c OLC_TURNS_TEST_ROOT)" = 0 ]
+          # The check broken: every chain is taken.
+          perl -0pi -e 's/let verdict = verify_server_chain\([^;]*;/let verdict: Result<(), webpki::Error> = Ok(());/' olc/olc-rtc/src/turns.rs
+          git diff --quiet -- olc/olc-rtc/src/turns.rs && { echo "the mutation did not apply"; exit 1; }
+          build olc-client-testroots-broken "$BIN_FEATURES,olc-client/turns-test-roots"
+          git checkout -q -- olc/olc-rtc/src/turns.rs
+          ls -l "$b"
+
+      - name: End to end, the test-roots client (the relay comes up, the bad certificates are refused)
+        run: |
+          set +e -uo pipefail
+          bash xrs/olc/interop/fakeroom.sh "$PWD/bin/olc-client-testroots" turns-testroots > out/e2e-testroots.log 2>&1
+          rc=$?
+          grep -E '^(--- |=== |ok |FAIL|PASS)|hello:|TURN over TLS|TURN:|closed-relay' out/e2e-testroots.log | grep -v '^    --- ' | head -60
+          [ $rc -eq 0 ] || tail -80 out/e2e-testroots.log
+          ok=1
+          for t in TestRustTurnsJoinsThroughTurnOverTLS TestRustTurnsJoinsThroughTurnOverTLSByAddress TestRustTurnsRefusesACertificateNoTrustedRootSigned \
+            TestRustTurnsRefusesACertificateForAnotherName TestRustTurnsRefusesACertificateForAnotherAddress; do
+            grep -q -e "^--- PASS: $t " out/e2e-testroots.log || { echo "$t did not pass"; ok=0; }
+          done
+          echo "RESULT e2e-testroots $([ $ok = 1 ] && [ $rc = 0 ] && echo ok || echo FAILED) (rc=$rc)" | tee out/result-e2e-testroots.txt
+          [ $ok = 1 ] && [ $rc = 0 ]
+
+      - name: End to end, the shipped client (it refuses a server only the test root signed)
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          bash xrs/olc/interop/fakeroom.sh "$PWD/bin/olc-client-shipped" turns-shipped > out/e2e-shipped.log 2>&1
+          rc=$?
+          grep -E '^(--- |ok |FAIL|PASS)' out/e2e-shipped.log | grep -v '^    --- ' | head -30
+          [ $rc -eq 0 ] || tail -60 out/e2e-shipped.log
+          ok=1
+          for t in TestRustTurnsRefusesACertificateNoTrustedRootSigned TestRustTurnsRefusesACertificateForAnotherName \
+            TestRustTurnsRefusesACertificateForAnotherAddress TestRustTurnsShippedBuildIgnoresTheTestRoot; do
+            grep -q -e "^--- PASS: $t " out/e2e-shipped.log || { echo "$t did not pass"; ok=0; }
+          done
+          echo "RESULT e2e-shipped $([ $ok = 1 ] && [ $rc = 0 ] && echo ok || echo FAILED) (rc=$rc)" | tee out/result-e2e-shipped.txt
+          [ $ok = 1 ] && [ $rc = 0 ]
+
+      - name: RED, the certificate check broken (the refusals must fail)
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          bash xrs/olc/interop/fakeroom.sh "$PWD/bin/olc-client-testroots-broken" turns-testroots > out/e2e-red.log 2>&1
+          rc=$?
+          grep -E '^(--- |ok |FAIL|PASS)' out/e2e-red.log | grep -v '^    --- ' | head -30
+          ok=1
+          [ $rc -ne 0 ] || { echo "the tests passed with the check broken"; ok=0; }
+          for t in TestRustTurnsRefusesACertificateNoTrustedRootSigned TestRustTurnsRefusesACertificateForAnotherName \
+            TestRustTurnsRefusesACertificateForAnotherAddress; do
+            grep -q -e "^--- FAIL: $t " out/e2e-red.log || { echo "$t did not fail"; ok=0; }
+          done
+          echo "RESULT e2e-red $([ $ok = 1 ] && echo ok || echo MISSING) (rc=$rc)" | tee out/result-e2e-red.txt
+          [ $ok = 1 ]
+
+      - name: The relay-only tests over UDP and TCP, and the rest of the rust set, as before
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          bash xrs/olc/interop/fakeroom.sh "$PWD/bin/olc-client-shipped" rust > out/e2e-rust.log 2>&1
+          rc=$?
+          grep -E '^(--- |ok |FAIL|PASS)' out/e2e-rust.log | grep -v '^    --- ' | head -30
+          [ $rc -eq 0 ] || tail -60 out/e2e-rust.log
+          echo "RESULT e2e-rust rc=$rc" | tee out/result-e2e-rust.txt
+          exit $rc
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## TURN over TLS, end to end'
+            echo '```'
+            cat out/result-*.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-turns-e2e
           path: out/
           retention-days: 7
 
