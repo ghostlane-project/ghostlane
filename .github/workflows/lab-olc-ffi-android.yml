@@ -20,8 +20,11 @@ name: Lab - olcRTC FFI on Android
 #     OlcrtcRuntime as OlcboxVpnService drives the Go engine today (setRoom
 #     only, the protector, the log writer, a fetch through the SOCKS port
 #     with the login, UDP ASSOCIATE, ten stop/starts, Go's error texts,
-#     memoryStats) on an x86_64 emulator, and measure PSS after a burst of
-#     256 downloads, after trim() and after mallopt's purges, twice;
+#     memoryStats) on an x86_64 emulator, and measure PSS and
+#     Private_Dirty after a burst of 256 downloads, after trim() and after
+#     mallopt's purges, twice with the core in the app's process and twice
+#     with it in a process of its own (xray-rust's olc-ffi-client in its
+#     control mode, packaged as lib/x86_64/libolcffidriver.so);
 #   - CallSequenceTest runs once more on the 16 KiB-page emulator image.
 # Every RESULT/MEM line lands in the job summary; the logs in the artifact.
 #
@@ -46,7 +49,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "b56eb891c9a7badbd82c29804b8e84cb18296982"
+  XRS_COMMIT: "41b98b0b3dbf45e51dfd1c0a96fdaf2ee1856086"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   # androidApp/build.gradle.kts ndkVersion (and the release workflow's).
@@ -135,11 +138,11 @@ jobs:
           set -uo pipefail
           bash lab/olc-ffi/android/build-core-android.sh xrs lab/olc-ffi/android > out/build-core.log 2>&1
           rc=$?
-          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|BINDINGS|SIGNATURE)|^error' out/build-core.log
+          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|BINDINGS|SIGNATURE)|^error' out/build-core.log
           {
             echo '### The Rust core'
             echo '```'
-            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|BINDINGS|SIGNATURE)' out/build-core.log
+            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|BINDINGS|SIGNATURE)' out/build-core.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           cp lab/olc-ffi/android/core/readelf-*.txt out/ 2> /dev/null
@@ -169,6 +172,7 @@ jobs:
           unzip -l "$app" | grep 'lib/' | tee out/apk-libs.txt
           grep -q 'lib/x86_64/libghostlane_core.so' out/apk-libs.txt
           grep -q 'lib/x86_64/libjnidispatch.so' out/apk-libs.txt
+          grep -q 'lib/x86_64/libolcffidriver.so' out/apk-libs.txt
           echo "APK $(basename "$app"): $(wc -c < "$app") bytes" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for the T1 host
@@ -201,6 +205,9 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-boot-timeout: 900
+          # A phone's 4 GB: at the default 2 GB the 16 KiB-page image's
+          # low-memory killer took the test process (run 43678263588).
+          ram-size: 4096M
           script: bash lab/olc-ffi/android/run-emulator-tests.sh out/emulator
 
       - name: CallSequenceTest on the 16 KiB-page image
@@ -215,6 +222,9 @@ jobs:
           target: google_apis_ps16k
           disable-animations: true
           emulator-boot-timeout: 900
+          # A phone's 4 GB: at the default 2 GB the 16 KiB-page image's
+          # low-memory killer took the test process (run 43678263588).
+          ram-size: 4096M
           script: bash lab/olc-ffi/android/run-emulator-tests.sh out/emulator-16k
 
       - name: Summary

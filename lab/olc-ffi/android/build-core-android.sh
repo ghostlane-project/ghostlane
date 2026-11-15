@@ -75,6 +75,14 @@ for pair in aarch64-linux-android:arm64-v8a x86_64-linux-android:x86_64; do
   "$bin/llvm-readelf" -dW "$out/$abi/libghostlane_core.so" | awk '/NEEDED/ { print "NEEDED '"$abi"' " $NF }'
 done
 
+# The core in a process of its own (TrimProcessTest): olc-ffi's
+# olc-ffi-client, the release profile as it is, for the emulator's ABI,
+# packaged as a library so the app runs it from its library directory, as
+# it runs its other cores. The x86_64 linker and compilers are still set.
+(cd "$src" && cargo build --locked --release -p olc-ffi --bin olc-ffi-client --target x86_64-linux-android)
+cp "$src/target/x86_64-linux-android/release/olc-ffi-client" "$out/x86_64/libolcffidriver.so"
+echo "DRIVER x86_64: olc-ffi-client $(wc -c < "$out/x86_64/libolcffidriver.so" | tr -d ' ') bytes, as lib/x86_64/libolcffidriver.so"
+
 # The Kotlin bindings, from the x86_64 build's static archive.
 (cd "$src" && cargo build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)
 gen="$lab/src/main/kotlin"

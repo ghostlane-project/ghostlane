@@ -134,9 +134,12 @@ class CallSequenceTest {
             assertEquals("a phone's byte budget", 3_000_000, s.getJSONObject("bytes").getInt("cap"))
             say("RESULT memory_stats: ${org.ghostlane.olcrtc.memoryStats()}")
 
-            // UDP as the service's hev asks for it: UDP ASSOCIATE, both ways.
+            // UDP as the service's hev asks for it: UDP ASSOCIATE, both ways,
+            // up to the wire's cap: 1,200 bytes of payload (udpwire's
+            // MaxPayloadSize, Go's and Rust's), one over it dropped, as Go
+            // drops it.
             val dst = t1.echoIp.ifEmpty { "127.0.0.1" }
-            for (size in listOf(32, 1400)) {
+            for (size in listOf(32, 1200)) {
                 val payload = ByteArray(size) { (it * 7 + size).toByte() }
                 try {
                     val ms = udpAssociateEcho(port, dst, t1.echoPort, payload)
@@ -146,6 +149,9 @@ class CallSequenceTest {
                     fail("UDP ASSOCIATE, $size bytes: $e")
                 }
             }
+            val over = runCatching { udpAssociateEcho(port, dst, t1.echoPort, ByteArray(1201) { 1 }, tries = 3) }
+            assertTrue("1,201 bytes are over the wire's cap: ${over.getOrNull()} ms", over.isFailure)
+            say("RESULT udp associate: 1201 bytes dropped (the wire's 1,200-byte cap)")
             mem("after-udp")
 
             // handleRtcLine's failure marks: none while the line was healthy.
@@ -186,6 +192,7 @@ class CallSequenceTest {
             mem("after-trim")
             say("RESULT trim gave back $given bytes")
         } finally {
+            runCatching { if (rt.isRunning()) rt.stop(5_000) }
             setLogWriter(null)
             rt.close()
         }

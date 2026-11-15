@@ -276,10 +276,10 @@ private fun readResponse(input: InputStream): Pair<String, Long> {
 /**
  * UDP ASSOCIATE, as hev's `udp: 'udp'` (HevTunnelConfig, the service's
  * setting) asks: the association on a TCP connection with the login, then
- * `payload` to `dst`:`dport` through the relay, both ways; the milliseconds
- * the first echo took.
+ * `payload` to `dst`:`dport` through the relay, both ways, sent once a
+ * second up to `tries` times; the milliseconds the first echo took.
  */
-fun udpAssociateEcho(port: Int, dst: String, dport: Int, payload: ByteArray): Long {
+fun udpAssociateEcho(port: Int, dst: String, dport: Int, payload: ByteArray, tries: Int = 15): Long {
     return open(port).use { s ->
         val i = greet(s, USER, PASS)
         s.getOutputStream().apply {
@@ -300,7 +300,7 @@ fun udpAssociateEcho(port: Int, dst: String, dport: Int, payload: ByteArray): Lo
         DatagramSocket().use { d ->
             d.soTimeout = 1_000
             val t0 = System.nanoTime()
-            repeat(15) {
+            repeat(tries) {
                 d.send(DatagramPacket(packet, packet.size, InetSocketAddress(relayAddr, relayPort)))
                 val buf = ByteArray(4096)
                 val r = DatagramPacket(buf, buf.size)
@@ -319,7 +319,7 @@ fun udpAssociateEcho(port: Int, dst: String, dport: Int, payload: ByteArray): Lo
                     return (System.nanoTime() - t0) / 1_000_000
                 }
             }
-            throw IOException("no echo within 15 s")
+            throw IOException("no echo within $tries s")
         }
     }
 }
@@ -343,60 +343,84 @@ val libc: LibC by lazy { Native.load("c", LibC::class.java) }
 const val M_PURGE = -101
 const val M_PURGE_ALL = -104
 
-/** The process's memory in kB: smaps_rollup's Rss, Pss and Pss_Anon, and
- * the Rss and Pss of the native allocator's own mappings (Scudo's are
- * named `[anon:scudo:...]`), with mallinfo's view (Debug's native heap). */
+/**
+ * A process's memory in kB, from `/proc/<proc>/smaps_rollup` (Rss, Pss,
+ * Pss_Anon, and Private_Dirty: the pages only this process holds, which
+ * other processes coming and going do not move) and `/proc/<proc>/smaps`
+ * for the native allocator's own mappings (Scudo's are named
+ * `[anon:scudo:...]`); for this process, mallinfo's view too (Debug's
+ * native heap).
+ */
 data class Mem(
     val rss: Long,
     val pss: Long,
     val pssAnon: Long,
+    val privDirty: Long,
     val allocRss: Long,
     val allocPss: Long,
+    val allocPriv: Long,
     val allocMaps: Int,
     val nativeAllocated: Long,
     val nativeSize: Long,
 )
 
-fun readMem(): Mem {
+/** A line's fields split on blanks, without a regex: Android's
+ * java.util.regex is ICU's, in native memory, and a pattern per line of
+ * smaps would move the very heap being measured. */
+private fun fields(line: String): List<String> = line.split(' ', '\t').filter { it.isNotEmpty() }
+
+fun readMem(proc: String = "self"): Mem {
     val rollup = mutableMapOf<String, Long>()
-    File("/proc/self/smaps_rollup").forEachLine { line ->
-        val parts = line.trim().split(Regex("\\s+"))
+    File("/proc/$proc/smaps_rollup").forEachLine { line ->
+        val parts = fields(line)
         if (parts.size >= 2 && parts[0].endsWith(":")) parts[1].toLongOrNull()?.let { rollup[parts[0].dropLast(1)] = it }
     }
     var allocRss = 0L
     var allocPss = 0L
+    var allocPriv = 0L
     var maps = 0
     var inAlloc = false
-    val header = Regex("^[0-9a-f]+-[0-9a-f]+ .*")
-    File("/proc/self/smaps").forEachLine { line ->
-        if (header.matches(line)) {
+    File("/proc/$proc/smaps").forEachLine { line ->
+        val first = line.substringBefore(' ')
+        if (first.contains('-') && !first.endsWith(':')) {
+            // A mapping's header: "<start>-<end> <perms> ... [anon:scudo:primary]".
             inAlloc = line.contains("[anon:scudo:") || line.contains("[anon:libc_malloc]")
             if (inAlloc) maps++
         } else if (inAlloc) {
-            val parts = line.trim().split(Regex("\\s+"))
-            when (parts[0]) {
-                "Rss:" -> allocRss += parts[1].toLong()
-                "Pss:" -> allocPss += parts[1].toLong()
-            }
+            val parts = fields(line)
+            val kb = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+            if (first == "Rss:") allocRss += kb
+            if (first == "Pss:") allocPss += kb
+            if (first == "Private_Dirty:") allocPriv += kb
         }
     }
+    val self = proc == "self"
     return Mem(
         rss = rollup["Rss"] ?: -1, pss = rollup["Pss"] ?: -1, pssAnon = rollup["Pss_Anon"] ?: -1,
-        allocRss = allocRss, allocPss = allocPss, allocMaps = maps,
-        nativeAllocated = Debug.getNativeHeapAllocatedSize() / 1024, nativeSize = Debug.getNativeHeapSize() / 1024,
+        privDirty = rollup["Private_Dirty"] ?: -1,
+        allocRss = allocRss, allocPss = allocPss, allocPriv = allocPriv, allocMaps = maps,
+        nativeAllocated = if (self) Debug.getNativeHeapAllocatedSize() / 1024 else -1,
+        nativeSize = if (self) Debug.getNativeHeapSize() / 1024 else -1,
     )
+}
+
+/** One MEM line: `m`, and the engine's heap and runtime from `s` (a
+ * memory_stats object, this process's when null). */
+fun memLine(label: String, m: Mem, s: JSONObject?): String {
+    val heap = s?.optJSONObject("heap")
+    val rt = s?.optJSONObject("rt")
+    return "MEM $label pss=${m.pss}kB rss=${m.rss}kB pss_anon=${m.pssAnon}kB priv_dirty=${m.privDirty}kB " +
+        "alloc_pss=${m.allocPss}kB alloc_rss=${m.allocRss}kB alloc_priv=${m.allocPriv}kB alloc_maps=${m.allocMaps} " +
+        "mallinfo_alloc=${m.nativeAllocated}kB native_heap=${m.nativeSize}kB heap_live=${heap?.opt("live")} " +
+        "heap_peak=${heap?.opt("peak")} rt_threads=${rt?.opt("threads")} rt_tasks=${rt?.opt("tasks")}"
 }
 
 fun mem(label: String): Mem {
     val m = readMem()
-    val s = runCatching { stats() }.getOrNull()
-    val heap = s?.optJSONObject("heap")
-    val rt = s?.optJSONObject("rt")
-    say(
-        "MEM $label pss=${m.pss}kB rss=${m.rss}kB pss_anon=${m.pssAnon}kB alloc_pss=${m.allocPss}kB " +
-            "alloc_rss=${m.allocRss}kB alloc_maps=${m.allocMaps} mallinfo_alloc=${m.nativeAllocated}kB " +
-            "native_heap=${m.nativeSize}kB heap_live=${heap?.opt("live")} heap_peak=${heap?.opt("peak")} " +
-            "rt_threads=${rt?.opt("threads")} rt_tasks=${rt?.opt("tasks")}"
-    )
+    say(memLine(label, m, runCatching { stats() }.getOrNull()))
     return m
 }
+
+/** What moved from `a` to `b`, in kB. */
+fun delta(a: Mem, b: Mem): String =
+    "pss ${b.pss - a.pss}, priv_dirty ${b.privDirty - a.privDirty}, alloc_priv ${b.allocPriv - a.allocPriv}, rss ${b.rss - a.rss}"

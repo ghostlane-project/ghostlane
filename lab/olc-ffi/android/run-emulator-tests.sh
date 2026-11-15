@@ -7,7 +7,9 @@
 #   - CallSequenceTest once (the API, the callbacks, the SOCKS fetch, UDP
 #     ASSOCIATE, ten stop/starts, Go's error texts, memoryStats);
 #   - TrimTest twice, each in a process of its own (the burst, trim() and
-#     mallopt's purges).
+#     mallopt's purges, the core inside the app's process);
+#   - TrimProcessTest twice (the same, the core in a process of its own:
+#     olc-ffi-client in its control mode).
 # The room's 127.0.0.1 becomes 10.0.2.2, the emulator's way to this host's
 # loopback; the origin and the echo are dialed by the server, on this host.
 # Each run's am output and logcat land in <out dir>; the RESULT and MEM lines
@@ -78,11 +80,13 @@ run() {
 : > "$out/results.txt"
 cat "$out/device.txt" >> "$out/results.txt"
 # LAB_RUNS picks the runs (the 16 KiB-page emulator runs the calls alone).
-for r in ${LAB_RUNS:-calls trim1 trim2}; do
+for r in ${LAB_RUNS:-calls trim1 trim2 proc1 proc2}; do
   case "$r" in
     calls) run calls CallSequenceTest ;;
     trim1) run trim1 TrimTest -e run 1 ;;
     trim2) run trim2 TrimTest -e run 2 ;;
+    proc1) run proc1 TrimProcessTest -e run 1 ;;
+    proc2) run proc2 TrimProcessTest -e run 2 ;;
     *) echo "unknown run $r" >&2; rc=1 ;;
   esac
 done
