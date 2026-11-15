@@ -1,0 +1,156 @@
+name: Lab - olcRTC FFI footprint
+
+# A measurement, not a check: the host-process footprint harness of the
+# olcRTC client port to Rust (plan §9.2). On this macOS runner, against the
+# T1 host (the interop-pipe hub, the origin, a UDP echo and the pinned Go
+# server; no carrier, no live room), two clients run in turn, each as a
+# process of its own, and only that process is sampled:
+#   - rust: fp-host (lab/olc-ffi/footprint/host/main.swift), a plain macOS
+#     command-line process, not XCTest, with ghostlane-core linked in at the
+#     xray-rust commit pinned below, built with the workspace's release
+#     profile as it is (codegen-units 1, lto thin) and the phone's runtime
+#     profile (lab/olc-ffi/footprint/build-host.sh);
+#   - go: the engine's olcrtc binary at its pin in mode cnc, built as the
+#     iPhone's framework is (-tags olcrtc_lean, -ldflags "-s -w"; plus
+#     olcrtc_interop for the pipe), GOMEMLIMIT=40MiB as the extension sets.
+# Setup f for both: the system allocator with MallocLargeCache=0. The driver
+# (lab/olc-ffi/footprint/footprint.py) samples proc_pid_rusage at 10 Hz
+# through idle, 32 downloads, 32 uploads, 64 DNS queries twice and 256
+# downloads, plus stop/starts and trim() for rust, two runs each. The rows
+# land in the job summary; the samples, ticks and logs in the artifact.
+#
+# Runs on a push to lab/olc-ffi-footprint or by hand, never on main, never on
+# a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
+# has no filter, starts on the same push; its scope job decides what it runs.)
+on:
+  push:
+    branches:
+      - lab/olc-ffi-footprint
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-ffi-footprint
+  cancel-in-progress: true
+
+env:
+  # ghostlane-project/xray-rust gl/olc-ffi, fetched by its hash. Moving the
+  # pin is a change to this file (and so a run).
+  XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
+  XRS_REF: "gl/olc-ffi"
+  XRS_COMMIT: "a4917347288ee3808c4284659dea7dfa364d3550"
+  GO_VERSION: "1.26.5"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  footprint:
+    name: Host-process footprint on macOS (setup f)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch xray-rust
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='xray-rust %H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchains
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-apple-darwin
+          rustup default "$RUST_TOOLCHAIN"
+          cargo --version; go version; xcrun swiftc --version; sw_vers; sysctl -n hw.ncpu hw.memsize
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-ffi-fp-darwin-${{ env.XRS_COMMIT }}
+          restore-keys: olc-ffi-fp-darwin-
+
+      - name: The T1 host (hub, origin, UDP echo, the pinned server) and the Go baseline
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          echo "T1_CONFIG=$RUNNER_TEMP/olc-t1.json" >> "$GITHUB_ENV"
+          # The engine at its pin plus the overlay (olc/interop/lib.sh).
+          ( . xrs/olc/interop/lib.sh && olc_prepare "$OLC_WORK/engine" && echo "$OLC_WORK/engine" > "$RUNNER_TEMP/engine-dir" )
+          engine=$(cat "$RUNNER_TEMP/engine-dir")
+          cd "$engine"
+          # /big is 4 MiB: the burst's downloads.
+          OLC_T1_HOST_OUT="$RUNNER_TEMP/olc-t1.json" OLC_T1_HOST_FOR=105m GOFLAGS=-mod=readonly \
+            nohup go test -count=1 -timeout 115m -tags olcrtc_interop ./internal/gate -run '^TestT1Host$' -v \
+              -olcrtc.gate-target=interop -olcrtc.gate-big-mb=4 > "$GITHUB_WORKSPACE/out/t1-host.log" 2>&1 &
+          echo "T1 host starting (pid $!); it builds the server first"
+          # The baseline client: cmd/olcrtc as scripts/build-cores-ios.sh
+          # builds the engine for the iPhone, plus the pipe engine.
+          CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -trimpath -tags olcrtc_lean,olcrtc_interop \
+            -ldflags "-s -w" -o "$RUNNER_TEMP/olcrtc-cnc" ./cmd/olcrtc
+          echo "BUILD olcrtc (go, cnc): $(wc -c < "$RUNNER_TEMP/olcrtc-cnc" | tr -d ' ') bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: fp-host (ghostlane-core, release profile)
+        run: |
+          set -euo pipefail
+          bash lab/olc-ffi/footprint/build-host.sh xrs lab/olc-ffi/footprint/build 2>&1 | tee out/build-host.log | grep -E '^(BUILD|error)|Finished|warning: unused' || true
+          test -x lab/olc-ffi/footprint/build/fp-host
+          grep -h '^BUILD' out/build-host.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Wait for the T1 host
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 300); do
+            [ -s "$T1_CONFIG" ] && break
+            if ! pgrep -f 'TestT1Host' > /dev/null; then echo "the T1 host ended:"; tail -40 out/t1-host.log; exit 1; fi
+            sleep 2
+          done
+          [ -s "$T1_CONFIG" ] || { echo "no T1 host within 10 min"; tail -40 out/t1-host.log; exit 1; }
+          cat "$T1_CONFIG"; echo
+
+      - name: The footprint rows
+        run: |
+          set +e -uo pipefail
+          # 256 downloads at once need more than macOS's default 256 files.
+          ulimit -n 8192
+          python3 -I lab/olc-ffi/footprint/footprint.py run --t1 "$T1_CONFIG" \
+            --rust lab/olc-ffi/footprint/build/fp-host --go "$RUNNER_TEMP/olcrtc-cnc" --runs 2 --out out/fp \
+            > out/footprint.log 2>&1
+          rc=$?
+          tail -60 out/footprint.log
+          [ -f out/fp/rows.md ] && cat out/fp/rows.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Stop the T1 host
+        if: always()
+        run: |
+          set +e
+          [ -n "${T1_CONFIG:-}" ] && touch "$T1_CONFIG.stop"
+          for _ in $(seq 1 20); do pgrep -f 'TestT1Host' > /dev/null || break; sleep 1; done
+          pkill -f 'TestT1Host'
+          [ -f "$T1_CONFIG.server.log" ] && cp "$T1_CONFIG.server.log" out/server.log
+          tail -20 out/t1-host.log
+          [ -f out/server.log ] && tail -30 out/server.log
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: olc-ffi-footprint
+          path: out/
+          retention-days: 14
