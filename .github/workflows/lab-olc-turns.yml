@@ -1,0 +1,356 @@
+name: Lab - olcRTC client, TURN over TLS (turns:)
+
+# A copy of lab-olc-rtc.yml for the TURN over TLS work (R4 item 1): its own
+# name, branch and concurrency group, so it never cancels the main lab's runs.
+# The job "turns" is the quick loop (the turns:/tls_boring tests, clippy, the
+# RED mutations); "linux" is the full one, run by hand or by a commit message
+# holding [full].
+#
+# A measurement, not a check: milestone M4 of the olcRTC client port to Rust.
+# The build box has no cmake or libclang, so the client's `boring` feature
+# (olc_rtc::dtls_boring: BoringSSL configured as libwebrtc configures it, so
+# the DTLS ClientHello and certificate are Chrome's) is built and tested here,
+# at the xray-rust commit pinned below:
+#   - the olc crates' tests with the feature on: the hello field by field
+#     against Chrome 157's, the extension permutation, the certificate, the
+#     cap on data before the handshake, and every peer-connection test of
+#     olc-rtc and olc-salutejazz over BoringSSL; clippy;
+#   - the same tests with the profiles broken (no permutation, no ML-KEM
+#     group), which must fail: the tests can tell; the same for the TLS
+#     profile of TURN over TLS (olc_rtc::tls_boring, its hello against the
+#     turn-capture job's Chrome 157 hello);
+#   - a release build of olc-client with the feature, run through the olcRTC
+#     engine's fake SaluteJazz SFU (pion) against the Go engine at the exits'
+#     pin (olc/interop/fakeroom.sh): the gate's S0-S5 beside the Go client,
+#     the relay-only gate, and the TestRust* set with the client's log (its
+#     DTLS line names what BoringSSL negotiated with pion); then the gate
+#     again with the same client on str0m's own DTLS, for the memory.
+# Every RESULT line, the gate's cells and the memory lines land in the job
+# summary and the artifacts.
+#
+# A second job (turn-capture) records, on loopback only, what Chrome stable
+# sends a TURN server: the TLS ClientHello of a turns: allocation and the
+# Allocate requests answering an RFC 8489 challenge and a classic one.
+#
+# Runs on a push to lab/olc-rtc or by hand, never on main, never on a pull
+# request, no schedule. It reads no secret and contacts no carrier. (PR
+# Checks, whose `push:` has no filter, starts on the same push; its scope job
+# decides what it runs.)
+on:
+  push:
+    branches:
+      - lab/olc-turns
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-turns
+  cancel-in-progress: true
+
+env:
+  # The client: ghostlane-project/xray-rust, fetched by its hash. Moving the
+  # pin is a change to this file (and so a run).
+  XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
+  XRS_REF: "gl/olc-rtc-turns"
+  XRS_COMMIT: "37c79d624ee22fe06bcd3464ad97eaaa81de58d8"
+  GO_VERSION: "1.26.5"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  # The features of the shipped client, with BoringSSL's DTLS.
+  TEST_FEATURES: "olc-client/boring,olc-client/shaped-tls"
+  BIN_FEATURES: "olc-client/boring,olc-client/shaped-tls,olc-client/heap-stats"
+
+jobs:
+  turns:
+    name: TURN over TLS (unit tests, clippy, RED)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Fetch the client
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake >/dev/null
+          (cd xrs && cargo --version); cmake --version | head -1; openssl version
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-turns-unit-${{ env.XRS_COMMIT }}
+          restore-keys: olc-turns-unit-
+
+      - name: Tests (olc-rtc with BoringSSL)
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          timeout 40m cargo test --locked --no-fail-fast -p olc-rtc --features boring --lib > "$o/unit.log" 2>&1
+          rc=$?
+          grep -E '^test |test result|^error|^warning|panicked|TURNS-' "$o/unit.log" | head -300
+          [ $rc -eq 0 ] || tail -120 "$o/unit.log"
+          echo "RESULT unit rc=$rc $(grep -c '^test .* ok$' "$o/unit.log") ok, $(grep -c '^test .* FAILED$' "$o/unit.log") failed, turns: $(grep -c '^test turns::tests::.* ok$' "$o/unit.log") ok, turns_verify: $(grep -c '^test turns_verify::tests::.* ok$' "$o/unit.log") ok, tls_boring: $(grep -c '^test tls_boring::tests::.* ok$' "$o/unit.log") ok" | tee "$o/result-unit.txt"
+          exit $rc
+
+      - name: Clippy
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          cargo clippy --locked -p olc-rtc -p olc-salutejazz -p olc-client --tests \
+            --features "$BIN_FEATURES,olc-client/turns-test-roots" -- -D warnings > "$o/clippy.log" 2>&1
+          rc=$?
+          grep -E '^(warning|error)' -A6 "$o/clippy.log" | head -150
+          echo "RESULT clippy rc=$rc" | tee "$o/result-clippy.txt"
+          exit $rc
+
+      - name: The turns tests fail on a broken client
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          mutate() { # name file perl-expression expected-test...
+            local name=$1 f=$2 expr=$3; shift 3
+            perl -0pi -e "$expr" "$f"
+            if git diff --quiet -- "$f"; then echo "RESULT red-$name NOT APPLIED"; return 1; fi
+            timeout 25m cargo test --locked -p olc-rtc --features boring --lib -- turns tls_boring > "$o/red-$name.log" 2>&1
+            local rc=$?
+            git checkout -q -- "$f"
+            local ok=1
+            [ $rc -ne 0 ] || { echo "red-$name: the tests passed on the broken client"; ok=0; }
+            for t in "$@"; do
+              grep -q "^test $t \.\.\. FAILED$" "$o/red-$name.log" || { echo "red-$name: $t did not fail"; ok=0; }
+            done
+            grep -E '^test .* FAILED$' "$o/red-$name.log" | head -12
+            echo "RESULT red-$name $([ $ok = 1 ] && echo ok || echo MISSING) (rc=$rc)" | tee "$o/result-red-$name.txt"
+            [ $ok = 1 ]
+          }
+          all=0
+          # The certificate check accepts everything.
+          mutate accept-all olc/olc-rtc/src/turns.rs 's/let verdict = verify_server_chain\([^;]*;/let verdict: Result<(), webpki::Error> = Ok(());/' \
+            turns::tests::an_untrusted_certificate_ends_that_relay_only turns::tests::a_certificate_for_another_name_ends_the_relay \
+            turns::tests::an_address_literal_sends_no_sni_and_is_checked_as_an_address || all=1
+          # The name is not checked (only the chain).
+          mutate no-name olc/olc-rtc/src/turns_verify.rs 's/ee\.verify_is_valid_for_subject_name\(name\)/Ok(())/; s/(pub fn verify_server_chain\(\n    chain: &\[Vec<u8>\],\n    )name:/$1_name:/' \
+            turns::tests::a_certificate_for_another_name_ends_the_relay turns_verify::tests::a_certificate_for_another_name_is_refused || all=1
+          # No resumption: the client cache is off.
+          mutate no-resume olc/olc-rtc/src/tls_boring.rs 's/SslSessionCacheMode::CLIENT\)/SslSessionCacheMode::OFF)/' \
+            turns::tests::a_later_connection_to_a_server_resumes_and_its_hello_carries_the_psk || all=1
+          # The server name is sent for an address literal.
+          mutate sni-for-ip olc/olc-rtc/src/tls_boring.rs 's/if let Some\(name\) = crate::turn::sni_name\(host\) \{/if let Some(name) = Some(host) {/' \
+            tls_boring::tests::a_hello_to_an_address_names_no_server turns::tests::an_address_literal_sends_no_sni_and_is_checked_as_an_address || all=1
+          # A relay made from some other context than the profile's.
+          mutate other-context olc/olc-rtc/src/turns.rs 's/crate::tls_boring::turns_context\(\)\.map_err/boring::ssl::SslContextBuilder::new(boring::ssl::SslMethod::tls()).map(boring::ssl::SslContextBuilder::build).map_err/' \
+            turns::tests::the_relays_hello_is_the_profiles || all=1
+          # The cache keeps every server.
+          mutate unbounded-cache olc/olc-rtc/src/turns.rs 's/self\.list\.len\(\) >= TICKET_SERVERS/self.list.len() >= 1000/' \
+            turns::tests::the_ticket_cache_keeps_one_session_per_server_and_few_servers || all=1
+          # More than one session per server.
+          mutate many-per-server olc/olc-rtc/src/turns.rs 's/self\.list\.retain\(\|\(k, _\)\| k != key\);//' \
+            turns::tests::the_ticket_cache_keeps_one_session_per_server_and_few_servers || all=1
+          exit $all
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-turns-unit
+          path: out/
+          retention-days: 7
+
+  linux:
+    name: BoringSSL DTLS on Linux
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Fetch the client
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake time >/dev/null
+          (cd xrs && cargo --version); go version; cmake --version | head -1
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-turns-linux-${{ env.XRS_COMMIT }}
+          restore-keys: olc-turns-linux-
+
+      - name: Tests with BoringSSL's DTLS
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          timeout 45m cargo test --locked --no-fail-fast -p olc-rtc -p olc-salutejazz -p olc-client \
+            --features "$TEST_FEATURES" > "$o/tests.log" 2>&1
+          rc=$?
+          grep -E '^test |test result|^error|^warning|panicked' "$o/tests.log" | head -400
+          [ $rc -eq 0 ] || tail -80 "$o/tests.log"
+          echo "RESULT tests rc=$rc $(grep -c '^test .* ok$' "$o/tests.log") ok, $(grep -c '^test .* FAILED$' "$o/tests.log") failed, dtls_boring: $(grep -c '^test dtls_boring::tests::.* ok$' "$o/tests.log") ok, tls_boring: $(grep -c '^test tls_boring::tests::.* ok$' "$o/tests.log") ok" | tee "$o/result-tests.txt"
+          exit $rc
+
+      - name: Clippy with BoringSSL's DTLS
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          cargo clippy --locked -p olc-rtc -p olc-salutejazz -p olc-client --tests \
+            --features "$BIN_FEATURES" -- -D warnings > "$o/clippy.log" 2>&1
+          rc=$?
+          grep -E '^(warning|error)' -A6 "$o/clippy.log" | head -150
+          echo "RESULT clippy rc=$rc" | tee "$o/result-clippy.txt"
+          exit $rc
+
+      - name: The tests fail on a broken profile
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          # Both profiles, DTLS and TURN's TLS, lose the permutation and
+          # the ML-KEM group.
+          changed=0
+          for f in olc/olc-rtc/src/dtls_boring.rs olc/olc-rtc/src/tls_boring.rs; do
+            sed -i -e 's/ctx\.set_permute_extensions(true);/ctx.set_permute_extensions(false);/' \
+              -e 's/"X25519MLKEM768:X25519:P-256:P-384"/"X25519:P-256:P-384"/' "$f"
+            changed=$((changed + $(git diff --numstat -- "$f" | cut -f1)))
+          done
+          timeout 20m cargo test --locked -p olc-rtc --features boring --lib tls_boring > "$o/red.log" 2>&1
+          rc=$?
+          git checkout -q -- olc/olc-rtc/src/dtls_boring.rs olc/olc-rtc/src/tls_boring.rs
+          grep -E '^test |test result|panicked' "$o/red.log" | head -40
+          ok=1
+          [ "$changed" = 4 ] || { echo "the mutation changed $changed lines, not 4"; ok=0; }
+          [ $rc -ne 0 ] || { echo "the tests passed on a broken profile"; ok=0; }
+          for t in dtls_boring::tests::the_client_hello_is_chromes dtls_boring::tests::the_extensions_are_permuted \
+            tls_boring::tests::the_turns_hello_is_chromes tls_boring::tests::the_turns_extensions_are_permuted; do
+            grep -q "^test $t \.\.\. FAILED$" "$o/red.log" || { echo "$t did not fail"; ok=0; }
+          done
+          echo "RESULT red $([ $ok = 1 ] && echo ok || echo MISSING) (rc=$rc)" | tee "$o/result-red.txt"
+          [ $ok = 1 ]
+
+      - name: Build the client
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set -euo pipefail
+          o=$GITHUB_WORKSPACE/out
+          mkdir -p "$GITHUB_WORKSPACE/bin/boring" "$GITHUB_WORKSPACE/bin/dimpl"
+          cargo build --locked --release -p olc-client --features "$BIN_FEATURES" > "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/boring/"
+          # The same client with str0m's own DTLS (dimpl), as the box builds it.
+          cargo build --locked --release -p olc-client --features "${BIN_FEATURES#olc-client/boring,}" >> "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/dimpl/"
+          for d in boring dimpl; do
+            b=$GITHUB_WORKSPACE/bin/$d/olc-client
+            echo "RESULT binary $d $(stat -c %s "$b") bytes, BoringSSL strings: $(strings -a "$b" | grep -c -i boringssl)"
+          done | tee "$o/result-binary.txt"
+          sha256sum "$GITHUB_WORKSPACE/bin/boring/olc-client" | tee "$o/boring-sha256.txt"
+
+      # The BoringSSL client as built here, for T3 from the build box (it
+      # cannot build BoringSSL): one day, then it goes.
+      - name: Keep the BoringSSL client
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-client-boring
+          path: bin/boring/olc-client
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Fake room, the gate beside the Go client
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          [ -x bin/boring/olc-client ] && [ -x bin/dimpl/olc-client ] || { echo "no binary"; exit 1; }
+          run() { # name dtls set flags...
+            local name=$1 bin=$PWD/bin/$2/olc-client; shift 2
+            bash xrs/olc/interop/fakeroom.sh "$bin" "$@" > "out/fakeroom-$name.log" 2>&1
+            local rc=$?
+            a=xrs/olc/interop/.work/gate-artifacts/fakeroom
+            if [ -d "$a" ]; then
+              mkdir -p "out/fakeroom-$name-artifacts"
+              (cd "$a" && find . -maxdepth 2 \( -name gate-report.json -o -name '*.log' \) -print0 | tar --null -T - -cf -) \
+                | tar xf - -C "out/fakeroom-$name-artifacts"
+              rm -rf "$a"
+            fi
+            echo "== $name rc=$rc"
+            grep -hE 'cell |client memory|client ready in|^(--- |ok |FAIL)' "out/fakeroom-$name.log" | grep -v '^    --- ' | head -40
+            echo "DTLS lines: $(cat "out/fakeroom-$name.log" out/fakeroom-$name-artifacts/*/*.log 2>/dev/null | grep -c 'webrtc: DTLS ')"
+            cat "out/fakeroom-$name.log" out/fakeroom-$name-artifacts/*/*.log 2>/dev/null | grep -h 'webrtc: DTLS ' \
+              | sed -E 's/^.*webrtc: DTLS /webrtc: DTLS /; s/, [0-9]+ ms as the / as the /' | sort | uniq -c | head -6
+            grep -hE 'channel "_lossy" open \(publisher=true\)|session [0-9a-f-]+ opened' "out/fakeroom-$name.log" \
+              | grep -E '^\s+[0-9:.]+ ' | sed -E 's/^\s+([0-9:.]+) [0-9/]+ [0-9:]+ /\1 /' | cut -c1-80 | head -14
+            return $rc
+          }
+          {
+            run gate boring gate -olcrtc.gate-flavours=rust,cli
+            run gate-relay boring gate-relay -olcrtc.gate-flavours=rust,cli
+            # The client's log in the test output, the DTLS line included.
+            export OLCRTC_GATE_RUST_TRACE=1
+            run rust boring rust
+            unset OLCRTC_GATE_RUST_TRACE
+            # The same gate with str0m's own DTLS, for the memory beside it.
+            run gate-dimpl dimpl gate -olcrtc.gate-flavours=rust,cli
+          } 2>&1 | tee out/fakeroom-summary.txt
+          ! grep -q '^== .* rc=[1-9]' out/fakeroom-summary.txt
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## olcRTC client with BoringSSL DTLS, Linux'
+            echo '```'
+            cat out/result-*.txt 2>/dev/null
+            grep -hE '^== |cell |client memory|DTLS lines|webrtc: DTLS' out/fakeroom-summary.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-rtc-linux
+          path: out/
+          retention-days: 7
