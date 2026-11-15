@@ -26,7 +26,7 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# e850316844c6: the fork's `ghostlane` after its second integration
+# 4a08116392ae: the fork's `ghostlane` after its third integration
 # (2026-11-14). Upstream's second 0.10.0 candidate (4a61b057) with the
 # reviewed topic branches merged in this order:
 #  - first integration (eb19e285): gl/reset-network (C ABI 1.18,
@@ -37,18 +37,35 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 #    then rustls from ghostlane-project/shaped-rustls at b0dc21a7, that
 #    fork's `ghostlane` (its Chrome 156 hello and the deframer shrink), the
 #    only git source deny.toml allows for it;
-#  - second integration: gl/dns-forward (the DNS outbound's `forward` rule,
-#    queries other than A/AAAA through a named outbound, which core.json
-#    writes), gl/gitleaks-olc-vectors (a gitleaks exception for the olcRTC
-#    port's synthetic key vectors, on their path only, so upstream's secrets
-#    job passes over every branch of the fork) and gl/fork-scope (AGENTS.md
-#    names the fork's write scope).
+#  - second integration (e8503168): gl/dns-forward (the DNS outbound's
+#    `forward` rule, queries other than A/AAAA through a named outbound,
+#    which core.json writes), gl/gitleaks-olc-vectors (a gitleaks exception
+#    for the olcRTC port's synthetic key vectors, on their path only, so
+#    upstream's secrets job passes over every branch of the fork) and
+#    gl/fork-scope (AGENTS.md names the fork's write scope);
+#  - third integration: gl/lean-futures-r2, gl/byte-budget-relay,
+#    gl/h2-read-buffer-r2, gl/byte-budget-windows-r3, and a Vision buffer fix:
+#     - gl/lean-futures-r2: boxed long-lived futures, one UDP scratch buffer
+#       per worker, the iOS runtime at one worker and four blocking threads,
+#       release size guards and one fork-only size-lint step in ci.yml;
+#     - gl/byte-budget-relay: one process-wide byte budget for relay buffers
+#       and unflushed writes, FIFO waiters, a 4 KiB floor per flow, a 2 ms
+#       flush deadline;
+#     - gl/h2-read-buffer-r2: the vendored h2 reads each frame into an
+#       allocation of its own size, XHTTP's header templates and its upload
+#       sent without a joined copy;
+#     - gl/byte-budget-windows-r3: HTTP/2 receive queues (XHTTP H2
+#       responses, gRPC downlinks, HTTP/2 CONNECT, DoH) within the budget, a
+#       settler for held-back credit, and the vendored quinn-proto's grown
+#       window paying its shrink debt first (Hysteria2's windows unchanged);
+#     - the Vision fix: a written frame's buffer is dropped whatever its
+#       capacity reads, so a flow no longer keeps ~62 KB for its life.
 #
 # Pin only commits on the fork's `ghostlane`. That branch moves by merges and
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-e850316844c64d54a7c73fc740e8f529dab92f5a}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-4a08116392ae0cf1345ac7bbc93b0be7e7398dd6}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
