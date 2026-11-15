@@ -145,8 +145,8 @@ jobs:
           cp lab/olc-ffi/android/core/readelf-*.txt out/ 2> /dev/null
           [ $rc -eq 0 ] || { tail -60 out/build-core.log; exit $rc; }
           if grep -q '^SIGNATURE differs' out/build-core.log; then exit 1; fi
-          test -f lab/olc-ffi/android/core/jniLibs/x86_64/libghostlane_core.so
-          test -f lab/olc-ffi/android/core/jniLibs/arm64-v8a/libghostlane_core.so
+          test -f lab/olc-ffi/android/src/main/jniLibs/x86_64/libghostlane_core.so
+          test -f lab/olc-ffi/android/src/main/jniLibs/arm64-v8a/libghostlane_core.so
 
       - name: Save the cargo cache
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -172,6 +172,7 @@ jobs:
           echo "APK $(basename "$app"): $(wc -c < "$app") bytes" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for the T1 host
+        id: t1wait
         run: |
           set -euo pipefail
           for _ in $(seq 1 300); do
@@ -203,7 +204,7 @@ jobs:
           script: bash lab/olc-ffi/android/run-emulator-tests.sh out/emulator
 
       - name: CallSequenceTest on the 16 KiB-page image
-        if: always()
+        if: ${{ !cancelled() && steps.t1wait.outcome == 'success' }}
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         env:
