@@ -4,9 +4,12 @@
 # The Rust side of the Android lab (lab/olc-ffi/android):
 #   - ghostlane-core, the one native library that carries both clients
 #     (olc-ffi, the olcRTC client's UniFFI API, and xray-ffi) on one Tokio
-#     runtime and one allocator, as libghostlane_core.so for
-#     aarch64-linux-android (the shipped ABI) and x86_64-linux-android (the
-#     emulator), with the workspace's release profile as it is (the shipped
+#     runtime and one allocator, as libghostlane_core.so for every ABI the
+#     app's filters ship (androidApp/build.gradle.kts
+#     defaultAndroidAbiFilters): aarch64-linux-android (arm64-v8a),
+#     armv7-linux-androideabi (armeabi-v7a, which the release workflow also
+#     ships as an APK of its own) and x86_64-linux-android (x86_64, the
+#     emulator's), with the workspace's release profile as it is (the shipped
 #     one: thin LTO, one codegen unit, symbols stripped);
 #   - linked by the NDK the app pins (androidApp/build.gradle.kts
 #     ndkVersion, the release workflow's ANDROID_NDK_VERSION) at the app's
@@ -19,9 +22,13 @@
 # The .so files land in <lab>/src/main/jniLibs/<abi>/ (both are the default
 # source directories, ignored by git); the readelf output and the stripped
 # copies in <lab>/core/, with ghostlane-runtime's unit tests for the
-# emulator (core/ghostlane-runtime-tests) and clippy's output for the
-# Android target. Lines starting BUILD, ALIGN, SIZE, DRIVER, TESTS, CLIPPY
-# and SIGNATURE are the job summary's.
+# emulator (core/ghostlane-runtime-tests, and core/ghostlane-runtime-tests-armv7
+# for an image that runs armeabi-v7a) and clippy's output for the Android
+# targets (x86_64, and armv7 for the 32-bit branches). Every import of each
+# .so is checked against the NDK's API 23 stubs of the libraries it needs,
+# and the three ABIs export the same names. Lines starting BUILD, ALIGN,
+# SIZE, ELF, IMPORTS, EXPORTS, DRIVER, TESTS, CLIPPY and SIGNATURE are the
+# job summary's.
 set -euo pipefail
 
 src="$(cd "${1:?usage: build-core-android.sh <xray-rust checkout> <lab dir>}" && pwd)"
@@ -38,14 +45,17 @@ page="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size
 
 out="$lab/src/main/jniLibs"
 rm -rf "$out"
-for pair in aarch64-linux-android:arm64-v8a x86_64-linux-android:x86_64; do
-  target=${pair%%:*}
-  abi=${pair#*:}
+sysroot="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+# <Rust target>:<ABI>:<the NDK's clang prefix>:<the NDK's sysroot triple>
+for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-android \
+  armv7-linux-androideabi:armeabi-v7a:armv7a-linux-androideabi:arm-linux-androideabi \
+  x86_64-linux-android:x86_64:x86_64-linux-android:x86_64-linux-android; do
+  IFS=: read -r target abi clang triple <<< "$quad"
   up=$(echo "$target" | tr 'a-z-' 'A-Z_')
   low=$(echo "$target" | tr '-' '_')
-  export "CARGO_TARGET_${up}_LINKER=$bin/${target}${api}-clang"
+  export "CARGO_TARGET_${up}_LINKER=$bin/${clang}${api}-clang"
   export "CARGO_TARGET_${up}_RUSTFLAGS=$page"
-  export "CC_${low}=$bin/${target}${api}-clang" "CXX_${low}=$bin/${target}${api}-clang++" "AR_${low}=$bin/llvm-ar"
+  export "CC_${low}=$bin/${clang}${api}-clang" "CXX_${low}=$bin/${clang}${api}-clang++" "AR_${low}=$bin/llvm-ar"
   start=$(date +%s)
   (cd "$src" && cargo build --locked --release -p ghostlane-core --target "$target")
   so="$src/target/$target/release/libghostlane_core.so"
@@ -75,6 +85,41 @@ for pair in aarch64-linux-android:arm64-v8a x86_64-linux-android:x86_64; do
   "$bin/llvm-size" -A -d "$out/$abi/libghostlane_core.so" \
     | awk -v abi="$abi" '$1 ~ /^\.(text|rodata|data\.rel\.ro|eh_frame|eh_frame_hdr|gcc_except_table|dynsym|dynstr|data|bss)$/ { print "SECTION " abi " " $1 " " $2 }'
   "$bin/llvm-readelf" -dW "$out/$abi/libghostlane_core.so" | awk '/NEEDED/ { print "NEEDED '"$abi"' " $NF }'
+  "$bin/llvm-readelf" -hW "$out/$abi/libghostlane_core.so" \
+    | awk -v abi="$abi" -F': *' '$1 ~ /Class|Machine|Flags/ { v = v (v ? "; " : "") $2 } END { print "ELF " abi ": " v }'
+
+  # Every symbol the core imports is defined by the API 23 stubs of the
+  # libraries it needs (a newer one would fail to load on the app's oldest
+  # phones); weak imports may be missing and are counted apart. The
+  # allocator's purge is looked up by dlsym (mallopt is API 26), so dlsym is
+  # imported and mallopt is not.
+  "$bin/llvm-nm" -D --defined-only "$out/$abi/libghostlane_core.so" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$lab/core/exports-$abi.txt"
+  "$bin/llvm-nm" -D --undefined-only "$out/$abi/libghostlane_core.so" > "$lab/core/imports-$abi.raw"
+  awk '$1 == "U" {print $2}' "$lab/core/imports-$abi.raw" | sed 's/@.*//' | sort -u > "$lab/core/imports-$abi.txt"
+  weak=$(awk '$1 == "w" || $1 == "v"' "$lab/core/imports-$abi.raw" | wc -l | tr -d ' ')
+  : > "$lab/core/stubs-$abi.txt"
+  for lib in $("$bin/llvm-readelf" -dW "$out/$abi/libghostlane_core.so" | awk '/NEEDED/ { gsub(/[][]/, "", $NF); print $NF }'); do
+    stub="$sysroot/$triple/$api/$lib"
+    [ -f "$stub" ] || { echo "IMPORTS $abi: no API $api stub for $lib at $stub" >&2; exit 1; }
+    "$bin/llvm-nm" -D --defined-only "$stub" | awk '{print $NF}' | sed 's/@.*//' >> "$lab/core/stubs-$abi.txt"
+  done
+  sort -u -o "$lab/core/stubs-$abi.txt" "$lab/core/stubs-$abi.txt"
+  missing=$(comm -23 "$lab/core/imports-$abi.txt" "$lab/core/stubs-$abi.txt")
+  [ -z "$missing" ] || { echo "IMPORTS $abi: not in the API $api stubs: $(echo "$missing" | tr '\n' ' ')" >&2; exit 1; }
+  grep -qx dlsym "$lab/core/imports-$abi.txt" || { echo "IMPORTS $abi: no dlsym import" >&2; exit 1; }
+  ! grep -qx mallopt "$lab/core/imports-$abi.txt" || { echo "IMPORTS $abi: mallopt imported (API 26)" >&2; exit 1; }
+  echo "IMPORTS $abi: $(wc -l < "$lab/core/imports-$abi.txt" | tr -d ' ') symbols, every one in the API $api stubs of its NEEDED libraries; $weak weak; dlsym imported, mallopt not"
+done
+
+# The ABIs export the same names (the bindings are generated once, from
+# x86_64's build, and loaded on all three).
+for abi in arm64-v8a armeabi-v7a; do
+  if cmp -s "$lab/core/exports-x86_64.txt" "$lab/core/exports-$abi.txt"; then
+    echo "EXPORTS $abi: the same $(wc -l < "$lab/core/exports-$abi.txt" | tr -d ' ') names as x86_64"
+  else
+    echo "EXPORTS $abi: differs from x86_64:"; diff "$lab/core/exports-x86_64.txt" "$lab/core/exports-$abi.txt" | head -20
+    exit 1
+  fi
 done
 
 # The core in a process of its own (TrimProcessTest): olc-ffi's
@@ -95,17 +140,29 @@ echo "DRIVER x86_64: olc-ffi-client $(wc -c < "$out/x86_64/libolcffidriver.so" |
 [ "$(wc -l < "$lab/core/tests.txt")" -eq 1 ] || { cat "$lab/core/tests.txt" "$lab/core/tests-build.log" >&2; exit 1; }
 cp "$(cat "$lab/core/tests.txt")" "$lab/core/ghostlane-runtime-tests"
 echo "TESTS x86_64: ghostlane-runtime's unit tests, $(wc -c < "$lab/core/ghostlane-runtime-tests" | tr -d ' ') bytes; warnings: $(grep -c '^warning' "$lab/core/tests-build.log" || true)"
+# The same for armv7: run-emulator-tests.sh runs them only on an image whose
+# ABI list names armeabi-v7a (the relief branch's 32-bit RTLD_DEFAULT).
+(cd "$src" && cargo test --locked -p ghostlane-runtime --target armv7-linux-androideabi --no-run --message-format=json \
+  2> "$lab/core/tests-build-armv7.log") \
+  | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | .executable' \
+  > "$lab/core/tests-armv7.txt"
+[ "$(wc -l < "$lab/core/tests-armv7.txt")" -eq 1 ] || { cat "$lab/core/tests-armv7.txt" "$lab/core/tests-build-armv7.log" >&2; exit 1; }
+cp "$(cat "$lab/core/tests-armv7.txt")" "$lab/core/ghostlane-runtime-tests-armv7"
+echo "TESTS armeabi-v7a: ghostlane-runtime's unit tests, $(wc -c < "$lab/core/ghostlane-runtime-tests-armv7" | tr -d ' ') bytes; warnings: $(grep -c '^warning' "$lab/core/tests-build-armv7.log" || true)"
 
-# Clippy as the fork runs it (-D warnings), for the Android target: the
-# host's clippy never sees the code under cfg(target_os = "android").
-if (cd "$src" && cargo clippy --locked -p ghostlane-runtime -p olc-ffi --target x86_64-linux-android --all-targets -- -D warnings) \
-  > "$lab/core/clippy-android.log" 2>&1; then
-  echo "CLIPPY x86_64-linux-android: ghostlane-runtime and olc-ffi, all targets, no warning"
-else
-  echo "CLIPPY x86_64-linux-android: warnings or errors"
-  grep -E '^(warning|error)' -A8 "$lab/core/clippy-android.log" | head -60
-  exit 1
-fi
+# Clippy as the fork runs it (-D warnings), for the Android targets: the
+# host's clippy never sees the code under cfg(target_os = "android"), and
+# armv7's sees its 32-bit branches.
+for target in x86_64-linux-android armv7-linux-androideabi; do
+  if (cd "$src" && cargo clippy --locked -p ghostlane-runtime -p olc-ffi --target "$target" --all-targets -- -D warnings) \
+    > "$lab/core/clippy-$target.log" 2>&1; then
+    echo "CLIPPY $target: ghostlane-runtime and olc-ffi, all targets, no warning"
+  else
+    echo "CLIPPY $target: warnings or errors"
+    grep -E '^(warning|error)' -A8 "$lab/core/clippy-$target.log" | head -60
+    exit 1
+  fi
+done
 
 # The Kotlin bindings, from the x86_64 build's static archive.
 (cd "$src" && cargo build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)

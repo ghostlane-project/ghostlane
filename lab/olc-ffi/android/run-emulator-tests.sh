@@ -5,9 +5,12 @@
 # host on this runner ($T1_CONFIG, written by zz_t1_host_test.go): installs
 # the lab app and its test APK, then
 #   - ghostlane-runtime's relief unit tests, natively (adb shell; the
-#     allocator's Android branch: footprint and trim);
+#     allocator's Android branch: footprint and trim), and their armeabi-v7a
+#     build when the image's ABI list names armeabi-v7a (rust32);
 #   - CallSequenceTest once (the API, the callbacks, the SOCKS fetch, UDP
 #     ASSOCIATE, ten stop/starts, Go's error texts, memoryStats);
+#   - CloseTest once (close() on a running runtime, then the next runtime in
+#     the same room);
 #   - TrimTest twice, each in a process of its own (the burst, trim() and
 #     mallopt's purges, the core inside the app's process);
 #   - TrimProcessTest twice (the same, the core in a process of its own:
@@ -47,6 +50,7 @@ done
 {
   echo "device: API $(adb shell getprop ro.build.version.sdk | tr -d '\r'), $(adb shell getprop ro.product.cpu.abi | tr -d '\r'), page size $(adb shell getconf PAGE_SIZE | tr -d '\r') B, $(adb shell nproc | tr -d '\r') CPUs, $(adb shell cat /proc/meminfo | awk '/MemTotal/ {print $2 " kB"}')"
   echo "allocator: $(adb shell getprop ro.malloc.impl | tr -d '\r') (empty = the build's default)"
+  echo "ABIs: $(adb shell getprop ro.product.cpu.abilist | tr -d '\r')"
 } | tee "$out/device.txt"
 
 # The package service can still be starting when the emulator reports a
@@ -112,20 +116,34 @@ run() {
 }
 
 # ghostlane-runtime's relief tests, natively on the emulator (adb's shell
-# runs what is pushed to /data/local/tmp).
+# runs what is pushed to /data/local/tmp): rust <name> <binary> <what>.
 rust() {
-  local bin="$here/core/ghostlane-runtime-tests"
-  [ -f "$bin" ] || { echo "== rust: no $bin" >> "$out/results.txt"; rc=1; return; }
-  adb push "$bin" /data/local/tmp/ghostlane-runtime-tests > /dev/null
-  adb shell chmod 755 /data/local/tmp/ghostlane-runtime-tests
-  timeout 300 adb shell /data/local/tmp/ghostlane-runtime-tests relief --test-threads=1 --nocapture > "$out/rust.txt" 2>&1
+  local name=$1 bin=$2 what=$3
+  [ -f "$bin" ] || { echo "== $name: no $bin" >> "$out/results.txt"; rc=1; return; }
+  adb push "$bin" "/data/local/tmp/$name-tests" > /dev/null
+  adb shell chmod 755 "/data/local/tmp/$name-tests"
+  timeout 300 adb shell "/data/local/tmp/$name-tests" relief --test-threads=1 --nocapture > "$out/$name.txt" 2>&1
   local verdict=passed
-  grep -q '^test result: ok' "$out/rust.txt" || { verdict=FAILED; rc=1; }
+  grep -q '^test result: ok' "$out/$name.txt" || { verdict=FAILED; rc=1; }
   {
-    echo "== rust (ghostlane-runtime relief, native): $verdict"
-    grep -E '^test |^test result|trim after|relief:|panicked|assert' "$out/rust.txt"
+    echo "== $name (ghostlane-runtime relief, $what): $verdict"
+    grep -E '^test |^test result|trim after|relief:|panicked|assert|not executable|No such file' "$out/$name.txt"
   } >> "$out/results.txt"
-  echo "== rust: $verdict"
+  echo "== $name: $verdict"
+}
+
+# The armeabi-v7a build of the same tests, where the image runs 32-bit ARM
+# (the relief branch's 32-bit RTLD_DEFAULT); not run elsewhere.
+rust32() {
+  local abis
+  abis=$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')
+  case ",$abis," in
+    *,armeabi-v7a,*) rust rust32 "$here/core/ghostlane-runtime-tests-armv7" "armeabi-v7a, translated" ;;
+    *)
+      echo "== rust32 (ghostlane-runtime relief, armeabi-v7a): not run, the image's ABIs are $abis" >> "$out/results.txt"
+      echo "== rust32: not run ($abis)"
+      ;;
+  esac
 }
 
 : > "$out/results.txt"
@@ -135,10 +153,12 @@ cat "$out/device.txt" >> "$out/results.txt"
 # (control1-3: the Kotlin side's readings and GC churn without the core), for
 # the SIGSEGV in ART's JIT code that its CallSequenceTest process died of once
 # (run 43681797712).
-for r in ${LAB_RUNS:-rust calls trim1 trim2 proc1 proc2}; do
+for r in ${LAB_RUNS:-rust rust32 calls close trim1 trim2 proc1 proc2}; do
   case "$r" in
-    rust) rust ;;
+    rust) rust rust "$here/core/ghostlane-runtime-tests" native ;;
+    rust32) rust32 ;;
     calls) run calls CallSequenceTest ;;
+    close) run close CloseTest ;;
     calls[0-9]) run "$r" CallSequenceTest ;;
     control[0-9]) run "$r" ControlTest ;;
     trim1) run trim1 TrimTest -e run 1 ;;

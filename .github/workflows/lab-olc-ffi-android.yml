@@ -5,10 +5,11 @@ name: Lab - olcRTC FFI on Android
 # runner:
 #   - the Rust core is ghostlane-core at the xray-rust commit pinned below
 #     (olc-ffi and xray-ffi in one library, one Tokio runtime, one
-#     allocator), as libghostlane_core.so for aarch64-linux-android (the
-#     shipped ABI) and x86_64-linux-android (the emulator), with the release
+#     allocator), as libghostlane_core.so for the app's three ABIs
+#     (arm64-v8a, armeabi-v7a, and x86_64 for the emulator), with the release
 #     profile as it is, linked by the NDK the app pins at its minSdk, every
-#     LOAD segment checked to be 16 KiB-aligned
+#     LOAD segment checked to be 16 KiB-aligned, every import checked
+#     against the NDK's API 23 stubs, the three export lists compared
 #     (lab/olc-ffi/android/build-core-android.sh);
 #   - its UniFFI Kotlin bindings (JNA) are generated from the same build into
 #     a small lab Gradle build (lab/olc-ffi/android, not one of the app's
@@ -20,7 +21,8 @@ name: Lab - olcRTC FFI on Android
 #     OlcrtcRuntime as OlcboxVpnService drives the Go engine today (setRoom
 #     only, the protector, the log writer, a fetch through the SOCKS port
 #     with the login, UDP ASSOCIATE, ten stop/starts, Go's error texts,
-#     memoryStats) on an x86_64 emulator, and measure PSS and
+#     memoryStats; CloseTest: close() on a running runtime, then the next
+#     runtime in the room) on an x86_64 emulator, and measure PSS and
 #     Private_Dirty after a burst of 256 downloads, after trim() and after
 #     mallopt's purges, twice with the core in the app's process and twice
 #     with it in a process of its own (xray-rust's olc-ffi-client in its
@@ -29,7 +31,10 @@ name: Lab - olcRTC FFI on Android
 #     (relief's: the allocator's Android branch), and clippy runs for the
 #     Android target (the host's never sees that branch);
 #   - the relief tests and CallSequenceTest run once more on the 16 KiB-page
-#     emulator image.
+#     emulator image;
+#   - a second job runs the olcRTC client's crate tests for 32-bit ARM under
+#     qemu-user (armv7-unknown-linux-gnueabihf, glibc;
+#     lab/olc-ffi/android/test-armv7-qemu.sh).
 # Every RESULT/MEM line lands in the job summary; the logs in the artifact.
 #
 # Emulator only: no device, no store track, no live carrier room, no secret.
@@ -53,7 +58,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "b91f38f18ee164e81884b2536e582487e27dbd88"
+  XRS_COMMIT: "325697de6b5cd17a547737f78cb8013fe32db0c8"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   # androidApp/build.gradle.kts ndkVersion (and the release workflow's).
@@ -107,7 +112,7 @@ jobs:
       - name: Toolchains
         run: |
           set -euo pipefail
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target aarch64-linux-android --target x86_64-linux-android
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --target aarch64-linux-android --target armv7-linux-androideabi --target x86_64-linux-android
           rustup default "$RUST_TOOLCHAIN"
           cargo --version; go version; java -version 2>&1 | head -1
           ls "$ANDROID_HOME/ndk"
@@ -142,18 +147,19 @@ jobs:
           set -uo pipefail
           bash lab/olc-ffi/android/build-core-android.sh xrs lab/olc-ffi/android > out/build-core.log 2>&1
           rc=$?
-          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)|^error' out/build-core.log
+          grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|ELF|IMPORTS|EXPORTS|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)|^error' out/build-core.log
           {
             echo '### The Rust core'
             echo '```'
-            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)' out/build-core.log
+            grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|ELF|IMPORTS|EXPORTS|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)' out/build-core.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          cp lab/olc-ffi/android/core/readelf-*.txt out/ 2> /dev/null
+          cp lab/olc-ffi/android/core/readelf-*.txt lab/olc-ffi/android/core/imports-*.txt lab/olc-ffi/android/core/exports-*.txt out/ 2> /dev/null
           [ $rc -eq 0 ] || { tail -60 out/build-core.log; exit $rc; }
           if grep -q '^SIGNATURE differs' out/build-core.log; then exit 1; fi
           test -f lab/olc-ffi/android/src/main/jniLibs/x86_64/libghostlane_core.so
           test -f lab/olc-ffi/android/src/main/jniLibs/arm64-v8a/libghostlane_core.so
+          test -f lab/olc-ffi/android/src/main/jniLibs/armeabi-v7a/libghostlane_core.so
 
       - name: Save the cargo cache
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -177,6 +183,14 @@ jobs:
           grep -q 'lib/x86_64/libghostlane_core.so' out/apk-libs.txt
           grep -q 'lib/x86_64/libjnidispatch.so' out/apk-libs.txt
           grep -q 'lib/x86_64/libolcffidriver.so' out/apk-libs.txt
+          # The two ARM ABIs the app ships, each with JNA's dispatch library
+          # from its AAR.
+          for abi in arm64-v8a armeabi-v7a; do
+            for lib in libghostlane_core.so libjnidispatch.so; do
+              grep -q "lib/$abi/$lib" out/apk-libs.txt || { echo "APK: no lib/$abi/$lib"; exit 1; }
+            done
+          done
+          echo "APK libs: $(awk '{print $NF}' out/apk-libs.txt | grep '^lib/' | tr '\n' ' ')" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "APK $(basename "$app"): $(wc -c < "$app") bytes" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for the T1 host
@@ -258,11 +272,60 @@ jobs:
           [ -f "$T1_CONFIG.server.log" ] && cp "$T1_CONFIG.server.log" out/server.log
           tail -20 out/t1-host.log
           [ -f out/server.log ] && tail -30 out/server.log
+          # A client's hello read on a session left up (run 2's "peer v3").
+          [ -f out/server.log ] && echo "SERVER: $(grep -c 'incompatible control protocol' out/server.log) \"incompatible control protocol\" line(s) in the run" | tee -a "$GITHUB_STEP_SUMMARY"
           exit 0
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: olc-ffi-android
+          path: out/
+          retention-days: 14
+
+  armv7:
+    name: The client's crate tests for 32-bit ARM under qemu-user
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch xray-rust
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='xray-rust %H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Toolchains (Rust for armv7 glibc, the cross compiler, qemu-user)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-user gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target armv7-unknown-linux-gnueabihf
+          rustup default "$RUST_TOOLCHAIN"
+          cargo --version; qemu-arm --version | head -1
+
+      - name: The crate tests under qemu-arm
+        run: |
+          set -uo pipefail
+          bash lab/olc-ffi/android/test-armv7-qemu.sh xrs out/armv7 > out-armv7.log 2>&1
+          rc=$?
+          tail -5 out-armv7.log
+          {
+            echo '### 32-bit ARM under qemu-user'
+            echo '```'
+            cat out/armv7/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          mv out-armv7.log out/armv7/run.log
+          exit $rc
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: olc-ffi-armv7
           path: out/
           retention-days: 14
