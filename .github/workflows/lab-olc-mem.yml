@@ -1,0 +1,157 @@
+name: Lab - olcRTC client memory
+
+# A measurement, not a check: R4 item 5 of the olcRTC client port to Rust. Why
+# the client's VmHWM reads more on a GitHub runner than on the build box, with
+# every figure split into anonymous (heap, arenas, stacks, bss) and file-backed
+# memory, and the 12 MiB engine target told in the dirty measure an iPhone's
+# phys_footprint counts. Builds the client at the xray-rust commit pinned
+# below (boring and dimpl), prints the runner's page size, THP, glibc and CPU
+# count, and runs the fake-room sets with the harness's peak-memory lines
+# (zzmem: status, smaps_rollup, smaps by category). No tests, no carrier, no
+# secret. Runs on a push to lab/olc-mem or by hand.
+on:
+  push:
+    branches:
+      - lab/olc-mem
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-olc-mem
+  cancel-in-progress: true
+
+env:
+  # The client: ghostlane-project/xray-rust, fetched by its hash. Moving the
+  # pin is a change to this file (and so a run).
+  XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
+  XRS_REF: "gl/olc-rtc-mem"
+  XRS_COMMIT: "ffefa2ab5a7ab1bbcd66196d0b8f1fcd3eb03478"
+  GO_VERSION: "1.26.5"
+  RUST_TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  # The features of the shipped client, with BoringSSL's DTLS.
+  TEST_FEATURES: "olc-client/boring,olc-client/shaped-tls"
+  BIN_FEATURES: "olc-client/boring,olc-client/shaped-tls,olc-client/heap-stats"
+
+
+jobs:
+  linux:
+    name: Client memory on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Fetch the client
+        run: |
+          set -euo pipefail
+          git init -q xrs
+          git -C xrs remote add origin "$XRS_REPO"
+          git -C xrs fetch -q --depth 1 origin "$XRS_COMMIT" || git -C xrs fetch -q origin "$XRS_REF"
+          git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
+          git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Toolchain and tools
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev cmake time >/dev/null
+          (cd xrs && cargo --version); go version; cmake --version | head -1
+
+      - name: Restore the cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            xrs/target
+          key: olc-mem-linux-${{ env.XRS_COMMIT }}
+          restore-keys: olc-mem-linux-
+
+      - name: The machine
+        run: |
+          set +e
+          o=$GITHUB_WORKSPACE/out
+          {
+            echo "== uname: $(uname -a)"
+            echo "== nproc: $(nproc) (all: $(nproc --all)); pagesize: $(getconf PAGESIZE)"
+            echo "== THP enabled: $(cat /sys/kernel/mm/transparent_hugepage/enabled) defrag: $(cat /sys/kernel/mm/transparent_hugepage/defrag)"
+            echo "== THP shmem: $(cat /sys/kernel/mm/transparent_hugepage/shmem_enabled)"
+            echo "== glibc: $(ldd --version | head -1)"
+            echo "== lscpu:"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket'
+            echo "== mem:"; free -m
+            echo "== workspace fs: $(df -T "$GITHUB_WORKSPACE" | tail -1)"
+            echo "== ulimit -s: $(ulimit -s)"
+            echo "== cgroup: $(cat /proc/self/cgroup)"
+          } 2>&1 | tee "$o/machine.txt"
+          cat "$o/machine.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the client
+        working-directory: xrs
+        run: |
+          set -euo pipefail
+          o=$GITHUB_WORKSPACE/out
+          mkdir -p "$GITHUB_WORKSPACE/bin/boring" "$GITHUB_WORKSPACE/bin/dimpl"
+          cargo build --locked --release -p olc-client --features "$BIN_FEATURES" > "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/boring/"
+          # The same client with str0m's own DTLS (dimpl), as the box builds it.
+          cargo build --locked --release -p olc-client --features "${BIN_FEATURES#olc-client/boring,}" >> "$o/build.log" 2>&1 || { tail -60 "$o/build.log"; exit 1; }
+          cp target/release/olc-client "$GITHUB_WORKSPACE/bin/dimpl/"
+          for d in boring dimpl; do
+            b=$GITHUB_WORKSPACE/bin/$d/olc-client
+            echo "RESULT binary $d $(stat -c %s "$b") bytes, BoringSSL strings: $(strings -a "$b" | grep -c -i boringssl)"
+          done | tee "$o/result-binary.txt"
+
+      - name: Fake room with the memory lines
+        run: |
+          set +e -uo pipefail
+          [ -x bin/boring/olc-client ] && [ -x bin/dimpl/olc-client ] || { echo "no binary"; exit 1; }
+          run() { # name dtls set "prefix words" flags...
+            local name=$1 dtls=$2 what=$3 prefix=$4; shift 4
+            local bin=$PWD/bin/$dtls/olc-client
+            # shellcheck disable=SC2086
+            $prefix bash xrs/olc/interop/fakeroom.sh "$bin" "$what" "$@" > "out/mem-$name.log" 2>&1
+            local rc=$?
+            rm -rf xrs/olc/interop/.work/gate-artifacts
+            echo "== $name rc=$rc prefix: $prefix"
+            grep -hE 'client memory|^(--- |ok |FAIL)' "out/mem-$name.log" | grep -v '^    --- ' | head -60
+            return $rc
+          }
+          {
+            run rust-boring boring rust env
+            run rust-dimpl dimpl rust env
+            run rust-boring-arena1 boring rust "env MALLOC_ARENA_MAX=1"
+            run rust-boring-arena2 boring rust "env MALLOC_ARENA_MAX=2"
+            run rust-boring-2cpu boring rust "taskset -c 0,1"
+            run gate-boring boring gate env -olcrtc.gate-flavours=rust,cli
+            run gate-dimpl dimpl gate env -olcrtc.gate-flavours=rust,cli
+            run gate-relay-boring boring gate-relay env -olcrtc.gate-flavours=rust,cli
+            run gate-boring-arena1 boring gate "env MALLOC_ARENA_MAX=1" -olcrtc.gate-flavours=rust,cli
+          } 2>&1 | tee out/mem-summary.txt
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## olcRTC client memory'
+            echo '```'
+            cat out/result-binary.txt 2>/dev/null
+            grep -hE '^== |client memory' out/mem-summary.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-mem-linux
+          path: out/
+          retention-days: 7
