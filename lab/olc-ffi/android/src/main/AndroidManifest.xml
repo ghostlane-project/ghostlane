@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The lab app: no activity, no service; the instrumented tests run in its
+     process and reach the T1 host on the runner (10.0.2.2) over INTERNET. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="olc-ffi lab" />
+</manifest>
