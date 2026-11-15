@@ -17,8 +17,9 @@ import os
 // Commands, one per line on stdin, each answered by one line on stdout:
 //   start        start, wait_ready(35000)    READY ms=<n> | ERR start <text>
 //   stats        memory_stats()              STATS <json>
-//   trim         trim()                      TRIM <bytes>
+//   trim         trim()                      TRIM <bytes> <footprint before> <after>
 //   relief       malloc_zone_pressure_relief RELIEF <bytes>
+//   budget <n>   set_byte_budget(n)          BUDGET cap=<n>
 //   cycle <n>    n × (stop, start, ready)    CYCLED n=<n> ready_min=<ms> ready_max=<ms>
 //   stop         stop(5000)                  STOPPED ms=<n>
 //   quit         stop when running, exit     BYE
@@ -253,11 +254,20 @@ while let line = readLine() {
     case "stats":
         say("STATS \(memoryStats())")
     case "trim":
-        say("TRIM \(trim())")
+        // trim() asks the allocator itself on Apple targets (xray-rust
+        // 2026-11-15 on); the footprint around the call is what it gave.
+        let before = physFootprint()
+        let bytes = trim()
+        say("TRIM \(bytes) \(before) \(physFootprint())")
+    case "budget":
+        // The extension's relief lowers B under pressure; the lab presses
+        // the phone's B (3,000,000) on this Mac, whose class is Standard.
+        let n = UInt64(words.dropFirst().first ?? "") ?? 0
+        setByteBudget(n)
+        say("BUDGET cap=\(n)")
     case "relief":
-        // What the system allocator gives back when asked (the extension's
-        // memory-pressure handler can ask it; trim() only drops the
-        // engine's own spare buffers).
+        // What the system allocator still gives back when asked after
+        // trim(), which asks it too from xray-rust 2026-11-15 on.
         say("RELIEF \(malloc_zone_pressure_relief(nil, 0))")
     case "cycle":
         let n = Int(words.dropFirst().first ?? "") ?? 1

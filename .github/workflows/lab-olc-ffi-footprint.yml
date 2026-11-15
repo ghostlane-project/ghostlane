@@ -15,9 +15,15 @@ name: Lab - olcRTC FFI footprint
 #     olcrtc_interop for the pipe), GOMEMLIMIT=40MiB as the extension sets.
 # Setup f for both: the system allocator with MallocLargeCache=0. The driver
 # (lab/olc-ffi/footprint/footprint.py) samples proc_pid_rusage at 10 Hz
-# through idle, 32 downloads, 32 uploads, 64 DNS queries twice and 256
-# downloads, plus stop/starts and trim() for rust, two runs each. The rows
-# land in the job summary; the samples, ticks and logs in the artifact.
+# through idle, 32 downloads, 32 uploads, 64 DNS queries twice, 256
+# downloads, trim() right after them (rust: the footprint before and after
+# the call), 512 downloads at once, plus stop/starts and trim() for rust, two
+# runs each; and the rust-b3 arm, the phone's byte budget pressed
+# (set_byte_budget(3000000)) through the 256 and 512 rows. The rows land in
+# the job summary; the samples, ticks and logs in the artifact. Before the
+# rows, ghostlane-runtime's tests run on this Mac, so its Apple code
+# (task_info's phys_footprint, malloc_zone_pressure_relief in trim()) runs
+# where it is meant to.
 #
 # Runs on a push to lab/olc-ffi-footprint or by hand, never on main, never on
 # a pull request, no schedule. It reads no secret. (PR Checks, whose `push:`
@@ -40,7 +46,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "e251b9ad08c331f05da03fb6afdb256177f3c7d3"
+  XRS_COMMIT: "ddb6ba2dcf2ef115af8cd06b3597a6706fcf0ca2"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -50,7 +56,7 @@ jobs:
   footprint:
     name: Host-process footprint on macOS (setup f)
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
 
@@ -84,6 +90,15 @@ jobs:
             xrs/target
           key: olc-ffi-fp-darwin-${{ env.XRS_COMMIT }}
           restore-keys: olc-ffi-fp-darwin-
+
+      - name: ghostlane-runtime's tests on macOS (the Apple footprint and relief)
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd xrs && cargo test --locked -p ghostlane-runtime --lib -- --nocapture) 2>&1 | tee out/rt-tests.log \
+            | grep -E '^test |test result|relief:|panicked' || true
+          { echo '```'; grep -E '^test |test result|relief:' out/rt-tests.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q 'test result: ok' out/rt-tests.log
 
       - name: The T1 host (hub, origin, UDP echo, the pinned server) and the Go baseline
         run: |
@@ -129,7 +144,7 @@ jobs:
           # 256 downloads at once need more than macOS's default 256 files.
           ulimit -n 8192
           python3 -I lab/olc-ffi/footprint/footprint.py run --t1 "$T1_CONFIG" \
-            --rust lab/olc-ffi/footprint/build/fp-host --go "$RUNNER_TEMP/olcrtc-cnc" --runs 2 --out out/fp \
+            --rust lab/olc-ffi/footprint/build/fp-host --budget-arm --go "$RUNNER_TEMP/olcrtc-cnc" --runs 2 --out out/fp \
             > out/footprint.log 2>&1
           rc=$?
           tail -60 out/footprint.log
