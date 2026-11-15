@@ -166,6 +166,18 @@ jobs:
             b=$GITHUB_WORKSPACE/bin/$d/olc-client
             echo "RESULT binary $d $(stat -c %s "$b") bytes, BoringSSL strings: $(strings -a "$b" | grep -c -i boringssl)"
           done | tee "$o/result-binary.txt"
+          sha256sum "$GITHUB_WORKSPACE/bin/boring/olc-client" | tee "$o/boring-sha256.txt"
+
+      # The BoringSSL client as built here, for T3 from the build box (it
+      # cannot build BoringSSL): one day, then it goes.
+      - name: Keep the BoringSSL client
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: olc-client-boring
+          path: bin/boring/olc-client
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Fake room, the gate beside the Go client
         if: ${{ !cancelled() }}
