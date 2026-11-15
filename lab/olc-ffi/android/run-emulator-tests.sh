@@ -67,6 +67,17 @@ install() {
 : > "$out/install.txt"
 install "$app" || exit 1
 install "$test_apk" || exit 1
+
+# The emulator's network can come up well after its boot (run 43687552946's
+# 16 KiB image: every CallSequenceTest there failed on "Network is
+# unreachable" to 10.0.2.2 for over a minute): wait up to 3 min for a route.
+net=down
+for _ in $(seq 1 90); do
+  if adb shell ip route get 10.0.2.2 > /dev/null 2>&1; then net=up; break; fi
+  sleep 2
+done
+echo "network: a route to 10.0.2.2 $net ($(adb shell ip route get 10.0.2.2 2>&1 | head -1 | tr -d '\r'))" | tee -a "$out/device.txt"
+[ "$net" = up ] || { adb shell ip route 2>&1 | head; exit 1; }
 adb logcat -G 16M > /dev/null 2>&1 || true
 
 rc=0
