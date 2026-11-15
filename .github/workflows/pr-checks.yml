@@ -663,19 +663,22 @@ jobs:
       # The one pin of the core on this branch. It moves to
       # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
       # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: 4a081163, the
-      # fork's ghostlane after its third integration (reset-network, logs,
-      # hev-udp, hy2-memory, xhttp-upload-memory, the Chrome 156 hello,
-      # rustls from ghostlane-project/shaped-rustls b0dc21a7; then
-      # dns-forward, whose `forward` rule core.json writes, the gitleaks
-      # exception for the olcRTC vectors and the fork's AGENTS.md scope;
-      # then lean-futures-r2, byte-budget-relay, h2-read-buffer-r2,
-      # byte-budget-windows-r3 and a Vision buffer fix, memory work that
-      # leaves the config parser as it was). A parser older than dns-forward
-      # refuses the references. Bump it with the copy of the core's field
-      # lists in XrayRustSurface.
+      # this is the only copy here, and the same commit: 1d60607f, the
+      # fork's ghostlane after its third integration and its CI fixes
+      # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
+      # Chrome 156 hello, rustls from ghostlane-project/shaped-rustls
+      # b0dc21a7; then dns-forward, whose `forward` rule core.json writes,
+      # the gitleaks exception for the olcRTC vectors and the fork's
+      # AGENTS.md scope; then lean-futures-r2, byte-budget-relay,
+      # h2-read-buffer-r2, byte-budget-windows-r3 and a Vision buffer fix,
+      # memory work that leaves the config parser as it was; then the fork's
+      # guards in a workflow of their own, a quinn-proto test fix, a gitleaks
+      # exception for str0m's example keys and a doc fix, none of them in
+      # the config parser). A parser older than dns-forward refuses the
+      # references. Bump it with the copy of the core's field lists in
+      # XrayRustSurface.
       XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: 4a08116392ae0cf1345ac7bbc93b0be7e7398dd6
+      XRAY_RUST_COMMIT: 1d60607f3df8fcf18db2f00df7da6b722cf7fb7b
     steps:
       - uses: actions/checkout@v7
         with:
