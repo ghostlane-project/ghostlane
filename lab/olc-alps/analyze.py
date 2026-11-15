@@ -6,8 +6,12 @@ each client's ClientHello, ALPS and h2 preface side by side.
 
 Ports name the clients (the workflow's): 8443 Chrome's page load, 8444
 Chrome's WebSocket, 8448 Chrome's fetch(), 8445 our fetch, 8446 our
-WebSocket. Prints a markdown report; writes the parsed connections and the
-comparison to <out.json>. Exits 0: the workflow reads the RESULT lines.
+WebSocket; on the late ports (the server holds its SETTINGS) 8452 Chrome's
+fetch(), 8453 Chrome's page load, 8454 our fetch. Prints a markdown
+report, with when each of a connection's first h2 frames arrived; writes
+the parsed connections and the comparisons to <out.json>. Exits 0: the
+workflow reads the RESULT lines, among them `RESULT must-equal`, which
+names the h2 fields of Chrome's fetch() and ours that differ (MUST_EQUAL).
 """
 import json
 import sys
@@ -18,7 +22,20 @@ CLIENTS = {
     8448: "chrome-fetch",
     8445: "ours-fetch",
     8446: "ours-websocket",
+    8452: "chrome-fetch-late",
+    8453: "chrome-navigation-late",
+    8454: "ours-fetch-late",
 }
+
+# The fields of `compare` that must be the same for Chrome's fetch() and
+# ours: what a preconnect's HTTP/2 shows an observer.
+MUST_EQUAL = ("chrome-fetch", "ours-fetch", [
+    "h2 SETTINGS", "h2 connection WINDOW_UPDATE", "h2 first frame types",
+    "h2 pseudo-header order", "h2 HEADERS flags", "h2 HEADERS priority",
+])
+
+FRAME_NAMES = {0: "DATA", 1: "HEADERS", 2: "PRIORITY", 3: "RST_STREAM", 4: "SETTINGS", 6: "PING",
+               7: "GOAWAY", 8: "WINDOW_UPDATE", 9: "CONTINUATION"}
 
 EXT_NAMES = {
     0x0000: "server_name", 0x0005: "status_request", 0x000A: "supported_groups",
@@ -191,7 +208,7 @@ def parse_h2(app):
         payload = app[at + 9:at + 9 + n]
         if len(payload) < n:
             break
-        f = {"type": kind, "flags": flags, "stream": stream, "len": n}
+        f = {"type": kind, "flags": flags, "stream": stream, "len": n, "end": at + 9 + n}
         if kind == 4 and not flags & 1:
             f["settings"] = [(int.from_bytes(payload[i:i + 2], "big"),
                               int.from_bytes(payload[i + 2:i + 6], "big")) for i in range(0, n, 6)]
@@ -214,6 +231,22 @@ def parse_h2(app):
         frames.append(f)
         at += 9 + n
     return frames
+
+
+def timeline(c):
+    """Each of the first h2 frames, named, and when its last byte arrived
+    (milliseconds since the handshake ended)."""
+    times = c.get("times") or []
+    out = []
+    for f in (c.get("h2") or [])[:8]:
+        name = FRAME_NAMES.get(f["type"], str(f["type"]))
+        if f["type"] == 4 and f["flags"] & 1:
+            name = "SETTINGS-ACK"
+        if f["type"] == 1:
+            name += f"({f['flags']:#04x})"
+        at = next((t for t, n in times if n >= f["end"]), None)
+        out.append((name, None if at is None else round(at / 1000, 2)))
+    return out
 
 
 def summary(c):
@@ -313,9 +346,25 @@ def main():
         offered = sorted({str(c.get("alps_offered")) for c in cs})
         print(f"RESULT alps-offered {name} {offered}")
 
+    print("\n## h2 timing\n")
+    print("Milliseconds since the handshake ended: when the server's SETTINGS went out, and when each "
+          "of the client's first frames had arrived.\n")
+    print("| id | client | server SETTINGS | client frames |")
+    print("|---|---|---|---|")
+    for c in conns:
+        if not c.get("h2"):
+            continue
+        tl = timeline(c)
+        settings = round(int(c.get("settings_at_us", 0)) / 1000, 2)
+        frames = " ".join(f"{n}@{t}" for n, t in tl)
+        print(f"| {c['id']} | {c['client']} | {settings} | {frames} |")
+        print(f"RESULT timing {c['client']}#{c['id']} settings@{settings} {frames}")
+        c["timeline"] = tl
+
     report = {"connections": conns, "comparisons": {}}
     for a, b in (("chrome-navigation", "ours-fetch"), ("chrome-fetch", "ours-fetch"),
-                 ("chrome-websocket", "ours-websocket"), ("chrome-navigation", "chrome-fetch")):
+                 ("chrome-websocket", "ours-websocket"), ("chrome-navigation", "chrome-fetch"),
+                 ("chrome-fetch-late", "ours-fetch-late")):
         if a in by and b in by:
             # The first full (not resumed) handshake of each.
             ca = next((c for c in by[a] if "pre_shared_key" not in c["hello_parsed"]["extensions"]), by[a][0])
@@ -329,6 +378,10 @@ def main():
                 print(f"| {field} | `{json.dumps(va)[:300]}` | `{json.dumps(vb)[:300]}` | {'yes' if same else '**no**'} |")
             diffs = [r[0] for r in rows if not r[3]]
             print(f"\nRESULT compare {a} vs {b}: {len(rows) - len(diffs)} same, differ: {diffs}")
+            if (a, b) == MUST_EQUAL[:2]:
+                fields = {r[0]: r[3] for r in rows}
+                bad = [f for f in MUST_EQUAL[2] if not fields.get(f, False)]
+                print(f"RESULT must-equal {a} vs {b}: {'ok' if not bad else 'FAILED'} differ: {bad}")
     with open(sys.argv[2], "w") as f:
         json.dump(report, f, indent=1, default=str)
 

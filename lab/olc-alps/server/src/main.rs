@@ -7,20 +7,29 @@
 //! application data (the h2 preface). It answers enough HTTP/2 and
 //! HTTP/1.1 for a browser's page load to finish.
 //!
-//! Usage: alps-lab-server --log FILE [--port N]... [--codepoint auto|new|old]
-//!        [--settings-hex HEX]
+//! Usage: alps-lab-server --log FILE [--port N]... [--late-port N]...
+//!        [--settings-delay-ms MS] [--codepoint auto|new|old] [--settings-hex HEX]
+//!
+//! On a `--late-port` the server holds its HTTP/2 SETTINGS for MS
+//! milliseconds (default 1000) after the handshake, reading what the client
+//! sends meanwhile: whether a client waits for the server's SETTINGS before
+//! its request shows in when its HEADERS arrive. Every h2 connection's log
+//! line carries when each read arrived (`times`, microseconds since the
+//! handshake ended, with the bytes received so far) and when the server's
+//! SETTINGS went out (`settings_at_us`).
 //!
 //! Memory: a ClientHello is read whole and kept at most MAX_HELLO bytes; a
 //! connection's application data is buffered at most MAX_APP bytes, and the
-//! first MAX_APP_LOG of them are logged; at most MAX_CONNECTIONS
-//! connections are served at once (others are closed unread).
+//! first MAX_APP_LOG of them are logged, with at most MAX_TIMES read times;
+//! at most MAX_CONNECTIONS connections are served at once (others are closed
+//! unread).
 
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use boring::asn1::Asn1Time;
 use boring::bn::{BigNum, MsbOption};
@@ -30,7 +39,7 @@ use boring::nid::Nid;
 use boring::pkey::PKey;
 use boring::ssl::{
     select_next_proto, AlpnError, Ssl, SslContext, SslContextBuilder, SslMethod, SslRef,
-    SslVersion,
+    SslStream, SslVersion,
 };
 use boring::x509::{X509Builder, X509NameBuilder, X509};
 use foreign_types::ForeignTypeRef;
@@ -43,6 +52,9 @@ const MAX_CONNECTIONS: usize = 64;
 const MAX_H2_REQUESTS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const H2_IDLE: Duration = Duration::from_secs(3);
+const MAX_TIMES: usize = 256;
+/// How often a late port's wait looks for the client's bytes.
+const LATE_POLL: Duration = Duration::from_millis(5);
 
 const ALPS_OLD: u16 = 0x4469;
 const ALPS_NEW: u16 = 0x44cd;
@@ -59,6 +71,9 @@ enum Codepoint {
 
 struct Config {
     ports: Vec<u16>,
+    /// Ports whose server holds its SETTINGS for `settings_delay`.
+    late_ports: Vec<u16>,
+    settings_delay: Duration,
     log: String,
     codepoint: Codepoint,
     /// The server's ALPS for h2: an HTTP/2 SETTINGS frame, as Chrome's
@@ -67,13 +82,15 @@ struct Config {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: alps-lab-server --log FILE [--port N]... [--codepoint auto|new|old] [--settings-hex HEX]");
+    eprintln!("usage: alps-lab-server --log FILE [--port N]... [--late-port N]... [--settings-delay-ms MS] [--codepoint auto|new|old] [--settings-hex HEX]");
     std::process::exit(2)
 }
 
 fn parse_args() -> Config {
     let mut cfg = Config {
         ports: Vec::new(),
+        late_ports: Vec::new(),
+        settings_delay: Duration::from_millis(1000),
         log: String::new(),
         codepoint: Codepoint::Auto,
         // SETTINGS, stream 0: MAX_CONCURRENT_STREAMS (3) = 100.
@@ -84,6 +101,10 @@ fn parse_args() -> Config {
         let mut val = || args.next().unwrap_or_else(|| usage());
         match a.as_str() {
             "--port" => cfg.ports.push(val().parse().unwrap_or_else(|_| usage())),
+            "--late-port" => cfg.late_ports.push(val().parse().unwrap_or_else(|_| usage())),
+            "--settings-delay-ms" => {
+                cfg.settings_delay = Duration::from_millis(val().parse().unwrap_or_else(|_| usage()))
+            }
             "--log" => cfg.log = val(),
             "--codepoint" => {
                 cfg.codepoint = match val().as_str() {
@@ -97,7 +118,7 @@ fn parse_args() -> Config {
             _ => usage(),
         }
     }
-    if cfg.ports.is_empty() || cfg.log.is_empty() {
+    if (cfg.ports.is_empty() && cfg.late_ports.is_empty()) || cfg.log.is_empty() {
         usage();
     }
     cfg
@@ -339,42 +360,79 @@ fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
-/// Enough HTTP/2 for a page load: the server's SETTINGS, ACKs, and a
-/// `200` with `ok` to every request. Returns the client's first bytes and
-/// the number of requests answered.
-fn serve_h2<S: Read + Write>(s: &mut S) -> (Vec<u8>, usize) {
-    let mut seen = Vec::new();
-    let mut buf: Vec<u8> = Vec::new();
-    let mut answered = 0;
-    let mut preface_ok = false;
-    if s.write_all(&frame(4, 0, 0, &[])).is_err() {
-        return (seen, 0);
-    }
+/// What the server saw of one HTTP/2 connection.
+#[derive(Default)]
+struct H2Seen {
+    /// The client's first bytes (at most MAX_APP_LOG).
+    app: Vec<u8>,
+    /// Per read: microseconds since the handshake ended, and the bytes
+    /// received by then (at most MAX_TIMES reads).
+    times: Vec<(u128, usize)>,
+    received: usize,
+    answered: usize,
+    /// When the server's SETTINGS went out, in microseconds since the
+    /// handshake ended.
+    settings_at_us: u128,
+}
+
+enum Got {
+    Data,
+    Idle,
+    End,
+}
+
+fn read_chunk(tls: &mut SslStream<Replay>, buf: &mut Vec<u8>, seen: &mut H2Seen, t0: Instant) -> Got {
     let mut chunk = [0u8; 4096];
-    'outer: loop {
-        let n = match s.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        if seen.len() < MAX_APP_LOG {
-            let take = n.min(MAX_APP_LOG - seen.len());
-            seen.extend_from_slice(&chunk[..take]);
-        }
-        if buf.len() + n > MAX_APP {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if !preface_ok {
-            if buf.len() < H2_PREFACE.len() {
-                continue;
+    match tls.read(&mut chunk) {
+        Ok(0) => Got::End,
+        Ok(n) => {
+            if buf.len() + n > MAX_APP {
+                return Got::End;
             }
+            if seen.app.len() < MAX_APP_LOG {
+                let take = n.min(MAX_APP_LOG - seen.app.len());
+                seen.app.extend_from_slice(&chunk[..take]);
+            }
+            seen.received += n;
+            if seen.times.len() < MAX_TIMES {
+                seen.times.push((t0.elapsed().as_micros(), seen.received));
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            Got::Data
+        }
+        Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => Got::Idle,
+        Err(_) => Got::End,
+    }
+}
+
+/// Enough HTTP/2 for a page load: the server's SETTINGS (after `delay`, on
+/// a late port), ACKs, and a `200` with `ok` to every request.
+fn serve_h2(tls: &mut SslStream<Replay>, delay: Option<Duration>, t0: Instant) -> H2Seen {
+    let mut seen = H2Seen::default();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut preface_ok = false;
+    if let Some(delay) = delay {
+        let _ = tls.get_mut().inner.set_read_timeout(Some(LATE_POLL));
+        while t0.elapsed() < delay {
+            if let Got::End = read_chunk(tls, &mut buf, &mut seen, t0) {
+                return seen;
+            }
+        }
+    }
+    let _ = tls.get_mut().inner.set_read_timeout(Some(H2_IDLE));
+    if tls.write_all(&frame(4, 0, 0, &[])).is_err() {
+        return seen;
+    }
+    seen.settings_at_us = t0.elapsed().as_micros();
+    loop {
+        if !preface_ok && buf.len() >= H2_PREFACE.len() {
             if &buf[..H2_PREFACE.len()] != H2_PREFACE {
-                break;
+                return seen;
             }
             buf.drain(..H2_PREFACE.len());
             preface_ok = true;
         }
-        while buf.len() >= 9 {
+        while preface_ok && buf.len() >= 9 {
             let len = usize::from(buf[0]) << 16 | usize::from(buf[1]) << 8 | usize::from(buf[2]);
             if buf.len() < 9 + len {
                 break;
@@ -387,23 +445,23 @@ fn serve_h2<S: Read + Write>(s: &mut S) -> (Vec<u8>, usize) {
                 4 if flags & 1 == 0 => frame(4, 1, 0, &[]),
                 6 if flags & 1 == 0 => frame(6, 1, 0, &payload),
                 1 | 9 if flags & 4 != 0 && stream != 0 => {
-                    answered += 1;
+                    seen.answered += 1;
                     let mut r = frame(1, 4, stream, &[0x88]); // :status 200
                     r.extend(frame(0, 1, stream, b"ok\n"));
                     r
                 }
-                7 => break 'outer,
+                7 => return seen,
                 _ => continue,
             };
-            if s.write_all(&reply).is_err() {
-                break 'outer;
-            }
-            if answered >= MAX_H2_REQUESTS {
-                break 'outer;
+            if tls.write_all(&reply).is_err() || seen.answered >= MAX_H2_REQUESTS {
+                return seen;
             }
         }
+        match read_chunk(tls, &mut buf, &mut seen, t0) {
+            Got::Data => {}
+            Got::Idle | Got::End => return seen,
+        }
     }
-    (seen, answered)
 }
 
 /// One HTTP/1.1 request head, answered with `200` and `ok`.
@@ -421,13 +479,14 @@ fn serve_http1<S: Read + Write>(s: &mut S) -> Vec<u8> {
     head
 }
 
-fn handle(ctx: &SslContext, cfg: &Config, log: &Log, id: u64, port: u16, mut tcp: TcpStream) {
+fn handle(ctx: &SslContext, cfg: &Config, log: &Log, id: u64, port: u16, late: bool, mut tcp: TcpStream) {
     let peer = tcp.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let _ = tcp.set_read_timeout(Some(IO_TIMEOUT));
     let _ = tcp.set_write_timeout(Some(IO_TIMEOUT));
     let mut fields = vec![
         ("id", id.to_string()),
         ("port", port.to_string()),
+        ("late", late.to_string()),
         ("peer", json_str(&peer)),
     ];
     let (raw, msg) = match read_client_hello(&mut tcp) {
@@ -496,6 +555,7 @@ fn handle(ctx: &SslContext, cfg: &Config, log: &Log, id: u64, port: u16, mut tcp
             return;
         }
     };
+    let t0 = Instant::now();
     let s = tls.ssl();
     let alpn = s.selected_alpn_protocol().map(<[u8]>::to_vec);
     let (has_alps, peer_alps) = negotiated_alps(s);
@@ -512,10 +572,13 @@ fn handle(ctx: &SslContext, cfg: &Config, log: &Log, id: u64, port: u16, mut tcp
     fields.push(("alps", has_alps.to_string()));
     fields.push(("peer_alps", json_str(&hex(&peer_alps))));
     if alpn.as_deref() == Some(b"h2") {
-        let _ = tls.get_mut().inner.set_read_timeout(Some(H2_IDLE));
-        let (app, answered) = serve_h2(&mut tls);
-        fields.push(("app", json_str(&hex(&app))));
-        fields.push(("requests", answered.to_string()));
+        let delay = late.then_some(cfg.settings_delay);
+        let h2 = serve_h2(&mut tls, delay, t0);
+        fields.push(("app", json_str(&hex(&h2.app))));
+        fields.push(("requests", h2.answered.to_string()));
+        fields.push(("settings_at_us", h2.settings_at_us.to_string()));
+        let times: Vec<String> = h2.times.iter().map(|(t, n)| format!("[{t},{n}]")).collect();
+        fields.push(("times", format!("[{}]", times.join(","))));
     } else {
         let head = serve_http1(&mut tls);
         fields.push(("app", json_str(&hex(&head))));
@@ -539,7 +602,13 @@ fn main() {
     let ids = Arc::new(AtomicU64::new(0));
     let live = Arc::new(AtomicUsize::new(0));
     let mut listeners = Vec::new();
-    for &port in &cfg.ports {
+    let all: Vec<(u16, bool)> = cfg
+        .ports
+        .iter()
+        .map(|&p| (p, false))
+        .chain(cfg.late_ports.iter().map(|&p| (p, true)))
+        .collect();
+    for (port, late) in all {
         let ln = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| panic!("bind {port}: {e}"));
         let (ctx, cfg, log, ids, live) = (ctx.clone(), cfg.clone(), log.clone(), ids.clone(), live.clone());
         listeners.push(std::thread::spawn(move || {
@@ -552,13 +621,13 @@ fn main() {
                 let id = ids.fetch_add(1, Ordering::SeqCst) + 1;
                 let (ctx, cfg, log, live) = (ctx.clone(), cfg.clone(), log.clone(), live.clone());
                 std::thread::spawn(move || {
-                    handle(&ctx, &cfg, &log, id, port, tcp);
+                    handle(&ctx, &cfg, &log, id, port, late, tcp);
                     live.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         }));
     }
-    eprintln!("alps-lab-server listening on {:?}", cfg.ports);
+    eprintln!("alps-lab-server listening on {:?}, late {:?}", cfg.ports, cfg.late_ports);
     for l in listeners {
         let _ = l.join();
     }

@@ -16,7 +16,11 @@ name: Lab - olcRTC signalling TLS, Chrome's ALPS
 #       side by side (lab/olc-alps/analyze.py);
 #   (d) when the commit has it, runs xray-rust's own offline ALPS test, and
 #       the same test on the commit's parent's non-test files, which must
-#       fail (RED).
+#       fail (RED), when that parent pins another shaped-rustls;
+#   (e) times each h2 connection's frames, also on late ports whose server
+#       holds its SETTINGS for a second, and, with H2_MUST_EQUAL, fails
+#       when our fetch's h2 (SETTINGS, window, frame order, pseudo-headers,
+#       HEADERS flags and priority) is not Chrome's fetch()'s.
 # Chrome runs with every name but alps.test unresolvable, so it reaches
 # nothing but the lab server.
 #
@@ -44,6 +48,12 @@ env:
   # What the probe of (c) must do at that commit: "fail" (rustls without
   # ALPS: the RED) or "ok".
   PROBE_EXPECT: "ok"
+  # "1": the h2 fields of MUST_EQUAL (analyze.py) must be the same for
+  # Chrome's fetch() and ours, or the run fails.
+  H2_MUST_EQUAL: "1"
+  # A mutation of the client, to see the comparison fail: "" (none),
+  # "no-priority" or "ack-after-headers".
+  XRS_MUTATION: ""
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: "0"
@@ -67,6 +77,18 @@ jobs:
           git -C xrs -c advice.detachedHead=false checkout -q "$XRS_COMMIT"
           git -C xrs log -1 --format='%H %s' | tee -a "$GITHUB_STEP_SUMMARY"
           mkdir -p out
+          case "$XRS_MUTATION" in
+            "") ;;
+            no-priority)
+              grep -q 'request_priority(' xrs/olc/olc-net/src/fetch.rs
+              sed -i '/\.request_priority(/d' xrs/olc/olc-net/src/fetch.rs ;;
+            ack-after-headers)
+              grep -q 'H2_SETTINGS_WAIT,' xrs/olc/olc-net/src/fetch.rs
+              sed -i 's/H2_SETTINGS_WAIT,/Duration::ZERO,/' xrs/olc/olc-net/src/fetch.rs ;;
+            *) echo "unknown mutation $XRS_MUTATION"; exit 1 ;;
+          esac
+          echo "mutation: ${XRS_MUTATION:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
+          git -C xrs diff | tee out/mutation.diff
 
       - name: Toolchain and tools
         run: |
@@ -110,7 +132,8 @@ jobs:
           set +e -uo pipefail
           o=$PWD/out
           lab/olc-alps/server/target/release/alps-lab-server --log "$o/server.jsonl" \
-            --port 8443 --port 8444 --port 8445 --port 8446 --port 8448 > "$o/server.err" 2>&1 &
+            --port 8443 --port 8444 --port 8445 --port 8446 --port 8448 \
+            --late-port 8452 --late-port 8453 --late-port 8454 --settings-delay-ms 1000 > "$o/server.err" 2>&1 &
           echo $! > "$o/server.pid"
           sleep 1
           cat > "$o/ws.html" <<'EOF'
@@ -124,6 +147,7 @@ jobs:
           fetch("https://alps.test:8448/f", {mode: "no-cors"}).then(() => { document.title = "fetched"; }, () => { document.title = "fetch error"; });
           </script>
           EOF
+          sed 's/8448/8452/' "$o/fetch.html" > "$o/fetch-late.html"
           chrome() { # name url...
             local name=$1; shift
             local d; d=$(mktemp -d)
@@ -138,7 +162,9 @@ jobs:
           for i in 1 2 3; do chrome "navigation-$i" https://alps.test:8443/; done
           chrome websocket "file://$o/ws.html"
           chrome fetch "file://$o/fetch.html"
-          (cd xrs && timeout 120 cargo run -q --locked -p olc-net --features shaped-tls --example alps_probe -- alps.test 8445 8446) \
+          chrome fetch-late "file://$o/fetch-late.html"
+          chrome navigation-late https://alps.test:8453/
+          (cd xrs && timeout 120 cargo run -q --locked -p olc-net --features shaped-tls --example alps_probe -- alps.test 8445 8446 8454) \
             > "$o/probe.log" 2>&1
           echo "probe rc=$?"
           cat "$o/probe.log"
@@ -169,19 +195,23 @@ jobs:
           parent_rev=$(git show HEAD^:Cargo.toml | sed -n 's/^rustls = { git = "https:\/\/github.com\/ghostlane-project\/shaped-rustls", rev = "\([0-9a-f]*\)" }$/\1/p')
           rev=$(sed -n 's/^rustls = { git = "https:\/\/github.com\/ghostlane-project\/shaped-rustls", rev = "\([0-9a-f]*\)" }$/\1/p' Cargo.toml)
           echo "rustls rev $rev, parent's $parent_rev"
-          [ -n "$parent_rev" ] && [ -n "$rev" ] && [ "$parent_rev" != "$rev" ]
-          git checkout -q HEAD^ -- Cargo.toml crates/xray-transport/src
-          sed -i "s/$rev/$parent_rev/g" Cargo.lock
-          git status --short | tee "$o/offline-red-tree.txt"
-          timeout 1800 $t > "$o/offline-red.log" 2>&1 && red=passed || red=failed
-          grep -E "^test |panicked|^test result" "$o/offline-red.log" | head -20
-          git checkout -q HEAD -- Cargo.toml Cargo.lock crates/xray-transport/src
+          [ -n "$parent_rev" ] && [ -n "$rev" ]
+          if [ "$parent_rev" = "$rev" ]; then
+            red=skipped
+          else
+            git checkout -q HEAD^ -- Cargo.toml crates/xray-transport/src
+            sed -i "s/$rev/$parent_rev/g" Cargo.lock
+            git status --short | tee "$o/offline-red-tree.txt"
+            timeout 1800 $t > "$o/offline-red.log" 2>&1 && red=passed || red=failed
+            grep -E "^test |panicked|^test result" "$o/offline-red.log" | head -20
+            git checkout -q HEAD -- Cargo.toml Cargo.lock crates/xray-transport/src
+          fi
           {
             echo "RESULT offline-test green $green"
             echo "RESULT offline-test clippy $clippy"
             echo "RESULT offline-test red (parent's rustls and xray-transport) $red"
           } | tee "$o/offline.txt"
-          [ "$green" = ok ] && [ "$clippy" = ok ] && [ "$red" = failed ]
+          [ "$green" = ok ] && [ "$clippy" = ok ] && { [ "$red" = failed ] || [ "$red" = skipped ]; }
 
       - name: Compare
         run: |
@@ -196,8 +226,14 @@ jobs:
           else
             grep -q '^RESULT probe fetch ok' out/probe.log || { echo "the probe's fetch failed"; ok=0; }
             grep -q '^RESULT probe websocket ok' out/probe.log || { echo "the probe's websocket failed"; ok=0; }
+            grep -q '^RESULT probe fetch-late ok' out/probe.log || { echo "the probe's late fetch failed"; ok=0; }
           fi
-          echo "RESULT probe expectation $PROBE_EXPECT: $([ $ok = 1 ] && echo met || echo MISSED)" | tee -a out/results.txt
+          if [ "$H2_MUST_EQUAL" = 1 ]; then
+            grep -q '^RESULT must-equal chrome-fetch vs ours-fetch: ok' out/compare.md \
+              || { echo "our fetch's h2 is not Chrome's fetch()'s"; ok=0; }
+          fi
+          echo "RESULT mutation ${XRS_MUTATION:-none}" >> out/results.txt
+          echo "RESULT probe expectation $PROBE_EXPECT, h2 must-equal $H2_MUST_EQUAL: $([ $ok = 1 ] && echo met || echo MISSED)" | tee -a out/results.txt
           [ $ok = 1 ]
 
       - name: Summary

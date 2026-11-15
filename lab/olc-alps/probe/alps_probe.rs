@@ -3,10 +3,12 @@
 //! the Chrome-shaped TLS of `olc_net::shaped_tls`, against the lab's
 //! BoringSSL server on loopback.
 //!
-//!   alps_probe <name> <fetch-port> <websocket-port>
+//!   alps_probe <name> <fetch-port> <websocket-port> [<late-fetch-port>]
 //!
 //! A `fetch` (ALPN h2, http/1.1, then one GET in what the server picked)
-//! and a WebSocket's own dial (ALPN http/1.1, then one HTTP/1.1 GET). The
+//! and a WebSocket's own dial (ALPN http/1.1, then one HTTP/1.1 GET); with
+//! a late port, one more `fetch` to the port whose server holds its
+//! SETTINGS (`fetch-late`). The
 //! server's certificate is self-signed, so the check is off
 //! (`allow_insecure`); nothing else differs from the product's dial.
 //! Prints one RESULT line per dial; exits 1 when either fails.
@@ -85,8 +87,8 @@ async fn websocket(tls: &TlsConnector, name: &str, port: u16) -> Result<String, 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4 {
-        eprintln!("usage: alps_probe <name> <fetch-port> <websocket-port>");
+    if args.len() != 4 && args.len() != 5 {
+        eprintln!("usage: alps_probe <name> <fetch-port> <websocket-port> [<late-fetch-port>]");
         std::process::exit(2);
     }
     let name = &args[1];
@@ -94,10 +96,15 @@ async fn main() {
     let ws_port: u16 = args[3].parse().expect("websocket port");
     let tls = TlsConnector::system().expect("connector");
     let mut ok = true;
-    for (what, r) in [
+    let mut results = vec![
         ("fetch", tokio::time::timeout(LIMIT, fetch(&tls, name, fetch_port)).await),
         ("websocket", tokio::time::timeout(LIMIT, websocket(&tls, name, ws_port)).await),
-    ] {
+    ];
+    if let Some(late) = args.get(4) {
+        let late: u16 = late.parse().expect("late fetch port");
+        results.push(("fetch-late", tokio::time::timeout(LIMIT, fetch(&tls, name, late)).await));
+    }
+    for (what, r) in results {
         match r {
             Ok(Ok(s)) => println!("RESULT probe {what} ok {s}"),
             Ok(Err(e)) => {
