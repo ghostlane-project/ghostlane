@@ -9,11 +9,12 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
  * copied from `crates/xray-config/src/surface.rs` of ghostlane-project/xray-rust
- * at e8503168 (the `ghostlane` branch after its second integration; the
- * parser changes since 4a61b057 are `log`, now read for the embedding's log
- * lines, which also takes Xray-core's `logLevel` spelling this config never
- * writes, and the `dns` outbound rule's `address`, `port` and `outboundTag`,
- * which only its `forward` action takes). The parser refuses a whole config
+ * at 4a081163 (the `ghostlane` branch after its third integration, which left
+ * `crates/xray-config` as the second, e8503168, had it; the parser changes
+ * since 4a61b057 are `log`, now read for the embedding's log lines, which
+ * also takes Xray-core's `logLevel` spelling this config never writes, and
+ * the `dns` outbound rule's `address`, `port` and `outboundTag`, which only
+ * its `forward` action takes). The parser refuses a whole config
  * over one field it does not list (`reject_unknown_fields`), so a builder that
  * grows a field the core does not know fails here, before a phone fails to
  * connect.

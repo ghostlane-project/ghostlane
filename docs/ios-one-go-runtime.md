@@ -372,7 +372,7 @@ No build of this branch changes what an iPhone runs.
   in hex, a Salamander password outside 4 to 4096 bytes) goes to Go whole,
   and the app's log says why.
 - Held by `XrayConfigIosCoreTest` (every field against the core's own field
-  lists, `XrayRustSurface`, copied from the fork at e8503168), the reference
+  lists, `XrayRustSurface`, copied from the fork at 4a081163), the reference
   configs `ios-core-*.json` and `bypass-ios-core-*.json`
   (`RustCoreConfigDumpTest`; per line with stand-in lists, and
   `bypass-ios-core-bundled-lists.json` once with the bundled Russian lists,
