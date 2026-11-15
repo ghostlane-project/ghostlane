@@ -540,6 +540,9 @@ def run_one(flavour, index, args, t1, base):
             held = [((s.get("layers") or {}).get(name) or [None])[0] or 0 for s in tk]
             layer_max[name] = max(held) if held else None
         conns = [((s.get("n") or {}).get("conns") or 0) for s in tk]
+        # The process's byte budget (memory_stats' "bytes", from xray-rust
+        # 2026-11-15 on): what was taken of B, highest tick.
+        budget = [((s.get("bytes") or {}).get("held") or 0) for s in tk if "bytes" in s]
         st = p["stats"] or {}
         rows.append({
             "flavour": flavour, "run": index, "phase": p["name"],
@@ -556,6 +559,8 @@ def run_one(flavour, index, args, t1, base):
             "rt_threads": (st.get("rt") or {}).get("threads"),
             "tasks": (st.get("rt") or {}).get("tasks"),
             "conns_max": max(conns) if conns else None,
+            "budget_held_max": max(budget) if budget else None,
+            "budget_cap": ((st.get("bytes") or {}).get("cap")),
             "layers_max": layer_max if tk else None,
             "load_s": round(p["t_load"] - p["t0"], 3),
             "info": p["info"],
@@ -599,16 +604,20 @@ def report(rows, meta):
     out += ["", "MiB of `phys_footprint` from `proc_pid_rusage` at 10 Hz; *end* is the median of the phase's "
             "last second (after the settle), *peak* the phase's highest sample, *life* the lifetime maximum "
             "at the phase's end. *heap* is the Rust counting allocator's live bytes (highest 4 Hz tick in the "
-            "phase); *peak* its lifetime high-water mark. Layers: KiB held, highest tick.", ""]
+            "phase); *peak* its lifetime high-water mark. Layers: KiB held, highest tick. *B*: KiB taken of "
+            "the process's byte budget, highest tick, of its cap.", ""]
     out += ["| flavour | run | phase | end | peak | life | threads | heap max | heap peak | conns | "
-            "socks/udp/smux_rx/smux_tx/mux_in KiB | load |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+            "socks/udp/smux_rx/smux_tx/mux_in KiB | B KiB | load |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         lm = r["layers_max"]
         layers = "-" if not lm else "/".join(kib(lm[n]) for n in LAYERS)
+        held = r.get("budget_held_max")
+        budget = "-" if held is None else f"{kib(held)} of {kib(r.get('budget_cap'))}"
         out.append(f"| {r['flavour']} | {r['run']} | {r['phase']} | {mib(r['fp_end'])} | {mib(r['fp_peak'])} | "
                    f"{mib(r['lifemax'])} | {r['threads']} | {mib(r['heap_live_max'])} | {mib(r['heap_peak'])} | "
-                   f"{r['conns_max'] if r['conns_max'] is not None else '-'} | {layers} | {load_text(r)} |")
+                   f"{r['conns_max'] if r['conns_max'] is not None else '-'} | {layers} | {budget} | "
+                   f"{load_text(r)} |")
     # The plan's rows, side by side.
     out += ["", "| phase | rust peak (run 1 / 2) | rust heap max | go peak (run 1 / 2) |", "|---|---|---|---|"]
     names = []
