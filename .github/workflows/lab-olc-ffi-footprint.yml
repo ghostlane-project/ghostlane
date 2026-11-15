@@ -17,7 +17,9 @@ name: Lab - olcRTC FFI footprint
 # (lab/olc-ffi/footprint/footprint.py) samples proc_pid_rusage at 10 Hz
 # through idle, 32 downloads, 32 uploads, 64 DNS queries twice, 256
 # downloads, trim() right after them (rust: the footprint before and after
-# the call), 512 downloads at once, plus stop/starts and trim() for rust, two
+# the call), 512 connections held open and idle (each CONNECT answered, no
+# byte moving: the heap per open connection), 512 downloads at once, plus
+# stop/starts and trim() for rust, two
 # runs each; and the rust-b3 arm, the phone's byte budget pressed
 # (set_byte_budget(3000000)) through the 256 and 512 rows. The rows land in
 # the job summary; the samples, ticks and logs in the artifact. Before the
@@ -46,7 +48,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "ddb6ba2dcf2ef115af8cd06b3597a6706fcf0ca2"
+  XRS_COMMIT: "d9906b94d160f2b85342420dd01784b7fd812808"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never

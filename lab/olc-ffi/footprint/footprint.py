@@ -44,6 +44,10 @@ Phases, each followed by SETTLE_S of quiet inside its window:
   after malloc_trim
           (rust, Linux) glibc's malloc_trim(0) after that: what the
           allocator still had to give
+  idle512 CONNS_FLOWS CONNECTs held open at once, each answered (the exit
+          dialed a target of the driver's own that accepts and never
+          sends), no byte moving: plan §9's "per open connection" row, idle
+          (xray-rust p3/m9-ffi.md gap 18); closed after the phase
   conns512
           CONNS_FLOWS downloads of WIDE_BYTES at once: every connection the
           SOCKS front takes (512), each with its floor
@@ -398,6 +402,35 @@ class Origin(http.server.ThreadingHTTPServer):
     request_queue_size = 1024
 
 
+class Hold:
+    """A target that accepts every connection and keeps it, never sending:
+    what idle512's CONNECTs are answered for."""
+
+    def __init__(self):
+        self.ln = socket.socket()
+        self.ln.bind(("127.0.0.1", 0))
+        self.ln.listen(1024)
+        self.addr = self.ln.getsockname()
+        self.kept = []
+        self.lock = threading.Lock()
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                c, _ = self.ln.accept()
+            except OSError:
+                return
+            with self.lock:
+                self.kept.append(c)
+
+    def drop(self):
+        with self.lock:
+            kept, self.kept = self.kept, []
+        for c in kept:
+            c.close()
+
+
 def free_port():
     s = socket.socket()
     with s:
@@ -552,6 +585,29 @@ def run_one(flavour, index, args, t1, base):
     def wide(n):
         return parallel(n, lambda i: get(args.pages, conn, f"/bytes?n={WIDE_BYTES}"))
 
+    held = []
+    held_lock = threading.Lock()
+
+    def hold_open(i):
+        s, _ = socks_open(conn["port"], conn["user"], conn["pass"], 1, args.hold.addr[0], args.hold.addr[1])
+        with held_lock:
+            held.append(s)
+        return 0
+
+    def release_held():
+        with held_lock:
+            for s in held:
+                s.close()
+            held.clear()
+        args.hold.drop()
+        deadline = time.time() + 15
+        while host is not None and time.time() < deadline:
+            if ((json.loads(host.call("stats", "STATS")).get("n") or {}).get("conns") or 0) == 0:
+                break
+            time.sleep(0.1)
+        if host is None:
+            time.sleep(2)
+
     def all_rows():
         phase("down", lambda: parallel(BURST_FLOWS, lambda i: get(origin, conn, "/big")))
         phase("up", lambda: parallel(BURST_FLOWS, lambda i: post(origin, conn, "/sink", UP_BYTES)))
@@ -563,6 +619,8 @@ def run_one(flavour, index, args, t1, base):
             phase("after trim", lambda: trimmed("trim", "TRIM", "trimmed"))
             if LINUX:
                 phase("after malloc_trim", lambda: trimmed("mtrim", "MTRIM", "malloc_trim"))
+        phase("idle512", lambda: parallel(CONNS_FLOWS, hold_open))
+        release_held()
         phase("conns512", lambda: wide(CONNS_FLOWS))
         if host is not None:
             def cycles():
@@ -744,6 +802,23 @@ def report(rows, meta):
             return " / ".join(mib(x) for x in v) if v else "-"
         out.append(f"| {name} | " + " | ".join(pick(f, "fp_peak") for f in flavours) +
                    f" | {pick('rust', 'heap_live_max')} |")
+    # Per open connection: idle512 over the phase before it (its end).
+    per = []
+    for i, r in enumerate(rows):
+        if r["phase"] != "idle512" or i == 0 or rows[i - 1]["run"] != r["run"]:
+            continue
+        prev = rows[i - 1]
+        fp = (None if r["fp_peak"] is None or prev["fp_end"] is None
+              else (r["fp_peak"] - prev["fp_end"]) / CONNS_FLOWS)
+        heap = (None if r["heap_live_max"] is None or prev["heap_live_end"] is None
+                else (r["heap_live_max"] - prev["heap_live_end"]) / CONNS_FLOWS)
+        per.append(f"| {r['flavour']} | {r['run']} | {'-' if fp is None else f'{fp:.0f}'} | "
+                   f"{'-' if heap is None else f'{heap:.0f}'} | {r['conns_max'] if r['conns_max'] is not None else '-'} |")
+    if per:
+        out += ["", f"Per open connection, idle ({CONNS_FLOWS} held): bytes of footprint (idle512's peak over the "
+                "previous phase's end) and of heap (idle512's highest tick over the previous phase's last "
+                "reading), each divided by the connections.", "",
+                "| flavour | run | footprint B/conn | heap B/conn | conns |", "|---|---|---|---|---|"] + per
     return "\n".join(out) + "\n"
 
 
@@ -778,6 +853,7 @@ def main():
     pages = Origin(("127.0.0.1", 0), Pages)
     threading.Thread(target=pages.serve_forever, daemon=True).start()
     a.pages = ("127.0.0.1", pages.server_address[1])
+    a.hold = Hold()
     os.makedirs(a.out, exist_ok=True)
     rust = a.rust or a.rust_client
     flavours = [f for f, path in (("rust", rust), ("rust-b3", rust if a.budget_arm else None), ("go", a.go))
@@ -793,7 +869,7 @@ def main():
         "setup": ("Linux, glibc malloc as it is" if LINUX else "f (system allocator, MallocLargeCache=0)"),
         "go": f"GOMEMLIMIT={GO_MEMORY_LIMIT}",
         "load": f"down {BURST_FLOWS} × GET /big, up {BURST_FLOWS} × {UP_BYTES} B, dns {DNS_BURST} × 2, "
-                f"wide {WIDE_FLOWS} × {WIDE_BYTES} B, conns512 {CONNS_FLOWS} × {WIDE_BYTES} B; "
+                f"wide {WIDE_FLOWS} × {WIDE_BYTES} B, idle512 {CONNS_FLOWS} held, conns512 {CONNS_FLOWS} × {WIDE_BYTES} B; "
                 f"settle {SETTLE_S:g} s after each; rust-b3: B = {PHONE_BUDGET}",
         "resolver": "%s:%d" % a.resolver,
         "transport": t1["transport"],
