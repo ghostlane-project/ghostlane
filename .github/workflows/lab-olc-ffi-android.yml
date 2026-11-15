@@ -58,7 +58,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-ffi"
-  XRS_COMMIT: "325697de6b5cd17a547737f78cb8013fe32db0c8"
+  XRS_COMMIT: "dddb2adf7d16b253f20d0f5b9711ba0484f057a2"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   # androidApp/build.gradle.kts ndkVersion (and the release workflow's).
@@ -144,7 +144,8 @@ jobs:
 
       - name: The Rust core and its Kotlin bindings
         run: |
-          set -uo pipefail
+          # Not -e (the runner's bash default): the summary is written first.
+          set +e -uo pipefail
           bash lab/olc-ffi/android/build-core-android.sh xrs lab/olc-ffi/android > out/build-core.log 2>&1
           rc=$?
           grep -E '^(BUILD|ALIGN|SIZE|SECTION|NEEDED|ELF|IMPORTS|EXPORTS|DRIVER|TESTS|CLIPPY|BINDINGS|SIGNATURE)|^error' out/build-core.log
@@ -157,9 +158,9 @@ jobs:
           cp lab/olc-ffi/android/core/readelf-*.txt lab/olc-ffi/android/core/imports-*.txt lab/olc-ffi/android/core/exports-*.txt out/ 2> /dev/null
           [ $rc -eq 0 ] || { tail -60 out/build-core.log; exit $rc; }
           if grep -q '^SIGNATURE differs' out/build-core.log; then exit 1; fi
-          test -f lab/olc-ffi/android/src/main/jniLibs/x86_64/libghostlane_core.so
-          test -f lab/olc-ffi/android/src/main/jniLibs/arm64-v8a/libghostlane_core.so
-          test -f lab/olc-ffi/android/src/main/jniLibs/armeabi-v7a/libghostlane_core.so
+          for abi in x86_64 arm64-v8a armeabi-v7a; do
+            test -f "lab/olc-ffi/android/src/main/jniLibs/$abi/libghostlane_core.so" || { echo "no $abi core"; exit 1; }
+          done
 
       - name: Save the cargo cache
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -310,7 +311,8 @@ jobs:
 
       - name: The crate tests under qemu-arm
         run: |
-          set -uo pipefail
+          # Not -e (the runner's bash default): the summary is written first.
+          set +e -uo pipefail
           bash lab/olc-ffi/android/test-armv7-qemu.sh xrs out/armv7 > out-armv7.log 2>&1
           rc=$?
           tail -5 out-armv7.log
