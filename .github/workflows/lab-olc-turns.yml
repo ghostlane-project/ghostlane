@@ -54,7 +54,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-rtc-turns"
-  XRS_COMMIT: "37c79d624ee22fe06bcd3464ad97eaaa81de58d8"
+  XRS_COMMIT: "b8d4145fc73d6a67f9791a0f217145331f1d4bde"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -108,6 +108,24 @@ jobs:
           [ $rc -eq 0 ] || tail -120 "$o/unit.log"
           echo "RESULT unit rc=$rc $(grep -c '^test .* ok$' "$o/unit.log") ok, $(grep -c '^test .* FAILED$' "$o/unit.log") failed, turns: $(grep -c '^test turns::tests::.* ok$' "$o/unit.log") ok, turns_verify: $(grep -c '^test turns_verify::tests::.* ok$' "$o/unit.log") ok, tls_boring: $(grep -c '^test tls_boring::tests::.* ok$' "$o/unit.log") ok" | tee "$o/result-unit.txt"
           exit $rc
+
+      - name: Heap, measured (a process of its own)
+        if: ${{ !cancelled() }}
+        working-directory: xrs
+        run: |
+          set +e -uo pipefail
+          o=$GITHUB_WORKSPACE/out
+          timeout 20m cargo test --locked -p olc-rtc --features boring --lib -- --ignored --test-threads=1 --nocapture heap_ > "$o/heap.log" 2>&1
+          rc=$?
+          grep -E '^test |test result|panicked|TURNS-HEAP' "$o/heap.log" | head -40
+          [ $rc -eq 0 ] || tail -60 "$o/heap.log"
+          grep -h 'TURNS-HEAP' "$o/heap.log" | tee "$o/result-heap.txt"
+          echo "RESULT heap rc=$rc"
+          timeout 20m cargo test --locked -p olc-client --features boring --lib sizes > "$o/sizes.log" 2>&1
+          rc2=$?
+          grep -E '^test |test result|panicked' "$o/sizes.log"
+          echo "RESULT sizes rc=$rc2"
+          exit $((rc | rc2))
 
       - name: Clippy
         if: ${{ !cancelled() }}
