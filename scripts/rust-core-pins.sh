@@ -26,8 +26,11 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# 1d60607f3df8: the fork's `ghostlane` after its third integration
-# (4a081163, 2026-11-14) and its CI fixes (2026-11-15). Upstream's second
+# 77f14eb8cef9: the head of the fork's gl/vision-padding-copy (2026-11-15),
+# which holds gl/tls-send-limit (bce67505), on the fork's `ghostlane` after
+# its third integration (4a081163, 2026-11-14) and its CI fixes (1d60607f,
+# 2026-11-15). `ghostlane` is fast-forwarded to this commit once this
+# workflow and PR Checks are green at it, not before. Upstream's second
 # 0.10.0 candidate (4a61b057) with the reviewed topic branches merged in
 # this order:
 #  - first integration (eb19e285): gl/reset-network (C ABI 1.18,
@@ -66,13 +69,22 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 #       ci.yml as upstream wrote it; the quinn-proto patch's shrink test
 #       checks each read's ShouldTransmit; a gitleaks exception for str0m
 #       0.25.0's example key files (rule and paths only); the iOS relay pool
-#       spare said as up to 32 KiB.
+#       spare said as up to 32 KiB;
+#  - on top of 1d60607f, the two topic branches of the fourth integration:
+#     - gl/tls-send-limit: a TLS client session flushes its queued records
+#       before it takes the next write, and takes each write whole; XHTTP
+#       over HTTP/1.1 hands the session its body 16 KiB at a time, and a
+#       WebSocket frame's buffer is dropped once written;
+#     - gl/vision-padding-copy: a padded Vision frame is written gathered,
+#       not copied, and its owed tail goes out while the carrier takes.
 #
-# Pin only commits on the fork's `ghostlane`. That branch moves by merges and
+# Pin only commits on the fork's `ghostlane`, or, for the run that decides
+# whether `ghostlane` may move, the head of a pushed topic branch that
+# `ghostlane` is an ancestor of. Those branches move by merges and
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-1d60607f3df8fcf18db2f00df7da6b722cf7fb7b}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
