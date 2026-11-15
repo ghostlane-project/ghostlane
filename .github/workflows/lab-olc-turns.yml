@@ -54,7 +54,7 @@ env:
   # pin is a change to this file (and so a run).
   XRS_REPO: "https://github.com/ghostlane-project/xray-rust"
   XRS_REF: "gl/olc-rtc-turns"
-  XRS_COMMIT: "38e2c5679c5c97c17d2fd554adde9524d626ecc2"
+  XRS_COMMIT: "468e154431684bb39bef404aa9ea11067207ae63"
   GO_VERSION: "1.26.5"
   RUST_TOOLCHAIN: "1.96.0"
   CARGO_TERM_COLOR: never
@@ -115,7 +115,7 @@ jobs:
         run: |
           set +e -uo pipefail
           o=$GITHUB_WORKSPACE/out
-          timeout 20m cargo test --locked -p olc-rtc --features boring --lib -- --ignored --test-threads=1 --nocapture heap_ > "$o/heap.log" 2>&1
+          timeout 8m cargo test --locked -p olc-rtc --features boring --lib -- --ignored --test-threads=1 --nocapture heap_ > "$o/heap.log" 2>&1
           rc=$?
           grep -E '^test |test result|panicked|TURNS-HEAP' "$o/heap.log" | head -40
           [ $rc -eq 0 ] || tail -60 "$o/heap.log"
@@ -164,7 +164,7 @@ jobs:
           }
           all=0
           # The certificate check accepts everything.
-          mutate accept-all olc/olc-rtc/src/turns.rs 's/let verdict = verify_server_chain\([^;]*;/let verdict: Result<(), webpki::Error> = Ok(());/' \
+          mutate accept-all olc/olc-rtc/src/turns.rs 's/(let verdict = verify_server_chain\([^;]*);/$1.or_else(|_: webpki::Error| Ok::<(), webpki::Error>(()));/' \
             turns::tests::an_untrusted_certificate_ends_that_relay_only turns::tests::a_certificate_for_another_name_ends_the_relay \
             turns::tests::an_address_literal_sends_no_sni_and_is_checked_as_an_address || all=1
           # The name is not checked (only the chain).
@@ -248,7 +248,7 @@ jobs:
           echo "RESULT strings: shipped $(strings -a "$b/olc-client-shipped" | grep -c OLC_TURNS_TEST_ROOT) testroots $(strings -a "$b/olc-client-testroots" | grep -c OLC_TURNS_TEST_ROOT) mentions of OLC_TURNS_TEST_ROOT" | tee "$o/result-strings.txt"
           [ "$(strings -a "$b/olc-client-shipped" | grep -c OLC_TURNS_TEST_ROOT)" = 0 ]
           # The check broken: every chain is taken.
-          perl -0pi -e 's/let verdict = verify_server_chain\([^;]*;/let verdict: Result<(), webpki::Error> = Ok(());/' olc/olc-rtc/src/turns.rs
+          perl -0pi -e 's/(let verdict = verify_server_chain\([^;]*);/$1.or_else(|_: webpki::Error| Ok::<(), webpki::Error>(()));/' olc/olc-rtc/src/turns.rs
           git diff --quiet -- olc/olc-rtc/src/turns.rs && { echo "the mutation did not apply"; exit 1; }
           build olc-client-testroots-broken "$BIN_FEATURES,olc-client/turns-test-roots"
           git checkout -q -- olc/olc-rtc/src/turns.rs
