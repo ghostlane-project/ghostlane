@@ -16,6 +16,11 @@ name: Rust core
 #     pinned Xray-core; supply-chain; secrets) run here, read from the pinned
 #     commit's own ci.yml by scripts/rust-core-upstream-ci.py, with the steps
 #     left out named in scripts/rust-core-upstream-skips.txt;
+#   - the fork's own guards, the size lints on the app's code and the release
+#     memory size guards (the job memory-guards of the pinned commit's
+#     .github/workflows/ghostlane-guards.yml), by the same driver: the fork
+#     keeps them out of ci.yml, whose rust job upstream's
+#     check-scheduled-interop-workflow.test.sh holds to its reviewed policy;
 #   - the Linux CLI, and the plan's interop: the CLI as the client of the
 #     lines the app writes, against Xray 26.4.25, 26.7.11 and 26.11.9
 #     (scripts/xray-servers.txt) as servers (scripts/rust-core-interop.py).
@@ -206,6 +211,29 @@ jobs:
           SRC: ${{ steps.fork.outputs.dir }}
         run: python3 scripts/rust-core-upstream-ci.py run "$SRC/.github/workflows/ci.yml" "$JOB" --workspace "$SRC" --skips scripts/rust-core-upstream-skips.txt
 
+  fork-guards:
+    name: Fork guards at the pin
+    runs-on: ubuntu-24.04
+    # The file's job gives itself 45 minutes; this adds the checkout.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: xray-rust at the pin
+        id: fork
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" | tail -n 1)"
+          echo "dir=$src" >> "$GITHUB_OUTPUT"
+
+      # Nothing is skipped: no --skips.
+      - name: The fork's guard steps
+        env:
+          SRC: ${{ steps.fork.outputs.dir }}
+        run: python3 scripts/rust-core-upstream-ci.py run "$SRC/.github/workflows/ghostlane-guards.yml" memory-guards --workspace "$SRC"
+
   cli:
     name: xray-rust CLI (Linux)
     runs-on: ubuntu-24.04
@@ -295,7 +323,7 @@ jobs:
   # published asset is never replaced: its sha256 is pinned, and a second
   # upload would break every fetch of the first.
   publish:
-    needs: [scripts, ios, upstream, cli, interop]
+    needs: [scripts, ios, upstream, fork-guards, cli, interop]
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     name: Publish to the rust-core-ios tag
     runs-on: ubuntu-24.04

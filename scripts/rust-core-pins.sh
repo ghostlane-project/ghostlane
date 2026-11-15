@@ -16,9 +16,9 @@
 # build-rust-core-cli.sh, fetch-rust-core-ios.sh, the two test-*.sh of those,
 # and .github/workflows/rust-core.yml, which reads it in a step, so there is
 # no second copy of these to drift. Bump XRAY_RUST_COMMIT here and the
-# checkout, the CLI's cache key, the release tag, the fetch and the upstream
-# CI the workflow runs (read from the pinned commit's own ci.yml) all move
-# together.
+# checkout, the CLI's cache key, the release tag, the fetch, the upstream CI
+# and the fork's guards the workflow runs (read from the pinned commit's own
+# ci.yml and ghostlane-guards.yml) all move together.
 
 # ghostlane-project/xray-rust, a fork of aimalygin/xray-rust.
 XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
@@ -26,9 +26,10 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# 4a08116392ae: the fork's `ghostlane` after its third integration
-# (2026-11-14). Upstream's second 0.10.0 candidate (4a61b057) with the
-# reviewed topic branches merged in this order:
+# 1d60607f3df8: the fork's `ghostlane` after its third integration
+# (4a081163, 2026-11-14) and its CI fixes (2026-11-15). Upstream's second
+# 0.10.0 candidate (4a61b057) with the reviewed topic branches merged in
+# this order:
 #  - first integration (eb19e285): gl/reset-network (C ABI 1.18,
 #    xray_core_reset_network), gl/logs (C ABI 1.19, the log callback),
 #    gl/hev-udp (hev's FWD_UDP, UDP in the control connection, with a
@@ -43,7 +44,7 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 #    for the olcRTC port's synthetic key vectors, on their path only, so
 #    upstream's secrets job passes over every branch of the fork) and
 #    gl/fork-scope (AGENTS.md names the fork's write scope);
-#  - third integration: gl/lean-futures-r2, gl/byte-budget-relay,
+#  - third integration (4a081163): gl/lean-futures-r2, gl/byte-budget-relay,
 #    gl/h2-read-buffer-r2, gl/byte-budget-windows-r3, and a Vision buffer fix:
 #     - gl/lean-futures-r2: boxed long-lived futures, one UDP scratch buffer
 #       per worker, the iOS runtime at one worker and four blocking threads,
@@ -59,13 +60,19 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 #       settler for held-back credit, and the vendored quinn-proto's grown
 #       window paying its shrink debt first (Hysteria2's windows unchanged);
 #     - the Vision fix: a written frame's buffer is dropped whatever its
-#       capacity reads, so a flow no longer keeps ~62 KB for its life.
+#       capacity reads, so a flow no longer keeps ~62 KB for its life;
+#     - CI fixes (4ce0786b..1d60607f): the fork-only size lints and release
+#       memory guards in a workflow of their own, ghostlane-guards.yml, with
+#       ci.yml as upstream wrote it; the quinn-proto patch's shrink test
+#       checks each read's ShouldTransmit; a gitleaks exception for str0m
+#       0.25.0's example key files (rule and paths only); the iOS relay pool
+#       spare said as up to 32 KiB.
 #
 # Pin only commits on the fork's `ghostlane`. That branch moves by merges and
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-4a08116392ae0cf1345ac7bbc93b0be7e7398dd6}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-1d60607f3df8fcf18db2f00df7da6b722cf7fb7b}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
