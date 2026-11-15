@@ -23,9 +23,13 @@ Phases, each followed by SETTLE_S of quiet inside its window:
   down    BURST_FLOWS downloads of the origin's /big at once
   up      BURST_FLOWS uploads of UP_BYTES to /sink at once
   dns     DNS_BURST DNS queries through one UDP associate, twice (gate S5)
-  wide    WIDE_FLOWS downloads of /big at once
+  wide    WIDE_FLOWS downloads of WIDE_BYTES at once, from an origin of the
+          driver's own (256 × 4 MiB at once ran the runner's network buffers
+          out and the T1 server tore the session down, for both clients)
   cycles  (rust) CYCLES stop/starts, as a link change does
   trim    (rust) trim(), then quiet
+  relief  (rust) malloc_zone_pressure_relief(NULL, 0), then quiet: what the
+          system allocator gives back when asked
 
   footprint.py run --t1 <t1.json> --rust <fp-host> --go <olcrtc> --runs 2 --out <dir>
   footprint.py sample <pid> <csv> <stop file>       (the sampler; run starts it)
@@ -36,6 +40,7 @@ the logs. Standard library only.
 
 import argparse
 import ctypes
+import http.server
 import json
 import os
 import queue
@@ -55,6 +60,7 @@ SETTLE_S = 6.0
 BURST_FLOWS = 32
 UP_BYTES = 2_000_000
 WIDE_FLOWS = 256
+WIDE_BYTES = 128 << 10
 DNS_BURST = 64
 DNS_WAIT_S = 5.0
 DNS_RESOLVER = ("8.8.8.8", 53)
@@ -311,6 +317,33 @@ def resolver_reachable():
             return False
 
 
+class Pages(http.server.BaseHTTPRequestHandler):
+    """GET /bytes?n=N: N bytes of the pattern, with their length."""
+
+    def do_GET(self):  # noqa: N802 - the handler's name
+        u = urllib.parse.urlsplit(self.path)
+        n = int((urllib.parse.parse_qs(u.query).get("n") or ["0"])[0])
+        if u.path != "/bytes" or n < 0:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(n))
+        self.end_headers()
+        left = n
+        while left > 0:
+            k = min(left, CHUNK)
+            self.wfile.write(BODY[:k])
+            left -= k
+
+    def log_message(self, *args):
+        pass
+
+
+class Origin(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 1024
+
+
 def free_port():
     s = socket.socket()
     with s:
@@ -461,7 +494,7 @@ def run_one(flavour, index, args, t1, base):
         phase("dns", lambda: {"target": "%s:%d" % args.resolver,
                               "answered": [dns_burst(conn, args.resolver), dns_burst(conn, args.resolver)],
                               "of": DNS_BURST})
-        phase("wide", lambda: parallel(WIDE_FLOWS, lambda i: get(origin, conn, "/big")))
+        phase("wide", lambda: parallel(WIDE_FLOWS, lambda i: get(args.pages, conn, f"/bytes?n={WIDE_BYTES}")))
         if host is not None:
             def cycles():
                 out = host.call(f"cycle {CYCLES}", "CYCLED", 60 * CYCLES)
@@ -470,6 +503,7 @@ def run_one(flavour, index, args, t1, base):
                 return info
             phase("cycles", cycles)
             phase("trim", lambda: {"trimmed": int(host.call("trim", "TRIM"))})
+            phase("relief", lambda: {"relieved": int(host.call("relief", "RELIEF"))})
     finally:
         if host is not None:
             try:
@@ -554,6 +588,8 @@ def load_text(r):
         return f"{CYCLES} cycles, ready {i['ready_min']}-{i['ready_max']} ms; fetch {i['fetch_after']} B"
     if "trimmed" in i:
         return f"trim gave {i['trimmed']} B"
+    if "relieved" in i:
+        return f"the allocator gave {i['relieved']} B"
     return ""
 
 
@@ -612,6 +648,9 @@ def main():
     a.resolver = DNS_RESOLVER
     if not resolver_reachable():
         a.resolver = (t1.get("echo_ip") or "127.0.0.1", int(t1["echo_port"]))
+    pages = Origin(("127.0.0.1", 0), Pages)
+    threading.Thread(target=pages.serve_forever, daemon=True).start()
+    a.pages = ("127.0.0.1", pages.server_address[1])
     os.makedirs(a.out, exist_ok=True)
     flavours = [f for f, path in (("rust", a.rust), ("go", a.go)) if path]
     rows = []
@@ -624,7 +663,7 @@ def main():
         "setup": "f (system allocator, MallocLargeCache=0)",
         "go": f"GOMEMLIMIT={GO_MEMORY_LIMIT}",
         "load": f"down {BURST_FLOWS} × GET /big, up {BURST_FLOWS} × {UP_BYTES} B, dns {DNS_BURST} × 2, "
-                f"wide {WIDE_FLOWS} × GET /big; settle {SETTLE_S:g} s after each",
+                f"wide {WIDE_FLOWS} × {WIDE_BYTES} B; settle {SETTLE_S:g} s after each",
         "resolver": "%s:%d" % a.resolver,
         "transport": t1["transport"],
     }

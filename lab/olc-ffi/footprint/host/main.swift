@@ -18,6 +18,7 @@ import os
 //   start        start, wait_ready(35000)    READY ms=<n> | ERR start <text>
 //   stats        memory_stats()              STATS <json>
 //   trim         trim()                      TRIM <bytes>
+//   relief       malloc_zone_pressure_relief RELIEF <bytes>
 //   cycle <n>    n × (stop, start, ready)    CYCLED n=<n> ready_min=<ms> ready_max=<ms>
 //   stop         stop(5000)                  STOPPED ms=<n>
 //   quit         stop when running, exit     BYE
@@ -253,6 +254,11 @@ while let line = readLine() {
         say("STATS \(memoryStats())")
     case "trim":
         say("TRIM \(trim())")
+    case "relief":
+        // What the system allocator gives back when asked (the extension's
+        // memory-pressure handler can ask it; trim() only drops the
+        // engine's own spare buffers).
+        say("RELIEF \(malloc_zone_pressure_relief(nil, 0))")
     case "cycle":
         let n = Int(words.dropFirst().first ?? "") ?? 1
         var readies: [Int] = []
