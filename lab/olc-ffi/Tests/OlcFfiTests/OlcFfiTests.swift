@@ -143,11 +143,17 @@ func accepts(port: Int) -> Bool {
     return rc == 0
 }
 
-/// Whether 127.0.0.1:port can be listened on again.
+/// Whether 127.0.0.1:port can be listened on again, as a listener asks:
+/// with SO_REUSEADDR (tokio's and Java's set it), since a connection the
+/// test made through the port leaves a TIME_WAIT on it, which a plain bind
+/// on Darwin refuses (run 43692067127: the next runtime bound the port, this
+/// check without the option did not).
 func binds(port: Int) -> Bool {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
     defer { close(fd) }
+    var one: Int32 = 1
+    guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size)) == 0 else { return false }
     var addr = loopback(port: port)
     let rc = withUnsafePointer(to: &addr) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
