@@ -129,6 +129,34 @@ func freePort() throws -> Int {
     return Int(UInt16(bigEndian: addr.sin_port))
 }
 
+/// Whether something accepts a connection on 127.0.0.1:port.
+func accepts(port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    var addr = loopback(port: port)
+    let rc = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    return rc == 0
+}
+
+/// Whether 127.0.0.1:port can be listened on again.
+func binds(port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    var addr = loopback(port: port)
+    let rc = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    return rc == 0 && listen(fd, 1) == 0
+}
+
 func loopback(port: Int) -> sockaddr_in {
     var addr = sockaddr_in()
     addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -352,6 +380,11 @@ func stats() throws -> [String: Any] {
     return obj
 }
 
+/// The tasks alive on the core's runtime, -1 when unread.
+func tasks() -> Int {
+    ((try? stats())?["rt"] as? [String: Any])?["tasks"] as? Int ?? -1
+}
+
 func mem(_ label: String) {
     let s = (try? stats()) ?? [:]
     let heap = s["heap"] as? [String: Any]
@@ -527,5 +560,47 @@ final class OlcFfiTests: XCTestCase {
         let given = trim()
         mem("after-trim")
         say("RESULT trim gave back \(given) bytes")
+    }
+
+    /// The extension letting go of a running runtime with no stop() first
+    /// (its last reference: the binding's deinit frees the object). The core
+    /// stops the run as stop(5_000) would (xray-rust 325697de's Drop): the
+    /// release returns within that bound, the SOCKS port refuses and binds
+    /// again, no task is left, and the next runtime in the same room is ready
+    /// and fetches. Before, the released one ran on: its task, its port and
+    /// its session in the room.
+    func testARunningRuntimeReleasedStopsItsRun() throws {
+        let host = try T1Host.load()
+        let port = try freePort()
+        var first: OlcrtcRuntime? = OlcrtcRuntime()
+        try configure(first!, host, port: port)
+        try first!.start()
+        try first!.waitReady(35_000)
+        let (status, body) = try fetch(host.origin, socks: port, user: Self.user, pass: Self.pass)
+        XCTAssertEqual(body, 1024, status)
+        let busy = tasks()
+
+        let t0 = Date()
+        first = nil
+        let releaseMS = Int(Date().timeIntervalSince(t0) * 1000)
+        XCTAssertLessThan(releaseMS, 5_500, "the release took \(releaseMS) ms, stop's bound is 5,000")
+        XCTAssertFalse(accepts(port: port), "the SOCKS port \(port) still accepts after the release")
+        XCTAssertTrue(binds(port: port), "the SOCKS port \(port) is still held after the release")
+        let settle = Date().addingTimeInterval(3)
+        while tasks() > 0 && Date() < settle { usleep(20_000) }
+        let left = tasks()
+        XCTAssertEqual(left, 0, "tasks left after the release")
+        say("RESULT release: a running runtime (\(busy) tasks) released in \(releaseMS) ms; the port refuses and binds again; \(left) tasks left")
+
+        let next = OlcrtcRuntime()
+        try configure(next, host, port: port)
+        let c0 = Date()
+        try next.start()
+        try next.waitReady(35_000)
+        let readyMS = Int(Date().timeIntervalSince(c0) * 1000)
+        let (st, n) = try fetch(host.origin, socks: port, user: Self.user, pass: Self.pass)
+        XCTAssertEqual(n, 1024, st)
+        say("RESULT release: the next runtime in the room ready in \(readyMS) ms, fetch \(st)")
+        try next.stop(5_000)
     }
 }
