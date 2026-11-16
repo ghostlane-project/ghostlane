@@ -18,95 +18,95 @@ struct LoopbackSocks: Equatable {
     let password: String?
 }
 
-/// What owns the tun for one start, and what stands behind it.
+/// What stands behind the tun for one start.
 ///
 /// Decided once, by `decide`, from the files the app left in the shared
-/// container. The tun's resolvers and the start path both follow from the
-/// answer, so the two cannot disagree.
+/// container. hev-socks5-tunnel owns the tun on every path; the tun's
+/// resolvers, hev's UDP mode and the start path all follow from the answer,
+/// so they cannot disagree.
+///
+/// Since step C of ghostlane-rust-core the extension carries no Go at all:
+/// no sing-box, no Xray, no Go olcRTC. Both engines live in ghostlane-core,
+/// the one Rust library (xray-rust's core and the olcRTC client, one runtime,
+/// one allocator, one byte budget). A start whose files only a Go engine
+/// could run is refused with a reason (`needsGo`) rather than started on an
+/// engine this build does not have.
 enum TunArrangement: Equatable {
 
-    /// sing-box owns the tun through libbox, on its gVisor stack, and does
-    /// the whole job. What Reality and Hysteria2 ran until 2026-11-13, and
-    /// the way back: the extension starts it whenever config.json's inbound
-    /// is a tun, which is what `SingBoxConfig.buildTun` writes.
-    case singBoxTun
-
-    /// sing-box listens on a loopback SOCKS port and hev owns the tun in
-    /// front of it: Reality, Hysteria2 and WebTunnel since 2026-11-13
-    /// (`SingBoxConfig.buildIosSocks`). sing-box still answers DNS, sniffs
-    /// and applies the Bypass Russia rules; it no longer runs a network stack.
-    case singBoxBehindHev(LoopbackSocks)
-
-    /// Xray (xhttp, since 1.0.426) or olcRTC (since 1.0.428) speaks the
-    /// transport on a loopback SOCKS port and hev owns the tun. No sing-box.
+    /// An engine of ghostlane-core speaks the transport on a loopback SOCKS
+    /// port and hev owns the tun in front of it.
     case engineBehindHev(Engine, LoopbackSocks)
 
+    /// The files name a line only a Go engine runs (xray.json for Go's Xray,
+    /// config.json alone for sing-box): the start fails with this reason.
+    case needsGo(String)
+
     enum Engine: String, Equatable {
-        case xray
+        /// xray-rust's core from core.json (`XrayConfig.buildIosCore`):
+        /// Reality, Reality gRPC, WebTunnel, Hysteria2, XHTTP.
+        case core = "rust"
+        /// The Rust olcRTC client (olc-ffi's `OlcrtcRuntime`) from olcrtc.json.
         case olcrtc
     }
 
-    /// Where sing-box's SOCKS inbound listens when the config names no port:
+    /// Where a SOCKS inbound listens when the config names no port:
     /// `SingBoxConfig.SINGBOX_SOCKS_PORT`, and Xray's `XRAY_SOCKS_PORT`.
     static let defaultSocksPort = 10810
 
+    static let needsGoXray =
+        "this line needs Go's Xray (xray.json), and this build carries no Go engine"
+    static let needsGoSingBox =
+        "this line needs sing-box (config.json), and this build carries no Go engine"
+
     /// The arrangement for one start.
     ///
-    /// xray.json and olcrtc.json are each present only for the one transport
-    /// that needs them (the app deletes the other), and either one means its
-    /// engine speaks the transport: config.json is then written but not run.
-    /// olcRTC is asked first, as it always was. Otherwise config.json is
-    /// sing-box's, and its inbound says which way round: a SOCKS inbound puts
-    /// hev in front, a tun (or anything unreadable, which sing-box will then
-    /// refuse in words of its own) gives sing-box the tun.
-    static func decide(config: String, xrayConfig: String?, olcrtcSocks: LoopbackSocks?) -> TunArrangement {
+    /// olcrtc.json is asked first, as it always was; then core.json, which
+    /// the app writes for every line `IosVpnManager.IOS_ENGINES` gives the
+    /// Rust core (and removes otherwise). xray.json and config.json are Go's
+    /// files: with neither olcrtc.json nor core.json beside them the line is
+    /// one the core refused (`IosCore.refusal`), and it is refused here.
+    static func decide(coreConfig: String?, olcrtcSocks: LoopbackSocks?, xrayConfig: String?, config: String) -> TunArrangement {
         if let olcrtcSocks {
             return .engineBehindHev(.olcrtc, olcrtcSocks)
         }
-        if let xrayConfig, !xrayConfig.isEmpty {
-            let login = xraySocksLogin(in: xrayConfig)
-            return .engineBehindHev(.xray, LoopbackSocks(
-                port: xraySocksPort(in: xrayConfig),
+        if false, let coreConfig, !coreConfig.isEmpty { // RED: core.json not read yet
+            let login = xraySocksLogin(in: coreConfig)
+            return .engineBehindHev(.core, LoopbackSocks(
+                port: xraySocksPort(in: coreConfig),
                 username: login?.username,
                 password: login?.password
             ))
         }
-        if let socks = singBoxSocks(in: config) {
-            return .singBoxBehindHev(socks)
+        if let xrayConfig, !xrayConfig.isEmpty {
+            return .needsGo(needsGoXray)
         }
-        return .singBoxTun
+        return .needsGo(needsGoSingBox)
     }
 
-    /// The SOCKS server hev forwards to, or nil when sing-box owns the tun.
+    /// The SOCKS server hev forwards to, or nil on a refusal.
     var hevSocks: LoopbackSocks? {
         switch self {
-        case .singBoxTun: return nil
-        case .singBoxBehindHev(let socks): return socks
         case .engineBehindHev(_, let socks): return socks
+        case .needsGo: return nil
         }
     }
 
-    /// Whether sing-box answers the resolver the tun advertises.
-    ///
-    /// On both sing-box arrangements it does: 172.19.0.2 is an address only
-    /// sing-box answers, by hijacking every query on port 53, and behind hev
-    /// a query to it reaches sing-box as SOCKS5 UDP and is hijacked just the
-    /// same. Behind Xray or olcRTC nothing would answer it, so the tun
-    /// advertises resolvers on the internet instead (LibboxPlatform.Tun).
-    var singBoxAnswersDns: Bool {
+    /// hev's `socks5.udp`. The core's password inbound refuses a UDP
+    /// ASSOCIATE for 0.0.0.0:0 by design, so its UDP rides hev's TCP lane
+    /// (the fork's hev-udp); olcRTC takes UDP ASSOCIATE, as it did on Go.
+    var hevUdp: String {
         switch self {
-        case .singBoxTun, .singBoxBehindHev: return true
-        case .engineBehindHev: return false
+        case .engineBehindHev(.core, _): return "tcp"
+        case .engineBehindHev(.olcrtc, _), .needsGo: return "udp"
         }
     }
 
     /// The name in the diagnostics and in the app's log: what runs, and
-    /// whether hev is in front of it.
+    /// that hev is in front of it.
     var engineLabel: String {
         switch self {
-        case .singBoxTun: return "sing-box"
-        case .singBoxBehindHev: return "sing-box+hev"
         case .engineBehindHev(let engine, _): return "\(engine.rawValue)+hev"
+        case .needsGo: return "none"
         }
     }
 

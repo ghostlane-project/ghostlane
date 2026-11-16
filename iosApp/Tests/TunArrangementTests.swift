@@ -64,42 +64,51 @@ enum TunArrangementTests {
         let noAuth = xray.replacingOccurrences(of: #""auth":"password","#, with: "")
         check(TunArrangement.xraySocksLogin(in: noAuth) == nil, "an Xray inbound without auth demands no login")
 
-        // The decision.
-        check(TunArrangement.decide(config: singBoxSocks, xrayConfig: nil, olcrtcSocks: nil)
-              == .singBoxBehindHev(LoopbackSocks(port: 10810, username: "tun-user", password: "tun-pass")),
-              "a socks config and no other engine: sing-box behind hev")
-        check(TunArrangement.decide(config: singBoxTun, xrayConfig: nil, olcrtcSocks: nil) == .singBoxTun,
-              "a tun config: sing-box owns the tun, the way back")
-        check(TunArrangement.decide(config: "not json", xrayConfig: nil, olcrtcSocks: nil) == .singBoxTun,
-              "an unreadable config goes to sing-box, which says what is wrong with it")
-        check(TunArrangement.decide(config: singBoxSocks, xrayConfig: xray, olcrtcSocks: nil)
-              == .engineBehindHev(.xray, LoopbackSocks(port: 10810, username: "xu", password: "xp")),
-              "xray.json present wins over sing-box's socks config")
-        check(TunArrangement.decide(config: singBoxTunSocks, xrayConfig: xray, olcrtcSocks: nil)
-              == .engineBehindHev(.xray, LoopbackSocks(port: 10810, username: "xu", password: "xp")),
-              "xray.json beside the config the app writes for it")
-        check(TunArrangement.decide(config: singBoxSocks, xrayConfig: "", olcrtcSocks: nil)
-              == .singBoxBehindHev(LoopbackSocks(port: 10810, username: "tun-user", password: "tun-pass")),
-              "an empty xray.json is no Xray")
-        check(TunArrangement.decide(config: singBoxSocks, xrayConfig: nil, olcrtcSocks: olcrtc) == .engineBehindHev(.olcrtc, olcrtc),
-              "olcrtc.json present wins over sing-box's socks config")
-        check(TunArrangement.decide(config: singBoxTunSocks, xrayConfig: xray, olcrtcSocks: olcrtc) == .engineBehindHev(.olcrtc, olcrtc),
+        // The decision, with no Go in the extension (step C of
+        // ghostlane-rust-core): core.json runs on ghostlane-core's xray core,
+        // olcrtc.json on its olcRTC client; a start that only Go could run
+        // (xray.json for Go's Xray, config.json for sing-box) is refused with
+        // a reason instead of starting an engine this build does not carry.
+        let core = xray.replacingOccurrences(of: #""user":"xu","pass":"xp""#, with: #""user":"cu","pass":"cp""#)
+        let coreSocks = LoopbackSocks(port: 10810, username: "cu", password: "cp")
+        check(TunArrangement.decide(coreConfig: core, olcrtcSocks: nil, xrayConfig: nil, config: singBoxTunSocks)
+              == .engineBehindHev(.core, coreSocks),
+              "core.json: the Rust core behind hev, its login read from core.json")
+        check(TunArrangement.decide(coreConfig: core, olcrtcSocks: nil, xrayConfig: xray, config: singBoxSocks)
+              == .engineBehindHev(.core, coreSocks),
+              "core.json wins over a stale xray.json: Go's Xray is not in this build")
+        check(TunArrangement.decide(coreConfig: core, olcrtcSocks: olcrtc, xrayConfig: nil, config: singBoxTunSocks)
+              == .engineBehindHev(.olcrtc, olcrtc),
               "olcRTC is asked first, as it always was")
+        check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: olcrtc, xrayConfig: nil, config: singBoxTunSocks)
+              == .engineBehindHev(.olcrtc, olcrtc),
+              "olcrtc.json: the Rust olcRTC client behind hev")
+        check(TunArrangement.decide(coreConfig: "", olcrtcSocks: nil, xrayConfig: nil, config: singBoxSocks)
+              == .needsGo(TunArrangement.needsGoSingBox),
+              "an empty core.json is no core.json")
+        check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: nil, xrayConfig: xray, config: singBoxTunSocks)
+              == .needsGo(TunArrangement.needsGoXray),
+              "xray.json alone needs Go's Xray: refused")
+        check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: nil, xrayConfig: nil, config: singBoxSocks)
+              == .needsGo(TunArrangement.needsGoSingBox),
+              "config.json alone needs sing-box: refused")
+        check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: nil, xrayConfig: nil, config: singBoxTun)
+              == .needsGo(TunArrangement.needsGoSingBox),
+              "sing-box's own tun needs sing-box: refused")
+        check(TunArrangement.needsGoXray.contains("Go") && TunArrangement.needsGoSingBox.contains("Go"),
+              "the refusal says that the line needs the Go engine")
 
-        // What follows from it: who answers the tun's resolver, what hev
-        // forwards to, and what the diagnostics call it.
-        let behind = TunArrangement.singBoxBehindHev(LoopbackSocks(port: 10810, username: "a", password: "b"))
-        check(TunArrangement.singBoxTun.singBoxAnswersDns, "sing-box on the tun answers 172.19.0.2")
-        check(behind.singBoxAnswersDns, "sing-box behind hev still answers 172.19.0.2")
-        check(!TunArrangement.engineBehindHev(.xray, olcrtc).singBoxAnswersDns, "behind Xray nothing answers 172.19.0.2")
-        check(!TunArrangement.engineBehindHev(.olcrtc, olcrtc).singBoxAnswersDns, "behind olcRTC nothing answers 172.19.0.2")
-        check(TunArrangement.singBoxTun.hevSocks == nil, "no hev on sing-box's own tun")
-        check(behind.hevSocks == LoopbackSocks(port: 10810, username: "a", password: "b"), "hev forwards to sing-box's port")
-        check(TunArrangement.engineBehindHev(.olcrtc, olcrtc).hevSocks == olcrtc, "hev forwards to the engine's port")
-        check(TunArrangement.singBoxTun.engineLabel == "sing-box", "label: sing-box")
-        check(behind.engineLabel == "sing-box+hev", "label: sing-box+hev")
-        check(TunArrangement.engineBehindHev(.xray, olcrtc).engineLabel == "xray+hev", "label: xray+hev")
+        // What follows from it: what hev forwards to and how it carries UDP,
+        // and what the diagnostics call it.
+        check(TunArrangement.engineBehindHev(.core, coreSocks).hevSocks == coreSocks, "hev forwards to the core's port")
+        check(TunArrangement.engineBehindHev(.olcrtc, olcrtc).hevSocks == olcrtc, "hev forwards to olcRTC's port")
+        check(TunArrangement.needsGo(TunArrangement.needsGoXray).hevSocks == nil, "nothing to forward to on a refusal")
+        check(TunArrangement.engineBehindHev(.core, coreSocks).hevUdp == "tcp",
+              "the core: UDP in hev's TCP lane (its password inbound refuses UDP ASSOCIATE for 0.0.0.0:0)")
+        check(TunArrangement.engineBehindHev(.olcrtc, olcrtc).hevUdp == "udp", "olcRTC: UDP ASSOCIATE, as before")
+        check(TunArrangement.engineBehindHev(.core, coreSocks).engineLabel == "rust+hev", "label: rust+hev, the app's own")
         check(TunArrangement.engineBehindHev(.olcrtc, olcrtc).engineLabel == "olcrtc+hev", "label: olcrtc+hev")
+        check(TunArrangement.needsGo(TunArrangement.needsGoXray).engineLabel == "none", "label: none")
 
         // The builder's own output, when the repository is at hand.
         if CommandLine.arguments.count > 1 {
@@ -114,16 +123,21 @@ enum TunArrangementTests {
             }
             for name in ["ios-socks-reality.json", "ios-socks-hysteria2.json",
                          "bypass-ios-socks-reality.json", "bypass-ios-socks-hysteria2.json"] {
-                guard case .singBoxBehindHev(let socks) = TunArrangement.decide(config: read(name), xrayConfig: nil, olcrtcSocks: nil) else {
-                    check(false, "\(name): sing-box behind hev")
-                    return
-                }
-                check(socks.port == 10810, "\(name): the builder's port")
-                check(socks.username?.isEmpty == false && socks.password?.isEmpty == false, "\(name): the builder's login")
+                check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: nil, xrayConfig: nil, config: read(name))
+                      == .needsGo(TunArrangement.needsGoSingBox), "\(name): sing-box's, refused without Go")
+                check(TunArrangement.singBoxSocks(in: read(name))?.port == 10810, "\(name): the builder's port")
             }
-            for name in ["ios-tun-reality.json", "bypass-tun-reality.json", "bypass-tun-hysteria2.json"] {
-                check(TunArrangement.decide(config: read(name), xrayConfig: nil, olcrtcSocks: nil) == .singBoxTun,
-                      "\(name): the way back starts sing-box on the tun")
+            for slug in ["reality", "grpc-reality", "webtunnel-ws", "webtunnel-httpupgrade", "hysteria2", "xhttp"] {
+                for name in ["ios-core-\(slug).json", "bypass-ios-core-\(slug).json"] {
+                    guard case .engineBehindHev(.core, let socks) = TunArrangement.decide(
+                        coreConfig: read(name), olcrtcSocks: nil, xrayConfig: nil, config: read("ios-tun-socks-lossy.json")
+                    ) else {
+                        check(false, "\(name): the Rust core behind hev")
+                        return
+                    }
+                    check(socks.port == 10810, "\(name): the builder's port")
+                    check(socks.username?.isEmpty == false && socks.password?.isEmpty == false, "\(name): the builder's login")
+                }
             }
             for name in ["ios-tun-socks-lossy.json", "bypass-tun-socks.json"] {
                 check(TunArrangement.singBoxSocks(in: read(name)) == nil,
