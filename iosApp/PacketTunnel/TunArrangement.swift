@@ -69,7 +69,7 @@ enum TunArrangement: Equatable {
         if let olcrtcSocks {
             return .engineBehindHev(.olcrtc, olcrtcSocks)
         }
-        if false, let coreConfig, !coreConfig.isEmpty { // RED: core.json not read yet
+        if let coreConfig, !coreConfig.isEmpty {
             let login = xraySocksLogin(in: coreConfig)
             return .engineBehindHev(.core, LoopbackSocks(
                 port: xraySocksPort(in: coreConfig),
