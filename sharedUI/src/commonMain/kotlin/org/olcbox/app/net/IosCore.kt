@@ -72,12 +72,12 @@ object IosCore {
      * engine at all (the extension says so in stage.txt).
      */
     val ENGINES: Map<IosTransport, IosEngine> = mapOf(
-        IosTransport.Reality to IosEngine.GO,
-        IosTransport.RealityGrpc to IosEngine.GO,
-        IosTransport.WebTunnel to IosEngine.GO,
-        IosTransport.Hysteria2 to IosEngine.GO,
-        IosTransport.Xhttp to IosEngine.GO,
-        IosTransport.Olcrtc to IosEngine.GO,
+        IosTransport.Reality to IosEngine.RUST,
+        IosTransport.RealityGrpc to IosEngine.RUST,
+        IosTransport.WebTunnel to IosEngine.RUST,
+        IosTransport.Hysteria2 to IosEngine.RUST,
+        IosTransport.Xhttp to IosEngine.RUST,
+        IosTransport.Olcrtc to IosEngine.RUST,
     )
 
     /**

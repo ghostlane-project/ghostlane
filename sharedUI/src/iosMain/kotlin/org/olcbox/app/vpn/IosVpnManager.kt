@@ -626,7 +626,7 @@ class IosVpnManager(
         // it (it is to look for olcrtc.json, xray.json, core.json, then
         // config.json). Everything above stays as Phase 0 wrote it:
         // config.json is still written, and a line the core cannot take goes
-        // to Go whole. The map gives the core nothing yet (IOS_ENGINES).
+        // to Go whole, which this extension no longer carries (IOS_ENGINES).
         val choice = IosCore.choose(spec, IOS_ENGINES)
         if (choice.engine != IosEngine.RUST) {
             choice.reason?.let { addLog("Rust core: $it; this line stays on the Go engine") }
@@ -1245,30 +1245,14 @@ class IosVpnManager(
         const val SING_BOX_BEHIND_HEV = true
 
         /**
-         * D2 of ghostlane-rust-core, Phase 1: the engine each transport runs
-         * on. RUST writes core.json for `ghostlane-core` (xray-rust) behind
-         * hev; GO is Phase 0's path above, untouched. A line the core cannot
-         * take (IosCore.refusal) goes to Go whatever this says, and olcRTC
-         * has no Rust engine. One entry back to GO is the way back for that
-         * transport alone, and a release.
-         *
-         * Every transport is GO here, and must stay GO until the extension
-         * runs core.json: on this branch the packet tunnel reads only
-         * olcrtc.json, xray.json and config.json, so a RUST entry would run
-         * sing-box from config.json under a log that says `rust+hev`, and
-         * would leave XHTTP with no engine at all. The extension half comes in
-         * a later branch (docs/ios-one-go-runtime.md, "What is not here
-         * yet"); an entry turns to RUST in the commit where both halves meet,
-         * and Hysteria2 and XHTTP only once their lab rows pass (D5 gate 2).
+         * D2 of ghostlane-rust-core: the engine each transport runs on
+         * (IosCore.ENGINES, held by XrayConfigIosCoreTest). Since step C the
+         * extension carries no Go, so every transport is RUST: core.json for
+         * the core's lines, olcrtc.json for the Rust olcRTC client. A line
+         * the core refuses (IosCore.refusal) still gets Phase 0's files, and
+         * the extension refuses to start it, saying it needs the Go engine.
          */
-        val IOS_ENGINES: Map<IosTransport, IosEngine> = mapOf(
-            IosTransport.Reality to IosEngine.GO,
-            IosTransport.RealityGrpc to IosEngine.GO,
-            IosTransport.WebTunnel to IosEngine.GO,
-            IosTransport.Hysteria2 to IosEngine.GO,
-            IosTransport.Xhttp to IosEngine.GO,
-            IosTransport.Olcrtc to IosEngine.GO,
-        )
+        val IOS_ENGINES: Map<IosTransport, IosEngine> = IosCore.ENGINES
         const val KEY_SOCKS_PORT = "ios_socks_port"
         const val KEY_SOCKS_USERNAME = "ios_socks_username"
         const val KEY_SOCKS_PASSWORD = "ios_socks_password"
