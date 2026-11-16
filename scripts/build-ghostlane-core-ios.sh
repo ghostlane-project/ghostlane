@@ -13,12 +13,10 @@
 #     own as hev's are (SWIFT_INCLUDE_PATHS points at both): Headers/XrayRust/
 #     (xray-ffi's C ABI) and Headers/OlcFfiFFI/ (UniFFI's C side);
 #   - the UniFFI Swift bindings, generated in library mode from the device
-#     archive by olc-ffi's own uniffi-bindgen, with olc-ffi's error shim. They
-#     are committed in iosApp/PacketTunnel/GhostlaneCore/ (Xcode's synchronized
-#     folder compiles what is there when the project is read), so this script
-#     checks them: missing, they are written there; different, the build stops,
-#     since the Swift would not match the library it calls (set
-#     GHOSTLANE_CORE_WRITE_BINDINGS=1 to overwrite after a pin move).
+#     archive by olc-ffi's own uniffi-bindgen, with olc-ffi's error shim, in
+#     <output-dir>/gen/ (OlcFfi.swift, OlcrtcError+Localized.swift), which the
+#     extension target compiles from there: generated, never committed, so
+#     they always match the library they call.
 # <output-dir>/GhostlaneCore.xcframework.commit records the commit and the
 # profile; an existing build of the same pin and profile is kept.
 # Needs Xcode, rustup, git. bash 3.2 safe (macOS).
@@ -27,7 +25,6 @@ set -euo pipefail
 OUT="${1:?usage: build-ghostlane-core-ios.sh <output-dir>}"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/.." && pwd)"
 # shellcheck source=scripts/ghostlane-core-pin.sh
 . "$HERE/ghostlane-core-pin.sh"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -38,9 +35,8 @@ if [ "${GHOSTLANE_CORE_FAST:-0}" = "1" ]; then
     export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 fi
 stamp="$GHOSTLANE_CORE_COMMIT $profile"
-bindings="$ROOT/iosApp/PacketTunnel/GhostlaneCore"
 if [ -f "$OUT/GhostlaneCore.xcframework.commit" ] && [ "$(cat "$OUT/GhostlaneCore.xcframework.commit")" = "$stamp" ] \
-   && [ -f "$bindings/OlcFfi.swift" ]; then
+   && [ -f "$OUT/gen/OlcFfi.swift" ]; then
     echo "ghostlane-core $stamp: already built in $OUT"
     exit 0
 fi
@@ -84,17 +80,4 @@ xcodebuild -create-xcframework -library "$device" -headers "$inc" -library "$sim
 ls "$OUT/GhostlaneCore.xcframework"
 echo "SYMBOLS uniffi exports: $(nm -gU "$device" 2>/dev/null | grep -c ' _uniffi_olc_ffi_fn_' || true); xray exports: $(nm -gU "$device" 2>/dev/null | grep -c ' _xray_' || true)"
 
-mkdir -p "$bindings"
-status=0
-for f in OlcFfi.swift OlcrtcError+Localized.swift; do
-    if [ ! -f "$bindings/$f" ] || [ "${GHOSTLANE_CORE_WRITE_BINDINGS:-0}" = "1" ]; then
-        cp "$gen/$f" "$bindings/$f"
-        echo "BINDINGS wrote iosApp/PacketTunnel/GhostlaneCore/$f (commit it)"
-    elif ! cmp -s "$gen/$f" "$bindings/$f"; then
-        echo "error: iosApp/PacketTunnel/GhostlaneCore/$f is not what ghostlane-core $GHOSTLANE_CORE_COMMIT generates; run with GHOSTLANE_CORE_WRITE_BINDINGS=1 and commit it" >&2
-        diff -u "$bindings/$f" "$gen/$f" | head -40 >&2 || true
-        status=1
-    fi
-done
-[ "$status" -eq 0 ] || exit 1
 echo "$stamp" > "$OUT/GhostlaneCore.xcframework.commit"
