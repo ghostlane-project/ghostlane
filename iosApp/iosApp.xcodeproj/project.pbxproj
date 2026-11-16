@@ -253,12 +253,12 @@
 			);
 			inputPaths = (
 			);
-			name = "Fetch Core Frameworks";
+			name = "Build ghostlane-core";
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n# The extension links Cores — sing-box and Xray in one framework, because two\n# separate gomobile binds cannot be linked into one binary — so it fetches it\n# itself. It cannot inherit it from the app target: iosApp *depends on* this\n# target, so this one builds first and the app's gradle phase has not run yet.\n# The fetch returns immediately once the framework is there, so this costs\n# nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/fetch-cores-ios.sh \"$PWD/sharedUI/build/generated/cores/ios\"\n# And the tun2socks in front of Xray and olcRTC, a static library rather than\n# a framework: LIBRARY_SEARCH_PATHS and SWIFT_INCLUDE_PATHS point into it.\nbash scripts/fetch-hev-ios.sh \"$PWD/sharedUI/build/generated/hev/ios\"\n";
+			shellScript = "set -e\n# The extension links no Go: its one engine library is ghostlane-core (Rust:\n# xray-rust's core and the olcRTC client), built at scripts/ghostlane-core-pin.sh.\n# It cannot inherit it from the app target: iosApp *depends on* this target, so\n# this one builds first. The script returns at once when that pin is built, so\n# this costs nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/build-ghostlane-core-ios.sh \"$PWD/sharedUI/build/generated/rust-core/ios\"\n# And the tun2socks in front of the engines, a static library rather than\n# a framework: LIBRARY_SEARCH_PATHS and SWIFT_INCLUDE_PATHS point into it.\nbash scripts/fetch-hev-ios.sh \"$PWD/sharedUI/build/generated/hev/ios\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -468,38 +468,40 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64",
-				);
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
-				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
 				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-ObjC",
-					"-framework",
-					Cores,
+					"-lghostlane_core",
 					"-lhev-socks5-tunnel",
 					"-lresolv",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				CURRENT_PROJECT_VERSION = 273;
 				DEVELOPMENT_TEAM = 3QJG3J7L66;
@@ -565,38 +567,40 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64",
-				);
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
-				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
 				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-ObjC",
-					"-framework",
-					Cores,
+					"-lghostlane_core",
 					"-lhev-socks5-tunnel",
 					"-lresolv",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 273;

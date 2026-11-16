@@ -67,14 +67,18 @@ enum HevTunnel {
     /// it; without it ICMP goes nowhere, so ping gets no answer. Logs
     /// go to stderr, which the provider points at engine.log before any
     /// engine starts.
-    static func configuration(socks: Socks, mtu: Int) -> String {
+    static func configuration(socks: Socks, mtu: Int, udp: String = "udp") -> String {
         var lines = [
             "tunnel:",
             "  mtu: \(mtu)",
             "socks5:",
             "  port: \(socks.port)",
             "  address: 127.0.0.1",
-            "  udp: 'udp'",
+            // 'udp' is SOCKS5 UDP ASSOCIATE (olcRTC); 'tcp' carries UDP in
+            // hev's TCP lane, which the Rust core's password inbound takes
+            // where it refuses an ASSOCIATE for 0.0.0.0:0
+            // (TunArrangement.hevUdp).
+            "  udp: '\(udp == "tcp" ? "tcp" : "udp")'",
         ]
         if let username = socks.username, !username.isEmpty {
             lines.append("  username: '\(yamlQuoted(username))'")
@@ -123,11 +127,11 @@ enum HevTunnel {
     /// grace, which is the only way it reports a configuration or descriptor
     /// it will not run with; otherwise the tunnel is up and stays up until
     /// `stop()`.
-    static func start(socks: Socks, mtu: Int, tunFd: Int32) throws {
+    static func start(socks: Socks, mtu: Int, udp: String = "udp", tunFd: Int32) throws {
         guard thread == nil else {
             throw failure("hev-socks5-tunnel is already running")
         }
-        let config = Array(configuration(socks: socks, mtu: mtu).utf8)
+        let config = Array(configuration(socks: socks, mtu: mtu, udp: udp).utf8)
         let done = DispatchSemaphore(value: 0)
         finished = done
         exitCode = nil

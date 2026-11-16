@@ -1,4 +1,3 @@
-import Cores
 import Dispatch
 import Foundation
 import os
@@ -44,12 +43,12 @@ enum MemoryPressure {
                 // `queue`, so the read is safe.
                 let event = source?.data ?? []
                 let level = event.contains(.critical) ? "critical" : "warning"
-                NetworkDiagnostics.record("memory pressure \(level); returning reserved memory")
+                NetworkDiagnostics.record("memory pressure \(level); the core trims and lowers its byte budget")
                 MemoryWatch.mark("pressure-\(level)")
-                MemoryWatch.summarizeNow("pressure-\(level)")
-                // Stop-the-world, and worth it here: this is the moment the
-                // footprint decides whether the process survives.
-                MobileFreeOSMemory()
+                // This is the moment the footprint decides whether the process
+                // survives: the core gives back its pools and the allocator's
+                // free pages, and its byte budget goes down (MemoryRelief).
+                MemoryWatch.pressure(event.contains(.critical) ? .critical : .warning)
             }
             source = created
             created.resume()

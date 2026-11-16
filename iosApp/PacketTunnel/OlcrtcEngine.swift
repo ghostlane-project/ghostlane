@@ -1,4 +1,3 @@
-import Cores
 import Foundation
 import os
 
@@ -11,8 +10,10 @@ import os
 /// and reaches this engine over a loopback SOCKS port, the same arrangement
 /// xhttp uses for Xray and sing-box's own transports use for sing-box.
 ///
-/// The engine is one `MobileRuntime` for the life of the extension process;
-/// the log writer is still a package-level hook. This stays a namespace: the
+/// The engine is the Rust olcRTC client in ghostlane-core (olc-ffi's
+/// `OlcrtcRuntime`, UniFFI; its Swift is generated from the library at build
+/// time), one for the life of the extension process; the log writer is a
+/// process-wide hook, as Go's was. No Go since step C. This stays a namespace: the
 /// runtime is a static because a tunnel extension hosts one tunnel.
 enum OlcrtcEngine {
 
@@ -67,20 +68,14 @@ enum OlcrtcEngine {
     /// App Group keeps them whether this is on or not.
     private static let verbose = false
 
-    /// The engine, from the Go constructor: `MobileRuntime()` allocates a
-    /// bare struct with no defaults and cannot start. `nonisolated(unsafe)`
-    /// because gobind classes are not Sendable and the extension drives one
-    /// tunnel at a time from the provider's own serialisation.
-    nonisolated(unsafe) private static let runtime: MobileRuntime = {
-        guard let runtime = MobileNew() else {
-            fatalError("olcrtc: MobileNew() returned nil")
-        }
-        return runtime
-    }()
+    /// The engine. Its calls are synchronous, as gomobile's were; the
+    /// extension drives one tunnel at a time from the provider's own
+    /// serialisation.
+    private static let runtime = OlcrtcRuntime()
 
     /// Held for the lifetime of the process: olcRTC keeps whatever is handed to
-    /// `setProtector`/`MobileSetLogWriter`, and Go's reference does not keep a
-    /// Swift object alive on its own.
+    /// `setProtector`/`setLogWriter`; held here as well, so the objects the
+    /// engine calls are the ones this file names.
     private static let protector = InterfaceProtector()
     private static let logWriter = EngineLog(
         file: FileManager.default
@@ -111,10 +106,10 @@ enum OlcrtcEngine {
     // 21 s from start to "SOCKS5 server listening" on 2026-09-09 and was
     // declared timed out one second short of ready; the app itself waits 45 s
     // for the tunnel, so there is room, and a slow start is not a dead one.
-    private static let readyTimeoutMillis = 35_000
+    private static let readyTimeoutMillis: Int64 = 35_000
 
     /// How long a stop may take before the engine is abandoned to the process.
-    private static let stopTimeoutMillis = 5_000
+    private static let stopTimeoutMillis: Int64 = 5_000
 
     /// `resolvers` are the servers of the network the extension stands on, as
     /// ResolverSnapshot read them before the tunnel's settings went on; empty
@@ -123,7 +118,7 @@ enum OlcrtcEngine {
         // Fresh per attempt, so whatever the app reads back afterwards belongs
         // to the attempt it is reporting on.
         logWriter.reset()
-        MobileSetLogWriter(logWriter)
+        setLogWriter(logWriter)
         currentLock.lock()
         current = (parameters, resolvers)
         currentLock.unlock()
@@ -184,7 +179,7 @@ enum OlcrtcEngine {
         // The network's own resolvers first, a public operator behind them; the
         // engine adds that operator's IPv6 twin and the other operators after.
         // Some mobile networks answer only their own servers (olcbox#16).
-        try runtime.setDNS((resolvers + ["1.1.1.1:53"]).joined(separator: ","))
+        try runtime.setDns((resolvers + ["1.1.1.1:53"]).joined(separator: ","))
         log.info("resolvers from the network: \(resolvers.count, privacy: .public)")
         // Bypass Russia lives in the engine on this platform: hev fronts it
         // and routes nothing. A matching name or address is dialed by the
@@ -193,11 +188,11 @@ enum OlcrtcEngine {
         let directRules = parameters.directRules ?? ""
         try runtime.setDirectRules(directRules)
         log.info("direct rules: \(directRules.utf8.count, privacy: .public) bytes")
-        try runtime.setVP8Options(parameters.vp8Fps, batchSize: parameters.vp8BatchSize)
+        try runtime.setVp8Options(Int64(parameters.vp8Fps), Int64(parameters.vp8BatchSize))
         // Set on every launch, "off" included: the runtime is the process's and
         // keeps a profile across starts.
         let dtlsProfile = parameters.dtlsProfile ?? "off"
-        try runtime.setDTLSProfile(dtlsProfile)
+        try runtime.setDtlsProfile(dtlsProfile)
         log.info("dtls profile: \(dtlsProfile, privacy: .public)")
         // Loopback only. The port is fixed rather than user-set now: nothing
         // outside this process is meant to reach it.
@@ -207,10 +202,10 @@ enum OlcrtcEngine {
         // supervisor when the room it is in ends, and re-reads the list at
         // every hop, so RoomKeeper can grow it while a session is live.
         try applyRooms(rooms)
-        runtime.setDeviceID(parameters.clientId)
+        runtime.setDeviceId(parameters.clientId)
         try runtime.setKey(parameters.keyHex)
-        try runtime.setSocksPort(parameters.socksPort)
-        try runtime.setSocksCredentials(parameters.socksUser, password: parameters.socksPass)
+        try runtime.setSocksPort(Int64(parameters.socksPort))
+        try runtime.setSocksCredentials(parameters.socksUser, parameters.socksPass)
 
         // A previous tunnel that died without tearing down would otherwise hold
         // the port and make this look like a bind failure.
@@ -257,16 +252,17 @@ enum OlcrtcEngine {
 /// The engine dials from inside the extension, where the default route points
 /// at our own tun (hev-socks5-tunnel's), so a socket left to the system's
 /// judgement could come straight back to us. The pin is
-/// `LibboxPlatform.pinToPhysicalInterface`, the same code libbox's platform
-/// control runs, deliberately one implementation.
-private final class InterfaceProtector: NSObject, MobileSocketProtectorProtocol, @unchecked Sendable {
-    func protect(_ fd: Int) -> Bool {
-        LibboxPlatform.pinToPhysicalInterface(Int32(fd))
+/// `TunPlatform.pinToPhysicalInterface`, the same code the xray core's
+/// protect callback runs (CoreEngine), deliberately one implementation.
+private final class InterfaceProtector: SocketProtector, @unchecked Sendable {
+    func protect(_ fd: Int64) -> Bool {
+        guard let fd = Int32(exactly: fd) else { return false }
+        return TunPlatform.pinToPhysicalInterface(fd)
     }
 }
 
 /// olcRTC explains itself through a callback rather than stderr, so its lines
-/// do not reach the engine.log the provider redirects sing-box into. Sending
+/// do not reach the engine.log. Sending
 /// them to the system log at least puts them in the same place as ours.
 /// Where olcRTC's own account of itself goes.
 ///
@@ -276,11 +272,11 @@ private final class InterfaceProtector: NSObject, MobileSocketProtectorProtocol,
 /// window at least once, for a log that answers the only question that matters
 /// when a connect fails. So it is also kept in the App Group, where the app can
 /// read it back and put it on screen next to the failure.
-private final class EngineLog: NSObject, @unchecked Sendable, MobileLogWriterProtocol {
+private final class EngineLog: LogWriter, @unchecked Sendable {
     private let log = Logger(subsystem: "org.proofkit.app", category: "olcrtc")
     private let file: URL?
-    /// Every mutable field below is touched only from this queue. Go calls
-    /// `writeLog` from whichever goroutine happens to be logging.
+    /// Every mutable field below is touched only from this queue. The core calls
+    /// `writeLog` from whichever of its threads happens to be logging.
     private let queue = DispatchQueue(label: "org.proofkit.olcrtc-log")
 
     /// Both ends of the attempt, never the sagging middle.
@@ -300,7 +296,6 @@ private final class EngineLog: NSObject, @unchecked Sendable, MobileLogWriterPro
 
     init(file: URL?) {
         self.file = file
-        super.init()
     }
 
     func reset() {
@@ -312,8 +307,7 @@ private final class EngineLog: NSObject, @unchecked Sendable, MobileLogWriterPro
         }
     }
 
-    func writeLog(_ msg: String?) {
-        guard let msg else { return }
+    func writeLog(_ msg: String) {
         log.info("\(msg, privacy: .public)")
         guard file != nil else { return }
         queue.async { [self] in

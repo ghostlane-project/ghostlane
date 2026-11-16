@@ -1508,7 +1508,7 @@ enum TunnelCounters {
         let bytesOut: Int64
     }
 
-    /// Must match `LibboxPlatform.Tun.address` in the extension. The two targets
+    /// Must match `TunPlatform.Tun.address` in the extension. The two targets
     /// share no code — the extension links Cores, the app does not — so this is
     /// a duplicated constant, and the one place it could drift.
     private static let tunAddress = "172.19.0.1"

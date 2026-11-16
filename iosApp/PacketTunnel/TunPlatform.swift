@@ -1,22 +1,21 @@
-import Cores
 import Darwin
 import Foundation
 import NetworkExtension
 import os
 
-/// The half of sing-box that has to be written per platform.
-///
-/// libbox runs the whole engine in-process and asks the host for the few things
-/// only the host can do — chiefly a tun to own. On iOS there is no tun device to
-/// open: the system hands the extension an `NEPacketTunnelFlow`, and the file
-/// descriptor behind it is what libbox needs. That is the one interesting method
-/// here; the rest are Android concerns or capabilities iOS does not expose.
-final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
+/// What the extension asks of the system around its engines, with no Go in
+/// it: the tun's constants and settings, and the pin of every engine socket
+/// to the physical interface (#58). It was the Go-free half of
+/// LibboxBridge.swift, sing-box's platform object, until step C of
+/// ghostlane-rust-core took sing-box out of the extension; ghostlane-core's
+/// xray core (CoreEngine's protect callback) and its olcRTC client
+/// (OlcrtcEngine's SocketProtector) both call `pinToPhysicalInterface`.
+enum TunPlatform {
 
-    /// Fixed on both sides rather than read from libbox's options.
+    /// Fixed here rather than read from a config.
     ///
-    /// The app writes the config, so the tun inbound in it and the settings
-    /// applied here are two halves of one decision — keeping them as constants
+    /// The app writes the configs, so what they expect of the tun and the
+    /// settings applied here are two halves of one decision — keeping them as constants
     /// in one place is clearer than parsing them back out of the engine, and it
     /// avoids depending on option types whose shape changes between releases.
     enum Tun {
@@ -28,73 +27,21 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         static let address6 = "fdfe:dcba:9876::1"
         static let prefix6 = 126
         static let mtu = 9000
-        // An address only our own sing-box answers — every query to it is
-        // hijacked on port 53. It used to be 1.1.1.1 and 8.8.8.8, which iOS
-        // knows as encrypted-DNS providers and quietly upgraded to DoT/DoH:
-        // those queries left through the tunnel past the hijack, and on a
-        // lossy relay each one took twenty seconds. Inside the tun's own /30.
-        //
-        // Wherever sing-box runs: on the tun it sees the query itself, and
-        // behind hev-socks5-tunnel (Reality, Hysteria2 and WebTunnel since
-        // 2026-11-13) hev hands it over as SOCKS5 UDP to 172.19.0.2:53 and
-        // sing-box hijacks it the same way. Nothing else ever answers it.
-        static let dns = ["172.19.0.2"]
-        // For the tun hev-socks5-tunnel owns in front of Xray or olcRTC
-        // (xhttp and olcRTC): there is no sing-box to hijack 172.19.0.2, so a
-        // query to it would travel through the SOCKS engine to an address
-        // nothing answers. These are answered on
-        // the internet, reached the way every other packet is, as UDP through
-        // SOCKS5 UDP ASSOCIATE. OpenDNS rather than 1.1.1.1 or 8.8.8.8, which
-        // iOS knows as encrypted-DNS providers and quietly upgrades to DoT/DoH
-        // — the upgrade is what made each query take twenty seconds on a lossy
-        // relay before the hijack existed. A plain resolver through a lossy
-        // relay is still slower than the hijack was; olcRTC's datagram lane is
-        // the case to watch.
+        // The resolvers the tun advertises. Every query to them travels
+        // through hev to the engine: the Rust core's routing sends port 53
+        // to its `dns` outbound (fake addresses for A, the rest forwarded
+        // through the line; core.json), and the olcRTC client answers a
+        // port-53 datagram over a smux stream. OpenDNS rather than 1.1.1.1
+        // or 8.8.8.8, which iOS knows as encrypted-DNS providers and quietly
+        // upgrades to DoT/DoH past port 53. (172.19.0.2, which only sing-box
+        // answered, went with sing-box in step C.)
         static let dnsThroughSocks = ["208.67.222.222", "208.67.220.220"]
     }
 
-    private weak var provider: NEPacketTunnelProvider?
-    private let log = Logger(subsystem: "org.proofkit.app", category: "libbox")
-
-    init(provider: NEPacketTunnelProvider) {
-        self.provider = provider
-        super.init()
-    }
-
-    // MARK: - the one that matters
-
-    /// Applies the tunnel settings and hands libbox the descriptor behind
-    /// `packetFlow`.
-    ///
-    /// `socket.fileDescriptor` is not public API. It is, however, how every
-    /// libbox-based iOS client does this — the alternative is copying every
-    /// packet between Swift and Go, which the memory budget here does not allow.
-    func openTun(_ options: LibboxTunOptionsProtocol?, ret0_: UnsafeMutablePointer<Int32>?) throws {
-        guard let provider else {
-            throw NSError(domain: "org.proofkit.tunnel", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "provider went away"])
-        }
-
-        // Nothing slow happens here on purpose. libbox calls this synchronously
-        // from its own start-up path and warns when it blocks — the first version
-        // applied the tunnel settings here and waited on the callback, which is
-        // what produced "open interface take too much time". The settings are
-        // applied before the engine starts now, so this only hands over the
-        // descriptor.
-        guard let fd = TunDescriptor.find(in: provider.packetFlow) else {
-            throw NSError(domain: "org.proofkit.tunnel", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "no descriptor behind packetFlow"])
-        }
-        log.info("tun opened, fd=\(fd, privacy: .public)")
-        ret0_?.pointee = fd
-    }
-
     /// The settings the tun is brought up with. `dns` names the resolvers the
-    /// system is told to use: `Tun.dns` wherever sing-box runs, on the tun or
-    /// behind hev-socks5-tunnel, and answers them itself; `Tun.dnsThroughSocks`
-    /// when hev fronts Xray or olcRTC and every query travels through the
-    /// SOCKS engine to a resolver on the internet (`TunArrangement`).
-    static func tunnelSettings(dns: [String] = Tun.dns) -> NEPacketTunnelNetworkSettings {
+    /// system is told to use; every query to them travels through hev to the
+    /// engine (`Tun.dnsThroughSocks`).
+    static func tunnelSettings(dns: [String] = Tun.dnsThroughSocks) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: Tun.address)
         let ipv4 = NEIPv4Settings(addresses: [Tun.address], subnetMasks: [Tun.mask])
         ipv4.includedRoutes = [NEIPv4Route.default()]
@@ -124,12 +71,9 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         // dialed, so an exit without IPv6 shows as a reset, not a refusal.
         // Either way the packets no longer leave by another door.
         //
-        // The engines' own sockets: olcRTC's are pinned to the physical
-        // interface per family (bindToPhysicalInterface, through its
-        // protector). sing-box's are not: it applies the platform's control
-        // only with `route.auto_detect_interface`, which no iOS config sets
-        // (and `getInterfaces` here would fail every dial if one did). Xray's
-        // are not either.
+        // The engines' own sockets are pinned to the physical interface per
+        // family (bindToPhysicalInterface): the xray core's through its
+        // protect callback, olcRTC's through its protector.
         let ipv6 = NEIPv6Settings(addresses: [Tun.address6], networkPrefixLengths: [NSNumber(value: Tun.prefix6)])
         ipv6.includedRoutes = [NEIPv6Route.default()]
         settings.ipv6Settings = ipv6
@@ -141,56 +85,12 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         return settings
     }
 
-    // MARK: - things iOS answers plainly
-
-    func underNetworkExtension() -> Bool { true }
-
-    /// procfs is a Linux notion; there is nothing to read here.
-    func useProcFS() -> Bool { false }
-
-    /// Every outbound socket has to be pinned to the physical interface.
-    ///
-    /// The default route now points into our own tun, so a socket left to the
-    /// system's judgement comes straight back to us and dials forever. sing-box
-    /// said so plainly: "open outbound connection: dial tcp …: i/o timeout"
-    /// while its inbound side was happily receiving the same connection.
-    func usePlatformAutoDetectControl() -> Bool { true }
-
-    /// Whether the VPN profile sends every route into the tunnel, which is the
-    /// kill switch (`PacketTunnelController.apply(killSwitch:)`). sing-tun has
-    /// to hear the same answer the system was given: in that mode only its
-    /// gVisor stack works, which is the one the config asks for anyway, and it
-    /// refuses the others outright.
-    ///
-    /// Only a tun inbound asks, so only the `singBoxTun` arrangement, the way
-    /// back. Behind hev-socks5-tunnel sing-box has no tun and nothing calls
-    /// this; hev is a userspace stack like gVisor and runs under the kill
-    /// switch as it does in front of Xray and olcRTC.
-    func includeAllNetworks() -> Bool {
-        (provider?.protocolConfiguration as? NETunnelProviderProtocol)?.includeAllNetworks ?? false
-    }
-
-    // The command server owns sing-box logs in 1.13. Interface diagnostics
-    // also go to a dedicated shared-container file, independent of Go startup.
-
-    func clearDNSCache() {
-        // The system resolver is bypassed entirely — the engine does its own DNS.
-    }
-
-    // MARK: - Android-only, and unsupported capabilities
-
-    func autoDetectControl(_ fd: Int32) throws {
-        let code = Self.bindToPhysicalInterface(fd)
-        guard code == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code),
-                          userInfo: [NSLocalizedDescriptionKey: "physical interface binding failed (errno=\(code))"])
-        }
-    }
+    // MARK: - the pin
 
     /// Binds one socket to the interface that actually reaches the internet.
     ///
-    /// Shared with olcRTC, which needs exactly this and for exactly the same
-    /// reason: any core running beside sing-box dials out from inside the
+    /// Shared by both engines of ghostlane-core, which need exactly this for
+    /// exactly the same reason: each dials out from inside the
     /// extension, where the default route now points at our own tun. A second
     /// copy of this would be a second thing to get wrong.
     ///
@@ -538,54 +438,5 @@ final class LibboxPlatform: NSObject, LibboxPlatformInterfaceProtocol {
         default:
             return false
         }
-    }
-
-    /// 1.13 returns a whole owner record rather than a uid, and folded the two
-    /// Android package-name lookups into it — so the pair of methods that used to
-    /// sit here is gone with them.
-    func findConnectionOwner(
-        _ ipProtocol: Int32,
-        sourceAddress: String?,
-        sourcePort: Int32,
-        destinationAddress: String?,
-        destinationPort: Int32
-    ) throws -> LibboxConnectionOwner {
-        throw Self.unsupported("connection ownership is not visible on iOS")
-    }
-
-    /// Only Android has a DNS resolver worth borrowing. Answering nil leaves the
-    /// engine on its own resolver, which is what the config already asks for.
-    func localDNSTransport() -> LibboxLocalDNSTransportProtocol? { nil }
-
-    /// New in 1.13, and only meaningful where the platform holds a trust store
-    /// the engine cannot read. iOS pins nothing here: outbound TLS is either
-    /// verified against the system roots the engine already reaches or, for a
-    /// published certificate pin, deliberately unverified.
-    func systemCertificates() -> LibboxStringIteratorProtocol? { nil }
-
-    /// Reported as unavailable rather than faked: sing-box only asks when a rule
-    /// depends on it, and a wrong answer would route traffic on a false premise.
-    func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
-        throw Self.unsupported("interface enumeration is not implemented")
-    }
-
-    func readWIFIState() -> LibboxWIFIState? { nil }
-
-    func send(_ notification: LibboxNotification?) throws {
-        // The extension has no UI; anything worth saying goes to the log.
-    }
-
-    func startDefaultInterfaceMonitor(_ listener: LibboxInterfaceUpdateListenerProtocol?) throws {
-        // No monitor yet. The cost is that a Wi-Fi/cellular switch is not noticed
-        // until the connection itself fails, which is worth fixing once the
-        // transports work but would only obscure the first bring-up.
-    }
-
-    func closeDefaultInterfaceMonitor(_ listener: LibboxInterfaceUpdateListenerProtocol?) throws {
-    }
-
-    private static func unsupported(_ what: String) -> NSError {
-        NSError(domain: "org.proofkit.tunnel", code: 3,
-                userInfo: [NSLocalizedDescriptionKey: what])
     }
 }
