@@ -106,8 +106,6 @@ enum MemoryWatch {
                 try? files.moveItem(at: file, to: keepAs)
             }
             currentFile = file
-            samplesSinceSummary = 0
-            alarmed = false
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: interval)
             source.setEventHandler { sample(into: file) }
