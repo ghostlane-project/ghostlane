@@ -621,7 +621,7 @@ jobs:
         run: |
           set -euo pipefail
           for t in tun-arrangement memory-relief direct-resolver interface-selection; do
-            echo "== $t"; "scripts/test-ios-$t.sh"
+            echo "== $t"; bash "scripts/test-ios-$t.sh"
           done
       - name: Restore ghostlane-core
         uses: actions/cache@v6
