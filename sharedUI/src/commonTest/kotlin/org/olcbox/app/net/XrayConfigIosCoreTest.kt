@@ -576,6 +576,15 @@ class XrayConfigIosCoreTest {
 
     private val allRust = IosTransport.entries.associateWith { IosEngine.RUST }
 
+    @Test fun theExtensionCarriesNoGoSoEveryTransportIsRust() {
+        for (transport in IosTransport.entries) {
+            assertEquals(IosEngine.RUST, IosCore.ENGINES[transport], "$transport")
+        }
+        for (line in IosCoreLine.entries) {
+            assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec(line), IosCore.ENGINES), "$line")
+        }
+    }
+
     @Test fun theMapGivesEachCoreLineToRust() {
         for (line in IosCoreLine.entries) {
             assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec(line), allRust), "$line")

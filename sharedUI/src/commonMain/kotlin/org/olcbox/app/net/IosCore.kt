@@ -64,6 +64,23 @@ data class IosEngineChoice(val engine: IosEngine, val line: IosCoreLine?, val re
  */
 object IosCore {
     /**
+     * The engine each transport runs on in the iPhone's packet tunnel
+     * (`IosVpnManager.IOS_ENGINES` reads this). Since step C of
+     * ghostlane-rust-core the extension carries no Go: every transport the
+     * core has a line for runs from core.json, olcRTC on the Rust client
+     * from olcrtc.json, and a line the core refuses ([refusal]) gets no
+     * engine at all (the extension says so in stage.txt).
+     */
+    val ENGINES: Map<IosTransport, IosEngine> = mapOf(
+        IosTransport.Reality to IosEngine.GO,
+        IosTransport.RealityGrpc to IosEngine.GO,
+        IosTransport.WebTunnel to IosEngine.GO,
+        IosTransport.Hysteria2 to IosEngine.GO,
+        IosTransport.Xhttp to IosEngine.GO,
+        IosTransport.Olcrtc to IosEngine.GO,
+    )
+
+    /**
      * The fake addresses the core hands out for names bound for the tunnel:
      * the range sing-box's iOS shape hands out ([SingBoxConfig.buildIosSocks]).
      * IPv4 only: hev's tun carries no IPv6.
