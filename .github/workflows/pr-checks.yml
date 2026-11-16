@@ -148,7 +148,7 @@ jobs:
           # above; the shared Kotlin its tests read runs them in apple-compile.
           # A here-string: a pipe into grep -q can end in SIGPIPE under
           # pipefail once grep has its match.
-          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-(room-list|tun-arrangement)\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-[a-z-]+\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins|ghostlane-core-pin|build-ghostlane-core-ios)\.sh$' <<< "$changed"; then
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -584,11 +584,13 @@ jobs:
 
   ios-extension:
     # The iPhone's packet tunnel extension, which nothing else compiles before
-    # a release build dispatched by hand. It links no Kotlin: Cores (sing-box,
-    # Xray, olcRTC) and hev-socks5-tunnel come prebuilt from this repository's
-    # releases, fetched by the target's own first build phase. So a Mac builds
-    # it with neither Gradle nor a signing identity, and runs the tests of its
-    # Foundation-only parts beside it. On a change to it, and on request.
+    # a release build dispatched by hand. It links no Kotlin and no Go: its
+    # one engine library is ghostlane-core (Rust), built by the target's own
+    # first build phase at scripts/ghostlane-core-pin.sh and cached per pin,
+    # and hev-socks5-tunnel comes prebuilt from this repository's releases.
+    # So a Mac builds it with neither Gradle nor a signing identity, and runs
+    # the tests of its Foundation-only parts beside it. On a change to it,
+    # and on request.
     #
     # ai-generated: the whole job.
     # !cancelled() and not always(): a run that a newer push supersedes is
@@ -601,7 +603,7 @@ jobs:
       !cancelled()
     name: iPhone tunnel extension
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       # The release's Xcode (release.yml, build-ios).
@@ -613,6 +615,19 @@ jobs:
       # holds the extension's device headers to the Kotlin they copy.
       - name: The room keeper's tests
         run: scripts/test-ios-room-list.sh
+      # The arrangement (core.json, olcrtc.json, the refusal of Go's files),
+      # the memory relief policy, the direct resolver and the interface pin.
+      - name: The extension's other Foundation-only tests
+        run: |
+          set -euo pipefail
+          for t in tun-arrangement memory-relief direct-resolver interface-selection; do
+            echo "== $t"; "scripts/test-ios-$t.sh"
+          done
+      - name: Restore ghostlane-core
+        uses: actions/cache@v6
+        with:
+          path: sharedUI/build/generated/rust-core/ios
+          key: ghostlane-core-ios-${{ hashFiles('scripts/ghostlane-core-pin.sh', 'scripts/build-ghostlane-core-ios.sh') }}
       # A file nothing references is not in the bundle (app-store-submission.md),
       # and until 2026-10-20 the manifest was such a file.
       - name: The privacy manifest is a plist, and one of the app's resources
@@ -645,6 +660,16 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+      # No Go in the extension: neither the Go runtime nor gomobile's glue.
+      - name: The extension carries no Go
+        run: |
+          set -euo pipefail
+          bin=iosApp/build/Release-iphoneos/PacketTunnel.appex/PacketTunnel
+          ls -l "$bin"
+          if nm "$bin" | grep -E ' _(runtime\.|go:buildid|_cgo_|x_cgo_|Mobile|Libbox|LibXray)' | head -5 | grep .; then
+            echo "::error::Go symbols in the extension"; exit 1
+          fi
+          echo "no Go symbols in $(wc -c < "$bin") bytes"
 
   # The Rust core's own verdict on the core.json the app writes for it: the
   # parser of ghostlane-project/xray-rust at the pinned commit reads every
