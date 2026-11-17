@@ -26,11 +26,12 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# 77f14eb8cef9: the head of the fork's gl/vision-padding-copy (2026-11-15),
-# which holds gl/tls-send-limit (bce67505), on the fork's `ghostlane` after
-# its third integration (4a081163, 2026-11-14) and its CI fixes (1d60607f,
-# 2026-11-15). `ghostlane` is fast-forwarded to this commit once this
-# workflow and PR Checks are green at it, not before. Upstream's second
+# d520064fbd42: the step-B candidate gl/olc-integ-2 (2026-11-17), published
+# for this run as the fork's gl/olc-integ-lab-8 (exactly its commits), on the
+# fork's `ghostlane` at 77f14eb8, the fourth integration (the head of
+# gl/vision-padding-copy, which holds gl/tls-send-limit). `ghostlane` is
+# fast-forwarded to this commit once this workflow and PR Checks are green
+# at it, not before. Upstream's second
 # 0.10.0 candidate (4a61b057) with the reviewed topic branches merged in
 # this order:
 #  - first integration (eb19e285): gl/reset-network (C ABI 1.18,
@@ -76,7 +77,12 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 #       over HTTP/1.1 hands the session its body 16 KiB at a time, and a
 #       WebSocket frame's buffer is dropped once written;
 #     - gl/vision-padding-copy: a padded Vision frame is written gathered,
-#       not copied, and its owed tail goes out while the carrier takes.
+#       not copied, and its owed tail goes out while the carrier takes;
+#  - on top of 77f14eb8, step B: the olcRTC client in Rust (olc/: carriers
+#    MTS Link and VK Calls, olc-ffi with its providers, olc-rtc, olc-p2p,
+#    olc-kcp, vendored str0m 0.25) as one commit (2a359e27), and
+#    gl/tun-bridge-memory (the TUN's TCP bridge borrows its read and batch
+#    buffers, and its reads take the byte budget).
 #
 # Pin only commits on the fork's `ghostlane`, or, for the run that decides
 # whether `ghostlane` may move, the head of a pushed topic branch that
@@ -84,7 +90,7 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-d520064fbd420f99df82fb1b2c30fbac3bc32811}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
