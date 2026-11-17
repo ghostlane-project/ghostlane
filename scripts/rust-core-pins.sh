@@ -26,8 +26,8 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # A full commit, never a branch: the build fetches exactly this and refuses a
 # checkout whose HEAD is anything else.
 #
-# d520064fbd42: the step-B candidate gl/olc-integ-2 (2026-11-17), published
-# for this run as the fork's gl/olc-integ-lab-8 (exactly its commits), on the
+# f9db68bb02bc: the step-B candidate gl/olc-integ-2 (2026-11-17), published
+# for this run as the fork's gl/olc-integ-lab-9 (exactly its commits), on the
 # fork's `ghostlane` at 77f14eb8, the fourth integration (the head of
 # gl/vision-padding-copy, which holds gl/tls-send-limit). `ghostlane` is
 # fast-forwarded to this commit once this workflow and PR Checks are green
@@ -90,7 +90,7 @@ XRAY_RUST_REPO="${XRAY_RUST_REPO:-ghostlane-project/xray-rust}"
 # fast-forwards alone, never by a rebase or a force push, so a pinned commit
 # (and the source of every asset published from it) stays reachable without
 # a tag.
-XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-d520064fbd420f99df82fb1b2c30fbac3bc32811}"
+XRAY_RUST_COMMIT="${XRAY_RUST_COMMIT:-f9db68bb02bc6d97fb52bd9552fe234e2fd57550}"
 
 # The channel the pinned commit's rust-toolchain.toml asks for. Exact, as the
 # Go toolchain is in cores-pins.sh; the checkout refuses a tree that asks for
