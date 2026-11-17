@@ -269,6 +269,8 @@
 			);
 			name = "Build ghostlane-core";
 			outputPaths = (
+				"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/gen/OlcFfi.swift",
+				"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/gen/OlcrtcError+Localized.swift",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
