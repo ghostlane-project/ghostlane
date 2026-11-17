@@ -63,7 +63,13 @@ done
 device="$src/target/aarch64-apple-ios/release/libghostlane_core.a"
 simulator="$src/target/aarch64-apple-ios-sim/release/libghostlane_core.a"
 
-(cd "$src" && $cargo_ build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)
+# uniffi-bindgen runs here, so it is built for the Mac, against the macOS SDK.
+# Xcode's run-script phase exports SDKROOT (the iPhoneOS SDK) and
+# IPHONEOS_DEPLOYMENT_TARGET; cc and aws-lc-sys's C would compile the host
+# build with them (sys/random.h not found).
+host_sdk="$(env -u SDKROOT xcrun --sdk macosx --show-sdk-path)"
+(cd "$src" && env -u IPHONEOS_DEPLOYMENT_TARGET SDKROOT="$host_sdk" \
+    $cargo_ build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)
 gen="$OUT/gen"
 rm -rf "$gen"; mkdir -p "$gen"
 (cd "$src" && target/debug/uniffi-bindgen generate --library "$device" --language swift --out-dir "$gen")
