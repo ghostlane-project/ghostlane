@@ -663,9 +663,9 @@ jobs:
       # The one pin of the core on this branch. It moves to
       # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
       # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: d520064f, the
+      # this is the only copy here, and the same commit: f9db68bb, the
       # step-B candidate gl/olc-integ-2 (published as the fork's
-      # gl/olc-integ-lab-8) on the fork's ghostlane 77f14eb8, the head of
+      # gl/olc-integ-lab-9) on the fork's ghostlane 77f14eb8, the head of
       # gl/vision-padding-copy after the third integration and its CI
       # fixes, 1d60607f
       # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
@@ -684,7 +684,7 @@ jobs:
       # references. Bump it with the copy of the core's field lists in
       # XrayRustSurface.
       XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: d520064fbd420f99df82fb1b2c30fbac3bc32811
+      XRAY_RUST_COMMIT: f9db68bb02bc6d97fb52bd9552fe234e2fd57550
     steps:
       - uses: actions/checkout@v7
         with:
