@@ -5,9 +5,11 @@
 # build-ghostlane-core-ios.sh. Moving the core is a change of this one line
 # (the UniFFI Swift is generated from the library at each build).
 #
-# Now: ghostlane-project/xray-rust gl/olc-ffi dddb2adf (ghostlane 1d60607f +
-# olc-client + olc-ffi + ghostlane-runtime + ghostlane-core). After the olc
-# integration (step B) this becomes that integration's commit.
+# Now: ghostlane-project/xray-rust d520064f, the olc integration's (step B)
+# candidate gl/olc-integ-2, published as gl/olc-integ-lab-8: ghostlane
+# 77f14eb8 + olc/ (carriers, olc-ffi with its providers, olc-rtc, olc-p2p,
+# olc-kcp) + ghostlane-runtime + ghostlane-core + gl/tun-bridge-memory. Once
+# the fork's ghostlane is fast-forwarded to it, it is a commit on ghostlane.
 GHOSTLANE_CORE_REPO="${GHOSTLANE_CORE_REPO:-ghostlane-project/xray-rust}"
-GHOSTLANE_CORE_COMMIT="${GHOSTLANE_CORE_COMMIT:-dddb2adf7d16b253f20d0f5b9711ba0484f057a2}"
+GHOSTLANE_CORE_COMMIT="${GHOSTLANE_CORE_COMMIT:-d520064fbd420f99df82fb1b2c30fbac3bc32811}"
 GHOSTLANE_CORE_TOOLCHAIN="${GHOSTLANE_CORE_TOOLCHAIN:-1.96.0}"
