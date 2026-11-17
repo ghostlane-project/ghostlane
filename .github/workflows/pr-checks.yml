@@ -663,9 +663,11 @@ jobs:
       # The one pin of the core on this branch. It moves to
       # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
       # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: 77f14eb8, the head
-      # of the fork's gl/vision-padding-copy on its ghostlane after the
-      # third integration and its CI fixes, 1d60607f
+      # this is the only copy here, and the same commit: d520064f, the
+      # step-B candidate gl/olc-integ-2 (published as the fork's
+      # gl/olc-integ-lab-8) on the fork's ghostlane 77f14eb8, the head of
+      # gl/vision-padding-copy after the third integration and its CI
+      # fixes, 1d60607f
       # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
       # Chrome 156 hello, rustls from ghostlane-project/shaped-rustls
       # b0dc21a7; then dns-forward, whose `forward` rule core.json writes,
@@ -677,11 +679,12 @@ jobs:
       # exception for str0m's example keys and a doc fix, none of them in
       # the config parser; then tls-send-limit and vision-padding-copy, how
       # a TLS session and a padded Vision frame are written, with the config
-      # parser untouched). A parser older than dns-forward refuses the
+      # parser untouched; then step B, the olcRTC client in olc/ and the
+      # TUN bridge's borrowed buffers, crates/xray-config untouched). A parser older than dns-forward refuses the
       # references. Bump it with the copy of the core's field lists in
       # XrayRustSurface.
       XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: 77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77
+      XRAY_RUST_COMMIT: d520064fbd420f99df82fb1b2c30fbac3bc32811
     steps:
       - uses: actions/checkout@v7
         with:

@@ -9,8 +9,9 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
  * copied from `crates/xray-config/src/surface.rs` of ghostlane-project/xray-rust
- * at 77f14eb8 (the head of `gl/vision-padding-copy` on the `ghostlane` branch
- * after its third integration and its CI fixes, 1d60607f; all of them left
+ * at d520064f (the step-B candidate gl/olc-integ-2 on the `ghostlane` branch
+ * at 77f14eb8, the head of `gl/vision-padding-copy` after its third
+ * integration and its CI fixes, 1d60607f; all of them left
  * `crates/xray-config` as the second integration, e8503168, had it;
  * the parser changes since 4a61b057 are `log`, now read for the embedding's
  * log lines, which also takes Xray-core's `logLevel` spelling this config
