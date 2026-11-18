@@ -5,10 +5,10 @@
 # build-ghostlane-core-ios.sh. Moving the core is a change of this one line
 # (the UniFFI Swift is generated from the library at each build).
 #
-# Now: ghostlane-project/xray-rust fa91beb6 (gl/ffi-tls-lab-1): ghostlane
-# f9db68bb (step B: olc/, ghostlane-runtime, ghostlane-core, the TUN memory
-# fix) + olc-ffi installing the signalling's TLS at a start (1.0.473 on an
-# iPhone: "no TLS connector installed for a TLS URL" on every carrier).
+# Now: ghostlane-project/xray-rust 2bce8cfc (gl/olc-mid-lab-1): fa91beb6 (step B
+# + olc-ffi installing the signalling's TLS) + offers numbering their lines
+# 0, 1, 2 (1.0.475 on an iPhone: MTS Link refused "can't parse mid 7GO") and
+# a peer's end and VK's renegotiation failures logged at info.
 GHOSTLANE_CORE_REPO="${GHOSTLANE_CORE_REPO:-ghostlane-project/xray-rust}"
-GHOSTLANE_CORE_COMMIT="${GHOSTLANE_CORE_COMMIT:-fa91beb60eb881b2c1b61e286b6b84306cb34c9e}"
+GHOSTLANE_CORE_COMMIT="${GHOSTLANE_CORE_COMMIT:-2bce8cfccbfa8e1240de9680b46362b594bede1a}"
 GHOSTLANE_CORE_TOOLCHAIN="${GHOSTLANE_CORE_TOOLCHAIN:-1.96.0}"
