@@ -56,7 +56,9 @@ rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal \
 cargo_="cargo +$GHOSTLANE_CORE_TOOLCHAIN"
 for target in aarch64-apple-ios aarch64-apple-ios-sim; do
     start=$(date +%s)
-    (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --target "$target")
+    # boring: every olcRTC carrier's DTLS from BoringSSL shaped as Chrome's;
+    # str0m's own DTLS offers ECDSA suites only and VK Calls refused it.
+    (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target")
     lib="$src/target/$target/release/libghostlane_core.a"
     echo "BUILD ghostlane-core $target ($profile): $(wc -c < "$lib" | tr -d ' ') bytes in $(( $(date +%s) - start )) s"
 done
