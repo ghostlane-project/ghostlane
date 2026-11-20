@@ -54,6 +54,8 @@ jobs:
       mac_helper: ${{ steps.paths.outputs.mac_helper }}
       ios_extension: ${{ steps.paths.outputs.ios_extension }}
       android_tun2socks: ${{ steps.paths.outputs.android_tun2socks }}
+      singbox_size: ${{ steps.paths.outputs.singbox_size }}
+      rust_core: ${{ steps.paths.outputs.rust_core }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,6 +105,8 @@ jobs:
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
+            echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
+            echo 'rust_core=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
@@ -126,9 +130,11 @@ jobs:
           # The Mac's tunnel helper is the one part of the app that is root, and
           # nothing else here compiles it: only a release build does, with a
           # signing identity. Built and asked on a Mac when it, what asks it, or
-          # the config it is handed changed. Not on a change to this file alone:
-          # a Mac's minutes are billed tenfold.
-          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$'; then
+          # the config it is handed changed, or the tags of the sing-box it runs:
+          # a resolver of the Mac's tun is one of them (with_dhcp), and only a
+          # Mac can tell it is gone. Not on a change to this file alone: a Mac's
+          # minutes are billed tenfold.
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^scripts/singbox-tags\.sh$'; then
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -137,12 +143,12 @@ jobs:
           # The iPhone's tunnel extension links no Kotlin, so a Mac builds it
           # without Gradle, on a change to what that job builds or reads: the
           # extension and its tests, the project file, the privacy manifest it
-          # checks, the script of its tests, and what it links, the prebuilt
+          # checks, the scripts of its tests, and what it links, the prebuilt
           # frameworks and their pins. Not on a change to this file alone, as
           # above; the shared Kotlin its tests read runs them in apple-compile.
           # A here-string: a pipe into grep -q can end in SIGPIPE under
           # pipefail once grep has its match.
-          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-room-list\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins)\.sh$' <<< "$changed"; then
+          if grep -qE '^iosApp/(PacketTunnel|Tests)/|^iosApp/iosApp\.xcodeproj/|^iosApp/iosApp/PrivacyInfo\.xcprivacy$|^scripts/test-ios-[a-z-]+\.sh$|^scripts/(fetch-cores-ios|fetch-hev-ios|cores-pins|hev-pins|ghostlane-core-pin|build-ghostlane-core-ios)\.sh$' <<< "$changed"; then
             echo 'ios_extension=true' >> "$GITHUB_OUTPUT"
             echo "The iPhone's tunnel extension is built and its tests run: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -158,11 +164,28 @@ jobs:
           else
             echo 'android_tun2socks=false' >> "$GITHUB_OUTPUT"
           fi
+          # What the sing-box tag lists save is sized by three more builds of
+          # it, minutes of the Gradle job, so only when the lists, the tree
+          # they compile or this file changed.
+          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+            echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'singbox_size=false' >> "$GITHUB_OUTPUT"
+          fi
+          # The Rust core reads and starts the core.json references: when they,
+          # the script that asks it, or this file (which pins the core) changed.
+          # The references change with every change to what the app writes
+          # for the core, which the Gradle job's dump test enforces.
+          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/(bypass-)?ios-core-|^scripts/check-rust-core-configs\.sh$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+            echo 'rust_core=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'rust_core=false' >> "$GITHUB_OUTPUT"
+          fi
 
   checks:
-    # After scope for the one step below that asks it what changed. Not held
+    # After scope for the two steps below that ask it what changed. Not held
     # to its success: !cancelled() runs the checks whatever became of scope,
-    # and that step is then skipped.
+    # and those steps are then skipped.
     needs: scope
     if: github.event_name != 'workflow_dispatch' && !cancelled()
     name: Gradle checks
@@ -170,9 +193,6 @@ jobs:
 
     env:
       ANDROID_NDK_VERSION: "28.2.13676358"
-      # The release the app pins (SingBoxConfig.SINGBOX_VERSION); every config
-      # the builders emit is checked against this exact binary below.
-      SINGBOX_VERSION: "1.13.14"
       XRAY_VERSION: "26.7.11"
       # crypt1/admin secrets (baked into GeneratedAppInfo). Absent on fork PRs ⇒
       # features compile but stay disabled; jvmTest uses its own explicit key.
@@ -272,27 +292,79 @@ jobs:
           test -n "$apk"
           python3 tools/check-android-compose-assets.py "$apk"
 
-      - name: Download pinned sing-box
+      # Built, not downloaded: the configs are checked with the binary the app
+      # ships, the patched tree with our tags (scripts/build-singbox.sh,
+      # scripts/singbox-tags.sh). SagerNet's release carries tags ours do not,
+      # so a shape that needs one of those passed `sing-box check` against it
+      # and would be refused by the app's own binary. Two lists, two binaries:
+      # the desktops' (Linux ships this one) and Android's, built for this
+      # runner.
+      - name: Build sing-box with the tags the app ships
+        working-directory: olcbox
         run: |
-          url="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "$url" -o sb.tar.gz
-          tar xzf sb.tar.gz
-          sudo mv "sing-box-${SINGBOX_VERSION}-linux-amd64/sing-box" /usr/local/bin/sing-box
+          set -euo pipefail
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box/desktop" desktop
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box/android" android
+          sudo install -m 0755 "$RUNNER_TEMP/sing-box/desktop" /usr/local/bin/sing-box
           sing-box version
 
-      # Every shape the builders emit, against the release the app pins. The
-      # jvm tests above wrote them; this is what `sing-box check` says about them.
+      # Every shape the builders emit, against the pinned version with the
+      # desktops' tags. The jvm tests above wrote them; this is what
+      # `sing-box check` says about them.
       - name: sing-box check the emitted configs
         working-directory: olcbox
+        run: scripts/check-singbox-configs.sh
+
+      # The same shapes against Android's binary, but for a tun's, which
+      # Android never writes (check-singbox-configs.sh says which those are).
+      # The desktops' list is a superset of Android's, so the step above
+      # cannot see a shape that needs a tag only the desktops have.
+      - name: sing-box check the emitted configs with Android's tags
+        working-directory: olcbox
+        env:
+          SINGBOX_BIN: ${{ runner.temp }}/sing-box/android
+          SINGBOX_TARGET: android
         run: scripts/check-singbox-configs.sh
 
       # The desktop draws its traffic chart from what the tun's sing-box says it
       # has carried, less the flows of the session's own lines. The names of the
       # totals and how a flow names its program are in no schema; they are asked
-      # of the pinned release here.
+      # of the desktops' binary here, which is also what says it has the API.
       - name: sing-box answers the traffic API as the app reads it
         working-directory: olcbox
         run: scripts/check-singbox-traffic-api.sh
+
+      # What the tag lists save, in the step summary: Android's (arm64, as in
+      # the APK) and the desktops' (amd64, as Linux ships it) beside the same
+      # tree with SagerNet's release list, which every build used before.
+      # Android's is built here without cgo; the APK's links through the NDK
+      # with 16 KB pages and is a little larger, by the same amount in both
+      # columns. Only when the lists or the tree changed (scope).
+      - name: sing-box size with our tags and with upstream's
+        if: needs.scope.outputs.singbox_size == 'true'
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          sb="$RUNNER_TEMP/sing-box"
+          GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/android-arm64" android
+          GOOS=android GOARCH=arm64 bash scripts/build-singbox.sh "$sb/upstream-android-arm64" upstream
+          bash scripts/build-singbox.sh "$sb/upstream" upstream
+          # Into the log as well: a step summary cannot be read through the API.
+          python3 - "$sb" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import os, sys
+          sb = sys.argv[1]
+          mib = lambda name: os.path.getsize(os.path.join(sb, name)) / 1048576
+          print("### sing-box, our tags and upstream's\n")
+          print("| binary | ours | upstream's | saved |")
+          print("|---|---|---|---|")
+          for what, ours, theirs in (
+              ("android/arm64, Android's tags", "android-arm64", "upstream-android-arm64"),
+              ("linux/amd64, the desktops' tags", "desktop", "upstream"),
+              ("linux/amd64, Android's tags", "android", "upstream"),
+          ):
+              a, b = mib(ours), mib(theirs)
+              print("| %s | %.1f MiB | %.1f MiB | %.1f MiB (%.0f %%) |" % (what, a, b, b - a, 100 * (b - a) / b))
+          PY
 
       - name: Validate generated Xray configurations
         working-directory: olcbox
@@ -309,6 +381,7 @@ jobs:
           path: |
             olcbox/sharedUI/build/xray-configs/
             olcbox/sharedUI/build/xray-configs-26/
+            olcbox/sharedUI/build/rust-core-configs/
             olcbox/sharedUI/build/reports/tests/jvmTest/
 
   # The release gate's scripts decide what a release may ship and scrub what a
@@ -469,16 +542,23 @@ jobs:
     if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper
     runs-on: macos-latest
-    timeout-minutes: 15
-    env:
-      # The release the app pins (SingBoxConfig.SINGBOX_VERSION).
-      SINGBOX_VERSION: "1.13.14"
+    # 15 until sing-box was built here rather than downloaded: a few minutes more.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
+      # The toolchain the releases build sing-box with (scripts/cores-pins.sh).
+      - name: The pinned Go
+        id: go
+        run: echo "version=$(bash -c 'unset GO_VERSION; . scripts/cores-pins.sh; echo "$GO_VERSION"')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          # Nothing here has a go.sum to key a cache on.
+          cache: false
       - name: Build the helper as the app's build does, and once to be asked over a pipe
         run: |
           src=desktopApp/tunneldaemon
@@ -491,23 +571,26 @@ jobs:
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
           cc -O2 -o "$RUNNER_TEMP/stand-in-line" scripts/macos-helper-check/stand-in-line.c
-      - name: The pinned sing-box, for this Mac
+      # The sing-box the app ships, not SagerNet's release: the patched tree
+      # with the desktops' tags (scripts/build-singbox.sh). The Mac's tun finds
+      # the network's own resolver through one of those tags (with_dhcp,
+      # scripts/singbox-tags.sh), and the release has it whether ours does or not.
+      - name: sing-box as the app ships it, for this Mac
         run: |
-          arch="$(uname -m)"; [ "$arch" = "x86_64" ] && arch=amd64
-          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-darwin-${arch}.tar.gz" -o "$RUNNER_TEMP/sb.tgz"
-          tar xzf "$RUNNER_TEMP/sb.tgz" -C "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/sing-box-${SINGBOX_VERSION}-darwin-${arch}/sing-box" "$RUNNER_TEMP/sing-box"
-          "$RUNNER_TEMP/sing-box" version | head -1
+          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box" desktop
+          "$RUNNER_TEMP/sing-box" version | sed -n 1p
       - name: Ask the helper what it does
         run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"
 
   ios-extension:
     # The iPhone's packet tunnel extension, which nothing else compiles before
-    # a release build dispatched by hand. It links no Kotlin: Cores (sing-box,
-    # Xray, olcRTC) and hev-socks5-tunnel come prebuilt from this repository's
-    # releases, fetched by the target's own first build phase. So a Mac builds
-    # it with neither Gradle nor a signing identity, and runs the tests of its
-    # Foundation-only parts beside it. On a change to it, and on request.
+    # a release build dispatched by hand. It links no Kotlin and no Go: its
+    # one engine library is ghostlane-core (Rust), built by the target's own
+    # first build phase at scripts/ghostlane-core-pin.sh and cached per pin,
+    # and hev-socks5-tunnel comes prebuilt from this repository's releases.
+    # So a Mac builds it with neither Gradle nor a signing identity, and runs
+    # the tests of its Foundation-only parts beside it. On a change to it,
+    # and on request.
     #
     # ai-generated: the whole job.
     # !cancelled() and not always(): a run that a newer push supersedes is
@@ -520,7 +603,7 @@ jobs:
       !cancelled()
     name: iPhone tunnel extension
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       # The release's Xcode (release.yml, build-ios).
@@ -532,6 +615,19 @@ jobs:
       # holds the extension's device headers to the Kotlin they copy.
       - name: The room keeper's tests
         run: scripts/test-ios-room-list.sh
+      # The arrangement (core.json, olcrtc.json, the refusal of Go's files),
+      # the memory relief policy, the direct resolver and the interface pin.
+      - name: The extension's other Foundation-only tests
+        run: |
+          set -euo pipefail
+          for t in tun-arrangement memory-relief direct-resolver interface-selection; do
+            echo "== $t"; bash "scripts/test-ios-$t.sh"
+          done
+      - name: Restore ghostlane-core
+        uses: actions/cache@v6
+        with:
+          path: sharedUI/build/generated/rust-core/ios
+          key: ghostlane-core-ios-${{ hashFiles('scripts/ghostlane-core-pin.sh', 'scripts/build-ghostlane-core-ios.sh') }}
       # A file nothing references is not in the bundle (app-store-submission.md),
       # and until 2026-10-20 the manifest was such a file.
       - name: The privacy manifest is a plist, and one of the app's resources
@@ -564,3 +660,97 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+      # No Go in the extension: neither the Go runtime nor gomobile's glue.
+      - name: The extension carries no Go
+        run: |
+          set -euo pipefail
+          bin=iosApp/build/Release-iphoneos/PacketTunnel.appex/PacketTunnel
+          ls -l "$bin"
+          if nm "$bin" | grep -E ' _(runtime\.|go:buildid|_cgo_|x_cgo_|Mobile|Libbox|LibXray)' | head -5 | grep .; then
+            echo "::error::Go symbols in the extension"; exit 1
+          fi
+          echo "no Go symbols in $(wc -c < "$bin") bytes"
+
+  # The Rust core's own verdict on the core.json the app writes for it: the
+  # parser of ghostlane-project/xray-rust at the pinned commit reads every
+  # reference config (sharedUI/src/jvmTest/resources/reference-configs/
+  # ios-core-*.json and bypass-ios-core-*.json, which the Gradle job's dump
+  # test holds XrayConfig.buildIosCore to), and the core is started from each
+  # until it binds its SOCKS port (scripts/check-rust-core-configs.sh). The
+  # CLI is built once per pin and cached (25 MB).
+  rust-core-configs:
+    needs: scope
+    if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true'
+    name: "Rust core: the app's core.json"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # The one pin of the core on this branch. It moves to
+      # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
+      # feat/rust-core-ci, is on the same branch as this job; until then
+      # this is the only copy here, and the same commit: 77f14eb8, the head
+      # of the fork's gl/vision-padding-copy on its ghostlane after the
+      # third integration and its CI fixes, 1d60607f
+      # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
+      # Chrome 156 hello, rustls from ghostlane-project/shaped-rustls
+      # b0dc21a7; then dns-forward, whose `forward` rule core.json writes,
+      # the gitleaks exception for the olcRTC vectors and the fork's
+      # AGENTS.md scope; then lean-futures-r2, byte-budget-relay,
+      # h2-read-buffer-r2, byte-budget-windows-r3 and a Vision buffer fix,
+      # memory work that leaves the config parser as it was; then the fork's
+      # guards in a workflow of their own, a quinn-proto test fix, a gitleaks
+      # exception for str0m's example keys and a doc fix, none of them in
+      # the config parser; then tls-send-limit and vision-padding-copy, how
+      # a TLS session and a padded Vision frame are written, with the config
+      # parser untouched). A parser older than dns-forward refuses the
+      # references. Bump it with the copy of the core's field lists in
+      # XrayRustSurface.
+      XRAY_RUST_REPO: ghostlane-project/xray-rust
+      XRAY_RUST_COMMIT: 77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Restored and saved as two steps, so a CLI built once is kept even
+      # when the check after it fails.
+      - name: Restore the CLI
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.XRAY_RUST_COMMIT }}-v1
+
+      # The project's own CLI build (its README: cargo build --locked -p
+      # xray-cli) with --release, from exactly the pinned commit, with the
+      # toolchain its rust-toolchain.toml names.
+      - name: Build xray-rust's CLI at the pin
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_RETRY: "5"
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/xray-rust"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "https://github.com/${XRAY_RUST_REPO}.git" "$XRAY_RUST_COMMIT"
+          git -C "$src" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$XRAY_RUST_COMMIT"
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$src/rust-toolchain.toml")"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          (cd "$src" && cargo "+$toolchain" build --locked --release -p xray-cli)
+          install -D -m 0755 "$src/target/release/xray-rust" ~/.cache/rust-core-cli/xray-rust
+
+      - name: Save the CLI
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: The core parses and starts every reference config
+        run: |
+          set -euo pipefail
+          shellcheck scripts/check-rust-core-configs.sh
+          bash scripts/check-rust-core-configs.sh ~/.cache/rust-core-cli/xray-rust

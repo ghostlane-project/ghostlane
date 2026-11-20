@@ -47,6 +47,9 @@ import org.olcbox.app.net.UdpBlockedFailover
 import org.olcbox.app.net.transportKind
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.IosCore
+import org.olcbox.app.net.IosEngine
+import org.olcbox.app.net.IosTransport
 import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
@@ -413,13 +416,20 @@ class IosVpnManager(
             if (isRestart || packetTunnelBridge.restartsByItself()) stopWhatCannotBeReplaced()
             return
         }
-        // What the extension actually runs: the two engines that speak their
-        // transport behind a SOCKS port sit behind hev-socks5-tunnel (xhttp
-        // since 1.0.426, olcRTC since 1.0.428; docs/ios-one-go-runtime.md);
-        // Reality and Hysteria2 are sing-box alone.
+        // What the extension actually runs: hev-socks5-tunnel owns the tun on
+        // every line and forwards to the engine that speaks the transport on a
+        // loopback SOCKS port: Xray for xhttp (since 1.0.426), olcRTC (since
+        // 1.0.428), and sing-box for its own transports, Reality, Hysteria2
+        // and WebTunnel (since 2026-11-13; docs/ios-one-go-runtime.md). The
+        // last follows SING_BOX_BEHIND_HEV, the switch that picks the shape
+        // written, so the label cannot outlive a way back. The Rust core
+        // (core.json) is to run the lines IOS_ENGINES gives it, also behind
+        // hev; it gives it none until the extension reads core.json.
         val engine = when {
             request.olcrtc != null -> "olcrtc+hev"
+            request.coreConfig != null -> "rust+hev"
             request.xrayConfig != null -> "xray+hev"
+            SING_BOX_BEHIND_HEV -> "sing-box+hev"
             else -> "sing-box"
         }
         addLog("Starting packet tunnel, transport=${location.kind}, engine=$engine")
@@ -547,13 +557,16 @@ class IosVpnManager(
         // reaches iOS without anyone remembering to update a second copy.
         //
         // xhttp is the one transport sing-box does not implement, so it runs on
-        // Xray and sing-box becomes the tun front-end for it. Reality and
-        // hysteria2 are native sing-box outbounds with no second core involved.
+        // Xray. Every other line (Reality, gRPC among them, Hysteria2, and
+        // WebTunnel's ws and httpupgrade) is a native sing-box outbound, and
+        // sing-box runs it on a loopback SOCKS port with hev-socks5-tunnel in
+        // front, as Xray does: no second core, and no gVisor either.
         val vless = spec as? OutboundSpec.Vless
-        // Demanded by Xray's SOCKS inbound on this path: hev reaches it on
-        // loopback, and so could any other app on the phone (see SocksLogin).
-        // The extension reads the pair back from the config, as it reads the port.
-        val xrayLogin = _socksProxySettings.value.let { SocksLogin.of(it.username, it.password) }
+        // Demanded by the SOCKS inbound hev forwards to, Xray's or sing-box's:
+        // hev reaches it on loopback, and so could any other app on the phone
+        // (see SocksLogin). The extension reads the pair back from the config,
+        // as it reads the port. The settings always hold a generated pair.
+        val socksLogin = _socksProxySettings.value.let { SocksLogin.of(it.username, it.password) }
         val xrayConfig = if (vless != null && vless.transport is TransportSpec.Xhttp) {
             // Since 1.0.426 the extension puts hev-socks5-tunnel, not sing-box,
             // in front of Xray on this path (docs/ios-one-go-runtime.md), so
@@ -567,22 +580,35 @@ class IosVpnManager(
                 geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
                 answersDns = true,
                 verboseLogs = verboseLogs,
-                login = xrayLogin,
+                login = socksLogin,
             )
         } else {
             null
         }
-        return IosPacketTunnelStartRequest(
+        val goRequest = IosPacketTunnelStartRequest(
             config = if (xrayConfig != null) {
                 SingBoxConfig.buildTunSocks(
                     XrayConfig.XRAY_SOCKS_PORT,
-                    username = xrayLogin?.username.orEmpty(),
-                    password = xrayLogin?.password.orEmpty(),
+                    username = socksLogin?.username.orEmpty(),
+                    password = socksLogin?.password.orEmpty(),
+                    routing = routing,
+                    verboseLogs = verboseLogs,
+                    logOutput = IOS_SING_BOX_LOG
+                )
+            } else if (SING_BOX_BEHIND_HEV) {
+                // The extension reads the inbound to decide what owns the tun
+                // (TunArrangement.decide): this socks one puts hev in front of
+                // sing-box.
+                SingBoxConfig.buildIosSocks(
+                    spec,
+                    login = requireNotNull(socksLogin) { "No login for the tunnel's own SOCKS port" },
                     routing = routing,
                     verboseLogs = verboseLogs,
                     logOutput = IOS_SING_BOX_LOG
                 )
             } else {
+                // The way back: a tun inbound, and the extension starts
+                // sing-box on the tun as 1.0.472 does.
                 SingBoxConfig.buildTun(
                     spec,
                     routing = routing,
@@ -593,6 +619,28 @@ class IosVpnManager(
             xrayConfig = xrayConfig,
             olcrtc = null,
             ruleSets = ruleSets
+        )
+
+        // D2, per transport: a line IOS_ENGINES gives to the Rust core is to
+        // run from core.json, with xray.json removed so the extension reaches
+        // it (it is to look for olcrtc.json, xray.json, core.json, then
+        // config.json). Everything above stays as Phase 0 wrote it:
+        // config.json is still written, and a line the core cannot take goes
+        // to Go whole, which this extension no longer carries (IOS_ENGINES).
+        val choice = IosCore.choose(spec, IOS_ENGINES)
+        if (choice.engine != IosEngine.RUST) {
+            choice.reason?.let { addLog("Rust core: $it; this line stays on the Go engine") }
+            return goRequest
+        }
+        return goRequest.copy(
+            xrayConfig = null,
+            coreConfig = XrayConfig.buildIosCore(
+                spec,
+                login = requireNotNull(socksLogin) { "No login for the tunnel's own SOCKS port" },
+                routing = routing,
+                geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                verboseLogs = verboseLogs,
+            )
         )
     }
 
@@ -1187,6 +1235,24 @@ class IosVpnManager(
 
     private companion object {
         const val IOS_SING_BOX_LOG = "sing-box.log"
+        /**
+         * Reality, Hysteria2 and WebTunnel run with hev-socks5-tunnel in front
+         * of sing-box on a loopback SOCKS port (since 2026-11-13). False is the
+         * way back to sing-box on its own tun: it picks both the config written
+         * and the engine named in the app's log, and the extension follows
+         * the config with no change (docs/ios-one-go-runtime.md).
+         */
+        const val SING_BOX_BEHIND_HEV = true
+
+        /**
+         * D2 of ghostlane-rust-core: the engine each transport runs on
+         * (IosCore.ENGINES, held by XrayConfigIosCoreTest). Since step C the
+         * extension carries no Go, so every transport is RUST: core.json for
+         * the core's lines, olcrtc.json for the Rust olcRTC client. A line
+         * the core refuses (IosCore.refusal) still gets Phase 0's files, and
+         * the extension refuses to start it, saying it needs the Go engine.
+         */
+        val IOS_ENGINES: Map<IosTransport, IosEngine> = IosCore.ENGINES
         const val KEY_SOCKS_PORT = "ios_socks_port"
         const val KEY_SOCKS_USERNAME = "ios_socks_username"
         const val KEY_SOCKS_PASSWORD = "ios_socks_password"

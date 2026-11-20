@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0DE00000000000000000011 /* OlcFfi.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000021 /* OlcFfi.swift */; };
+		C0DE00000000000000000012 /* OlcrtcError+Localized.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000022 /* OlcrtcError+Localized.swift */; };
 		9A0000010000000000000001 /* OlcboxIosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000011 /* OlcboxIosApp.swift */; };
 		9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000012 /* SwiftPlatformBridge.swift */; };
 		9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000013 /* SwiftOlcRtcManager.swift */; };
@@ -41,6 +43,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DE00000000000000000021 /* OlcFfi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "OlcFfi.swift"; path = "../sharedUI/build/generated/rust-core/ios/gen/OlcFfi.swift"; sourceTree = SOURCE_ROOT; };
+		C0DE00000000000000000022 /* OlcrtcError+Localized.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "OlcrtcError+Localized.swift"; path = "../sharedUI/build/generated/rust-core/ios/gen/OlcrtcError+Localized.swift"; sourceTree = SOURCE_ROOT; };
 		9A0000010000000000000010 /* iosApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9A0000010000000000000011 /* OlcboxIosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OlcboxIosApp.swift; sourceTree = "<group>"; };
 		9A0000010000000000000012 /* SwiftPlatformBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftPlatformBridge.swift; sourceTree = "<group>"; };
@@ -86,11 +90,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C0DE00000000000000000030 /* GhostlaneCore (generated) */ = {
+			isa = PBXGroup;
+			children = (
+				C0DE00000000000000000021 /* OlcFfi.swift */,
+				C0DE00000000000000000022 /* OlcrtcError+Localized.swift */,
+			);
+			name = "GhostlaneCore (generated)";
+			sourceTree = "<group>";
+		};
 		9A0000010000000000000030 = {
 			isa = PBXGroup;
 			children = (
 				9A0000010000000000000031 /* iosApp */,
 				B31340D1301599E5009B5598 /* PacketTunnel */,
+				C0DE00000000000000000030 /* GhostlaneCore (generated) */,
 				9A0000010000000000000032 /* Frameworks */,
 				9A0000010000000000000033 /* Products */,
 			);
@@ -154,7 +168,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = B31340DD301599E5009B5598 /* Build configuration list for PBXNativeTarget "PacketTunnel" */;
 			buildPhases = (
-				B31340F1301599E5009B5598 /* Fetch Core Frameworks */,
+				B31340F1301599E5009B5598 /* Build ghostlane-core */,
 				B31340CA301599E5009B5598 /* Sources */,
 				B31340CB301599E5009B5598 /* Frameworks */,
 				B31340CC301599E5009B5598 /* Resources */,
@@ -245,7 +259,7 @@
 			shellPath = /bin/sh;
 			shellScript = "set -e\nexport PATH=\"$HOME/go/bin:/usr/local/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\nif [ -z \"$ARCHS\" ] || [ \"$ARCHS\" = \"undefined_arch\" ]; then\n  export ARCHS=arm64\nfi\nGRADLE_VERSION_ARGS=\"\"\n# CI exports OLCBOX_VERSION. An archive made from Xcode does not, and without a\n# fallback the app's own about screen reads 1.0.0 out of gradle.properties while\n# its Info.plist carries the real version - the same disagreement that put 1.0.0\n# in the App Store, inverted. MARKETING_VERSION is exported into every build\n# phase, so the project file is the single place both numbers come from.\nolcbox_version=\"${OLCBOX_VERSION:-$MARKETING_VERSION}\"\nif [ -n \"$olcbox_version\" ]; then\n  GRADLE_VERSION_ARGS=\"-Polcbox.version=$olcbox_version\"\nfi\ncd \"$SRCROOT/..\"\n./gradlew $GRADLE_VERSION_ARGS :sharedUI:fetchCoresIosXcframework :sharedUI:buildOlcrtcIosXcframework :sharedUI:embedAndSignAppleFrameworkForXcode --no-configuration-cache\n";
 		};
-		B31340F1301599E5009B5598 /* Fetch Core Frameworks */ = {
+		B31340F1301599E5009B5598 /* Build ghostlane-core */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -253,12 +267,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Fetch Core Frameworks";
+			name = "Build ghostlane-core";
 			outputPaths = (
+				"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/gen/OlcFfi.swift",
+				"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/gen/OlcrtcError+Localized.swift",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n# The extension links Cores — sing-box and Xray in one framework, because two\n# separate gomobile binds cannot be linked into one binary — so it fetches it\n# itself. It cannot inherit it from the app target: iosApp *depends on* this\n# target, so this one builds first and the app's gradle phase has not run yet.\n# The fetch returns immediately once the framework is there, so this costs\n# nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/fetch-cores-ios.sh \"$PWD/sharedUI/build/generated/cores/ios\"\n# And the tun2socks in front of Xray and olcRTC, a static library rather than\n# a framework: LIBRARY_SEARCH_PATHS and SWIFT_INCLUDE_PATHS point into it.\nbash scripts/fetch-hev-ios.sh \"$PWD/sharedUI/build/generated/hev/ios\"\n";
+			shellScript = "set -e\n# The extension links no Go: its one engine library is ghostlane-core (Rust:\n# xray-rust's core and the olcRTC client), built at scripts/ghostlane-core-pin.sh.\n# It cannot inherit it from the app target: iosApp *depends on* this target, so\n# this one builds first. The script returns at once when that pin is built, so\n# this costs nothing on every build after the first.\ncd \"$SRCROOT/..\"\nbash scripts/build-ghostlane-core-ios.sh \"$PWD/sharedUI/build/generated/rust-core/ios\"\n# And the tun2socks in front of the engines, a static library rather than\n# a framework: LIBRARY_SEARCH_PATHS and SWIFT_INCLUDE_PATHS point into it.\nbash scripts/fetch-hev-ios.sh \"$PWD/sharedUI/build/generated/hev/ios\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -277,6 +293,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DE00000000000000000011 /* OlcFfi.swift in Sources */,
+				C0DE00000000000000000012 /* OlcrtcError+Localized.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -468,38 +486,40 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64",
-				);
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
-				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
 				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-ObjC",
-					"-framework",
-					Cores,
+					"-lghostlane_core",
 					"-lhev-socks5-tunnel",
 					"-lresolv",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				CURRENT_PROJECT_VERSION = 273;
 				DEVELOPMENT_TEAM = 3QJG3J7L66;
@@ -565,38 +585,40 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64",
-				);
-				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/cores/ios/Cores.xcframework/ios-arm64_x86_64-simulator",
-				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
 				);
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
 				);
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
 					"$(SRCROOT)/../sharedUI/build/generated/hev/ios/HevSocks5Tunnel.xcframework/ios-arm64_x86_64-simulator/Headers/HevSocks5Tunnel",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/XrayRust",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-ObjC",
-					"-framework",
-					Cores,
+					"-lghostlane_core",
 					"-lhev-socks5-tunnel",
 					"-lresolv",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 273;

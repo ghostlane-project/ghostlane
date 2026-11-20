@@ -75,9 +75,12 @@ object LinkParser {
         val publicKey = p.query["pbk"].orEmpty()
         // What a link says about its TLS matters only where there is ordinary TLS
         // to say it about: with Reality keys there is no certificate to waive and
-        // no way to do without the handshake. `alpn` stays unread for VLESS: a
-        // WebSocket link that lists h2 first works only because it is ignored.
+        // no way to do without the handshake. `alpn` is read for WebSocket and
+        // HTTP upgrade alone, where ProofKit's WebTunnel links carry a browser's
+        // offer (`h2,http/1.1`); each core writes only what keeps those
+        // handshakes HTTP/1.1 (OutboundSpec.Vless.alpn).
         val ordinaryTls = tlsOf(p.query, fallbackSni = "")
+        val upgrade = transport is TransportSpec.Ws || transport is TransportSpec.HttpUpgrade
         return OutboundSpec.Vless(
             uuid = p.userinfo,
             host = p.host,
@@ -91,6 +94,7 @@ object LinkParser {
             tag = p.tag.ifBlank { p.host },
             plain = publicKey.isBlank() && p.query["security"]?.trim()?.lowercase() == "none",
             insecure = publicKey.isBlank() && ordinaryTls.insecure,
+            alpn = if (publicKey.isBlank() && upgrade) ordinaryTls.alpn else emptyList(),
         )
     }
 

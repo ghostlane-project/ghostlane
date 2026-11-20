@@ -1019,11 +1019,12 @@ jobs:
       # started normally. There is no upstream version to move to, so the choice is
       # to align it ourselves or to ship Hysteria2 broken on every recent phone.
       #
-      # The recipe is theirs, from SagerNet's own build.yml: same build tags, same
-      # shared ldflags, same NDK triples, CGO through the NDK clang. The one
-      # addition is max-page-size. Deviating from those tags silently drops
-      # protocols, so they are read from the tree at the pinned tag rather than
-      # copied here where they would rot.
+      # The recipe is theirs, from SagerNet's own build.yml: same shared ldflags,
+      # same NDK triples, CGO through the NDK clang. The one addition is
+      # max-page-size. The tags are not theirs: Android's list in
+      # scripts/singbox-tags.sh, which says what each one is for. A tag missing
+      # from it drops a protocol without a word, so PR Checks checks every
+      # config the app writes with a binary built from the same list.
       #
       # The tree is the pinned module with Ghostlane's Reality hello patch
       # (scripts/patched-singbox.sh; the patch says why), the tree every
@@ -1033,9 +1034,11 @@ jobs:
         run: |
           set -euo pipefail
           bash "${GITHUB_WORKSPACE}/olcbox/scripts/patched-singbox.sh" "${RUNNER_TEMP}/sing-box"
+          # shellcheck source=scripts/singbox-tags.sh
+          . "${GITHUB_WORKSPACE}/olcbox/scripts/singbox-tags.sh"
           cd "${RUNNER_TEMP}/sing-box"
 
-          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+          TAGS="${SINGBOX_TAGS_ANDROID}"
           LDFLAGS_SHARED="$(cat release/LDFLAGS)"
           NDK_BIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           OUT="${GITHUB_WORKSPACE}/olcbox/androidApp/jniLibs"

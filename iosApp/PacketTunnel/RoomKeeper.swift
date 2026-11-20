@@ -1,4 +1,3 @@
-import Cores
 import CryptoKit
 import Foundation
 import os
@@ -21,7 +20,7 @@ import os
 /// thread-safe; the state around them is not, and does not need to be.
 ///
 /// ai-generated: the whole file.
-final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Sendable {
+final class RoomKeeper: NSObject, SessionListener, @unchecked Sendable {
     static let shared = RoomKeeper()
 
     /// Two refreshes closer than this are one: a client cycling through dead
@@ -154,13 +153,13 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
         }
     }
 
-    // MARK: MobileSessionListenerProtocol
+    // MARK: SessionListener (olc-ffi)
 
     /// The engine established a session: the initial one, or the one after a
     /// hop or a reconnect. Right after a handover the list holds exactly one
     /// live room until it is read again, so every session after the first
     /// refreshes it.
-    func onSessionOpened(_ room: String?, sessionID: String?) {
+    func onSessionOpened(_ room: String, _ sessionId: String) {
         queue.async { [self] in
             guard running else { return }
             sessions += 1
@@ -171,7 +170,7 @@ final class RoomKeeper: NSObject, MobileSessionListenerProtocol, @unchecked Send
             restartNotBefore = .distantPast
             NetworkDiagnostics.record("olcrtc session opened (\(sessions == 1 ? "first of the generation" : "handover or reconnect"))")
             if sessions > 1 || firstSessionRefreshes {
-                refresh(reason: "session opened in room \(room.map(RoomDigest.of) ?? "?")")
+                refresh(reason: "session opened in room \(RoomDigest.of(room))")
             }
         }
     }

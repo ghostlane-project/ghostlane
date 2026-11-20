@@ -8,7 +8,7 @@ import Foundation
 /// — TEST-NET-2, an address nothing routes to — and this replaces it with the
 /// first resolver `ResolverSnapshot` found, or Yandex DNS when it found none.
 /// A string substitution, not a JSON edit: the placeholder is quoted and
-/// unique, `SingBoxConfigTest` pins that it appears exactly once, and a parser
+/// unique, `SingBoxConfigTest` and `XrayConfigIosCoreTest` pin where it appears, and a parser
 /// here would be a second implementation of the config's shape.
 ///
 /// The values must match `SingBoxConfig.DIRECT_DNS_PLACEHOLDER` and
@@ -17,9 +17,11 @@ enum DirectResolver {
     static let placeholder = "198.51.100.53"
     static let fallback = "77.88.8.8"
 
-    /// The first IPv4, else the first global IPv6, else a link-local IPv6 that
-    /// still carries its zone — an IPv6-only Wi-Fi advertises its router that
-    /// way, and sing-box dials a zoned address as Go does — else the fallback.
+    /// The first IPv4, else the first global IPv6, else the fallback. A
+    /// link-local IPv6 is never offered, zoned or not: the Rust core refuses a
+    /// zone in `dns.servers[].address`, and core.json with it (sing-box, which
+    /// dialled a zoned address, left the extension in step C), and without
+    /// its zone a link-local address cannot be dialled.
     /// `ResolverSnapshot` renders servers as `host:port` and `[v6%zone]:port`.
     static func pick(_ servers: [String]) -> String {
         let hosts = servers.map(host(of:)).filter { !$0.isEmpty }
@@ -29,9 +31,6 @@ enum DirectResolver {
         }
         if let v6 = unzoned.first(where: { $0.contains(":") && !isLinkLocal($0) && $0 != "::1" }) {
             return v6
-        }
-        if let zoned = hosts.first(where: { isLinkLocal($0) && $0.contains("%") }) {
-            return zoned
         }
         return fallback
     }

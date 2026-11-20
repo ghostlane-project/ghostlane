@@ -108,9 +108,11 @@ class XrayConfigRoutingTest {
 
         val rules = json.rules()
         assertEquals(6, rules.size)
-        // 1. the system's DNS datagrams, from our inbound only, to the resolver
+        // 1. the system's DNS, from our inbound only, to the resolver: over
+        // UDP, and over TCP for the retry of a truncated (TC=1) answer, which
+        // would otherwise leave by the tunnel and time out
         assertEquals(listOf("in"), rules[0]["inboundTag"]!!.jsonArray.strings())
-        assertEquals("udp", rules[0].str("network")); assertEquals("53", rules[0].str("port"))
+        assertEquals("tcp,udp", rules[0].str("network")); assertEquals("53", rules[0].str("port"))
         assertEquals("dns-out", rules[0].str("outboundTag"))
         // 2/3. each resolver's own queries to its side of the tunnel
         assertEquals(listOf("dns-direct"), rules[1]["inboundTag"]!!.jsonArray.strings())

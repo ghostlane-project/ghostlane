@@ -324,8 +324,11 @@ func (d *Daemon) connect(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Fail("no_subscription", msg)
 	}
 	sel := store.Selection{Subscription: req.Subscription, Selector: req.Selector, Mode: mode, KillSwitch: req.KillSwitch}
+	// The config keeps a copy: remember() writes the stored selection under
+	// d.mu while this handler goes on reading its own sel without it.
+	stored := sel
 	d.mu.Lock()
-	d.cfg.Selection = &sel
+	d.cfg.Selection = &stored
 	cfg := d.cfg.Clone()
 	d.mu.Unlock()
 	if err := d.saveConfig(cfg); err != nil {

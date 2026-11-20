@@ -53,6 +53,14 @@ sealed interface OutboundSpec {
         val plain: Boolean = false,
         /** `allowInsecure=1` on ordinary TLS. Never set with Reality keys: there is no certificate to waive. */
         val insecure: Boolean = false,
+        /**
+         * The link's `alpn`, read for WebSocket and HTTP upgrade over ordinary
+         * TLS only (empty for anything else): ProofKit's WebTunnel links say
+         * `h2,http/1.1`, a browser's offer, because `http/1.1` alone is the
+         * fingerprint of such a line. What each core writes of it is its own
+         * rule ([IosCore], [SingBoxConfig]). Last and defaulted, as the two above.
+         */
+        val alpn: List<String> = emptyList(),
     ) : OutboundSpec
 
     data class Hysteria2(

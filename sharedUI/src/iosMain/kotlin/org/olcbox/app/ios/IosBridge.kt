@@ -91,13 +91,16 @@ interface IosBridgeCallback {
 /**
  * Everything the extension needs to bring one location up.
  *
- * [config] is a complete sing-box config with a tun inbound. At most one of the
- * other two is ever set, and for reality and hysteria2 neither is: sing-box
- * borrows a second core only for the transports it does not implement itself.
+ * [config] is a complete sing-box config, and its inbound tells the extension
+ * what owns the tun (TunArrangement.decide). For sing-box's own transports
+ * (Reality, Hysteria2, WebTunnel) it is a loopback SOCKS inbound with a login,
+ * and hev-socks5-tunnel owns the tun and forwards to it; a tun inbound instead
+ * gives sing-box the tun, the way back. At most one of the other two is ever
+ * set, and for sing-box's own transports neither is.
  *
  * [xrayConfig] is an Xray config for xhttp, and [olcrtc] the parameters for our
- * own engine. In both cases the borrowed core listens on a loopback SOCKS port
- * and sing-box, which owns the tun, reaches it there.
+ * own engine. In both cases that engine listens on a loopback SOCKS port, hev
+ * owns the tun and reaches it there, and [config] is written but not run.
  *
  * [ruleSets] are the rule-set files [config] refers to under Bypass Russia,
  * file name to base64 of the bytes, and empty when it refers to none.
@@ -130,7 +133,17 @@ data class IosPacketTunnelStartRequest(
      * Anything else that starts a tunnel wants its files to be the ones that
      * run, and replaces what is running.
      */
-    val onlyIfDown: Boolean = false
+    val onlyIfDown: Boolean = false,
+    /**
+     * `core.json`: the Rust core's config ([org.olcbox.app.net.XrayConfig.buildIosCore])
+     * when the per-transport choice gives this line to it, else null; it
+     * gives none yet (`IosVpnManager.IOS_ENGINES`). The bridge writes it or
+     * removes it, like [xrayConfig]. The extension that reads it comes in a
+     * later branch, and is to look for olcrtc.json, xray.json, core.json,
+     * then config.json, so with it set the other two engine files are absent
+     * and [config] is written but not run.
+     */
+    val coreConfig: String? = null
 )
 
 /**

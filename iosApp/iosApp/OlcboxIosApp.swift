@@ -875,6 +875,14 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
                 Self.olcrtcParameters(request.olcrtc),
                 to: container.appendingPathComponent("olcrtc.json")
             )
+            // The Rust core's config, for a line the app gives to it (none
+            // yet: IosVpnManager.IOS_ENGINES). The extension that is to read
+            // it, after olcrtc.json and xray.json and before config.json,
+            // comes in a later branch; it is removed on every other line.
+            try Self.handOver(
+                request.coreConfig,
+                to: container.appendingPathComponent("core.json")
+            )
             // Written or removed, like the two above: a `rules/` left behind
             // by a Bypass Russia connection is harmless to a Global config,
             // which never names it, but a config that names a file the app
@@ -1500,7 +1508,7 @@ enum TunnelCounters {
         let bytesOut: Int64
     }
 
-    /// Must match `LibboxPlatform.Tun.address` in the extension. The two targets
+    /// Must match `TunPlatform.Tun.address` in the extension. The two targets
     /// share no code — the extension links Cores, the app does not — so this is
     /// a duplicated constant, and the one place it could drift.
     private static let tunAddress = "172.19.0.1"

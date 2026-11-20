@@ -28,10 +28,11 @@ object XrayConfig {
     /**
      * Kept off the PAC port 10809.
      *
-     * The same number as [SingBoxConfig.SINGBOX_SOCKS_PORT] and safely so: on
-     * Android and desktop only one core runs at a time, and on iOS — where both
-     * do — sing-box owns the tun and has no SOCKS inbound of its own, so this
-     * port has exactly one listener either way.
+     * The same number as [SingBoxConfig.SINGBOX_SOCKS_PORT] and safely so:
+     * one core runs at a time on every platform. On iOS hev-socks5-tunnel
+     * fronts Xray on xhttp and sing-box is not started there (since 1.0.426);
+     * on sing-box's own lines sing-box listens here and Xray is not started
+     * (since 2026-11-13). So this port has exactly one listener either way.
      */
     const val XRAY_SOCKS_PORT = 10810
 
@@ -43,9 +44,10 @@ object XrayConfig {
 
     /**
      * The tunnel-side resolver under [answersDns], reached through `out`. The
-     * same address SingBoxConfig uses for the same job.
+     * same address SingBoxConfig uses for the same job, and the one core.json's
+     * `dns` outbound forwards to through the line ([IosCore]).
      */
-    private const val REMOTE_DNS_SERVER = "1.1.1.1"
+    internal const val REMOTE_DNS_SERVER = "1.1.1.1"
 
     /**
      * What `ip_is_private` means to sing-box, spelled out: the local network,
@@ -255,6 +257,40 @@ object XrayConfig {
     }
 
     /**
+     * `core.json`: the config the iOS extension starts `ghostlane-core`
+     * (xray-rust) from, behind hev-socks5-tunnel, for a line the per-transport
+     * choice gives to the Rust core ([IosCore.choose]). A shape of its own:
+     * [buildXhttp] stays what Go's Xray runs on every platform.
+     *
+     * It is sing-box's iOS shape ([SingBoxConfig.buildIosSocks]) in the Xray
+     * JSON xray-rust's parser accepts, which refuses the whole document over
+     * one field it does not know:
+     *  - one inbound, SOCKS5 on 127.0.0.1:[socksPort] demanding [login], UDP on;
+     *  - DNS answered by the core: the tun's resolver reaches it as a query to
+     *    port 53, which the routing hands to a `dns` outbound; A gets a fake
+     *    address from [IosCore.FAKE_IP_POOL], AAAA nothing, HTTPS is refused,
+     *    and every other type is forwarded through the line to
+     *    [REMOTE_DNS_SERVER] (a rule only xray-rust reads);
+     *  - under Bypass Russia, the names on [geodata]'s lists are resolved for
+     *    real by the network's own resolver and leave directly, as do their
+     *    addresses and the local network; everything else rides the tunnel;
+     *  - `log` at warning (debug with [verboseLogs]) and no access log.
+     *
+     * [spec] must be one of [IosCoreLine] that the core takes: [IosCore.refusal]
+     * says why one is not, and this throws IllegalArgumentException for it.
+     * [routing] is Global or a bypass; under a bypass [geodata] carries the
+     * region's lists inline, as [buildXhttp] does.
+     */
+    fun buildIosCore(
+        spec: OutboundSpec,
+        login: SocksLogin,
+        routing: Routing = Routing.Global,
+        geodata: XrayGeodata.Lists? = null,
+        verboseLogs: Boolean = false,
+        socksPort: Int = XRAY_SOCKS_PORT,
+    ): String = IosCore.build(spec, login, routing, geodata, verboseLogs, socksPort)
+
+    /**
      * Two resolvers, each tagged so the routing below can send its queries
      * where they belong: `dns-direct` on the network underneath for the
      * Russian lists and the server's own name, `dns-remote` through the tunnel
@@ -318,7 +354,12 @@ object XrayConfig {
                 addJsonObject {
                     put("type", "field")
                     putJsonArray("inboundTag") { add("in") }
-                    put("network", "udp"); put("port", 53)
+                    // TCP too: the system asks again over TCP when an answer
+                    // comes back truncated (TC=1). Without the rule that
+                    // retry leaves by the tunnel, to the tun's resolver
+                    // address, which nothing answers out there, and times
+                    // out. The same rule as core.json's (IosCore).
+                    put("network", "tcp,udp"); put("port", 53)
                     put("outboundTag", "dns-out")
                 }
                 if (geodata != null || serverByName) {

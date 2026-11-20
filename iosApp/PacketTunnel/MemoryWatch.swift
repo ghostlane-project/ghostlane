@@ -1,4 +1,3 @@
-import Cores
 import Darwin
 import Foundation
 import os
@@ -107,9 +106,6 @@ enum MemoryWatch {
                 try? files.moveItem(at: file, to: keepAs)
             }
             currentFile = file
-            samplesSinceSummary = 0
-            alarmed = false
-            summarizeGoroutines(container: container)
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: interval)
             source.setEventHandler { sample(into: file) }
@@ -147,98 +143,44 @@ enum MemoryWatch {
         return last?.contains(stoppedMarker) ?? false
     }
 
-    /// One sample: what the system charges the process, and what the Go runtime
-    /// admits to holding.
+    /// One sample: what the system charges the process, and what the core
+    /// admits to holding (`memoryStats()`, one JSON line: the counted heap,
+    /// the runtime's threads and tasks, the layers as [held, cap, budget],
+    /// and the byte budget B).
     ///
     /// Both halves are needed and neither is enough. The footprint is what the
-    /// process is killed for, but it counts stacks, the allocator's spans and
-    /// every byte the process holds that Go never allocated, so it cannot say
-    /// whether a climb is the engine's at all. The runtime's own figures say
-    /// exactly that, and say whether the ceiling set by `MobileSetMemoryLimit`
-    /// is binding — a collection count racing upward is a limit doing work, and
-    /// a limit doing too much work is throughput spent on staying alive.
-    /// Once a minute, what the goroutine count is made of.
+    /// process is killed for, but it counts stacks, the allocator's free
+    /// pages, hev and every byte the core never allocated, so it cannot say
+    /// whether a climb is the core's at all; the core's own figures say that.
     ///
-    /// olcbox#26: an eight-hour session reached 700+ goroutines and 7.6 MB of
-    /// stacks, against ~100-150 for a live tunnel, and the trace could only
-    /// count them. The engine now groups them by where they are blocked, and
-    /// that line goes to its own file, appended across runs (a "start" line
-    /// per run) and kept for hours, since the leak is slow and the answer is
-    /// the composition just before the process dies, not the count.
-    private static let summaryEvery = 240 // samples, i.e. one minute at 4 Hz
-    private static let summaryWindow = 240 // lines, i.e. four hours
-    nonisolated(unsafe) private static var samplesSinceSummary = 0
-    nonisolated(unsafe) private static var summaryFile: URL?
+    /// Each sample also feeds MemoryRelief, which says when to ask the core to
+    /// trim() and where its byte budget goes; the pressure source feeds it the
+    /// system's events through `pressure(_:)`. One policy, on this queue.
+    nonisolated(unsafe) private static var relief = MemoryRelief()
 
-    private static func summarizeGoroutines(container: URL) {
-        let file = container.appendingPathComponent("goroutines.txt")
-        summaryFile = file
-        appendSummary("start", to: file)
+    /// A memory-pressure event from MemoryPressure: trim at once and lower B.
+    /// Not gated on `enabled`: this is relief, not the trace.
+    static func pressure(_ event: MemoryRelief.Event) {
+        queue.async { act(relief.on(event, at: Date())) }
     }
 
-    /// A summary now, outside the minute cadence: the 1.0.424 xhttp death
-    /// took 27 s from start to kill and its first minute line never came.
-    /// Called on a memory-pressure event and when the footprint first
-    /// crosses the line below, so the export names the goroutines of the
-    /// run that is about to die, not of the healthy one that follows it.
-    static func summarizeNow(_ why: String) {
-        guard enabled else { return }
-        queue.async {
-            guard let summaryFile else { return }
-            // The pressure source fires in bursts - ten events inside a
-            // second in the 1.0.428 export - and each summary stops the
-            // world to walk every goroutine; one per burst is enough.
-            let now = Date()
-            guard now.timeIntervalSince(lastUnscheduledSummary) > 5 else { return }
-            lastUnscheduledSummary = now
-            appendSummary("\(why): " + MobileGoroutineSummary(), to: summaryFile)
-            samplesSinceSummary = 0
+    /// Asks the core what the policy said. trim() drops its pools and asks
+    /// the system allocator for its free pages; it returns the bytes given
+    /// back, which the trace records.
+    private static func act(_ action: MemoryRelief.Action) {
+        if let budget = action.byteBudget {
+            setByteBudget(budget)
+            note = budget == 0 ? "budget formula" : "budget \(budget)"
+        }
+        if action.trim {
+            let given = trim()
+            note = "trimmed \(given)"
         }
     }
-    nonisolated(unsafe) private static var lastUnscheduledSummary = Date.distantPast
-
-    /// Footprint at which one unscheduled summary is written per run. Deaths
-    /// have come at 45-50 MB; 38 leaves time for the write.
-    private static let alarmFootprint: UInt64 = 38 * 1_048_576
-    nonisolated(unsafe) private static var alarmed = false
-
-    private static func appendSummary(_ text: String, to file: URL) {
-        let line = String(format: "%7.2fs  %@", Date().timeIntervalSince(started), text)
-        var lines = (try? String(contentsOf: file, encoding: .utf8))?
-            .split(separator: "\n").map(String.init) ?? []
-        lines.append(line)
-        if lines.count > summaryWindow { lines.removeFirst(lines.count - summaryWindow) }
-        try? Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file, options: .atomic)
-    }
-
-    /// Footprint above which idle heap is handed back to the system at once,
-    /// and how often at most. The 1.0.427 traces show the runtime holding
-    /// 7-10 MB of collected-but-unreleased heap while the footprint sat at
-    /// 37-44 MB and the device reported critical pressure; jetsam judges the
-    /// footprint, so that reserve is worth returning before the system asks.
-    /// FreeOSMemory is a stop-the-world collection - a few milliseconds on a
-    /// heap this size - hence the rate limit.
-    private static let releaseAbove: UInt64 = 36 * 1_048_576
-    private static let releaseEvery: TimeInterval = 5
-    nonisolated(unsafe) private static var lastRelease = Date.distantPast
 
     private static func sample(into file: URL) {
-        samplesSinceSummary += 1
-        let now = Date()
-        if footprintBytes() > releaseAbove, now.timeIntervalSince(lastRelease) > releaseEvery {
-            lastRelease = now
-            MobileFreeOSMemory()
-            note = "released"
-        }
-        if samplesSinceSummary >= summaryEvery, let summaryFile {
-            samplesSinceSummary = 0
-            appendSummary(MobileGoroutineSummary(), to: summaryFile)
-        }
+        act(relief.on(.sample(footprint: footprintBytes()), at: Date()))
         let footprint = footprintBytes()
-        if !alarmed, footprint >= alarmFootprint, let summaryFile {
-            alarmed = true
-            appendSummary("footprint \(footprint / 1_048_576) MB: " + MobileGoroutineSummary(), to: summaryFile)
-        }
         // Bytes the process may still allocate before the system kills it. This
         // is the number that matters: the cap is not a documented constant and
         // differs by device and OS, so headroom is measured, not assumed.
@@ -252,7 +194,7 @@ enum MemoryWatch {
             Double(headroom) / 1_048_576,
             Double(peak) / 1_048_576,
             note,
-            MobileMemoryStats()
+            memoryStats()
         )
         samples.append(line)
         if samples.count > window { samples.removeFirst(samples.count - window) }
