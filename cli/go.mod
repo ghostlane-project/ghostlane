@@ -2,7 +2,7 @@ module github.com/ghostlane-project/ghostlane/cli
 
 go 1.26.3
 
-replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olcrtc v0.0.0-20261109222247-2d4266af3947
+replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olcrtc v0.0.0-20261119213407-42dd44d28883
 
 // sing-box v1.13.14 with scripts/patches/sing-box-reality-hello.patch, the tree
 // every Ghostlane build compiles: `make singbox-src` writes it
@@ -11,7 +11,7 @@ replace github.com/openlibrecommunity/olcrtc => github.com/ghostlane-project/olc
 replace github.com/sagernet/sing-box => ./.sing-box-patched
 
 require (
-	github.com/openlibrecommunity/olcrtc v0.0.0-20261109222247-2d4266af3947
+	github.com/openlibrecommunity/olcrtc v0.0.0-20261119213407-42dd44d28883
 	github.com/sagernet/sing v0.8.11
 	github.com/sagernet/sing-box v1.13.14
 	github.com/vishvananda/netlink v1.3.1
