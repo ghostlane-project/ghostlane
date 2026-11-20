@@ -38,7 +38,7 @@ adb shell 'toybox nc --help 2>&1 | head -2; id' | tee "$out/image.txt"
 
 adb logcat -G 16M > /dev/null 2>&1 || true
 adb logcat -c || true
-timeout 900 adb shell am instrument -w -r "$runner" > "$out/am.txt" 2>&1
+timeout 900 adb shell am instrument -w -r -e class org.olcbox.app.RustCoreVpnE2ETest "$runner" > "$out/am.txt" 2>&1
 adb logcat -d -v time > "$out/logcat.txt" 2>&1 || true
 grep -h 'RustCoreE2E' "$out/logcat.txt" | sed -E 's/^.*RustCoreE2E *\( *[0-9]+\): //' > "$out/results.txt" || true
 cat "$out/results.txt"

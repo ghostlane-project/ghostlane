@@ -119,6 +119,14 @@ class RustCoreVpnE2ETest {
     fun theServiceCarriesATunConnectionOnTheRustCoreAndLetsGo() {
         shell("appops set $pkg ACTIVATE_VPN allow")
         say("RESULT appops ACTIVATE_VPN: ${shell("appops get $pkg ACTIVATE_VPN").trim()}")
+        // The appop only lets the consent dialog pass itself: the app still has to go
+        // through prepare(), whose dialog (com.android.vpndialogs) sees the pre-consent
+        // and makes this package the prepared VPN without a tap.
+        android.net.VpnService.prepare(context)?.let { consent ->
+            context.startActivity(consent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitFor("the VPN consent to settle", 15_000) { android.net.VpnService.prepare(context) == null }
+        }
+        say("RESULT VPN prepared: ${android.net.VpnService.prepare(context) == null}")
         shell("pm grant $pkg android.permission.POST_NOTIFICATIONS")
         assertTrue("no tun fd before the start", tunFds().isEmpty())
 
