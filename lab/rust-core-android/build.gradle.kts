@@ -38,7 +38,8 @@ android {
     val coreDir = file(providers.gradleProperty("ghostlaneCoreDir").orElse("../../out/core").get())
     sourceSets.getByName("main") {
         jniLibs.srcDir(coreDir.resolve("jniLibs"))
-        java.srcDir(coreDir.resolve("kotlin"))
+        // AGP 9's built-in Kotlin compiles .kt only from the kotlin directories.
+        kotlin.srcDir(coreDir.resolve("kotlin"))
     }
 
     packaging {
