@@ -237,7 +237,12 @@ LIBXRAY_VERSION="${LIBXRAY_VERSION:-v1.260711.0}"
 # it, so until the next re-pin a release passes only with gate: skip. Pin commits
 # on `proofkit`: GitHub drops a commit no branch reaches, and every checkout of
 # it then fails.
-OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261109222247-2d4266af3947}"
+# 2d4266af3947 -> 42dd44d28883 (olcrtc#80; the engine's v0.15.0 -> v0.15.1, the tag's
+# commit, spelled as a pseudo-version because the pin's checks and CORES_TAG are
+# built on the revision tail): a VK Calls signalling socket that stays silent for
+# 30 s is ended and the call rejoined, where it used to hang until the app gave up.
+# Same API.
+OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261119213407-42dd44d28883}"
 
 # Bumped when the framework's *shape* changes while its pins do not — adding the
 # macOS slice being the first case. The versions alone cannot express that: they
@@ -321,7 +326,9 @@ OLCRTC_VERSION="${OLCRTC_VERSION:-v0.0.0-20261109222247-2d4266af3947}"
 # sing-box-reality-hello.patch): a Reality hello keeps its X25519MLKEM768 key
 # share and announces 26.7.11, so Reality lines open on Xray-core >= v26.7.
 # Same API.
-CORES_BUILD="${CORES_BUILD:-38}"
+# 38 -> 39: the engine pin above (42dd44d28883, olcrtc#80): a silent VK Calls
+# signalling socket is rejoined. Same API.
+CORES_BUILD="${CORES_BUILD:-39}"
 
 # The revision rather than the whole pseudo-version: the tag stays readable and
 # still changes whenever olcRTC does.
