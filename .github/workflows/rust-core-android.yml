@@ -283,6 +283,26 @@ jobs:
           ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
             -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -120
 
+      # A release build (minified, R8) keeps what the core needs: the engine the service
+      # finds by name, the UniFFI bindings, JNA. Unsigned; nothing is published.
+      - name: Release APK with the core keeps the engine, the bindings and JNA
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew :androidApp:assembleGithubRelease \
+            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -60
+          rel=$(find androidApp/build/outputs/apk/github/release -name '*.apk' | head -1)
+          ls -l "$rel"
+          unzip -p "$rel" 'classes*.dex' | strings > out-release-dex.txt
+          for name in org/olcbox/app/rustcore/RustCoreEngine org/ghostlane/olcrtc/OlcrtcRuntime com/sun/jna/Native xray_core_set_socket_protect_callback; do
+            grep -q "$name" out-release-dex.txt || { echo "release dex lost $name"; exit 1; }
+          done
+          [ "$(unzip -l "$rel" | grep -c 'libghostlane_core.so')" -eq 3 ]
+          { echo '### Release (R8) keeps the Rust core classes'; echo "APK: $(stat -c %s "$rel") bytes"; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: What the core adds to the APK, per ABI
         working-directory: olcbox
         run: |

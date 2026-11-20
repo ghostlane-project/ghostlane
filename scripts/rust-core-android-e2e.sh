@@ -3,7 +3,7 @@
 #
 # Runs the app's RustCoreVpnE2ETest (androidApp/src/androidTestRustcore) on the
 # booted emulator: installs the debug app and its test APK (built by the `app`
-# job of rust-core-android.yml), runs the three tests, keeps the am output and
+# job of rust-core-android.yml), runs the six tests, keeps the am output and
 # logcat in <out dir>, the RESULT lines in <out dir>/results.txt. Non-zero when
 # a test fails. No carrier room, no secret.
 set -uo pipefail
@@ -43,7 +43,7 @@ adb logcat -d -v time > "$out/logcat.txt" 2>&1 || true
 grep -h 'RustCoreE2E' "$out/logcat.txt" | sed -E 's/^.*RustCoreE2E *\( *[0-9]+\): //' > "$out/results.txt" || true
 cat "$out/results.txt"
 tail -30 "$out/am.txt"
-if ! grep -q '^OK (3 tests)' "$out/am.txt"; then
+if ! grep -q '^OK (6 tests)' "$out/am.txt"; then
   grep -E ' (E|F)/(AndroidRuntime|DEBUG|libc|TestRunner|ghostlane-core)' "$out/logcat.txt" | tail -60
   exit 1
 fi

@@ -171,6 +171,33 @@ object IosCore {
         }
     }
 
+    /**
+     * [spec] written with [address] for its server, for a line named by a hostname
+     * that the caller resolved on the network underneath. Each place the name was
+     * also the wire's (the TLS server name, a Host header, HTTP/2 hosts) is given
+     * the name, so the address replaces only where the connection goes. A spec
+     * whose host is already an address comes back as it is.
+     */
+    fun pinHost(spec: OutboundSpec, address: String): OutboundSpec {
+        if (XrayConfig.isIpLiteral(spec.host)) return spec
+        val name = spec.host
+        return when (spec) {
+            is OutboundSpec.Vless -> spec.copy(
+                host = address,
+                sni = spec.sni.ifBlank { name },
+                transport = when (val t = spec.transport) {
+                    is TransportSpec.Ws -> t.copy(host = t.host.ifBlank { name })
+                    is TransportSpec.HttpUpgrade -> t.copy(host = t.host.ifBlank { name })
+                    is TransportSpec.Xhttp -> t.copy(host = t.host.ifBlank { name })
+                    is TransportSpec.Http -> t.copy(hosts = t.hosts.ifEmpty { listOf(name) })
+                    else -> t
+                },
+            )
+            is OutboundSpec.Hysteria2 -> spec.copy(host = address, sni = spec.sni.ifBlank { name })
+            else -> spec
+        }
+    }
+
     private fun vlessRefusal(spec: OutboundSpec.Vless): String? {
         val reality = spec.publicKey.isNotBlank()
         return when {

@@ -23,6 +23,8 @@ import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.data.model.RoutingMode
+import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.rustcore.RustCoreEngine
 import org.olcbox.app.vpn.VpnStatus
@@ -213,5 +215,146 @@ class RustCoreVpnE2ETest {
         say("RESULT stopped: status Disconnected, core stopped, service ended, tun fd closed, tun0 gone")
         RustCore.testConfig = null
         server.close()
+    }
+
+    // ---- the gaps closed after phase 2: UDP, a hostname with bypass routing, proxy mode ----
+
+    private fun consent() {
+        shell("appops set $pkg ACTIVATE_VPN allow")
+        android.net.VpnService.prepare(context)?.let { c ->
+            context.startActivity(c.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitFor("the VPN consent to settle", 15_000) { android.net.VpnService.prepare(context) == null }
+        }
+        shell("pm grant $pkg android.permission.POST_NOTIFICATIONS")
+    }
+
+    private fun saveProfile(link: String, routing: RoutingSettings = RoutingSettings()) = runBlocking {
+        val location = LocationConfig(name = "e2e", kind = LocationKind.Vless, rawLink = link)
+        LocationsDataSourceImpl(context).saveLocationBundle(
+            LocationBundleV4(
+                activeLocationId = "e2e",
+                locations = listOf(LocationEntry.from("e2e", location)),
+                routing = routing
+            )
+        )
+    }
+
+    private fun startIntent(mode: String, user: String, pass: String) =
+        Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME)
+            .setAction(OlcboxVpnActions.ACTION_START_VPN)
+            .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
+            .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, mode)
+            .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, user)
+            .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, pass)
+            .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_MODE, "proxy_selected")
+            .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_PROXY_APPS, arrayListOf("com.android.shell"))
+
+    private fun stopAndWait() {
+        context.startService(
+            Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME).setAction(OlcboxVpnActions.ACTION_STOP_VPN)
+        )
+        waitFor("the status Disconnected", 30_000) { OlcboxVpnState.status.value is VpnStatus.Disconnected }
+        waitFor("the Rust core to stop", 10_000) { !RustCoreEngine.isCoreRunning() }
+        waitFor("the service to end", 20_000) { !serviceRunning() }
+        waitFor("the tun fd to close", 10_000) { tunFds().isEmpty() }
+    }
+
+    private fun logCount(needle: String) = OlcboxVpnState.logs.value.count { it.contains(needle) }
+
+    /** The shell sends one UDP datagram through the tun and prints what comes back. */
+    private fun shellUdp(host: String, port: Int, payload: String): String {
+        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("sh")
+        ParcelFileDescriptor.AutoCloseOutputStream(input).use {
+            it.write("(echo $payload; sleep 3) | toybox nc -u -w 5 $host $port\n".toByteArray())
+            it.flush()
+        }
+        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+
+    @Test
+    fun udpRoundTripsThroughTheTunOnTheRustCore() {
+        consent()
+        val nonce = "UDP${System.nanoTime()}"
+        val echo = java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
+        val datagrams = AtomicInteger()
+        Thread {
+            val buf = ByteArray(2048)
+            while (!echo.isClosed) {
+                runCatching {
+                    val p = java.net.DatagramPacket(buf, buf.size)
+                    echo.receive(p)
+                    datagrams.incrementAndGet()
+                    echo.send(java.net.DatagramPacket(p.data, p.length, p.address, p.port))
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+
+        val user = "u${System.nanoTime() % 100000}"
+        val pass = "p${System.nanoTime() % 100000}x"
+        RustCore.testConfig = { port, _ ->
+            """{"log":{"loglevel":"warning","access":"none"},
+              "inbounds":[{"tag":"in","protocol":"socks","listen":"127.0.0.1","port":$port,
+                "settings":{"auth":"password","accounts":[{"user":"$user","pass":"$pass"}],"udp":true}}],
+              "outbounds":[{"tag":"direct","protocol":"freedom"},
+                {"tag":"loop","protocol":"freedom","settings":{"redirect":"127.0.0.1:${echo.localPort}"}}],
+              "routing":{"domainStrategy":"AsIs","rules":[{"type":"field","ip":["192.0.2.1"],"outboundTag":"loop"}]}}"""
+        }
+        saveProfile("vless://00000000-0000-4000-8000-000000000000@192.0.2.9:443?type=tcp&security=none#e2e")
+        try {
+            context.startForegroundService(startIntent("tun", user, pass))
+            waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+            val reply = shellUdp("192.0.2.1", 5353, nonce)
+            say("RESULT UDP through the tun: '${reply.trim()}', datagrams at the echo: ${datagrams.get()}")
+            assertTrue("the datagram came back: '$reply'", reply.contains(nonce))
+            assertTrue("the echo saw it", datagrams.get() >= 1)
+        } finally {
+            RustCore.testConfig = null
+            echo.close()
+            stopAndWait()
+        }
+    }
+
+    @Test
+    fun aHostnameServerWithBypassRoutingStartsTheCore() {
+        consent()
+        // A Reality line named by a hostname (a resolver answers `localhost` on any network), under
+        // Bypass Russia: the service resolves the name, writes the config with the lists inline,
+        // and the core starts and opens its SOCKS port. Nothing answers on the other end: only
+        // the start is asserted, not a connection.
+        val link = "vless://11111111-1111-1111-1111-111111111111@localhost:44321" +
+            "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+            "&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#h"
+        saveProfile(link, RoutingSettings(mode = RoutingMode.BypassRussia))
+        val readyBefore = logCount("Rust core ready on")
+        val resolvedBefore = logCount("resolved to an address")
+        try {
+            context.startForegroundService(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
+            waitFor("the core to start on a resolved, bypass-routed line", 60_000) {
+                logCount("Rust core ready on") > readyBefore
+            }
+            assertTrue("the name was resolved", logCount("resolved to an address") > resolvedBefore)
+            assertFalse("the core is running", !RustCoreEngine.isCoreRunning())
+            say("RESULT hostname + Bypass Russia: the core started")
+        } finally {
+            stopAndWait()
+        }
+    }
+
+    @Test
+    fun proxyModeIsRefusedForACoreLineWithAReason() {
+        val link = "vless://11111111-1111-1111-1111-111111111111@192.0.2.9:443" +
+            "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+            "&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#p"
+        saveProfile(link)
+        try {
+            context.startForegroundService(startIntent("proxy", "", ""))
+            waitFor("a status that says why", 30_000) {
+                (OlcboxVpnState.status.value as? VpnStatus.Error)?.message?.contains("proxy mode") == true
+            }
+            assertFalse("no core runs", RustCoreEngine.isCoreRunning())
+            say("RESULT proxy mode refused: ${(OlcboxVpnState.status.value as VpnStatus.Error).message}")
+        } finally {
+            stopAndWait()
+        }
     }
 }

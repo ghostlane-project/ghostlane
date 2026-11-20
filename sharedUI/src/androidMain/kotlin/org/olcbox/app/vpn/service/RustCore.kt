@@ -46,6 +46,12 @@ interface RustCoreBackend {
 
     /** Stops the olcRTC client, if one runs. Never throws. */
     fun stopOlc(timeoutMs: Long)
+
+    /**
+     * The room list of a running (or about to run) olcRTC client: the engine re-reads it at every
+     * hop, so a list refreshed while the tunnel is up is applied here (RoomKeeper.swift's `apply`).
+     */
+    fun setRooms(primary: String, extras: List<String>)
     fun isOlcRunning(): Boolean
 
     /** Drops the core's pools and asks the allocator for its free pages; the bytes given back. */
@@ -63,6 +69,8 @@ data class RustOlcParams(
     val provider: String,
     val transport: String,
     val room: String,
+    /** The other rooms of the location's failover group, in order ([LocationConfig.failoverRoomIds]). */
+    val failoverRooms: List<String>,
     val keyHex: String,
     val deviceId: String,
     val socksHost: String,

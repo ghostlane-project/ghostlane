@@ -9,6 +9,7 @@ import com.sun.jna.ptr.LongByReference
 import com.sun.jna.ptr.PointerByReference
 import org.ghostlane.olcrtc.LogWriter
 import org.ghostlane.olcrtc.OlcrtcRuntime
+import org.ghostlane.olcrtc.SessionListener
 import org.ghostlane.olcrtc.SocketProtector
 import org.ghostlane.olcrtc.memoryStats as coreMemoryStats
 import org.ghostlane.olcrtc.setByteBudget as coreSetByteBudget
@@ -183,8 +184,12 @@ object RustCoreEngine : RustCoreBackend {
         rt.setDtlsProfile(params.dtlsProfile)
         rt.setSocksListenHost(params.socksHost)
         rt.setProvider(params.provider)
-        rt.setRoom(params.room)
-        rt.clearFailoverRooms()
+        // Each session the engine opens (the first, every hop, every reconnect) is reported; the
+        // room's name is not logged, only that it happened.
+        rt.setSessionListener(object : SessionListener {
+            override fun onSessionOpened(room: String, sessionId: String) = log("olcRTC session opened")
+        })
+        setRooms(params.room, params.failoverRooms)
         rt.setDeviceId(params.deviceId)
         rt.setKey(params.keyHex)
         rt.setSocksPort(params.socksPort.toLong())
@@ -199,6 +204,13 @@ object RustCoreEngine : RustCoreBackend {
             runCatching { rt.stop(RustOlcParams.STOP_TIMEOUT_MS) }
             throw IllegalStateException(e.message ?: "olcRTC did not become ready")
         }
+    }
+
+    override fun setRooms(primary: String, extras: List<String>) {
+        val rt = runtime()
+        rt.setRoom(primary)
+        rt.clearFailoverRooms()
+        for (room in extras) rt.addFailoverRoom(room)
     }
 
     override fun stopOlc(timeoutMs: Long) {

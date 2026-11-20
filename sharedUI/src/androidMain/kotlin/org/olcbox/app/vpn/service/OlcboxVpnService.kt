@@ -95,6 +95,7 @@ import org.olcbox.app.net.TunnelExit
 import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.net.WhitelistCheck
 import org.olcbox.app.net.XrayConfig
+import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
@@ -226,6 +227,7 @@ class OlcboxVpnService : VpnService() {
     private val xrayCore by lazy { AndroidXrayController(this) }
     /** The Rust core engine runs the transport instead of the Go cores (RustCore.resolve); off by default. */
     @Volatile private var rustCore = false
+    private var rustRoomsJob: Job? = null
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
 
@@ -1384,7 +1386,9 @@ class OlcboxVpnService : VpnService() {
         return try {
             checkNotNull(backend) { "the Rust core is not packaged in this build" }
             backend.load()
-            check(tun) { "the Rust core engine runs in tun mode only" }
+            // Proxy mode (an authenticated SOCKS port for other apps) is not built on the Rust core
+            // yet; an olcRTC room needs only its own port and login, so it runs.
+            check(tun || isOlc) { "the Rust core engine does not run proxy mode for this line yet; use tun mode or switch it off" }
             stopRustEngines()
             stopCoreProcesses()
             if (isOlc) startRustOlc(backend, location, upstream, requestedGeneration, port) else startRustLine(backend, location, upstream, port)
@@ -1418,12 +1422,29 @@ class OlcboxVpnService : VpnService() {
         val login = SocksLogin.of(socksUsername, socksPassword)
         val json = RustCore.testConfig?.invoke(port, login) ?: run {
             val raw = location.rawLink ?: error("core location has no link")
-            val spec = LinkParser.parse(raw) ?: error("unparseable core link")
+            var spec = LinkParser.parse(raw) ?: error("unparseable core link")
+            // A server named by a hostname is resolved here, on the upstream network: this process is
+            // outside the tun, so the question does not loop, and the core is given the address.
+            if (!XrayConfig.isIpLiteral(spec.host)) {
+                val address = resolveServerAddress(spec.host, upstream)
+                addLog("Rust core: the server's name resolved to an address")
+                spec = IosCore.pinHost(spec, address)
+            }
             IosCore.refusal(spec)?.let { error("the Rust core refuses this line: $it") }
-            if (routingFor(upstream) is Routing.Rules) addLog("Routing: the Rust core path keeps the line global")
+            val routing = routingFor(upstream)
+            // What the core builds: Global, or a region's Bypass with its lists inline (as iOS). The
+            // user's own rules and the blocked-only policy are the Go path's for now.
+            val bypass = routing as? Routing.RuleBased
+            if (bypass != null) {
+                check(bypass.policy is Routing.Policy.Bypass && bypass.custom.isEmpty) {
+                    "the Rust core runs Global and region Bypass routing only; custom rules and the blocked-only mode need the Go cores"
+                }
+            }
             XrayConfig.buildIosCore(
                 spec,
                 login ?: error("the Rust core needs the tun's SOCKS login"),
+                routing = routing,
+                geodata = (bypass?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) },
                 socksPort = port,
                 verboseLogs = verboseDebugLogs
             )
@@ -1441,6 +1462,15 @@ class OlcboxVpnService : VpnService() {
         }
         addLog("Rust core ready on $socksListenHost:$port")
     }
+
+    /** An IPv4 address of [host] from the upstream network's resolver (Android blocks IPv6 at the tun), else any. */
+    private suspend fun resolveServerAddress(host: String, upstream: Network): String =
+        withContext(Dispatchers.IO) {
+            val all = runCatching { upstream.getAllByName(host).toList() }
+                .getOrElse { error("the server's name did not resolve: ${it.message ?: it}") }
+            (all.firstOrNull { it is java.net.Inet4Address } ?: all.firstOrNull())?.hostAddress
+                ?: error("the server's name resolved to nothing")
+        }
 
     /** An olcRTC room (VK Calls, MTS Link, SaluteJazz, ...) on the core's olc runtime, as OlcrtcEngine.swift. */
     private suspend fun startRustOlc(
@@ -1465,6 +1495,7 @@ class OlcboxVpnService : VpnService() {
                 provider = config.bypassProvider,
                 transport = config.transport,
                 room = config.id,
+                failoverRooms = config.failoverRoomIds,
                 keyHex = config.key,
                 deviceId = deviceIdentityProvider.hwid().orEmpty(),
                 socksHost = socksListenHost,
@@ -1489,10 +1520,39 @@ class OlcboxVpnService : VpnService() {
         if (requestedGeneration != generation) error("olcRTC start superseded")
         addLog("olcRTC (Rust core) ready on $socksListenHost:$port")
         markRtcConnected()
+        keepRustRoomsCurrent(backend, config)
+    }
+
+    /**
+     * The room list of the running client follows the app's store, as RoomKeeper.swift keeps it
+     * current on iOS: the app refreshes a subscription's `##rooms` into the stored location, and
+     * the engine, which re-reads its list at every hop, is handed the new one. On this platform the
+     * app process is the service's own, so the store is the source and nothing is fetched here.
+     * Only the number of rooms is logged.
+     */
+    private fun keepRustRoomsCurrent(backend: RustCoreBackend, started: LocationConfig) {
+        rustRoomsJob?.cancel()
+        rustRoomsJob = scope.launch {
+            var applied = listOf(started.id) + started.failoverRoomIds
+            while (true) {
+                delay(RUST_ROOMS_REFRESH_MS)
+                val stored = runCatching { storedBundle() }.getOrNull() ?: continue
+                val now = stored.locations.firstOrNull { it.storageId == stored.activeLocationId }
+                    ?.location?.normalized() ?: continue
+                // Only the same group: same key and carrier. Another location is a restart's business.
+                if (now.key != started.key || now.bypassProvider != started.bypassProvider) continue
+                val list = listOf(now.id) + now.failoverRoomIds
+                if (list == applied || !backend.isOlcRunning()) continue
+                runCatching { backend.setRooms(now.id, now.failoverRoomIds) }
+                    .onSuccess { applied = list; addLog("olcRTC rooms refreshed: ${list.size}") }
+            }
+        }
     }
 
     /** iOS's stop order: the olc client, then the xray core; each a no-op when it is not running. */
     private fun stopRustEngines() {
+        rustRoomsJob?.cancel()
+        rustRoomsJob = null
         val backend = RustCore.backend ?: return
         runCatching { backend.stopOlc(RustOlcParams.STOP_TIMEOUT_MS) }
             .onFailure { addLog("Rust olcRTC stop failed: ${it.message ?: it}") }
@@ -1876,7 +1936,10 @@ class OlcboxVpnService : VpnService() {
                 socksPort = socksListenPort,
                 corePort = activeCorePort,
                 username = upstreamLogin().first,
-                password = upstreamLogin().second
+                password = upstreamLogin().second,
+                // The Rust core's password inbound refuses UDP ASSOCIATE for 0.0.0.0:0: its UDP
+                // rides hev's FWD UDP lane, as on iOS (TunArrangement.hevUdp).
+                udp = if (rustCore && activeCorePort != null) "tcp" else "udp"
             )
         )
         return file
@@ -3011,6 +3074,8 @@ class OlcboxVpnService : VpnService() {
          * short here. The iOS tunnel waits 35 s for the same start.
          */
         private const val OLCRTC_READY_TIMEOUT_MS = 35_000L
+        /** RoomKeeper.swift's periodicRefresh. */
+        private const val RUST_ROOMS_REFRESH_MS = 5 * 60 * 1000L
         private const val MOBILE_STOP_TIMEOUT_MS = 5_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
