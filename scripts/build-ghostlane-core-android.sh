@@ -64,7 +64,7 @@ jni="$OUT/jniLibs"; chk="$OUT/checks"
 rm -rf "$jni" "$chk" "$OUT/kotlin"; mkdir -p "$jni" "$chk"
 report="$OUT/report.txt"; : > "$report"
 say() { echo "$*" | tee -a "$report"; }
-say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring; armv7 falls back to none if its boring build fails, see BORING lines)"
+say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring; armv7 and x86_64 fall back to none if their boring build fails, see BORING lines)"
 
 # <Rust target>:<ABI>:<NDK clang prefix>:<NDK sysroot triple>
 for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-android \
@@ -99,20 +99,20 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   export "AR_${low}=$bin/llvm-ar"
   start=$(date +%s)
   features="--features boring"
-  if [ "$target" = armv7-linux-androideabi ]; then
-    # boring-sys's bindgen on 32-bit ARM (run 4: bindings.rs's `pub use
+  if [ "$target" = armv7-linux-androideabi ] || [ "$target" = x86_64-linux-android ]; then
+    # boring-sys's bindgen on armv7 and x86_64 (runs 4-5; arm64 builds) (run 4: bindings.rs's `pub use
     # _bindgen_ty_1 as ErrLib` unresolved): clang gets the Android target
     # explicitly, not cargo's bare armv7-linux-androideabi.
-    export "BINDGEN_EXTRA_CLANG_ARGS_${low}=--target=armv7a-linux-androideabi$api"
+    export "BINDGEN_EXTRA_CLANG_ARGS_${low}=--target=$clang$api"
     if ! (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target"); then
-      # One attempt with boring; if it still fails, armv7 ships without it
+      # One attempt with boring; if it still fails, this ABI ships without it
       # (the report says so) so the other ABIs' results stay usable.
       say "BORING $abi: the build with boring failed, building without it (VK Calls' DTLS is not available on this ABI)"
       features=""
     fi
   fi
   # shellcheck disable=SC2086
-  [ "$target" = armv7-linux-androideabi ] && [ -n "$features" ] && [ -f "$src/target/$target/release/libghostlane_core.so" ] \
+  { [ "$target" = armv7-linux-androideabi ] || [ "$target" = x86_64-linux-android ]; } && [ -n "$features" ] && [ -f "$src/target/$target/release/libghostlane_core.so" ] \
     || (cd "$src" && $cargo_ build --locked --release -p ghostlane-core $features --target "$target")
   so="$src/target/$target/release/libghostlane_core.so"
   test -f "$so" || { echo "cargo left no $so" >&2; exit 1; }
