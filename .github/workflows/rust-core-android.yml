@@ -1,0 +1,193 @@
+name: Rust core for Android
+
+# Phase 1 of the Android move to the Rust core: libghostlane_core.so (with the
+# `boring` feature) for arm64-v8a, armeabi-v7a and x86_64 from the pin in
+# scripts/ghostlane-core-pin.sh, built by scripts/build-ghostlane-core-android.sh
+# with the NDK the app pins; the report (sizes, 16 KiB alignment, imports,
+# BoringSSL) in the job summary, the libraries and the UniFFI Kotlin bindings as
+# an artifact; then an instrumented smoke test on an x86_64 emulator (4 KiB and
+# 16 KiB pages): load, start the xray core from a minimal config, a SOCKS
+# connection through it, stop; the olcRTC client object made and closed.
+#
+# Emulator only: no device, no store track, no live carrier room, no secret.
+# Runs on a push to a lab/rust-core-* branch or by hand, never on main.
+on:
+  push:
+    branches:
+      - 'lab/rust-core-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-core-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # androidApp/build.gradle.kts ndkVersion (and release.yml's).
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  EMULATOR_API: "35"
+
+jobs:
+  build:
+    name: Build ghostlane-core for Android (boring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Room on the disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install the NDK
+        run: sdkmanager "ndk;${ANDROID_NDK_VERSION}" > /dev/null
+
+      - name: Build tools (cmake and clang for BoringSSL's build)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang libclang-dev
+          cmake --version | head -1; clang --version | head -1
+
+      - name: Restore the cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/core/src/target
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}
+          restore-keys: rust-core-android-
+
+      - name: Build
+        run: |
+          set +e -uo pipefail
+          bash scripts/build-ghostlane-core-android.sh out/core 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          mkdir -p out/core
+          {
+            echo '### ghostlane-core for Android'
+            echo '```'
+            cat out/core/report.txt 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ $rc -eq 0 ] || { tail -80 out-build.log; exit $rc; }
+
+      - name: Save the cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/core/src/target
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}
+
+      - name: Artifact (without the source and the target directory)
+        run: |
+          mkdir -p artifact
+          cp -r out/core/jniLibs out/core/kotlin out/core/checks out/core/report.txt artifact/
+          cp out-build.log artifact/ 2> /dev/null || true
+          find artifact -name '*.so' -exec ls -l {} +
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ghostlane-core-android
+          path: artifact/
+          retention-days: 14
+
+  smoke:
+    name: Smoke test on the x86_64 emulator
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghostlane-core-android
+          path: out/core
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "platforms;android-37" "build-tools;36.0.0" > /dev/null
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: The lab app and its test APK
+        run: |
+          set -euo pipefail
+          ./gradlew -p lab/rust-core-android assembleDebug assembleDebugAndroidTest -PghostlaneCoreDir="$GITHUB_WORKSPACE/out/core" --stacktrace 2>&1 | tail -25
+          app=$(find lab/rust-core-android/build/outputs/apk/debug -name '*-debug.apk' | head -1)
+          unzip -l "$app" | grep 'lib/' | tee out-apk-libs.txt
+          for abi in x86_64 arm64-v8a armeabi-v7a; do
+            for lib in libghostlane_core.so libjnidispatch.so; do
+              grep -q "lib/$abi/$lib" out-apk-libs.txt || { echo "APK: no lib/$abi/$lib"; exit 1; }
+            done
+          done
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Smoke test (x86_64, 4 KiB pages)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-smoke.sh out/smoke-4k
+
+      - name: Smoke test (x86_64, 16 KiB pages)
+        if: ${{ !cancelled() }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis_ps16k
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-smoke.sh out/smoke-16k
+
+      - name: Summary
+        if: always()
+        run: |
+          for d in smoke-4k smoke-16k; do
+            [ -f "out/$d/results.txt" ] || { echo "### $d: no results" >> "$GITHUB_STEP_SUMMARY"; continue; }
+            { echo "### Smoke ($d)"; echo '```'; cat "out/$d/results.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rust-core-android-smoke
+          path: out/smoke-*
+          retention-days: 14
