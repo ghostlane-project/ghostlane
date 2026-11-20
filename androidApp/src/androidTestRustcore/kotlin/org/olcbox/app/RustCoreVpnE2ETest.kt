@@ -1,0 +1,209 @@
+package org.olcbox.app
+
+import android.app.ActivityManager
+import android.content.Context
+import android.content.Intent
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.olcbox.app.data.datasource.LocationsDataSourceImpl
+import org.olcbox.app.data.model.LocationBundleV4
+import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.net.LocationKind
+import org.olcbox.app.rustcore.RustCoreEngine
+import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.service.OlcboxVpnActions
+import org.olcbox.app.vpn.service.OlcboxVpnState
+import org.olcbox.app.vpn.service.RustCore
+
+/**
+ * Phase 2 end to end: the app's own OlcboxVpnService, switched onto the Rust core
+ * (intent extra), establishes the tun, runs ghostlane-core behind hev, and carries a
+ * connection; then stops and lets go of the tun.
+ *
+ * No server of ours is needed: the test installs a core.json (RustCore.testConfig,
+ * which only tests set) whose default outbound is `freedom` and whose one rule sends
+ * 192.0.2.1 (TEST-NET-1, reachable nowhere) through a `freedom` with `redirect` to a
+ * server this test runs on loopback. The fetch of 192.0.2.1:80 is made by the shell
+ * (uid 2000), which the service's split-tunnel list sends through the tun: the answer
+ * can only have come tun -> hev -> SOCKS (login) -> core -> redirect -> this server.
+ *
+ * No carrier room: olcRTC is covered as far as phase 1 went (runtime object, stats).
+ */
+@RunWith(AndroidJUnit4::class)
+class RustCoreVpnE2ETest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val context: Context = instrumentation.targetContext
+    private val pkg = context.packageName
+
+    private fun say(line: String) {
+        Log.i("RustCoreE2E", line)
+    }
+
+    private fun shell(cmd: String): String {
+        val pfd = instrumentation.uiAutomation.executeShellCommand(cmd)
+        return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+
+    /** Shell's `nc` with a request on stdin; what the server sent back. */
+    private fun shellFetch(host: String, port: Int, request: String): String {
+        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("toybox nc -w 8 $host $port")
+        ParcelFileDescriptor.AutoCloseOutputStream(input).use { it.write(request.toByteArray()); it.flush() }
+        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+
+    private fun tunFds(): List<String> =
+        File("/proc/self/fd").listFiles().orEmpty()
+            .mapNotNull { runCatching { it.canonicalPath }.getOrNull() }
+            .filter { it.contains("/dev/tun") || it.contains("/dev/net/tun") }
+
+    /** rx + tx bytes of tun0, or null when there is no such interface. */
+    private fun tunInterfaceBytes(): Long? =
+        File("/proc/net/dev").readLines().firstOrNull { it.trim().startsWith("tun0:") }?.let { line ->
+            val f = line.substringAfter(':').trim().split(Regex("\\s+"))
+            f[0].toLong() + f[8].toLong()
+        }
+
+    private fun serviceRunning(): Boolean {
+        @Suppress("DEPRECATION")
+        return (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+            .getRunningServices(100).any { it.service.className == OlcboxVpnActions.SERVICE_CLASS_NAME }
+    }
+
+    private fun waitFor(what: String, timeoutMs: Long, cond: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (cond()) return
+            Thread.sleep(200)
+        }
+        val tail = OlcboxVpnState.logs.value.takeLast(40).joinToString("\n")
+        throw AssertionError("timed out waiting for $what; status=${OlcboxVpnState.status.value}; log tail:\n$tail")
+    }
+
+    @Test
+    fun theSwitchIsOffUnlessAsked() {
+        assertFalse("the build flag is off", RustCore.resolve(Intent(), context))
+        assertTrue(RustCore.resolve(Intent().putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true), context))
+        assertFalse(RustCore.resolve(Intent().putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, false), context))
+        assertNotNull("the engine is packaged", RustCore.backend)
+    }
+
+    @Test
+    fun theOlcRuntimeLoadsAndTrims() {
+        val engine = RustCoreEngine
+        engine.load()
+        val stats = JSONObject(engine.memoryStats())
+        say("RESULT olc memoryStats keys: ${stats.keys().asSequence().toList()}")
+        assertTrue(stats.length() > 0)
+        assertFalse(engine.isOlcRunning())
+        say("RESULT trim gave back ${engine.trim()} bytes")
+        engine.setByteBudget(1_000_000L)
+        engine.setByteBudget(0L)
+    }
+
+    @Test
+    fun theServiceCarriesATunConnectionOnTheRustCoreAndLetsGo() {
+        shell("appops set $pkg ACTIVATE_VPN allow")
+        say("RESULT appops ACTIVATE_VPN: ${shell("appops get $pkg ACTIVATE_VPN").trim()}")
+        shell("pm grant $pkg android.permission.POST_NOTIFICATIONS")
+        assertTrue("no tun fd before the start", tunFds().isEmpty())
+
+        // The server the redirect leads to.
+        val nonce = "E2E-${System.nanoTime()}"
+        val hits = AtomicInteger()
+        val server = ServerSocket(0, 5, InetAddress.getByName("127.0.0.1"))
+        Thread {
+            while (!server.isClosed) {
+                runCatching {
+                    server.accept().use { c ->
+                        val r = c.getInputStream().bufferedReader()
+                        while (r.readLine().let { it != null && it.isNotEmpty() }) Unit
+                        hits.incrementAndGet()
+                        c.getOutputStream().write(
+                            "HTTP/1.0 200 OK\r\nContent-Length: ${nonce.length}\r\nConnection: close\r\n\r\n$nonce".toByteArray()
+                        )
+                    }
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+
+        val user = "u${System.nanoTime() % 100000}"
+        val pass = "p${System.nanoTime() % 100000}x"
+        RustCore.testConfig = { port, login ->
+            assertEquals("the tun's login reaches the core", user, login?.username)
+            """{"log":{"loglevel":"warning","access":"none"},
+              "inbounds":[{"tag":"in","protocol":"socks","listen":"127.0.0.1","port":$port,
+                "settings":{"auth":"password","accounts":[{"user":"$user","pass":"$pass"}],"udp":false}}],
+              "outbounds":[{"tag":"direct","protocol":"freedom"},
+                {"tag":"loop","protocol":"freedom","settings":{"redirect":"127.0.0.1:${server.localPort}"}}],
+              "routing":{"domainStrategy":"AsIs","rules":[{"type":"field","ip":["192.0.2.1"],"outboundTag":"loop"}]}}"""
+        }
+
+        // The profile the service reads from the app's store: a VLESS line (never parsed here: testConfig stands in).
+        val location = LocationConfig(
+            name = "e2e",
+            kind = LocationKind.Vless,
+            rawLink = "vless://00000000-0000-4000-8000-000000000000@192.0.2.9:443?type=tcp&security=none#e2e"
+        )
+        runBlocking {
+            LocationsDataSourceImpl(context).saveLocationBundle(
+                LocationBundleV4(activeLocationId = "e2e", locations = listOf(LocationEntry.from("e2e", location)))
+            )
+        }
+
+        val start = Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME)
+            .setAction(OlcboxVpnActions.ACTION_START_VPN)
+            .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
+            .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, "tun")
+            .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, user)
+            .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, pass)
+            // Only the shell's traffic goes through the tun (this app is always left out of it).
+            .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_MODE, "proxy_selected")
+            .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_PROXY_APPS, arrayListOf("com.android.shell"))
+        try {
+            context.startForegroundService(start)
+            waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+            say("RESULT status Connected; log: ${OlcboxVpnState.logs.value.filter { it.contains("Rust core") }.joinToString(" | ")}")
+            assertTrue("a tun fd is held while connected: ${tunFds()}", tunFds().isNotEmpty())
+            assertTrue("the service runs", serviceRunning())
+            assertTrue("the Rust core runs", RustCoreEngine.isCoreRunning())
+            waitFor("tun0", 10_000) { tunInterfaceBytes() != null }
+
+            val before = tunInterfaceBytes() ?: 0L
+            val hitsBefore = hits.get()
+            val reply = shellFetch("192.0.2.1", 80, "GET /e2e HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
+            say("RESULT fetch of 192.0.2.1:80 through the tun answered: ${reply.lineSequence().firstOrNull()} ... ${reply.takeLast(24)}")
+            assertTrue("the answer is the test server's: '$reply'", reply.contains(nonce))
+            assertEquals("the server saw one request", hitsBefore + 1, hits.get())
+            val after = tunInterfaceBytes() ?: 0L
+            say("RESULT tun0 bytes $before -> $after")
+            assertTrue("tun0 carried the fetch", after > before)
+        } finally {
+            context.startService(
+                Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME).setAction(OlcboxVpnActions.ACTION_STOP_VPN)
+            )
+        }
+        waitFor("the status Disconnected", 30_000) { OlcboxVpnState.status.value is VpnStatus.Disconnected }
+        waitFor("the Rust core to stop", 10_000) { !RustCoreEngine.isCoreRunning() }
+        waitFor("the service to end", 20_000) { !serviceRunning() }
+        waitFor("the tun fd to close", 10_000) { tunFds().isEmpty() }
+        assertEquals("tun0 is gone", null, tunInterfaceBytes())
+        say("RESULT stopped: status Disconnected, core stopped, service ended, tun fd closed, tun0 gone")
+        RustCore.testConfig = null
+        server.close()
+    }
+}

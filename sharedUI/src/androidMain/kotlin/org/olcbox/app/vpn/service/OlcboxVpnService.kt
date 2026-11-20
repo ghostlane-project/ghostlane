@@ -76,6 +76,7 @@ import org.olcbox.app.net.AndroidCoreProcess
 import org.olcbox.app.net.AndroidSingBoxController
 import org.olcbox.app.net.AndroidXrayController
 import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.IosCore
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OlcrtcDirectRules
@@ -223,6 +224,8 @@ class OlcboxVpnService : VpnService() {
     // and `activeCoreLogin` the login that port demands (null = none, proxy mode).
     private val singBoxCore by lazy { AndroidSingBoxController(this) }
     private val xrayCore by lazy { AndroidXrayController(this) }
+    /** The Rust core engine runs the transport instead of the Go cores (RustCore.resolve); off by default. */
+    @Volatile private var rustCore = false
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
 
@@ -421,6 +424,8 @@ class OlcboxVpnService : VpnService() {
         // Always-on is a VPN by definition: a saved proxy mode never establishes
         // the tun the system is waiting for.
         applyStartOptions(if (bySystem) options.copy(connectionMode = AndroidConnectionMode.Tun) else options)
+        rustCore = RustCore.resolve(startIntent, applicationContext)
+        if (rustCore) addLog("Transport engine: Rust core (developer switch)")
         val isRestart = shouldRestartForStartCommand()
         // Android's claim lasts the session: a restart the app asks for inside
         // it (another location, an edited app list) is not a first connect again.
@@ -437,6 +442,11 @@ class OlcboxVpnService : VpnService() {
         )
         startTunnel(isMigration = false, isRestart = isRestart)
         return START_REDELIVER_INTENT
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (rustCore) relieveRustCore(level)
     }
 
     override fun onDestroy() {
@@ -1216,6 +1226,7 @@ class OlcboxVpnService : VpnService() {
         setErrorOnFailure: Boolean
     ): Boolean {
         val routing = routingFor(upstream)
+        if (rustCore) return startRustTransport(location, upstream, requestedGeneration, setErrorOnFailure)
         return if (location.kind == LocationKind.Olcrtc) {
             activeCorePort = null
             activeCoreLogin = null
@@ -1353,6 +1364,157 @@ class OlcboxVpnService : VpnService() {
             false
         }
     }
+
+    // ---- Rust core engine (developer switch, off by default) -----------------
+    // Everything below runs only when `rustCore` is set. The arrangement is iOS's
+    // (CoreEngine.swift, OlcrtcEngine.swift): the engine listens on a loopback SOCKS
+    // port that demands a login, hev owns the tun in front of it, and every socket the
+    // engine opens goes through VpnService.protect first.
+
+    private suspend fun startRustTransport(
+        location: LocationConfig,
+        upstream: Network,
+        requestedGeneration: Long,
+        setErrorOnFailure: Boolean
+    ): Boolean {
+        val backend = RustCore.backend
+        val isOlc = location.kind == LocationKind.Olcrtc
+        val tun = connectionMode == AndroidConnectionMode.Tun
+        val port = if (isOlc) socksListenPort else if (tun) sessionCorePort.acquire() else socksListenPort
+        return try {
+            checkNotNull(backend) { "the Rust core is not packaged in this build" }
+            backend.load()
+            check(tun) { "the Rust core engine runs in tun mode only" }
+            stopRustEngines()
+            stopCoreProcesses()
+            if (isOlc) startRustOlc(backend, location, upstream, requestedGeneration, port) else startRustLine(backend, location, upstream, port)
+            coroutineContext.ensureActive()
+            true
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                addLog("Rust core start canceled")
+                stopRustEngines()
+                unbindProcessFromNetwork()
+            }
+            throw e
+        } catch (e: Exception) {
+            val msg = e.message ?: "Rust core transport failed"
+            addLog("Rust core start failed: $msg")
+            stopRustEngines()
+            unbindProcessFromNetwork()
+            if (!isOlc && tun) sessionCorePort.release()
+            if (setErrorOnFailure && requestedGeneration == generation) {
+                setStatus(VpnStatus.Error(msg))
+                updateNotification("Connection failed")
+            }
+            false
+        }
+    }
+
+    /** A VLESS / Hysteria2 line on the xray core (XrayConfig.buildIosCore, the config iOS runs). */
+    private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int) {
+        // A core binds no network of its own; see startTransport.
+        unbindProcessFromNetwork()
+        val login = SocksLogin.of(socksUsername, socksPassword)
+        val json = RustCore.testConfig?.invoke(port, login) ?: run {
+            val raw = location.rawLink ?: error("core location has no link")
+            val spec = LinkParser.parse(raw) ?: error("unparseable core link")
+            IosCore.refusal(spec)?.let { error("the Rust core refuses this line: $it") }
+            if (routingFor(upstream) is Routing.Rules) addLog("Routing: the Rust core path keeps the line global")
+            XrayConfig.buildIosCore(
+                spec,
+                login ?: error("the Rust core needs the tun's SOCKS login"),
+                socksPort = port,
+                verboseLogs = verboseDebugLogs
+            )
+        }
+        waitForSocksPortReleased(port, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
+        backend.startCore(
+            json,
+            protect = { fd -> this@OlcboxVpnService.protect(fd) },
+            log = { level, line -> addLog("core: $line"); if (level <= 2) Log.w("ghostlane-core", LogScrubber.default.scrub(line)) }
+        )
+        activeCorePort = port
+        activeCoreLogin = login
+        if (!waitForSocksPortOpen(port, MOBILE_READY_TIMEOUT_MS) || !backend.isCoreRunning()) {
+            error("Rust core SOCKS not ready on $port")
+        }
+        addLog("Rust core ready on $socksListenHost:$port")
+    }
+
+    /** An olcRTC room (VK Calls, MTS Link, SaluteJazz, ...) on the core's olc runtime, as OlcrtcEngine.swift. */
+    private suspend fun startRustOlc(
+        backend: RustCoreBackend,
+        location: LocationConfig,
+        upstream: Network,
+        requestedGeneration: Long,
+        port: Int
+    ) {
+        activeCorePort = null
+        activeCoreLogin = null
+        val config = location.normalized()
+        resetRtcHealthState()
+        waitForSocksPortReleased(port, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
+        if (isLocalSocksPortOpen(port)) error("SOCKS port $port is still in use")
+        bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
+        val directRules = OlcrtcDirectRules.forRouting(routingFor(upstream))
+        addLog("Starting olcRTC (Rust core) provider=${config.bypassProvider}, transport=${config.transport}")
+        lastMobileProvider = config.bypassProvider
+        backend.startOlc(
+            RustOlcParams(
+                provider = config.bypassProvider,
+                transport = config.transport,
+                room = config.id,
+                keyHex = config.key,
+                deviceId = deviceIdentityProvider.hwid().orEmpty(),
+                socksHost = socksListenHost,
+                socksPort = port,
+                socksUser = socksUsername,
+                socksPass = socksPassword,
+                dns = upstreamDnsList(upstream),
+                directRules = directRules,
+                vp8Fps = config.vp8Fps.toLong(),
+                vp8Batch = config.vp8Batch.toLong(),
+                udp = OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport, directRules = directRules.isNotEmpty()),
+                dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
+            ),
+            protect = { fd -> connectionMode == AndroidConnectionMode.Proxy || this@OlcboxVpnService.protect(fd.toInt()) },
+            log = { msg ->
+                val line = msg.trimEnd()
+                addLog("rtc: $line")
+                Log.v("olcrtc", LogScrubber.default.scrub(line))
+                handleRtcLine(line)
+            }
+        )
+        if (requestedGeneration != generation) error("olcRTC start superseded")
+        addLog("olcRTC (Rust core) ready on $socksListenHost:$port")
+        markRtcConnected()
+    }
+
+    /** iOS's stop order: the olc client, then the xray core; each a no-op when it is not running. */
+    private fun stopRustEngines() {
+        val backend = RustCore.backend ?: return
+        runCatching { backend.stopOlc(RustOlcParams.STOP_TIMEOUT_MS) }
+            .onFailure { addLog("Rust olcRTC stop failed: ${it.message ?: it}") }
+        runCatching { backend.stopCore() }
+            .onFailure { addLog("Rust core stop failed: ${it.message ?: it}") }
+        activeCorePort = null
+        activeCoreLogin = null
+    }
+
+    /**
+     * MemoryRelief.swift's policy on Android's own signal: trim at once, and under real
+     * pressure lower the byte budget (1 MB warning, 256 KiB critical), as iOS does.
+     */
+    private fun relieveRustCore(level: Int) {
+        val backend = RustCore.backend ?: return
+        if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        runCatching {
+            backend.setByteBudget(if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) 262_144L else 1_000_000L)
+            addLog("Memory pressure $level: Rust core trimmed ${backend.trim()} bytes")
+        }
+    }
+    // ---- end of the Rust core engine -----------------------------------------
 
     private fun stopCoreProcesses() {
         singBoxCore.stopNow()
@@ -2037,6 +2199,7 @@ class OlcboxVpnService : VpnService() {
             .onFailure { addLog("olcRTC stop did not finish in time: ${it.message ?: it}") }
         // Also tear down any active sing-box / Xray core (no-op if none running).
         runCatching { stopCoreProcesses() }
+        if (rustCore) stopRustEngines()
         if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
             lastJitsiStopCompletedAtMs = System.currentTimeMillis()
         }
@@ -2344,7 +2507,9 @@ class OlcboxVpnService : VpnService() {
      * seconds after it came up and restarted it, forever.
      */
     private fun isActiveTransportRunning(): Boolean =
-        if (activeCorePort != null) {
+        if (rustCore) {
+            RustCore.backend?.let { it.isCoreRunning() || it.isOlcRunning() } == true
+        } else if (activeCorePort != null) {
             singBoxCore.isRunning() || xrayCore.isRunning()
         } else {
             olcrtc.isRunning()
