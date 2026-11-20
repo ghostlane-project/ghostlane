@@ -73,7 +73,12 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   IFS=: read -r target abi clang triple <<< "$quad"
   up=$(echo "$target" | tr 'a-z-' 'A-Z_'); low=$(echo "$target" | tr '-' '_')
   export "CARGO_TARGET_${up}_LINKER=$bin/${clang}${api}-clang"
-  export "CARGO_TARGET_${up}_RUSTFLAGS=$page"
+  # BoringSSL is C++: its C++ runtime is linked statically (libc++_static.a
+  # and libc++abi.a, from the NDK) so the core stays ONE .so with no
+  # libc++_shared.so beside it. boring-sys's own default is -lc++, which
+  # lld resolves to the shared one.
+  export "BORING_BSSL_RUST_CPPLIB_${low}=c++_static"
+  export "CARGO_TARGET_${up}_RUSTFLAGS=$page -C link-arg=-lc++abi"
   # No CC_<target>/CXX_<target> here: boring-sys passes them to CMake as
   # CMAKE_C_COMPILER next to the NDK's toolchain file, which sets the compilers
   # itself, and CMake reset its cache over the conflict (run 44668307401: the
@@ -106,6 +111,10 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
 
   "$bin/llvm-nm" -D --defined-only "$lib" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$chk/exports-$abi.txt"
   "$bin/llvm-nm" -D --undefined-only "$lib" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$chk/imports-$abi.txt"
+  if "$bin/llvm-readelf" -dW "$lib" | grep -q 'NEEDED.*c++_shared'; then
+    echo "NEEDED $abi: libc++_shared.so is still a dependency (the C++ runtime must be static)" >&2; exit 1
+  fi
+  say "NEEDED $abi: $("$bin/llvm-readelf" -dW "$lib" | awk '/NEEDED/ { gsub(/[][]/, "", $NF); printf "%s ", $NF }')(no libc++_shared)"
   : > "$chk/stubs-$abi.txt"
   for needed in $("$bin/llvm-readelf" -dW "$lib" | awk '/NEEDED/ { gsub(/[][]/, "", $NF); print $NF }'); do
     stub="$sysroot/$triple/$api/$needed"
