@@ -73,7 +73,7 @@ class RustCoreVpnE2ETest {
 
     /** rx + tx bytes of tun0, or null when there is no such interface. */
     private fun tunInterfaceBytes(): Long? =
-        File("/proc/net/dev").readLines().firstOrNull { it.trim().startsWith("tun0:") }?.let { line ->
+        shell("cat /proc/net/dev").lines().firstOrNull { it.trim().startsWith("tun0:") }?.let { line ->
             val f = line.substringAfter(':').trim().split(Regex("\\s+"))
             f[0].toLong() + f[8].toLong()
         }
