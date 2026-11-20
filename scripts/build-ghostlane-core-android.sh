@@ -73,6 +73,18 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   IFS=: read -r target abi clang triple <<< "$quad"
   up=$(echo "$target" | tr 'a-z-' 'A-Z_'); low=$(echo "$target" | tr '-' '_')
   export "CARGO_TARGET_${up}_LINKER=$bin/${clang}${api}-clang"
+  # cc-rs (aws-lc-sys) looks for arm-linux-androideabi-clang for armv7, a
+  # name the NDK does not have (it ships armv7a-linux-androideabi<API>-clang):
+  # a shim on PATH that runs the right one. Not CC_<target>: that is what
+  # boring-sys would hand to CMake.
+  if [ "$target" = armv7-linux-androideabi ]; then
+    shim="$OUT/shims"; mkdir -p "$shim"
+    for pair in clang:clang clang++:clang++; do
+      printf '#!/bin/sh\nexec "%s/%s%s-%s" "$@"\n' "$bin" "$clang" "$api" "${pair%%:*}" > "$shim/arm-linux-androideabi-${pair%%:*}"
+      chmod +x "$shim/arm-linux-androideabi-${pair%%:*}"
+    done
+    export PATH="$shim:$PATH"
+  fi
   # BoringSSL is C++: its C++ runtime is linked statically (libc++_static.a
   # and libc++abi.a, from the NDK) so the core stays ONE .so with no
   # libc++_shared.so beside it. boring-sys's own default is -lc++, which
