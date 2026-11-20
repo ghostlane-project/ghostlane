@@ -37,6 +37,7 @@ bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
 sysroot="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
 [ -x "$bin/clang" ] || { echo "no NDK $ANDROID_NDK_VERSION at $ndk" >&2; exit 1; }
 export ANDROID_NDK_HOME="$ndk" ANDROID_NDK_ROOT="$ndk"
+export PATH="$bin:$PATH"
 export CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 CARGO_NET_RETRY=5
 
 profile="shipped"
@@ -73,7 +74,12 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   up=$(echo "$target" | tr 'a-z-' 'A-Z_'); low=$(echo "$target" | tr '-' '_')
   export "CARGO_TARGET_${up}_LINKER=$bin/${clang}${api}-clang"
   export "CARGO_TARGET_${up}_RUSTFLAGS=$page"
-  export "CC_${low}=$bin/${clang}${api}-clang" "CXX_${low}=$bin/${clang}${api}-clang++" "AR_${low}=$bin/llvm-ar"
+  # No CC_<target>/CXX_<target> here: boring-sys passes them to CMake as
+  # CMAKE_C_COMPILER next to the NDK's toolchain file, which sets the compilers
+  # itself, and CMake reset its cache over the conflict (run 44668307401: the
+  # second configure's try_run in BoringSSL's benchmark failed). The cc crate
+  # finds the NDK's clang on PATH by target triple instead.
+  export "AR_${low}=$bin/llvm-ar"
   start=$(date +%s)
   (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target")
   so="$src/target/$target/release/libghostlane_core.so"
