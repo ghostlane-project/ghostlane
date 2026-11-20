@@ -137,7 +137,7 @@ jobs:
       - name: The lab app and its test APK
         run: |
           set -euo pipefail
-          ./gradlew -p lab/rust-core-android assembleDebug assembleDebugAndroidTest -PghostlaneCoreDir="$GITHUB_WORKSPACE/out/core" --stacktrace 2>&1 | tail -25
+          ./gradlew -p lab/rust-core-android assembleDebug assembleDebugAndroidTest -PghostlaneCoreDir="$GITHUB_WORKSPACE/out/core" 2>&1 | tail -80
           app=$(find lab/rust-core-android/build/outputs/apk/debug -name '*-debug.apk' | head -1)
           unzip -l "$app" | grep 'lib/' | tee out-apk-libs.txt
           for abi in x86_64 arm64-v8a armeabi-v7a; do
