@@ -319,10 +319,21 @@ jobs:
       # A phone test build: the Rust switch ON by default, its own applicationId
       # (org.proofkit.app.rustlab) so it installs next to the store app. Built after the
       # checked APKs, so it never feeds the e2e job.
+      # The crypt1 client key, as release.yml gives it to a store build: without it the
+      # app cannot read an olcrtc://crypt1/ list, nor the answer to a partner's
+      # happ:// link, and says "Link not recognised" to a link that is fine.
       - name: Lab APK for a phone (Rust core on, installs next to the store app)
         working-directory: olcbox
+        env:
+          OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
         run: |
           set -euo pipefail
+          if [ -n "${OLCBOX_CRYPT_KEY_V1}" ]; then
+            echo '### Lab APK: crypt1 links ON' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this lab APK cannot import crypt1 or partner links"
+            echo '### Lab APK: crypt1 links OFF (no key)' >> "$GITHUB_STEP_SUMMARY"
+          fi
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
