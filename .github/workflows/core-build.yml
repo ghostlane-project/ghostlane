@@ -27,9 +27,10 @@ name: Core build
 # program is linked with its symbols, which are kept beside the stripped copy.
 #
 # What a job built is kept in a cache keyed by the commit of the core, the
-# target and the hash of the scripts that build it. A second run with the same
-# three restores it, the scripts find their own stamp in it and start no
-# cargo, and the step after them fails if cargo compiled anything.
+# Rust toolchain the pin file names (and for Android the NDK), the target and
+# the hash of the scripts that build it. A second run with the same restores
+# it, the scripts find their own stamp in it (which names the same) and start
+# no cargo, and the step after them fails if cargo compiled anything.
 #
 # Nothing here signs, publishes or joins a carrier room; there is no secret.
 # Runs on rust/all and on pull requests into it when what it builds with
@@ -117,6 +118,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       commit: ${{ steps.core.outputs.commit }}
+      toolchain: ${{ steps.core.outputs.toolchain }}
       engine: ${{ steps.core.outputs.engine }}
       hev: ${{ steps.core.outputs.hev }}
     steps:
@@ -146,13 +148,14 @@ jobs:
           hev="$(git rev-parse "HEAD:$HEV_SOURCE")"
           {
             echo "commit=$GHOSTLANE_CORE_COMMIT"
+            echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN"
             echo "engine=$engine"
             echo "hev=$hev"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### The core at \`$GHOSTLANE_CORE_COMMIT\`"
             echo
-            echo "From $from, in ${GHOSTLANE_CORE_REPO}. This commit $says."
+            echo "From $from, in ${GHOSTLANE_CORE_REPO}, built with Rust $GHOSTLANE_CORE_TOOLCHAIN. This commit $says."
             echo
             echo "hev-socks5-tunnel: the app's tree \`${hev:0:12}\` ($HEV_SOURCE)."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -172,7 +175,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: out/android
-          key: core-build-android-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-android.sh', 'scripts/build-ghostlane-core-host.sh') }}
+          key: core-build-android-${{ needs.plan.outputs.commit }}-rust-${{ needs.plan.outputs.toolchain }}-ndk-${{ env.ANDROID_NDK_VERSION }}-${{ hashFiles('scripts/build-ghostlane-core-android.sh', 'scripts/build-ghostlane-core-host.sh') }}
 
       - name: Room on the disk
         if: steps.cache.outputs.cache-hit != 'true'
@@ -217,7 +220,7 @@ jobs:
           set -euo pipefail
           n="$(cat out/android/compiled.txt)"
           [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
-          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Restored from the cache of this commit, toolchain, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the build of this commit
         if: steps.cache.outputs.cache-hit != 'true'
@@ -270,7 +273,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: out/apple
-          key: core-build-apple-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+          key: core-build-apple-${{ needs.plan.outputs.commit }}-rust-${{ needs.plan.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
 
       - name: Build
         env:
@@ -296,7 +299,7 @@ jobs:
           set -euo pipefail
           n="$(cat out/apple/compiled.txt)"
           [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
-          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Restored from the cache of this commit, toolchain, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the build of this commit
         if: steps.cache.outputs.cache-hit != 'true'
@@ -344,7 +347,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: out/linux
-          key: core-build-${{ matrix.target }}-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}
+          key: core-build-${{ matrix.target }}-${{ needs.plan.outputs.commit }}-rust-${{ needs.plan.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}
 
       - name: cmake, clang and lld (BoringSSL's build, and the musl cross compiler)
         if: steps.cache.outputs.cache-hit != 'true'
@@ -384,7 +387,7 @@ jobs:
           set -euo pipefail
           n="$(cat out/linux/compiled.txt)"
           [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
-          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Restored from the cache of this commit, toolchain, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the build of this commit
         if: steps.cache.outputs.cache-hit != 'true'
@@ -477,7 +480,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: out/windows
-          key: core-build-windows-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+          key: core-build-windows-${{ needs.plan.outputs.commit }}-rust-${{ needs.plan.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
 
       - name: Build
         shell: bash
@@ -514,7 +517,7 @@ jobs:
           set -euo pipefail
           n="$(cat out/windows/compiled.txt)"
           [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
-          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Restored from the cache of this commit, toolchain, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the build of this commit
         if: steps.cache.outputs.cache-hit != 'true'

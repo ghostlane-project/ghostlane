@@ -23,10 +23,11 @@
 #     stubs of the NEEDED libraries), EXPORTS (the ABIs export the same
 #     names), BINDINGS.
 # <output-dir>/ghostlane-core-android.commit records what was built (commit,
-# profile, the hashes of this script and of the proof's): an output directory
-# that holds this build already is kept, cargo is not started, and
-# <output-dir>/compiled.txt, the number of crates cargo compiled in this run,
-# says 0.
+# profile, the Rust toolchain, the NDK, the hashes of this script and of the
+# proof's): an output directory that holds this build already is kept, cargo
+# is not started, and <output-dir>/compiled.txt, the number of crates cargo
+# compiled in this run, says 0. With no NDK named nothing is kept: what was
+# built depends on it.
 # GHOSTLANE_CORE_FAST=1 turns LTO off, for a lab build only.
 # Needs rustup, git, cmake, clang (boring-sys's bindgen) and the NDK at
 # $ANDROID_HOME/ndk/$ANDROID_NDK_VERSION (androidApp/build.gradle.kts'
@@ -53,7 +54,10 @@ fi
 # with its symbols instead, kept so, and stripped as a copy below.
 export CARGO_PROFILE_RELEASE_STRIP=false
 
-stamp="$GHOSTLANE_CORE_COMMIT $profile $(git hash-object "$HERE/build-ghostlane-core-android.sh") $(git hash-object "$HERE/build-ghostlane-core-host.sh")"
+: "${ANDROID_NDK_VERSION:?the NDK the app pins}"
+# What decides the build: the commit, the profile, the Rust toolchain and the
+# NDK (other compilers compile other code from the same commit), and the scripts.
+stamp="$GHOSTLANE_CORE_COMMIT $profile rust $GHOSTLANE_CORE_TOOLCHAIN ndk $ANDROID_NDK_VERSION $(git hash-object "$HERE/build-ghostlane-core-android.sh") $(git hash-object "$HERE/build-ghostlane-core-host.sh")"
 kept() {
   local abi
   [ -f "$OUT/ghostlane-core-android.commit" ] || return 1
@@ -66,13 +70,12 @@ kept() {
   [ -s "$OUT/report.txt" ] || return 1
 }
 if kept; then
-  echo "KEPT ghostlane-core for Android: built before from $GHOSTLANE_CORE_COMMIT ($profile), nothing compiled"
+  echo "KEPT ghostlane-core for Android: built before from $GHOSTLANE_CORE_COMMIT ($profile, Rust $GHOSTLANE_CORE_TOOLCHAIN, NDK $ANDROID_NDK_VERSION), nothing compiled"
   echo 0 > "$OUT/compiled.txt"
   exit 0
 fi
 rm -f "$OUT/ghostlane-core-android.commit"
 
-: "${ANDROID_NDK_VERSION:?the NDK the app pins}"
 : "${ANDROID_HOME:?the Android SDK}"
 api=23
 ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
@@ -111,7 +114,7 @@ rm -rf "$jni" "$chk" "$symbols" "$OUT/kotlin"; mkdir -p "$jni" "$chk" "$symbols"
 report="$OUT/report.txt"; : > "$report"
 cargo_log="$chk/cargo.log"; : > "$cargo_log"
 say() { echo "$*" | tee -a "$report"; }
-say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring)"
+say "PIN $GHOSTLANE_CORE_COMMIT ($profile, Rust $GHOSTLANE_CORE_TOOLCHAIN, NDK $ANDROID_NDK_VERSION, API $api, features: boring)"
 # boring-sys's bindings as rustfmt wrote them, and the enum ErrLib names (see RUSTFMT above).
 boring_bindings() {
   local b errlib
