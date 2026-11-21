@@ -91,6 +91,7 @@ jobs:
         env:
           REQUIRE_GO: '1'
           REQUIRE_TOOLS: ${{ runner.os == 'Linux' && '1' || '' }}
+          REQUIRE_DMG: ${{ runner.os == 'macOS' && '1' || '' }}
         run: bash scripts/test-check-no-go.sh
 
   plan:

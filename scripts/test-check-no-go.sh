@@ -15,6 +15,7 @@
 # Part C is the allow list: listed and dirty passes, unlisted and dirty fails,
 # listed and clean fails as stale, an artefact that cannot be opened is not a pass.
 #
+# REQUIRE_DMG=1 (the macOS job) fails when the DMG fixture could not be made.
 # REQUIRE_GO=1 makes a missing Go toolchain a failure instead of a skip, and
 # REQUIRE_TOOLS=1 does the same for zstd, 7z, mksquashfs, unsquashfs and cpio.
 # bash 3.2 and BSD tools are enough.
@@ -92,6 +93,10 @@ def tar_bytes(files, mode="w"):
     b = io.BytesIO()
     with tarfile.open(fileobj=b, mode=mode) as t:
         for name, data in files:
+            if isinstance(data, str):  # a symlink to an absolute path, as in distroless tzdata
+                ti = tarfile.TarInfo(name); ti.type = tarfile.SYMTYPE; ti.linkname = data; ti.mode = 0o777
+                t.addfile(ti)
+                continue
             ti = tarfile.TarInfo(name); ti.size = len(data); ti.mode = 0o755
             t.addfile(ti, io.BytesIO(data))
     return b.getvalue()
@@ -117,13 +122,13 @@ def build(outdir, payload, tag):
     write(d + "/zip/app.apk", zip_bytes([("classes.dex", b"dex\n035\x00" + b"\x00" * 40), ("lib/arm64-v8a/libhello.so", P)]))
     apk = zip_bytes([("AndroidManifest.xml", b"<m/>"), ("lib/x86_64/libhello.so", P)])
     write(d + "/zipzip/app.aab", zip_bytes([("BundleConfig.pb", b"\x0a\x00"), ("base/apks/base.apk", apk)]))
-    write(d + "/tgz/pkg.tar.gz", gzip.compress(tar_bytes([("usr/lib/ghost/engine", P)])))
+    write(d + "/tgz/pkg.tar.gz", gzip.compress(tar_bytes([("usr/lib/ghost/engine", P), ("usr/share/zoneinfo/localtime", "/etc/localtime")])))
     write(d + "/txz/pkg.tar.xz", lzma.compress(tar_bytes([("usr/lib/ghost/engine", P)])))
     jar = zip_bytes([("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\n"), ("native/linux/libhello.so", P)])
-    data_tar = lzma.compress(tar_bytes([("opt/app/lib/app/app.jar", jar)]))
+    data_tar = lzma.compress(tar_bytes([("opt/app/lib/app/app.jar", jar), ("usr/share/zoneinfo/localtime", "/etc/localtime")]))
     ctrl = gzip.compress(tar_bytes([("control", b"Package: x\n")]))
     write(d + "/deb/x_1.0_amd64.deb", ar_bytes([("debian-binary", b"2.0\n"), ("control.tar.gz", ctrl), ("data.tar.xz", data_tar)]))
-    layer = tar_bytes([("usr/bin/tool", P)])
+    layer = tar_bytes([("usr/bin/tool", P), ("usr/share/zoneinfo/localtime", "/etc/localtime")])
     write(d + "/image/image.tar", tar_bytes([("manifest.json", b"[]"), ("abc/layer.tar", layer)]))
     write(d + "/staticlib/libhello.a", ar_bytes([("hello.o", P)]))
     # loose files for the tools that make their own container
@@ -143,8 +148,13 @@ PY
 mk() { python3 -I "$tmp/mk.py" "$@"; }
 
 # the tools that make a container themselves, for a tree built by mk
+tools_checked=0
 extra_containers() { # DIR
-  local d="$1"
+  local d="$1" t
+  if [ "$tools_checked" = 0 ]; then
+    tools_checked=1
+    for t in zstd 7z cpio mksquashfs unsquashfs; do need_tool "$t" || true; done
+  fi
   if command -v zstd > /dev/null 2>&1; then zstd -q -f -o "$d/zst/pkg.tar.zst" "$d/zst/pkg.tar"; fi
   if command -v 7z > /dev/null 2>&1; then (cd "$d/src" && 7z a -y -bd "$d/x.7z" opt > /dev/null); fi
   if command -v cpio > /dev/null 2>&1; then (cd "$d/src" && find opt -type f | cpio -o -H newc --quiet > "$d/x.cpio" 2>/dev/null); fi
@@ -152,7 +162,11 @@ extra_containers() { # DIR
     mksquashfs "$d/src" "$d/appimage/fs.sqsh" -noappend -quiet > /dev/null 2>&1 && cat "$d/appimage/stub" "$d/appimage/fs.sqsh" > "$d/appimage/App.AppImage"
   fi
   if [ "$(uname -s)" = Darwin ] && command -v hdiutil > /dev/null 2>&1; then
-    hdiutil create -quiet -srcfolder "$d/src" -volname T -format UDZO -ov "$d/app.dmg" > /dev/null 2>&1 || true
+    local try
+    for try in 1 2 3 4; do
+      hdiutil create -quiet -srcfolder "$d/src" -volname T -format UDZO -ov "$d/app.dmg" > /dev/null 2>&1 && break
+      rm -f "$d/app.dmg"; sleep $((try * 3))
+    done
   fi
 }
 
@@ -160,7 +174,17 @@ plant_all() { # DIR LABEL: every container the fixture tree holds must be found
   local d="$1" label="$2" f
   for f in bare/hello zip/app.apk zipzip/app.aab tgz/pkg.tar.gz txz/pkg.tar.xz deb/x_1.0_amd64.deb image/image.tar staticlib/libhello.a \
            zst/pkg.tar.zst x.7z x.cpio appimage/App.AppImage app.dmg; do
-    if [ -f "$d/$f" ]; then found "$d/$f" "$label in $f"; fi
+    if [ -f "$d/$f" ]; then found "$d/$f" "$label in $f"
+    else
+      local must=0
+      case "$f" in
+        app.dmg) [ "${REQUIRE_DMG:-}" = 1 ] && must=1 ;;
+        bare/*|zip*|tgz/*|txz/*|deb/*|image/*|staticlib/*) must=1 ;;
+        *) [ "${REQUIRE_TOOLS:-}" = 1 ] && must=1 ;;
+      esac
+      if [ $must = 1 ]; then bad "the fixture $f was not made, so its nesting was not tested ($label)"
+      else echo "skip $label in $f: not made on this runner"; fi
+    fi
   done
 }
 
@@ -176,7 +200,7 @@ extra_containers "$tmp/a/s-nest"
 plant_all "$tmp/a/s-nest" "pclntab only"
 
 # names: an empty file, a zip entry, a directory
-for nm in libgojni.so libsingboxcore.so libxraycore.so sing-box xray olcrtc OlcRtcMobile libolcrtc.so libolcrtc-arm64.so xray.exe; do
+for nm in libgojni.so libsingboxcore.so libxraycore.so sing-box xray olcrtc OlcRtcMobile libolcrtc.so libolcrtc-arm64.so xray.exe olcrtc-linux-amd64 olcrtc-darwin-arm64 olcrtc-windows-amd64.exe olcrtc-windows-amd64.dll; do
   mkdir -p "$tmp/n"; : > "$tmp/n/$nm"
   python3 -I - "$tmp/n/z-$nm.zip" "$nm" <<'PY'
 import sys, zipfile
@@ -197,6 +221,15 @@ found "$tmp/n/d.zip" "a directory named OlcRtcMobile.xcframework" "name:"
 
 # clean look-alikes
 mkdir -p "$tmp/c"
+# the app's own rule lists live in a directory named xray: a directory is not a Go core
+python3 -I - "$tmp/c/lookalike.apk" <<'PY'
+import sys, zipfile
+elf = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 56 + b"hello from rust\x00" * 8 + b"\x00" * 64
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("lib/arm64-v8a/libhello.so", elf)
+    z.writestr("composeResources/x/files/xray/geoip-cn.txt", b"1.0.1.0/24\n")
+PY
+clean "$tmp/c/lookalike.apk" "a directory named xray holding a text list"
 python3 -I - "$tmp/c" <<'PY'
 import sys, os
 sys.path.insert(0, os.environ.get("MKDIR", ""))
