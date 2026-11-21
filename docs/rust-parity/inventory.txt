@@ -1,0 +1,275 @@
+# The features of today's builds, by platform. One line each:
+#
+#   id | platforms | source | what
+#
+# platforms: a android, i ios, m macos, l linux, w windows, c cli. A platform is listed
+# only where today's build has the feature (the build on main, before the Rust core).
+# source: where the tree shows the feature, a file or file::text that occurs in it.
+# scripts/parity-ledger.py holds every line to a row on each platform it names, and
+# fails on a link scheme, routing mode, carrier, transport, setting, CLI command, flag
+# or environment variable the tree has and this list does not.
+#
+import.url                           | a,i,m,l,w,c | README.MD::a QR code, or a pasted link | Add a server list from its https URL
+import.url.http-refused              | c | docs/cli.md::an `http://` list is refused | A list over plain http is refused, its token would travel in the clear
+import.paste                         | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/home/components/AddConfigurationSheet.kt::onPasteLinkClick | Paste links or a list into the app
+import.qr.scan                       | a,i | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/home/components/AddConfigurationSheet.kt::onScanQrClick | Scan a QR code with the camera
+import.file                          | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/home/components/AddConfigurationSheet.kt::onImportFileClick | Open a file with a list or a saved bundle
+import.deeplink.ghostlane            | a,i,m,l,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/ImportLink.kt::GHOSTLANE_SCHEME | A ghostlane://add?url= link imports a list without a paste
+import.deeplink.proofkit             | a,i,m,l | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/ImportLink.kt::const val SCHEME | The older proofkit:// scheme keeps working for links already handed out
+import.deeplink.path                 | a,i,m,l | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/ImportLink.kt::add/<list URL> | The path form ghostlane://add/<list URL>, raw or percent-encoded, also import/
+import.deeplink.web                  | a,i | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/ImportLink.kt::WEB_ORIGIN | The web link carries the list in the fragment and opens the installed app
+import.body.base64                   | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/SubscriptionBodyCodec.kt::decodeBase64 | A list body that is base64 of scheme lines (Happ and v2rayNG style)
+import.body.json                     | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::ImportMode.Restore | A saved bundle or a single location as JSON
+import.olcrtc.line                   | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::fun parseOlcRtcUri | An olcrtc:// line: carrier, transport, room, key, name, client id
+import.olcrtc.transport-options      | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::fun parseTransportToken | Transport options in a line (vp8 fps and batch)
+import.olcrtc.list-fields            | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::fun buildSubscriptionMetadata | A list's own # lines: name, update, refresh, colour, icon, used, available
+import.olcrtc.room-fields            | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::fun buildLocationMetadata | A room's own ## lines: name, colour, icon, used, available, ip, comment
+import.olcrtc.rooms-group            | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::parseFailoverRooms | The ##rooms header names the rooms of one failover group
+import.crypt1                        | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/crypt/CryptCodec.kt::olcrtc://crypt1/ | An encrypted olcrtc://crypt1 link or list body (release builds carry the key)
+import.partner-link                  | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/PartnerLinkResolver.kt::happ:// | A partner's happ://crypt link is resolved to a readable link
+import.link.vless                    | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fun parseVless | A vless:// link
+import.link.hysteria2                | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fun parseHy2 | A hysteria2:// link
+import.link.hy2                      | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::hy2:// | A hy2:// link, the short spelling of hysteria2
+import.link.trojan                   | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fun parseTrojan | A trojan:// link
+import.link.ss                       | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fun parseShadowsocks | An ss:// link: SIP002 and the legacy whole-base64 form, AEAD and 2022 methods
+import.link.vmess                    | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fun parseVmess | A vmess:// link in v2rayN's JSON shape
+import.vless.type.tcp                | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"tcp", "raw" | VLESS over TCP (raw)
+import.vless.type.xhttp              | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"xhttp" | VLESS over XHTTP
+import.vless.type.grpc               | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"grpc" | VLESS over gRPC
+import.vless.type.ws                 | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"ws" | VLESS over WebSocket
+import.vless.type.httpupgrade        | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"httpupgrade" | VLESS over HTTPUpgrade
+import.vless.type.http               | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"http", "h2" | VLESS over HTTP/2 (type=http, older links h2)
+import.vless.reality-params          | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::pbk | Reality keys: public key, short id, server name, fingerprint, flow
+import.vless.security-none           | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::security | security=none is VLESS with no TLS
+import.vless.allowinsecure           | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::allowInsecure | allowInsecure is read on ordinary TLS and ignored under Reality
+import.vless.alpn                    | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::alpn | A link's ALPN is read for WebSocket and HTTPUpgrade (WebTunnel links)
+import.hysteria2.params              | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::obfs-password | Hysteria2 parameters: Salamander password, pinSHA256, insecure, server name
+import.refuse.unsupported            | a,i,m,l,w | README.MD::is left out at | A link the app cannot carry is left out at import (an SS plugin, Trojan over Reality, VMess over kcp or QUIC)
+import.tag.utf8                      | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::private fun urlDecode | A server's name is percent-decoded as UTF-8
+list.header.profile-title            | a,i,m,l,w | README.MD::`profile-title` | The provider's name for the list
+list.header.subscription-userinfo    | a,i,m,l,w | README.MD::`subscription-userinfo` | Traffic and expiry of the plan
+list.header.support-url              | a,i,m,l,w | README.MD::`support-url` | The provider's support link
+list.header.profile-web-page-url     | a,i,m,l,w | README.MD::`profile-web-page-url` | The provider's web page
+list.header.profile-update-interval  | a,i,m,l,w,c | README.MD::`profile-update-interval` | How often the provider wants the list asked again
+list.header.announce                 | a,i,m,l,w,c | README.MD::`announce` | A short note shown under the list (a refusal's sentence on the CLI)
+list.header.fallback-url             | a,i,m,l,w | README.MD::`fallback-url` | A spare address asked when the usual one does not answer, https only
+list.header.new-url                  | a,i,m,l,w | README.MD::`new-url` or `new-domain` | The list moved for good, https only
+list.device-headers                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/datasource/LocationsDatasource.kt::x-hwid | A fetch names the device to the host (x-hwid, x-device-os, x-ver-os, x-device-model)
+list.device-refused                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RefusedList.kt::class RefusedList | A host that turns a device away answers with its sentence; the list stays on record and is asked again
+list.plan-info                       | a,i,m,l,w | README.MD::What the provider says about your plan | Quota, expiry, a note and the provider's links shown with the list
+list.refresh.manual                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/repository/LocationsRepository.kt::refreshSubscription | Refresh one list or all of them by hand
+list.refresh.keeps-session           | c | docs/cli.md::A refresh never disconnects by itself | A refresh never drops a running line; a rotated room or key reconnects it
+list.remove                          | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/repository/LocationsRepository.kt::deleteSubscription | Remove a whole list
+list.remove.location                 | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/repository/LocationsRepository.kt::deleteLocation | Remove one location from the board
+list.group-by-provider               | a,i,m,l,w | README.MD::The app groups them by provider | The board groups locations by provider and filters by protocol
+list.router-export                   | a,m,l,w | README.MD::Servers for your router | Each server as its link, a sing-box outbound (Podkop) or an Xray outbound (XKeen); not for encrypted lists
+list.share.qr                        | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/share/ConfigShareService.kt::subscriptionQrText | Share a list or a room as a QR code or a link
+list.tv-phone-import                 | a | sharedUI/src/androidMain/kotlin/org/olcbox/app/ui/tv/PhoneImportSheet.kt::PhoneImportSheet | On Android TV a phone on the same home network sends a list through a one-page form
+board.occupancy                      | a,i,m,l,w | README.MD::carry their occupancy on the board | Rooms show how full they are; a full room or a key no longer good is said before connecting
+board.latency.tunnel                 | a,i,m,l,w | README.MD::through the tunnel for the | Latency of the connection in use, measured through the tunnel
+board.latency.icmp-tcp               | a,m,l,w | sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/net/PathLatency.kt::PathLatency | Latency of a server you are not on: ICMP first, then a TCP connect to the link's port
+board.latency.olcrtc-room            | a,i,m,l,w | README.MD::has no address to probe | An olcRTC room is timed only while you are in it
+location.manual-edit                 | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/locations/LocationSettingsScreen.kt::LocationSettingsScreen | Add or edit a room by hand (the configurator)
+room.check                           | a,m,l,w | sharedUI/src/androidMain/kotlin/org/olcbox/app/vpn/OlcRtcConnectionChecker.kt::OlcRtcConnectionChecker | Check an olcRTC room without connecting to it
+room.failover.engine                 | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::failoverRoomIds | The engine moves to the next room of a failover group while the session is live
+room.failover.ios                    | i | docs/ios-room-failover.md::room | On iOS the tunnel extension reads the next room off the list's header and hands it to the engine, through the tunnel
+room.failure-reasons                 | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/vpn/OlcrtcFailure.kt::OlcrtcFailure | A failed room says why: a dead key, an empty room, a full room, a tunnel that carried nothing
+carrier.telemost                     | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_TELEMOST | olcRTC over Yandex Telemost
+carrier.wbstream                     | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_WB_STREAM | olcRTC over WB Stream
+carrier.jitsi                        | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_JITSI | olcRTC over Jitsi, self-hosted rooms included
+carrier.salutejazz                   | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_SALUTEJAZZ | olcRTC over Sber SaluteJazz, always over datachannel
+carrier.vkcalls                      | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_VKCALLS | olcRTC over VK Calls, a room is the call's join link, over vp8channel
+carrier.mtslink                      | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::PROVIDER_MTSLINK | olcRTC over MTS Link, a room is the meeting's join link, over vp8channel
+transport.datachannel                | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::TRANSPORT_DATACHANNEL | olcRTC over the carrier's data channel
+transport.vp8channel                 | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::TRANSPORT_VP8CHANNEL | olcRTC inside the carrier's video (vp8channel)
+transport.seichannel                 | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::TRANSPORT_SEICHANNEL | olcRTC over SEI frames (seichannel)
+olcrtc.vp8-options                   | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::vp8Fps | vp8channel frame rate and batch size
+olcrtc.udp                           | a,m,l,w | sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/OlcRtcUdpRelay.kt::OlcRtcUdpRelay | UDP carried through a room
+olcrtc.chrome-dtls                   | a,i,m,l,w | README.MD::opens olcRTC's encrypted connection the way | The experimental switch that opens the encrypted connection the way Chrome does
+carry.vless.reality.tcp              | a,i,m,l,w,c | README.MD::VLESS + Reality, over TCP, gRPC or HTTP/2 | VLESS Reality over TCP, Vision flow included
+carry.vless.reality.grpc             | a,i,m,l,w | README.MD::VLESS + Reality, over TCP, gRPC or HTTP/2 | VLESS Reality over gRPC
+carry.vless.reality.http             | a,m,l,w | README.MD::HTTP/2 (`type=http`) | VLESS Reality over HTTP/2
+carry.vless.reality.xhttp            | a,i,m,l,w,c | README.MD::XHTTP | VLESS Reality over XHTTP (packet-up)
+carry.vless.tls.tcp                  | a,m,l,w | README.MD::VLESS over TLS, incl. behind a CDN | VLESS over ordinary TLS on TCP
+carry.vless.tls.ws                   | a,i,m,l,w | README.MD::WebSocket | VLESS over TLS and WebSocket (WebTunnel, behind a CDN)
+carry.vless.tls.httpupgrade          | a,i,m,l,w | README.MD::HTTPUpgrade | VLESS over TLS and HTTPUpgrade (WebTunnel)
+carry.vless.tls.http                 | a,m,l,w | README.MD::HTTP/2 | VLESS over TLS and HTTP/2
+carry.vless.none                     | a,m,l,w | README.MD::`security=none` is VLESS with no TLS | VLESS with no TLS at all
+carry.vless.allowinsecure            | a,m,l,w | README.MD::`allowInsecure` is | A link's allowInsecure is honoured on ordinary TLS
+carry.reality.fingerprints           | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality ClientHello fingerprints by name
+carry.reality.fp-android-360         | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality with fp=android or fp=360
+carry.hysteria2                      | a,i,m,l,w,c | README.MD::Hysteria2, with Salamander obfuscation | Hysteria2
+carry.hysteria2.salamander           | a,i,m,l,w,c | README.MD::Salamander | Hysteria2 with Salamander obfuscation
+carry.hysteria2.pin                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::pinSHA256 | Hysteria2 verified by a pinned certificate fingerprint
+carry.hysteria2.insecure             | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::insecure | Hysteria2 with insecure=1 and no pin
+carry.hysteria2.udp-blocked-failover | i | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/UdpBlockedFailover.kt::UdpBlockedFailover | On iOS a Hysteria2 that carries nothing moves to the same exit over a TCP transport, once per connect
+carry.trojan                         | a,m,l,w | README.MD::Trojan | Trojan, over TCP, WebSocket, gRPC and the other transports its link names
+carry.shadowsocks                    | a,m,l,w | README.MD::Shadowsocks, AEAD and 2022 | Shadowsocks, AEAD methods
+carry.shadowsocks.2022               | a,m,l,w | README.MD::Shadowsocks, AEAD and 2022 | Shadowsocks 2022 methods
+carry.vmess                          | a,m,l,w | README.MD::VMess | VMess, with TLS and its transports
+carry.hostname-servers               | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/XrayConfig.kt::isIpLiteral | A server named by a hostname, resolved on the network underneath
+carry.dns-in-tunnel                  | a,i,m,l,w,c | README.MD::name resolution included | Names are resolved through the tunnel in a mode that tunnels the rest
+carry.udp                            | a,i,m,l,w,c | README.MD::UDP | UDP through the line
+mode.tun                             | a,m,l,w | README.MD::TUN, proxy | TUN mode: the whole device or machine through the tunnel
+mode.system-vpn                      | i | README.MD::System VPN | The iPhone's system VPN (packet tunnel)
+mode.proxy                           | a,m,w | README.MD::TUN, proxy | Proxy mode: a local SOCKS5 listener for other apps
+proxy.os-settings                    | m,w | README.MD::OS proxy settings | The OS proxy settings point at the listener while connected
+proxy.pac                            | m | README.MD::a PAC | A PAC file for the macOS proxy
+proxy.socks-settings                 | a,m,w | README.MD::SOCKS5 listen address | SOCKS5 listen address, port and credentials
+proxy.local-login                    | a,i | README.MD::ask for a login only the app knows | The local SOCKS ports between tunnel and engine ask for a login only the app knows
+proxy.random-port                    | a | README.MD::the port also changes with every | On Android the local port changes with every connect
+tunnel.network-migration             | a,i,m,l,w | README.MD::Network migration, reconnect handling | Network migration, reconnect handling and watchdog recovery
+tunnel.hold                          | a | README.MD::Android holds the tunnel for the whole session | The tunnel stays up across a reconnect, another server, a lost network or a restarted engine
+tunnel.supervise                     | m,l,w | README.MD::restarted behind | A core or engine that dies is restarted behind the tunnel, which stays as it is
+tunnel.switch-server                 | m,l,w | README.MD::another server chosen while connected | Another server is started behind the tunnel without taking it down
+tunnel.verify                        | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/TunnelVerifier.kt::TunnelVerifier | A tunnel that came up is proven by a request through it, so a connected one that carries nothing is said
+tunnel.ipv6                          | i | README.MD::the tunnel takes IPv6 as well as IPv4 | The iPhone's tunnel carries IPv6 as well as IPv4
+ios.tun-arrangement                  | i | iosApp/PacketTunnel/TunArrangement.swift::TunArrangement | How the extension arranges hev-socks5-tunnel in front of the core
+ios.physical-interface               | i | iosApp/PacketTunnel/PhysicalInterface.swift::PhysicalInterface | The extension's own traffic leaves by the right physical interface
+ios.direct-resolver                  | i | iosApp/PacketTunnel/DirectResolver.swift::DirectResolver | The extension resolves names on the network underneath
+ios.memory-relief                    | i | iosApp/PacketTunnel/MemoryRelief.swift::MemoryRelief | The extension trims its memory under pressure to stay inside the system's limit
+android.always-on                    | a | README.MD::always-on VPN | Always-on VPN: the connection comes up by itself, and the settings row says whether it is on and whether connections without VPN are blocked
+android.split-tunnel                 | a | sharedUI/src/androidMain/kotlin/org/olcbox/app/vpn/AndroidSplitTunnelSettings.kt::AndroidSplitTunnelMode | Per-app tunnelling: all apps, only chosen apps, or all but chosen apps
+android.split-tunnel.preset-ru       | a | README.MD::preset for Russian apps | A preset for the Russian apps that refuse to work through a VPN
+android.quick-tile                   | a | androidApp/src/main/kotlin/org/olcbox/app/QuickSettingsTileService.kt::QuickSettingsTileService | A quick-settings tile
+android.tv                           | a | README.MD::Android TV | Android TV: a launcher entry and a focus mark you can see from the sofa
+android.notification                 | a | README.MD::the notification | A foreground notification that says when the VPN is reconnecting
+android.abis                         | a | README.MD::Android native ABIs | arm64-v8a, armeabi-v7a and x86_64
+android.min-sdk                      | a | androidApp/build.gradle.kts::minSdk | Android 6 (API 23) on the GitHub build, API 24 on Play
+killswitch.ios                       | i | README.MD::iPhone: a kill switch | The iPhone's kill switch, off by default
+killswitch.linux                     | l | README.MD::Linux desktop: a kill switch | The Linux tunnel's kill switch on a dummy device, off by default
+killswitch.macos                     | m | sharedUI/src/commonMain/kotlin/org/olcbox/app/vpn/KillSwitchNotice.kt::isKillSwitchHold | The Mac's kill switch (pf), off by default
+macos.daemon                         | m | docs/macos-tunnel-daemon.md::daemon | The root tunnel daemon the user approves in System Settings
+linux.privilege-prompt               | l | README.MD::OLCBOX_LINUX_PRIVILEGE | The tunnel asks for the administrator's password (pkexec or sudo)
+linux.resolved-revert                | l | README.MD::reverts `systemd-resolved` settings | Stopping the tunnel removes the policy routes and reverts systemd-resolved
+windows.uac-elevation                | w | README.MD::UAC elevation | TUN mode starts after a UAC prompt, with the bundled Wintun runtime
+windows.wintun-dns-guard             | w | README.MD::`strict_route` | In the Windows tunnel every name is answered inside it and port 53 beside it is refused
+desktop.tray.menu                    | m,l,w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/desktop/DesktopText.kt::Quit | A tray menu: Open, Start or Stop, Settings, Quit
+desktop.tray.icon-state              | m,l,w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/desktop/DesktopTrayIcon.kt::DesktopTrayIcon | The tray icon says whether the VPN is up
+desktop.close-to-tray                | m,l,w | desktopApp/src/main/kotlin/main.kt::SystemTray.isSupported | Closing the window hides it to the tray
+lan.share                            | m,l,w | docs/lan-sharing.md::one** private address | Share the tunnel as an authenticated SOCKS5 listener on one private address of this machine
+lan.pinned-network                   | m,l,w | docs/lan-sharing.md::The network is pinned | The network sharing was enabled on is pinned by its gateway; another network turns it off
+lan.port-proof                       | m,l,w | docs/lan-sharing.md::The port is proved to be ours | The port is proved to be ours by a second loopback listener
+lan.recheck                          | m,l,w | docs/lan-sharing.md::The path is checked, and re-checked | The exit is verified through the LAN listener at start and every fifteen seconds
+lan.windows-firewall                 | w | docs/lan-sharing.md::inbound firewall rule | A scoped inbound firewall rule, removed on stop and swept after a crash
+lan.regenerate                       | m,l,w | docs/lan-sharing.md::regenerating the credential | Regenerate the credential from the settings screen
+lan.interface-choice                 | m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/ApplicationSettingsSheet.kt::lan_choose_interface | Choose which private address the listener uses
+routing.mode.global                  | a,i,m,l,w | README.MD::All traffic through the tunnel | All traffic through the tunnel
+routing.mode.bypassrussia            | a,i,m,l,w | README.MD::Bypass Russia | Bypass Russia: Russian sites and the local network go straight out
+routing.mode.bypassiran              | a,m,l,w | README.MD::Bypass Iran | Bypass Iran
+routing.mode.bypasschina             | a,m,l,w | README.MD::Bypass China | Bypass China
+routing.mode.blockedonly             | a,m,w | README.MD::Only blocked sites through the tunnel | Only blocked sites through the tunnel
+routing.rules.direct                 | a,m,l,w | README.MD::always goes direct | Your own rules: a domain, an address or a prefix that always goes direct
+routing.rules.tunnel                 | a,m,l,w | README.MD::always through | Your own rules: a domain, an address or a prefix that always goes through the tunnel
+routing.lists.bundled                | a,i,m,l,w | README.MD::The lists ship inside the app | The region lists ship inside the app, pinned by hash, so no mode needs the network to start
+routing.room-direct-rules            | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/OlcrtcDirectRules.kt::OlcrtcDirectRules | An olcRTC room applies the mode and your rules itself, from the engine's direct rules
+smart.transport-probe                | a,m,l,w | README.MD::Smart connect | Before a connect, each transport of a server is asked for a 204 and then for 64 KB whole
+smart.olcrtc-fallback                | a,m,l,w | README.MD::ends on olcRTC in the same | Smart connect ends on olcRTC of the same country, and never changes the country
+smart.whitelist-first                | a | README.MD::goes to olcRTC first | When only domestic sites answer, Android goes to olcRTC first
+smart.session-failover               | a,m,l,w | README.MD::After two failed reconnects | A server that dies in a session: the other transports, then the same country's servers, then olcRTC, behind the tunnel
+smart.candidate-check                | a,m,l,w | README.MD::A candidate is checked by an engine of its own first | A failover candidate is checked by an engine of its own, so a dead one costs a check and not a reconnect
+smart.linux-no-dialog                | l | README.MD::no dialog is opened for a | On Linux a failover never opens a password dialog by itself
+setting.autoSelectLowest             | a,i,m,l,w | docs/lowest-selection.md::Lowest latency | Choose the lowest-latency server automatically, per list
+setting.lowestSubscriptionUrls       | a,i,m,l,w | docs/lowest-selection.md::Lowest latency | Which lists choose their lowest-latency server
+setting.autoUpdate                   | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_auto_update | Refresh lists on a schedule
+setting.updateIntervalHours          | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_update_interval | How often lists are refreshed
+setting.notifyOnUpdate               | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_notify | Tell when a list changed
+setting.refreshOnOpen                | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_update_on_open | Refresh lists when the app opens
+setting.pingOnLaunch                 | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_ping_on_launch | Measure latency when the app opens
+setting.connectOnLaunch              | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_connect_on_launch | Connect when the app opens
+setting.sort                         | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::SubscriptionSort | Sort the board by ping or by name
+setting.preventDuplicates            | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_prevent_duplicates | Refresh a duplicate list rather than add it twice
+setting.collapsible                  | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_collapsible | Lists can be folded
+setting.smartConnect                 | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/SubscriptionSettingsScreen.kt::sub_smart_connect | Smart connect on or off
+setting.lastKnownGoodTransport       | a,m,l,w | README.MD::starting with the one that worked last time | The transport that worked last time is tried first
+setting.foldedSubscriptionUrls       | a,i,m,l,w | README.MD::the folds are still there | Folded lists stay folded the next time the app opens
+setting.pinnedLocations              | a,i,m,l,w | README.MD::A room pinned to the top of its list | A pinned room stays on the board when its list is folded, and survives a refresh
+setting.transportFilter              | a,i,m,l,w | README.MD::filtering by protocol | Filter the board by protocol
+setting.mode                         | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/RoutingSettingsScreen.kt::settings_routing | The routing mode
+setting.verboseDebugLogs             | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/home/components/LogsSheet.kt::verboseDebugLogs | Verbose debug logs
+setting.olcrtcChromeDtls             | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/OlcrtcHandshakeRow.kt::OlcrtcHandshakeRow | olcRTC's Chrome-style handshake
+setting.directRules                  | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/RoutingSettingsScreen.kt::routing_rules_direct | Your direct rules
+setting.tunnelRules                  | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/RoutingSettingsScreen.kt::routing_rules_tunnel | Your tunnel rules
+setting.killSwitch                   | i | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt::killSwitch | The iPhone's kill switch setting
+setting.app-update-interval          | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/ApplicationSettingsSheet.kt::updates_check_interval | How often the app looks for a new version
+app.updates                          | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/update/AppUpdateService.kt::AppUpdateService | The app looks for its own new version and offers it (not the Play and App Store builds)
+diag.log.export                      | a,i,m,l,w | README.MD::Diagnostics log with export | A diagnostics log that can be saved or shared
+diag.log.scrub                       | a,i,m,l,w,c | README.MD::are replaced by short tags | Server addresses are replaced by short tags before a line reaches the log
+ui.language                          | a,i,m,l,w | README.MD::In English, Russian, Chinese and Persian | English, Russian, Chinese and Persian, following the system's language
+ui.rtl                               | a | README.MD::Persian is laid out right to left | Persian is laid out right to left
+ui.one-tap-connect                   | a,i,m,l,w | README.MD::One tap to connect | One tap to connect, with the session's time and traffic on screen
+ui.onboarding                        | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/onboarding/OnboardingScreen.kt::OnboardingScreen | A first-run walkthrough, which settings can replay
+ui.vpn-disclosure                    | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/components/VpnDisclosureScreen.kt::VpnDisclosureScreen | The disclosure of what the VPN does, accepted before the first connect
+ui.configurator                      | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/admin/AdminGate.kt::AdminGate | The hidden configurator for editing rooms and the local proxy by hand
+connect.failure-reasons              | a,i,m,l,w | README.MD::A failure that says what failed | A failed connection says what failed
+session.traffic                      | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/ui/features/home/SessionTraffic.kt::SessionTraffic | The session's traffic counters
+cli.cmd.run                          | c | docs/cli.md::ghostlane run | run: the daemon in the foreground
+cli.cmd.version                      | c | docs/cli.md::ghostlane version | version: the version, the engine pins, whether crypt1 lists read, the release key's hash
+cli.cmd.add                          | c | docs/cli.md::ghostlane add | add: a list URL, a ghostlane:// link or one olcrtc://, vless:// or hysteria2:// line
+cli.cmd.list                         | c | docs/cli.md::ghostlane list | list: every line with its country and carrier, numbered across lists
+cli.cmd.connect                      | c | docs/cli.md::ghostlane connect | connect: a country, an exact label or an index
+cli.cmd.disconnect                   | c | docs/cli.md::`disconnect` clears it | disconnect: clears the stored selection
+cli.cmd.status                       | c | docs/cli.md::ghostlane status | status: state, line, mode, the proxy lines to paste, errors
+cli.cmd.refresh                      | c | docs/cli.md::ghostlane refresh | refresh: ask the lists again now
+cli.cmd.remove                       | c | cli/cmd/ghostlane/commands.go::remove | remove: drop a list
+cli.flag.json                        | c | cli/cmd/ghostlane/commands.go::machine-readable output | --json: machine-readable output
+cli.flag.socket                      | c | cli/cmd/ghostlane/commands.go::control socket | --socket: the control socket
+cli.flag.tun                         | c | docs/cli.md::--tun | --tun: route the whole machine
+cli.flag.proxy                       | c | docs/cli.md::--proxy | --proxy: a local SOCKS5 and HTTP proxy only
+cli.flag.kill-switch                 | c | docs/cli.md::--kill-switch | --kill-switch: with --tun, refuse traffic outside the tunnel while no line is up
+cli.flag.subscription                | c | docs/cli.md::--subscription | --subscription: restrict to one list (and, for run, add one at start)
+cli.flag.state-dir                   | c | docs/cli.md::--state-dir | --state-dir: where the daemon keeps its files
+cli.flag.connect                     | c | docs/cli.md::--connect | --connect: connect a selector at start (containers)
+cli.flag.mode                        | c | docs/cli.md::--mode | --mode (tun or proxy), with --connect
+cli.flag.probe-url                   | c | docs/cli.md::--probe-url | --probe-url: the liveness probe through the tunnel
+cli.env.ghostlane_proxy_listen       | c | docs/cli.md::GHOSTLANE_PROXY_LISTEN | GHOSTLANE_PROXY_LISTEN: the proxy's listen address; non-loopback without credentials is refused
+cli.env.ghostlane_proxy_port         | c | docs/cli.md::GHOSTLANE_PROXY_PORT | GHOSTLANE_PROXY_PORT
+cli.env.ghostlane_proxy_user         | c | docs/cli.md::GHOSTLANE_PROXY_USER | GHOSTLANE_PROXY_USER
+cli.env.ghostlane_proxy_pass         | c | docs/cli.md::GHOSTLANE_PROXY_PASS | GHOSTLANE_PROXY_PASS
+cli.env.ghostlane_state_dir          | c | docs/cli.md::GHOSTLANE_STATE_DIR | GHOSTLANE_STATE_DIR
+cli.select.country                   | c | docs/cli.md::takes a country | connect DE: all of a country's lines, in the list's order, with failover between them
+cli.select.label-index               | c | docs/cli.md::exact label from | connect by an exact label or an index, for lists whose labels carry no country
+cli.select.stored                    | c | docs/cli.md::The selection is stored | The selection is stored, reconnected after a reboot, and retried when a refresh changes the list
+cli.mode.proxy                       | c | docs/cli.md::**proxy** (default) | Proxy mode: SOCKS5 and HTTP on 127.0.0.1:1080, no privileges
+cli.proxy.config                     | c | docs/cli.md::**Proxy settings.** | The proxy block of config.yaml: listen, port, user, pass
+cli.mode.tun                         | c | docs/cli.md::**tun** routes the whole machine | Tun mode: the whole machine through the tunnel
+cli.tun.inbound-keep                 | c | docs/cli.md::Inbound services keep working | Inbound services keep answering: a policy rule per public address
+cli.tun.daemon-exempt                | c | docs/cli.md::The daemon's own traffic | The daemon's own traffic never enters the tun (its uid is excluded)
+cli.tun.ipv6-refused                 | c | docs/cli.md::IPv6 is refused, not leaked | IPv6 is refused, not leaked
+cli.tun.kill-switch                  | c | docs/cli.md::Fail-open by default, closed with | The kill switch survives failovers, boot and a crash, and opens on disconnect
+cli.tun.dead-server                  | c | docs/cli.md::A dead server never gets the tun | A dead server never gets the tun: a line is proven before the rules go in
+cli.tun.nothing-else                 | c | docs/cli.md::Nothing else is touched | Nothing else is touched: not resolv.conf, sysctls or nftables
+cli.service.systemd                  | c | docs/cli.md::`ghostlane.service` runs | The systemd service as an unprivileged user with the two capabilities
+cli.service.openrc                   | c | docs/cli.md::Alpine / OpenRC | The OpenRC service on Alpine
+cli.control-socket                   | c | docs/cli.md::The control socket | The control socket, for root and the ghostlane group
+cli.state-files                      | c | docs/cli.md::Its files live in | config.yaml, the cached lists, the device id and the last working room
+cli.device-id                        | c | docs/cli.md::**The device id.** | A device id of its own that a provider's device limit counts
+cli.no-secrets-in-logs               | c | docs/cli.md::list tokens never appear in logs | Keys and list tokens never appear in logs or in status
+cli.failover.lines                   | c | docs/cli.md::tried in the list's order with failover | The next line of the selection is tried when one fails
+cli.failover.probe                   | c | docs/cli.md::`probe n/3 failed` | Three failed liveness probes move to the next carrier
+cli.failover.no-traffic              | c | docs/cli.md::`room carries no traffic` | A room that carries nothing in 45 s moves to the next carrier
+cli.backoff                          | c | docs/cli.md::(10 s to 5 min) | A failed selection is retried with backoff from 10 s to 5 min
+cli.list.unsupported-note            | c | docs/cli.md::are listed with a note | A line the version does not connect is listed with a note
+cli.install.script                   | c | docs/cli.md::install.sh | The signed installer script, with --version, --base-url, --family and --no-service
+cli.pkg.deb                          | c | docs/cli.md::deb | A deb package
+cli.pkg.rpm                          | c | docs/cli.md::rpm | An rpm package
+cli.pkg.apk                          | c | docs/cli.md::apk | An apk package
+cli.pkg.pacman                       | c | docs/cli.md::pkg.tar.zst | An Arch package
+cli.pkg.tarball                      | c | docs/cli.md::tar.gz | A tarball
+cli.repo.apt                         | c | docs/cli.md::Debian, Ubuntu and derivatives | The signed apt repository
+cli.repo.dnf                         | c | docs/cli.md::Fedora, RHEL, Rocky, Alma | The signed dnf repository
+cli.docker.image                     | c | docs/cli.md::ghcr.io/ghostlane-project/ghostlane-cli | The Docker image (distroless, amd64, arm64, arm/v7)
+cli.docker.tun                       | c | docs/cli.md::--cap-add NET_ADMIN | Tun mode in a container, for the namespace's non-root processes and forwarded traffic
+cli.arch.amd64                       | c | docs/cli.md::amd64 | Linux amd64
+cli.arch.arm64                       | c | docs/cli.md::arm64 | Linux arm64
+cli.arch.arm7                        | c | docs/cli.md::arm7 | Linux armv7
+dist.android.apk-universal           | a | README.MD::universal and `armeabi-v7a` APKs | The universal APK
+dist.android.apk-armv7               | a | README.MD::universal and `armeabi-v7a` APKs | The armeabi-v7a APK
+dist.android.aab                     | a | README.MD::Android App Bundle for Play | The Android App Bundle for Play
+dist.ios.ipa                         | i | README.MD::The [App Store](https | The iOS app (App Store and TestFlight)
+dist.macos.dmg-arm64                 | m | README.MD::Signed and notarised DMG, one per architecture | The signed and notarised DMG for Apple silicon
+dist.macos.dmg-amd64                 | m | README.MD::Signed and notarised DMG, one per architecture | The signed and notarised DMG for Intel
+dist.windows.exe                     | w | README.MD::EXE, MSI and a portable zip | The Windows installer (EXE)
+dist.windows.msi                     | w | README.MD::EXE, MSI and a portable zip | The Windows MSI
+dist.windows.portable                | w | README.MD::EXE, MSI and a portable zip | The Windows portable zip
+dist.linux.appimage                  | l | README.MD::AppImage | The Linux AppImage

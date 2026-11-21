@@ -1,0 +1,3 @@
+# linux: one row for each feature of this platform's build that the inventory lists.
+# id | status | tests | note
+# status: proven, partial, not-proven or retired (docs/rust-parity/README.md).
