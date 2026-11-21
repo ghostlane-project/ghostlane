@@ -34,6 +34,29 @@ on:
         description: 'With gate: skip, why. Printed in the release notes'
         type: string
         default: ''
+      dry_run:
+        description: 'Dry run: build what was chosen, sign nothing, upload to no store, publish nothing, join no live room. Off main a run is dry whatever this says, unless signed_head names its commit'
+        type: boolean
+        default: false
+      signed_head:
+        description: 'Off main only: the full 40-hex commit this run may sign and publish. It must be the commit being built. Left empty, a run off main is dry'
+        type: string
+        default: ''
+
+# Dry or signed (scripts/release-guard.sh decides, in the plan job). On main a
+# run signs unless dry_run is ticked, as it always did. Off main a run is dry
+# unless signed_head is the commit being built.
+#
+# A dry run builds every chosen platform the way a checkout without the
+# repository's secrets does, and keeps the results as artifacts of the run. It
+# reaches no step that reads a signing, store or publish secret and no job with
+# more than read permissions: each of those asks for
+# needs.plan.outputs.signed == 'true', as a job's or a step's `if`, or inside
+# the value itself. Its Play track is none, and the gate writes its skipped
+# report with a fixed reason instead of joining a room.
+#
+# scripts/test-release-dry.sh reads all of that off this file, for every job
+# and step there is: a new one that names a secret without the guard fails it.
 
 permissions:
   contents: read
@@ -87,6 +110,12 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
+      # 'true' only when the guard said so. Everything that signs, uploads to
+      # a store or publishes asks for exactly that, so an output that was
+      # never written is a dry run.
+      signed: ${{ steps.guard.outputs.signed }}
+      # The input in a run that signs, none in a dry run.
+      play_track: ${{ steps.guard.outputs.play_track }}
       macos_arm64: ${{ steps.p.outputs.macos_arm64 }}
       macos_intel: ${{ steps.p.outputs.macos_intel }}
       windows: ${{ steps.p.outputs.windows }}
@@ -98,6 +127,38 @@ jobs:
       macos_any: ${{ steps.p.outputs.macos_any }}
       macos_matrix: ${{ steps.p.outputs.macos_matrix }}
     steps:
+      - name: Checkout the guard
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+
+      # First, and nothing before it but the checkout of the commit being
+      # built. A refusal (a signed_head that names another commit) stops the
+      # run here, before the gate and before any build.
+      - name: Dry or signed
+        id: guard
+        env:
+          GUARD_REF: ${{ github.ref }}
+          GUARD_SHA: ${{ github.sha }}
+          GUARD_DRY_RUN: ${{ inputs.dry_run }}
+          GUARD_SIGNED_HEAD: ${{ inputs.signed_head }}
+          GUARD_PLAY_TRACK: ${{ inputs.play_track }}
+        run: |
+          set -euo pipefail
+          # Through a file, so a refusal part-way writes no output at all.
+          scripts/release-guard.sh decide > "$RUNNER_TEMP/guard.out"
+          cat "$RUNNER_TEMP/guard.out" >> "$GITHUB_OUTPUT"
+          sed -n 's/^why=//p' "$RUNNER_TEMP/guard.out" >> "$GITHUB_STEP_SUMMARY"
+
+      # A run that signs builds only a core commit the store line holds (the
+      # `ghostlane` branch of the core's repository); it stops here otherwise.
+      # A dry run prints the same finding and goes on.
+      - name: The core pin against the store line
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUARD_SIGNED: ${{ steps.guard.outputs.signed }}
+        run: scripts/release-guard.sh pin
+
       # Correction to the commit that added this: the secrets were set. The
       # claim that they were not came from reading the APK with an anchored
       # grep, and dex strings carry a length byte in front, so `^[0-9a-f]{64}$`
@@ -141,6 +202,8 @@ jobs:
 
       - name: Resolve requested platforms
         id: p
+        env:
+          SIGNED: ${{ steps.guard.outputs.signed }}
         run: |
           # Dispatch is the only trigger, so the selection is always the input.
           # It used to fall back to "all" on a push to main, which meant every
@@ -171,6 +234,11 @@ jobs:
             *)
               mac_arm=true ;;
           esac
+          # A dry run publishes nothing, whatever was asked for. The publish
+          # jobs ask the guard themselves; this is the same answer once more.
+          if [ "$SIGNED" != true ]; then
+            pub=false
+          fi
           # Each key written exactly once: duplicate keys in $GITHUB_OUTPUT are
           # ambiguous and would make the selection depend on parsing order.
           {
@@ -290,6 +358,9 @@ jobs:
       engine_version: ${{ needs.release_version.outputs.olcrtc_version }}
       skip: ${{ inputs.gate == 'skip' }}
       skip_reason: ${{ inputs.gate_reason }}
+      # A run that signs nothing joins no live room: the gate walks no leg and
+      # writes its skipped report with a fixed reason (gate.yml, Dry).
+      dry: ${{ needs.plan.outputs.signed != 'true' }}
       # A literal: `with:` of a reusable-workflow call cannot read `env`. warn
       # while the gate runs the local target only; fail is meant for when the
       # link target (a fleet node) is compared release to release.
@@ -313,8 +384,9 @@ jobs:
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
-      WINDOWS_CODESIGN_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_BASE64 }}
-      WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD }}
+      # Empty in a dry run, which does not reach the signing step either.
+      WINDOWS_CODESIGN_CERTIFICATE_BASE64: ${{ needs.plan.outputs.signed == 'true' && secrets.WINDOWS_CODESIGN_CERTIFICATE_BASE64 || '' }}
+      WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ needs.plan.outputs.signed == 'true' && secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD || '' }}
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
 
     steps:
@@ -412,6 +484,7 @@ jobs:
           Copy-Item $zip.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64-portable.zip"
 
       - name: Sign Windows release assets
+        if: needs.plan.outputs.signed == 'true'
         shell: pwsh
         working-directory: olcbox
         run: |
@@ -512,6 +585,7 @@ jobs:
           cache-dependency-path: olcrtc/go.sum
 
       - name: Import Developer ID certificate
+        if: needs.plan.outputs.signed == 'true'
         env:
           MACOS_CODESIGN_CERTIFICATE_BASE64: ${{ secrets.MACOS_CODESIGN_CERTIFICATE_BASE64 }}
           MACOS_CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CODESIGN_CERTIFICATE_PASSWORD }}
@@ -575,6 +649,7 @@ jobs:
           "$dest/xray" version | sed -n 1p
 
       - name: Sign the bundled cores
+        if: needs.plan.outputs.signed == 'true'
         working-directory: olcbox
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -596,10 +671,12 @@ jobs:
             codesign --verify --verbose=2 "$core"
           done
 
+      # No identity in a dry run: Gradle then builds the DMG unsigned, as it
+      # does for a checkout without the secret.
       - name: Build macOS DMG
         working-directory: olcbox
         env:
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_SIGN_IDENTITY: ${{ needs.plan.outputs.signed == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
         run: |
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" :desktopApp:packageReleaseDmg --stacktrace
@@ -626,6 +703,7 @@ jobs:
 
       - name: Submit for notarisation
         id: notarise
+        if: needs.plan.outputs.signed == 'true'
         working-directory: olcbox
         env:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -828,30 +906,43 @@ jobs:
       contents: read
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
-      CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
       OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
     defaults:
       run:
         working-directory: cli
     steps:
       - uses: actions/checkout@v7
+      # The key reaches the two steps that need it and no other; a dry run
+      # reaches neither, and its packages and sums carry no signature.
       - name: Signing key is set
+        if: needs.plan.outputs.signed == 'true'
+        env:
+          CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
         run: |
           [ -n "${CLI_RELEASE_SIGNING_KEY}" ] || { echo "::error::CLI_RELEASE_SIGNING_KEY is not set; the CLI release is signed or not built"; exit 1; }
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: cli/go.sum
-      - name: Build, package, sum, sign
+      - name: Build, package, sum
         run: |
           set -euo pipefail
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           [ -n "${OLCBOX_CRYPT_KEY_V1}" ] || echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this CLI build cannot read crypt1 lists"
           make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}"
+      - name: Sign
+        if: needs.plan.outputs.signed == 'true'
+        env:
+          CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
           umask 077
           printf '%s\n' "${CLI_RELEASE_SIGNING_KEY}" > "$RUNNER_TEMP/cli-signing.pem"
           make sign VERSION="${OLCBOX_VERSION}" KEY="$RUNNER_TEMP/cli-signing.pem"
           rm -f "$RUNNER_TEMP/cli-signing.pem"
+      - name: Only what ships
+        run: |
+          set -euo pipefail
           rm -rf dist/linux-* dist/nfpm-*.yaml
           ls -la dist
       - name: Upload artifact
@@ -877,14 +968,17 @@ jobs:
       # move together: a config this app writes is validated against one schema.
       SINGBOX_VERSION: "1.13.14"
       XRAY_VERSION: "26.7.11"
-      ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
-      ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
-      ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-      ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+      # The five below are empty in a dry run. The signing step then takes its
+      # branch for a checkout without the secrets (a throw-away keystore, so
+      # the APK installs and the bundle is whole), and nothing goes to Play.
+      ANDROID_RELEASE_KEYSTORE_BASE64: ${{ needs.plan.outputs.signed == 'true' && secrets.ANDROID_RELEASE_KEYSTORE_BASE64 || '' }}
+      ANDROID_RELEASE_STORE_PASSWORD: ${{ needs.plan.outputs.signed == 'true' && secrets.ANDROID_RELEASE_STORE_PASSWORD || '' }}
+      ANDROID_RELEASE_KEY_ALIAS: ${{ needs.plan.outputs.signed == 'true' && secrets.ANDROID_RELEASE_KEY_ALIAS || '' }}
+      ANDROID_RELEASE_KEY_PASSWORD: ${{ needs.plan.outputs.signed == 'true' && secrets.ANDROID_RELEASE_KEY_PASSWORD || '' }}
       # A Google Cloud service account invited into the Play Console with
       # "Release to testing tracks" (and "Release to production" for that
       # track). Absent, the play bundle is built and kept as an artifact only.
-      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+      PLAY_SERVICE_ACCOUNT_JSON: ${{ needs.plan.outputs.signed == 'true' && secrets.PLAY_SERVICE_ACCOUNT_JSON || '' }}
 
     steps:
       - name: Checkout olcbox
@@ -1272,10 +1366,10 @@ jobs:
       - name: Upload the play bundle to Google Play
         id: play_upload
         continue-on-error: true
-        if: env.PLAY_SERVICE_ACCOUNT_JSON != '' && inputs.play_track != 'none'
+        if: needs.plan.outputs.signed == 'true' && env.PLAY_SERVICE_ACCOUNT_JSON != '' && needs.plan.outputs.play_track != 'none'
         working-directory: olcbox
         env:
-          PLAY_TRACK: ${{ inputs.play_track || 'internal' }}
+          PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
         run: |
           set -euo pipefail
           sa="$RUNNER_TEMP/play-service-account.json"
@@ -1297,9 +1391,9 @@ jobs:
       # Says what happened to the Play upload in the run summary, so that
       # "continue-on-error" cannot turn a refusal into silence. Never fails.
       - name: Report the Google Play upload
-        if: always() && env.PLAY_SERVICE_ACCOUNT_JSON != '' && inputs.play_track != 'none'
+        if: always() && needs.plan.outputs.signed == 'true' && env.PLAY_SERVICE_ACCOUNT_JSON != '' && needs.plan.outputs.play_track != 'none'
         env:
-          PLAY_TRACK: ${{ inputs.play_track || 'internal' }}
+          PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
           PLAY_OUTCOME: ${{ steps.play_upload.outcome }}
         run: |
           set -euo pipefail
@@ -1374,8 +1468,12 @@ jobs:
         run: |
           gomobile init
 
+      # Not reached in a dry run: its `signed` output is then never written,
+      # and the job takes the unsigned path below, as it does for a checkout
+      # without the secrets.
       - name: Import the iOS distribution certificate
         id: signing
+        if: needs.plan.outputs.signed == 'true'
         env:
           IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
           IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
@@ -1420,7 +1518,7 @@ jobs:
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Provisioning profiles from App Store Connect
-        if: steps.signing.outputs.signed == 'true'
+        if: needs.plan.outputs.signed == 'true' && steps.signing.outputs.signed == 'true'
         working-directory: olcbox
         env:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -1443,7 +1541,7 @@ jobs:
             --profile "ProofKit PacketTunnel App Store=org.proofkit.app.PacketTunnel"
 
       - name: Archive and upload to TestFlight
-        if: steps.signing.outputs.signed == 'true'
+        if: needs.plan.outputs.signed == 'true' && steps.signing.outputs.signed == 'true'
         working-directory: olcbox
         env:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -1623,7 +1721,9 @@ jobs:
     # Not gated on publishing any more — see the submit step for why. This job is
     # a 1x runner sleeping, so running it for test builds too costs almost
     # nothing; the expensive machine was released before it started.
-    if: needs.plan.outputs.macos_any == 'true'
+    #
+    # Not in a dry run: nothing was submitted, and the notary's key stays unread.
+    if: needs.plan.outputs.macos_any == 'true' && needs.plan.outputs.signed == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1651,7 +1751,7 @@ jobs:
   staple-macos:
     name: Staple the ticket
     needs: [plan, release_version, notarise-wait]
-    if: needs.plan.outputs.macos_any == 'true'
+    if: needs.plan.outputs.macos_any == 'true' && needs.plan.outputs.signed == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.macos_matrix) }}
@@ -1713,7 +1813,10 @@ jobs:
     # publish a v1.0.N holding nothing but the gate's report and then delete and
     # recreate the rolling nightly the same way. Hence the gate's own result. A
     # gate skipped by request (gate: skip) passes, with a report that says so.
-    if: ${{ needs.plan.outputs.publish == 'true' && needs.gate.result == 'success' && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    #
+    # And only a run that signs: a dry run publishes nothing, and none of the
+    # three publish jobs is reached in one.
+    if: ${{ needs.plan.outputs.signed == 'true' && needs.plan.outputs.publish == 'true' && needs.gate.result == 'success' && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     concurrency:
       group: publish-${{ github.repository }}-${{ needs.release_version.outputs.nightly_tag }}
       cancel-in-progress: false
@@ -1955,7 +2058,7 @@ jobs:
   publish-cli-docker:
     runs-on: ubuntu-latest
     needs: [plan, release_version, build-cli, publish-nightly]
-    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    if: ${{ needs.plan.outputs.signed == 'true' && needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -1999,7 +2102,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [plan, release_version, build-cli, publish-nightly]
-    if: ${{ needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
+    if: ${{ needs.plan.outputs.signed == 'true' && needs.publish-nightly.result == 'success' && needs.build-cli.result == 'success' }}
     permissions:
       contents: write
     concurrency:
