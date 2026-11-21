@@ -28,6 +28,10 @@ mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ghostlane-core-pin.sh
 . "$HERE/ghostlane-core-pin.sh"
+# A dispatch with pin=<sha> builds another commit of the core: the resolver
+# checks it, and an empty value is the pin.
+GHOSTLANE_CORE_COMMIT="$(bash "$HERE/ghostlane-core-resolve.sh" "${GHOSTLANE_CORE_PIN_OVERRIDE:-}" |
+  sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')"
 export PATH="$HOME/.cargo/bin:$PATH"
 : "${ANDROID_NDK_VERSION:?the NDK the app pins}"
 : "${ANDROID_HOME:?the Android SDK}"
