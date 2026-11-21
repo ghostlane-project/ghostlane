@@ -70,19 +70,26 @@ internal fun JsonObjectBuilder.putTransport(transport: TransportSpec) {
  * `h2, http/1.1` (a browser's offer, ProofKit's WebTunnel links) and turns any
  * other list, or none, into `http/1.1` alone, the fingerprint those links
  * avoid. [pin] is a certificate's SHA-256 as [CoreSupport.pin] spells it.
- * [insecure] is the link's own wish to waive certificate checks, handed on by
- * a kind that carries such links.
+ *
+ * [insecure] is the link's own wish to waive certificate checks, written as
+ * `allowInsecure` when a kind hands it on and never otherwise: not as `false`
+ * either, so the config of a link that waives nothing is what it was. This
+ * only passes the wish through. Whether a link that waives its checks is
+ * carried at all is its kind's rule, said in its refusal, and the kinds here
+ * today hand nothing on: each refuses such a link, or verifies it against
+ * its published pin instead.
  */
 internal fun JsonObjectBuilder.putTls(
     serverName: String,
     fingerprint: String? = null,
     alpn: List<String> = emptyList(),
     pin: String? = null,
-    @Suppress("UNUSED_PARAMETER") insecure: Boolean = false,
+    insecure: Boolean = false,
 ) {
     put("security", "tls")
     putJsonObject("tlsSettings") {
         if (serverName.isNotBlank()) put("serverName", serverName)
+        if (insecure) put("allowInsecure", true)
         if (fingerprint != null) put("fingerprint", fingerprint)
         if (alpn.isNotEmpty()) putJsonArray("alpn") { alpn.forEach { add(it) } }
         if (pin != null) put("pinnedPeerCertSha256", pin)
