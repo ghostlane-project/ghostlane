@@ -1,0 +1,4 @@
+android | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | shared Kotlin, no engine on its path
+macos | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | shared Kotlin, no engine on its path
+linux | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | shared Kotlin, no engine on its path
+windows | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | shared Kotlin, no engine on its path

@@ -1,0 +1,5 @@
+android | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | shared Kotlin, no engine on its path
+ios | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | shared Kotlin, no engine on its path
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | The adder is tested on literal numbers; the count's source on this tun is the tun's sing-box local API, which the move removes, and its replacement is not proven
+linux | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | shared Kotlin, no engine on its path
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | The adder is tested on literal numbers; the count's source on this tun is the tun's sing-box local API, which the move removes, and its replacement is not proven

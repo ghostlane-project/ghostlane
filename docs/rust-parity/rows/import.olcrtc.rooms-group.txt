@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row
+ios | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row
+macos | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row
+linux | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row
+windows | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row

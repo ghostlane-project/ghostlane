@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run

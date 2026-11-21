@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core

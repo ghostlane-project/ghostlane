@@ -1,0 +1,6 @@
+android | not-proven | - | -
+ios | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/RustCoreConfigDumpTest.kt::dumpIosCoreConfigs, scripts/check-rust-core-configs.sh, .github/workflows/pr-checks.yml::Rust core: the app's core.json, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayConfigIosCoreTest.kt::realityVision | The core parses the builder's config for the line and starts from it (the iPhone's reference configs); no traffic through the line is run yet
+macos | not-proven | - | -
+linux | not-proven | - | -
+windows | not-proven | - | -
+cli | not-proven | - | -

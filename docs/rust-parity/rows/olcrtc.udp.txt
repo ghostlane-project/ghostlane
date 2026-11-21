@@ -1,0 +1,5 @@
+android | not-proven | - | -
+ios | not-proven | - | The iPhone's tunnel hands UDP to a room by UDP ASSOCIATE; the Rust path is not run
+macos | not-proven | - | -
+linux | not-proven | - | -
+windows | not-proven | - | -
