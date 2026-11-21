@@ -1,0 +1,188 @@
+name: No Go in what ships
+
+# K1. scripts/check-no-go.sh reads every shipped file at every nesting and fails
+# on anything that is Go (a build id, go:buildinfo, a pclntab header, the Go
+# runtime's symbols, a Go core's file name). scripts/no-go-allow.d/ lists the
+# artefacts that may still hold Go; the list only shrinks, and a clean artefact
+# that is still on it fails.
+#
+# Three jobs:
+#   selftest        scripts/test-check-no-go.sh on ubuntu and macOS. It needs a Go
+#                   toolchain to make the planted hello (a test fixture, never a
+#                   shipped file) and plants a stripped one with no build id at
+#                   each nesting.
+#   plan, scan      the check on every asset of a published release (the latest
+#                   one, or release_tag), one job per asset, downloaded with the
+#                   run's own token. A DMG is opened on macOS; an ubuntu job
+#                   never gets one. A run of this workflow that is red names, per
+#                   asset, what was found and where, in its job summary.
+#
+# To check a dry release run's artefacts (the IPA and the AAB are not in a
+# release): dispatch this workflow with run_id set to that run's id. Each
+# artifact of the run becomes a job; one whose name holds "mac" or "dmg" runs on
+# macOS. The run's artifacts must be readable with this workflow's token, which
+# holds contents: read and nothing wider; if the API refuses, download the
+# artifact and run scripts/check-no-go.sh on the file by hand.
+#
+# An artefact that is not on the allow list and holds Go makes its job red: add
+# no entry for it, fix the build, or (for a first dry run of a new artefact)
+# have `check-no-go.sh --suggest FILE` print the file name the entry would have.
+#
+# Runs on a push or a pull request that touches what it reads, and by hand.
+# It is not part of the release gate and starts nothing live.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release whose assets are checked; empty = the latest published release
+        type: string
+        default: ''
+      run_id:
+        description: Id of a run (a dry release run) whose artifacts are checked instead of a release's assets
+        type: string
+        default: ''
+  pull_request:
+    branches:
+      - main
+      - rust/all
+    paths:
+      - scripts/check-no-go.sh
+      - scripts/test-check-no-go.sh
+      - scripts/no-go-allow.d/**
+      - .github/workflows/no-go.yml
+  push:
+    paths:
+      - scripts/check-no-go.sh
+      - scripts/test-check-no-go.sh
+      - scripts/no-go-allow.d/**
+      - .github/workflows/no-go.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: no-go-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: Self-test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Tools the check opens containers with
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools zstd cpio build-essential
+
+      - name: Self-test
+        env:
+          REQUIRE_GO: '1'
+          REQUIRE_TOOLS: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: bash scripts/test-check-no-go.sh
+
+  plan:
+    name: What to check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      mode: ${{ steps.plan.outputs.mode }}
+      ref: ${{ steps.plan.outputs.ref }}
+    steps:
+      - name: Assets or artifacts
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RUN_ID" ]; then
+            case "$RUN_ID" in *[!0-9]*) echo "run_id must be a number" >&2; exit 1;; esac
+            gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.expired | not) | .name' > names.txt
+            mode=run; ref=$RUN_ID
+          else
+            if [ -z "$TAG" ]; then TAG=$(gh api "repos/$REPO/releases/latest" --jq .tag_name); fi
+            gh api "repos/$REPO/releases/tags/$TAG" --jq 'if .draft then error("a draft is not published") else .assets[].name end' > names.txt
+            mode=release; ref=$TAG
+          fi
+          [ -s names.txt ] || { echo "nothing to check" >&2; exit 1; }
+          python3 -I - <<'PY' > matrix.json
+          import json
+          out = []
+          for n in open("names.txt").read().split("\n"):
+              if not n:
+                  continue
+              low = n.lower()
+              mac = low.endswith(".dmg") or "dmg" in low or "mac" in low
+              out.append({"name": n, "os": "macos-latest" if mac else "ubuntu-latest"})
+          print(json.dumps({"include": out}))
+          PY
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          {
+            echo "## $mode $ref"
+            echo
+            sed 's/^/- /' names.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  scan:
+    name: ${{ matrix.name }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tools the check opens containers with
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends p7zip-full squashfs-tools zstd cpio
+
+      - name: Download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MODE: ${{ needs.plan.outputs.mode }}
+          REF: ${{ needs.plan.outputs.ref }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asset"
+          if [ "$MODE" = release ]; then
+            gh release download "$REF" -R "$REPO" -p "$NAME" -D "$RUNNER_TEMP/asset" --clobber
+          else
+            gh run download "$REF" -R "$REPO" -n "$NAME" -D "$RUNNER_TEMP/asset"
+          fi
+          find "$RUNNER_TEMP/asset" -type f -exec ls -l {} +
+
+      - name: Check
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          files=()
+          while IFS= read -r f; do files+=("$f"); done < <(find "$RUNNER_TEMP/asset" -type f | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "the download holds no file" >&2; exit 1; }
+          opts=(--summary "$GITHUB_STEP_SUMMARY")
+          if [ "$RUNNER_OS" != macOS ]; then opts+=(--dmg-not-opened-ok); fi
+          scripts/check-no-go.sh "${opts[@]}" "${files[@]}"
