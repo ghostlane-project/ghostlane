@@ -34,7 +34,7 @@ const DIAL_LIMIT: Duration = Duration::from_secs(3);
 const EXCHANGE_LIMIT: Duration = Duration::from_secs(120);
 
 fn is_false(flag: &bool) -> bool {
-    todo!()
+    !*flag
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,7 +151,11 @@ pub struct Response {
 
 /// A refusal: a code for programs and a sentence for people.
 pub fn fail(code: &str, message: &str) -> Response {
-    todo!()
+    Response {
+        error: code.to_string(),
+        message: message.to_string(),
+        ..Response::default()
+    }
 }
 
 /// Why a request got no answer.
@@ -165,7 +169,10 @@ pub enum CallError {
 
 impl fmt::Display for CallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        match self {
+            CallError::DaemonDown(detail) => write!(f, "{DAEMON_DOWN}: {detail}"),
+            CallError::Exchange(detail) => f.write_str(detail),
+        }
     }
 }
 
@@ -173,14 +180,36 @@ impl std::error::Error for CallError {}
 
 /// Asks the daemon on the socket at `path` and waits for its answer.
 pub fn call(path: &Path, request: &Request) -> Result<Response, CallError> {
-    todo!()
+    let stream = dial(path)
+        .map_err(|why| CallError::DaemonDown(format!("dial unix {}: {why}", path.display())))?;
+    let mut conn = Deadline::new(&stream);
+    let line =
+        gocompat::json::encode_line(request).map_err(|err| CallError::Exchange(err.to_string()))?;
+    conn.write_all(&line).map_err(|err| {
+        CallError::Exchange(format!(
+            "write unix {}: {}",
+            path.display(),
+            errno_text(&err)
+        ))
+    })?;
+    read_value(&mut conn)
+        .map_err(|why| CallError::Exchange(format!("daemon answered nothing: {why}")))
 }
 
 /// Connects within the dial limit. A unix socket answers at once or not at
 /// all, but for a daemon whose queue is full: the connect runs aside, and is
 /// left behind when it takes too long.
 fn dial(path: &Path) -> Result<UnixStream, String> {
-    todo!()
+    let (sender, receiver) = mpsc::channel();
+    let target = path.to_path_buf();
+    thread::spawn(move || {
+        let _ = sender.send(UnixStream::connect(target));
+    });
+    match receiver.recv_timeout(DIAL_LIMIT) {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(err)) => Err(format!("connect: {}", errno_text(&err))),
+        Err(_) => Err("i/o timeout".to_string()),
+    }
 }
 
 /// A connection whose reads and writes all end by one moment, as Go's
@@ -192,37 +221,52 @@ struct Deadline<'a> {
 
 impl<'a> Deadline<'a> {
     fn new(stream: &'a UnixStream) -> Deadline<'a> {
-        todo!()
+        Deadline {
+            stream,
+            until: Instant::now() + EXCHANGE_LIMIT,
+        }
     }
 
     fn left(&self) -> io::Result<Duration> {
-        todo!()
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            Err(timed_out())
+        } else {
+            Ok(left)
+        }
     }
 }
 
 fn timed_out() -> io::Error {
-    todo!()
+    io::Error::new(io::ErrorKind::TimedOut, "i/o timeout")
 }
 
 /// A read or a write that ran into the socket's time limit says so in one
 /// way, whatever the system calls it.
 fn as_timeout(err: io::Error) -> io::Error {
-    todo!()
+    match err.kind() {
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => timed_out(),
+        _ => err,
+    }
 }
 
 impl Read for Deadline<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        todo!()
+        self.stream.set_read_timeout(Some(self.left()?))?;
+        let mut stream = self.stream;
+        stream.read(buf).map_err(as_timeout)
     }
 }
 
 impl Write for Deadline<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        todo!()
+        self.stream.set_write_timeout(Some(self.left()?))?;
+        let mut stream = self.stream;
+        stream.write(buf).map_err(as_timeout)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        todo!()
+        Ok(())
     }
 }
 
@@ -235,7 +279,11 @@ struct Seen<R> {
 
 impl<R: Read> Read for Seen<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        todo!()
+        let count = self.inner.read(buf)?;
+        self.text |= buf[..count]
+            .iter()
+            .any(|&byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'));
+        Ok(count)
     }
 }
 
@@ -243,7 +291,19 @@ impl<R: Read> Read for Seen<R> {
 /// for the answer, so the end of the value is the end of the reading. The
 /// error is a sentence for the other side, Go's where Go has one for it.
 fn read_value<T: DeserializeOwned>(reader: impl Read) -> Result<T, String> {
-    todo!()
+    let mut input = Seen {
+        inner: BufReader::new(reader),
+        text: false,
+    };
+    let read = {
+        let mut deserializer = serde_json::Deserializer::from_reader(&mut input);
+        T::deserialize(&mut deserializer)
+    };
+    read.map_err(|err| match err.classify() {
+        serde_json::error::Category::Eof if input.text => "unexpected EOF".to_string(),
+        serde_json::error::Category::Eof => "EOF".to_string(),
+        _ => err.to_string(),
+    })
 }
 
 /// Why the control socket could not be opened, as Go words it
@@ -253,7 +313,7 @@ pub struct BindError(String);
 
 impl fmt::Display for BindError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        f.write_str(&self.0)
     }
 }
 
@@ -275,7 +335,9 @@ pub struct Stopper {
 
 impl Stopper {
     pub fn stop(&self) {
-        todo!()
+        self.stopping.store(true, Ordering::SeqCst);
+        // the server waits for a connection: this one wakes it
+        let _ = UnixStream::connect(&self.path);
     }
 }
 
@@ -283,11 +345,33 @@ impl Server {
     /// Listens on `path` with the file mode `mode`. The directory is made
     /// when it is missing, and a socket file a dead daemon left is replaced.
     pub fn bind(path: &Path, mode: u32) -> Result<Server, BindError> {
-        todo!()
+        let refused = |action: &str, at: &Path, why: &str| {
+            BindError(format!("{action} {}: {why}", at.display()))
+        };
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            if dir.exists() && !dir.is_dir() {
+                return Err(refused("mkdir", dir, "not a directory"));
+            }
+            let made = DirBuilder::new().recursive(true).mode(0o750).create(dir);
+            made.map_err(|err| refused("mkdir", dir, &errno_text(&err)))?;
+        }
+        let _ = fs::remove_file(path);
+        let listener = UnixListener::bind(path)
+            .map_err(|err| refused("listen unix", path, &format!("bind: {}", errno_text(&err))))?;
+        fs::set_permissions(path, Permissions::from_mode(mode))
+            .map_err(|err| refused("chmod", path, &errno_text(&err)))?;
+        Ok(Server {
+            listener,
+            path: path.to_path_buf(),
+            stopping: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     pub fn stopper(&self) -> Stopper {
-        todo!()
+        Stopper {
+            path: self.path.clone(),
+            stopping: Arc::clone(&self.stopping),
+        }
     }
 
     /// Answers one request a connection, each on a thread of its own, until
@@ -296,10 +380,31 @@ impl Server {
     where
         H: Fn(Request) -> Response + Send + Sync + 'static,
     {
-        todo!()
+        let handler = Arc::new(handler);
+        let ended = loop {
+            match self.listener.accept() {
+                Ok(_) if self.stopping.load(Ordering::SeqCst) => break Ok(()),
+                Ok((stream, _)) => {
+                    let handler = Arc::clone(&handler);
+                    thread::spawn(move || answer(&stream, &*handler));
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) if self.stopping.load(Ordering::SeqCst) => break Ok(()),
+                Err(err) => break Err(err),
+            }
+        };
+        let _ = fs::remove_file(&self.path);
+        ended
     }
 }
 
 fn answer(stream: &UnixStream, handler: &dyn Fn(Request) -> Response) {
-    todo!()
+    let mut conn = Deadline::new(stream);
+    let response = match read_value::<Request>(&mut conn) {
+        Ok(request) => handler(request),
+        Err(why) => fail("bad_request", &why),
+    };
+    if let Ok(line) = gocompat::json::encode_line(&response) {
+        let _ = conn.write_all(&line);
+    }
 }
