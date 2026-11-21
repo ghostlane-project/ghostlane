@@ -1,0 +1,36 @@
+# The Linux CLI in Rust, beside the Go module that still ships (go.mod, cmd/,
+# internal/). The Go tooling reads no directory without a .go file, so the two
+# live in one directory without seeing each other.
+#
+# The members are a glob: a later crate is a new directory under crates/ and
+# no edit here, unless the program itself has to call it (then it is one line
+# under [dependencies]).
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[package]
+name = "ghostlane-cli"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+description = "Ghostlane for Linux servers and boxes: the command line, the state files and the control socket"
+
+[lib]
+name = "ghostlane_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ghostlane"
+path = "src/main.rs"
+
+# Few and common, and none that needs a C toolchain or OpenSSL: the release
+# targets are static musl binaries.
+[dependencies]
+base64 = "0.22"
+gocompat = { package = "ghostlane-gocompat", path = "crates/gocompat" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+signal-hook = "0.3"
