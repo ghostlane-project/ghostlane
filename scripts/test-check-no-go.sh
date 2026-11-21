@@ -33,6 +33,19 @@ need_tool() { # name; REQUIRE_TOOLS=1 turns a missing tool into a failure
   return 1
 }
 
+# what the check prints for each planted signal (a function: bash 3.2 cannot
+# parse a case with a bare ) inside $( ))
+sigword() {
+  case "$1" in
+    pcln*) echo pclntab ;;
+    buildinfo) echo buildinfo ;;
+    buildid) echo build-id ;;
+    buildnote) echo build-id-note ;;
+    section) echo section ;;
+    *) echo symbol ;;
+  esac
+}
+
 # found FILE LABEL [PATTERN]: the check must exit 1 and say GO (and PATTERN)
 found() {
   local out rc
@@ -155,7 +168,7 @@ plant_all() { # DIR LABEL: every container the fixture tree holds must be found
 echo "== A. one signal at a time, names, and what is not Go"
 for key in pcln pcln118 pcln4 buildinfo buildid buildnote section goexit gopanic itab cgo; do
   mk "$tmp/a" single "s-$key" "$key"
-  found "$tmp/a/s-$key/bare/hello" "signal $key, bare" "$(case $key in pcln*) echo pclntab;; buildinfo) echo buildinfo;; buildid) echo build-id;; buildnote) echo build-id-note;; section) echo section;; *) echo symbol;; esac)"
+  found "$tmp/a/s-$key/bare/hello" "signal $key, bare" "$(sigword "$key")"
   found "$tmp/a/s-$key/zipzip/app.aab" "signal $key, in an APK in an AAB"
 done
 mk "$tmp/a" single s-nest pcln
