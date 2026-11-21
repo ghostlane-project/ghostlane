@@ -27,6 +27,11 @@
 #   scripts/p6-tests/core-build.sh [root]     root defaults to the repository
 # Needs bash, git, python3 and PyYAML.
 set -euo pipefail
+# What the build scripts read from the environment, as a run of core-build.yml
+# sets it (a dispatch with pin=<sha> sets the override for every job): the
+# test starts from none of it, and names each case's own.
+unset GHOSTLANE_CORE_PIN_OVERRIDE GHOSTLANE_CORE_SRC GHOSTLANE_CORE_FAST GHOSTLANE_CORE_KEEP_GOING \
+  GHOSTLANE_CORE_LINK_PROOF GHOSTLANE_MUSL_TOOLCHAIN_DIR NM
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 host="$root/scripts/build-ghostlane-core-host.sh"
 android="$root/scripts/build-ghostlane-core-android.sh"

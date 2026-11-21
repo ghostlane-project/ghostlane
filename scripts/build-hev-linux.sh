@@ -65,7 +65,7 @@ static_for() {
 # toolchain <dir> <rust target>: see the header. Everything it says goes to
 # stderr; stdout is the environment.
 toolchain() {
-  local dir="$1" target="$2" arch triple cflags root low up tool check gcc_files wrapper
+  local dir="$1" target="$2" arch triple cflags root low up tool check gcc_files wrapper musl
   case "$target" in
     x86_64-unknown-linux-musl) arch=x86_64 triple=x86_64-alpine-linux-musl cflags="" ;;
     aarch64-unknown-linux-musl) arch=aarch64 triple=aarch64-alpine-linux-musl cflags="" ;;
@@ -101,6 +101,12 @@ toolchain() {
     test -f "$root/usr/lib/libc.a" || { echo "no libc.a in $root" >&2; return 1; }
     touch "$root/.ready"
   fi
+  test -f "$root/lib/apk/db/installed" || { echo "no package database in $root to read musl's version from" >&2; return 1; }
+  musl="$(awk '/^P:/ { p = $0 } /^V:/ && p == "P:musl" { sub(/^V:/, ""); print; exit }' "$root/lib/apk/db/installed")"
+  case "$musl" in
+    1.2.[3-9]* | 1.2.[1-9][0-9]* | 1.[3-9]* | [2-9]*) ;;
+    *) echo "the sysroot's musl is '$musl', older than 1.2.3" >&2; return 1 ;;
+  esac
   # The target and the sysroot come last, after whatever the caller passed: cc
   # and CMake name Rust's triple, and it is Alpine's that finds the start
   # files, libgcc and libstdc++ in the sysroot.
@@ -128,7 +134,7 @@ toolchain() {
   rm -rf "$check"
   gcc_files=""
   for check in "$root/usr/lib/gcc/$triple"/*; do gcc_files="$(basename "$check")"; done
-  echo "== $target: $("$CLANG" --version | sed -n 1p), $(ld.lld --version | sed -n 1p), libgcc and libstdc++ $gcc_files from Alpine $ALPINE" >&2
+  echo "== $target: $("$CLANG" --version | sed -n 1p), $(ld.lld --version | sed -n 1p), libgcc and libstdc++ $gcc_files and musl $musl from Alpine $ALPINE" >&2
 
   low="$(echo "$target" | tr '-' '_')"
   up="$(echo "$target" | tr '[:lower:]-' '[:upper:]_')"
@@ -137,6 +143,13 @@ toolchain() {
   echo "AR_${low}=$(command -v llvm-ar)"
   echo "CARGO_TARGET_${up}_LINKER=$dir/bin/$target-clang"
   echo "BINDGEN_EXTRA_CLANG_ARGS_${low}=--sysroot=$root"
+  # The sysroot's musl is 1.2.3 or later, whose time_t is 64 bits on every
+  # architecture, and that is what BoringSSL is compiled against and what
+  # boring-sys's bindings say. The libc crate keeps musl 1.1's 32-bit time_t on
+  # armv7 unless told otherwise (and the boring crate then does not compile
+  # there: it hands a libc::time_t to X509_VERIFY_PARAM_set_time). This gives
+  # the Rust side the C side's types.
+  echo "RUST_LIBC_UNSTABLE_MUSL_V1_2_3=1"
 }
 
 if [ "${1:-}" = "--toolchain" ]; then
