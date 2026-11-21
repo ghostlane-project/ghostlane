@@ -24,9 +24,22 @@ concurrency:
 
 jobs:
   hev-windows:
-    name: hev.exe with Wintun
+    name: hev.exe with Wintun (${{ matrix.variant }})
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: loopback
+            delay: "0"
+          - variant: loopback-slow-reply
+            delay: "0.2"
+          - variant: host-address
+            delay: "0"
+    env:
+      VARIANT: ${{ matrix.variant }}
+      STUB_DELAY: ${{ matrix.delay }}
     steps:
       - uses: actions/checkout@v7
 
@@ -36,9 +49,15 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'lab'
           New-Item -ItemType Directory -Force $dir | Out-Null
           @'
-          import socket, struct, threading, sys
+          import socket, struct, threading, sys, time
 
           LOG = open(sys.argv[1], 'a', buffering=1)
+          BIND = sys.argv[2]
+          DELAY = float(sys.argv[3])
+
+          def snd(c, b):
+              time.sleep(DELAY)
+              c.sendall(b)
 
           def log(m):
               LOG.write(m + '\n')
@@ -90,13 +109,13 @@ jobs:
                   n = hs[1]
                   log('HELLO ver=%d nmethods=%d' % (hs[0], n))
                   log('METHODS %s' % recvn(c, n).hex())
-                  c.sendall(b'\x05\x00')
+                  snd(c, b'\x05\x00')
                   log('REPLIED no-auth')
                   cmd = recvn(c, 3)[1]
                   host, port = read_addr(c)
                   if cmd == 1:
                       log('CONNECT %s:%d' % (host, port))
-                      c.sendall(b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+                      snd(c, b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
                       buf = b''
                       while b'\r\n\r\n' not in buf:
                           x = c.recv(4096)
@@ -104,19 +123,19 @@ jobs:
                               return
                           buf += x
                       body = b'hev-spike-tcp-ok\n'
-                      c.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
+                      snd(c, b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
                   elif cmd == 3:
                       u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                      u.bind(('127.0.0.1', 0))
+                      u.bind((BIND, 0))
                       p = u.getsockname()[1]
-                      log('ASSOCIATE hint %s:%d relay 127.0.0.1:%d' % (host, port, p))
+                      log('ASSOCIATE hint %s:%d relay %s:%d' % (host, port, BIND, p))
                       threading.Thread(target=udp_relay, args=(u,), daemon=True).start()
-                      c.sendall(b'\x05\x00\x00\x01\x7f\x00\x00\x01' + struct.pack('!H', p))
+                      snd(c, b'\x05\x00\x00\x01' + socket.inet_aton(BIND) + struct.pack('!H', p))
                       while c.recv(1):
                           pass
                   else:
                       log('CMD %d refused' % cmd)
-                      c.sendall(b'\x05\x07\x00\x01' + b'\x00' * 6)
+                      snd(c, b'\x05\x07\x00\x01' + b'\x00' * 6)
               except Exception as e:
                   log('connection error %r' % (e,))
               finally:
@@ -124,7 +143,7 @@ jobs:
 
           srv = socket.socket()
           srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-          srv.bind(('127.0.0.1', 1080))
+          srv.bind((BIND, 1080))
           srv.listen(16)
           log('READY')
           while True:
@@ -236,10 +255,13 @@ jobs:
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'lab'
           python --version
-          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log')) `
+          $bind = '127.0.0.1'
+          if ($env:VARIANT -eq 'host-address') { $bind = (Find-NetRoute -RemoteIPAddress 8.8.8.8 | Select-Object -First 1).IPAddress }
+          "variant $($env:VARIANT): stub on $bind, reply delay $($env:STUB_DELAY) s"
+          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log'), $bind, $env:STUB_DELAY) `
             -RedirectStandardError (Join-Path $dir 'stub.err') -NoNewWindow
           for ($i = 0; $i -lt 30; $i++) {
-            try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
+            try { $c = New-Object Net.Sockets.TcpClient($bind, 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
           }
           Get-Content (Join-Path $dir 'stub.log')
 
@@ -251,7 +273,7 @@ jobs:
             ipv4: 198.18.0.1
           socks5:
             port: 1080
-            address: 127.0.0.1
+            address: $bind
             udp: 'udp'
           misc:
             log-file: stderr
