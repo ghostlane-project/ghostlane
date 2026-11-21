@@ -361,6 +361,9 @@ jobs:
           # Until the commit has the desktop program: a static program with
           # BoringSSL is linked for the target all the same, and checked.
           GHOSTLANE_CORE_LINK_PROOF: "1"
+          # cargo goes on past a crate that fails, so that every crate that
+          # does not compile for the target is named in the report.
+          GHOSTLANE_CORE_KEEP_GOING: "1"
           TARGET: ${{ matrix.target }}
         run: |
           set +e -uo pipefail

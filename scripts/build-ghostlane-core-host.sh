@@ -62,7 +62,9 @@
 # GHOSTLANE_CORE_LINK_PROOF=1, on a musl target of a commit with no
 #   ghostlane-engine: links olc-client with `boring` into a static program and
 #   checks it, so that "a static program with BoringSSL links for this target"
-#   is known before the engine exists. The program is not kept.
+#   is known before the engine exists. The program is not kept. It is tried
+#   as well when ghostlane-core itself does not compile for the target (which
+#   still fails it): the LINK line then says whether BoringSSL is the problem.
 # Needs rustup, git, cmake, a C and C++ compiler and libclang (boring-sys's
 # bindgen); on Linux also what build-hev-linux.sh --toolchain needs. bash 3.2
 # safe (macOS).
@@ -315,20 +317,42 @@ strip_program() {
   fi
 }
 
+# link_proof <target>: a musl target of a commit with no ghostlane-engine
+# links olc-client with `boring` (no xray crate in it) into a static program,
+# which must carry BoringSSL; the LINK line says what it found. The program is
+# not kept.
+link_proof() {
+  local target="$1" start sym rc=0 how proof
+  start=$(date +%s)
+  if ! run_cargo "$target" "$logs/$target.log" -p olc-client --bin olc-client --features boring; then
+    failed "$target" "a static program with boring (olc-client) did not link" "$logs/$target.log"
+    return 1
+  fi
+  sym="$src/target/$target/release/olc-client"
+  how="$(static_program "$sym")" || rc=$?
+  proof="$(boring_proof "$sym")" || rc=$?
+  say "LINK $target: olc-client with boring, standing in for the engine, links in $(($(date +%s) - start)) s: $how, $(wc -c < "$sym" | tr -d ' ') bytes; $proof"
+  [ "$rc" -eq 0 ] || { failed "$target" "the stand-in program is not static or carries no BoringSSL" "$logs/$target.log"; return 1; }
+}
+
 build_target() {
   local target="$1" start lib name out proof rc exe sym how
   out="$OUT/report/$target.txt"
   : > "$out"
   : > "$logs/$target.log"
-  rm -rf "$OUT/lib/$target" "$OUT/bin/$target" "$OUT/symbols/$target" "$OUT/stamps/$target"
+  rm -rf "${OUT:?}/lib/${target:?}" "${OUT:?}/bin/${target:?}" "${OUT:?}/symbols/${target:?}" "${OUT:?}/stamps/${target:?}"
   say() { echo "$*" | tee -a "$out"; }
   if is_musl "$target"; then musl_env "$target"; fi
 
   start=$(date +%s)
-  # Not built with the feature yet: the check below reads the file and must
-  # say so, on every target.
-  if ! run_cargo "$target" "$logs/$target.log" -p ghostlane-core; then
+  if ! run_cargo "$target" "$logs/$target.log" -p ghostlane-core --features boring; then
     failed "$target" "ghostlane-core with boring did not build" "$logs/$target.log"
+    # The target still fails. What the stand-in says is whether BoringSSL
+    # itself builds and links into a static program there, apart from the
+    # crates that stopped the core.
+    if is_musl "$target" && [ "${GHOSTLANE_CORE_LINK_PROOF:-0}" = "1" ]; then
+      link_proof "$target" || true
+    fi
     return 1
   fi
   name="$(lib_name "$target")"
@@ -382,17 +406,7 @@ build_target() {
   else
     say "ENGINE $target: none, this commit has no crates/ghostlane-engine"
     if is_musl "$target" && [ "${GHOSTLANE_CORE_LINK_PROOF:-0}" = "1" ]; then
-      start=$(date +%s)
-      if ! run_cargo "$target" "$logs/$target.log" -p olc-client --bin olc-client --features boring; then
-        failed "$target" "a static program with boring (olc-client) did not link" "$logs/$target.log"
-        return 1
-      fi
-      sym="$src/target/$target/release/olc-client"
-      rc=0
-      how="$(static_program "$sym")" || rc=$?
-      proof="$(boring_proof "$sym")" || rc=$?
-      say "LINK $target: olc-client with boring, standing in for the engine, links in $(($(date +%s) - start)) s: $how, $(wc -c < "$sym" | tr -d ' ') bytes; $proof"
-      [ "$rc" -eq 0 ] || { failed "$target" "the stand-in program is not static or carries no BoringSSL" "$logs/$target.log"; return 1; }
+      link_proof "$target" || return 1
     fi
   fi
 
