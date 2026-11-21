@@ -214,23 +214,28 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          # hev's README: symlinks must be native for the build under MSYS2.
+          export MSYS=winsymlinks:native
+          T="$(cygpath -u "$RUNNER_TEMP")"
           src="$PWD/androidApp/src/main/jni/hev-socks5-tunnel"
-          rm -rf "$RUNNER_TEMP/hev-src"
-          cp -r "$src" "$RUNNER_TEMP/hev-src"
-          cd "$RUNNER_TEMP/hev-src"
+          echo "core.symlinks=$(git config core.symlinks || echo unset)"
+          ls -l "$src/third-part/yaml/include/yaml.h" "$src/third-part/hev-task-system/include/hev-task.h"
+          rm -rf "$T/hev-src"
+          cp -a "$src" "$T/hev-src"
+          cd "$T/hev-src"
           echo "MSYSTEM=$MSYSTEM"; gcc --version | head -1; make --version | head -1
           make REV_ID=spike -j2
           ls -la bin
-          cp bin/hev-socks5-tunnel.exe "$RUNNER_TEMP/run/hev.exe" 2>/dev/null || cp bin/hev-socks5-tunnel "$RUNNER_TEMP/run/hev.exe"
+          cp bin/hev-socks5-tunnel.exe "$T/run/hev.exe" 2>/dev/null || cp bin/hev-socks5-tunnel "$T/run/hev.exe"
           echo '--- DLLs hev.exe imports (objdump)'
-          objdump -p "$RUNNER_TEMP/run/hev.exe" | grep 'DLL Name' | sort -u
+          objdump -p "$T/run/hev.exe" | grep 'DLL Name' | sort -u
           echo '--- ldd'
-          ldd "$RUNNER_TEMP/run/hev.exe" | tee "$RUNNER_TEMP/ldd.txt"
+          ldd "$T/run/hev.exe" | tee "$T/ldd.txt"
           # Beside hev.exe: every DLL ldd resolves under the MSYS2 tree.
-          grep -o '/usr/bin/[A-Za-z0-9_.+-]*\.dll' "$RUNNER_TEMP/ldd.txt" | sort -u | while read -r d; do
-            echo "bundle $d"; cp "$d" "$RUNNER_TEMP/run/"
+          grep -o '/usr/bin/[A-Za-z0-9_.+-]*\.dll' "$T/ldd.txt" | sort -u | while read -r d; do
+            echo "bundle $d"; cp "$d" "$T/run/"
           done
-          ls -la "$RUNNER_TEMP/run"
+          ls -la "$T/run"
 
       - name: Bring hev.exe up on Wintun
         shell: pwsh
