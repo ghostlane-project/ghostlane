@@ -14,7 +14,15 @@ name: Release gate
 # - workflow_dispatch: a manual run; engine_ref gates a candidate before a re-pin.
 # - schedule: daily ("scheduled", not "nightly", which is release.yml's
 #   rolling release tag). Red means something outside the app changed.
-# - push: the pin or the gate changed ("pin"), on any branch.
+# - push: the pin or the gate changed ("pin"), on any branch but those under
+#   rust/.
+#
+# Dry: a run that may join no live room walks no leg and writes the skipped
+# report with one fixed reason. That is a release that signs nothing (the
+# caller passes dry), and any run of the gate's own on a branch under rust/,
+# where the Rust core is integrated; a push there does not start the gate at
+# all. scripts/gate-resolve.sh decides, the suite job asks again in its own
+# `if`, and scripts/test-release-dry.sh holds all of it.
 #
 # Every engine flag, env name, tag and path lives in scripts/gate-run.sh. The
 # secrets reach a step only through its env, only in the leg of their own
@@ -49,6 +57,10 @@ on:
         description: Why the gate is skipped; the release notes print it
         type: string
         default: ''
+      dry:
+        description: 'The caller signs nothing and publishes nothing: walk no leg, write the skipped report with the fixed dry-run reason'
+        type: boolean
+        default: false
       compare_severity:
         description: 'warn or fail: what a regression against the previous release does'
         type: string
@@ -88,8 +100,14 @@ on:
     # Branches only. Path filters are not evaluated for tag pushes, so without
     # this every tag the release creates (with a PAT, which does trigger
     # workflows) would start a full gate.
+    #
+    # Not the branches under rust/: the Rust core is integrated there, the pin
+    # and the gate's own files change there often, and no live room is joined
+    # from there. The exclusion comes after the match; in the other order it
+    # excludes nothing.
     branches:
       - '**'
+      - '!rust/**'
     paths:
       - scripts/cores-pins.sh
       - scripts/olcrtc-pin.sh
@@ -117,6 +135,8 @@ jobs:
       current_tag: ${{ steps.r.outputs.current_tag }}
       severity: ${{ steps.r.outputs.severity }}
       skip: ${{ steps.r.outputs.skip }}
+      dry: ${{ steps.r.outputs.dry }}
+      dry_reason: ${{ steps.r.outputs.dry_reason }}
       limited: ${{ steps.r.outputs.limited }}
       providers: ${{ steps.r.outputs.providers }}
       transports: ${{ steps.r.outputs.transports }}
@@ -141,6 +161,7 @@ jobs:
           GATE_CALL_APP_VERSION: ${{ inputs.app_version }}
           GATE_CALL_SKIP: ${{ inputs.skip }}
           GATE_CALL_SKIP_REASON: ${{ inputs.skip_reason }}
+          GATE_CALL_DRY: ${{ inputs.dry }}
           GATE_CALL_SEVERITY: ${{ inputs.compare_severity }}
           GATE_ENGINE_REF: ${{ inputs.engine_ref }}
           GATE_PROVIDERS: ${{ inputs.providers }}
@@ -191,7 +212,12 @@ jobs:
   suite:
     name: Suite (${{ matrix.provider }})
     needs: resolve
-    if: needs.resolve.outputs.skip != 'true'
+    # The legs are the only jobs that join a room, so a dry run is kept from
+    # them three ways, each enough alone: resolve's skip, the caller's own dry,
+    # and, for a run nobody called (no mode), the branch itself when it is
+    # under rust/. A release called from there without dry is a run that
+    # signs, and walks its legs as on main.
+    if: ${{ needs.resolve.outputs.skip != 'true' && !inputs.dry && !(!inputs.mode && startsWith(github.ref, 'refs/heads/rust/')) }}
     runs-on: ubuntu-latest
     # Setup about 3, plan up to 10, cli up to 25, mobile up to 35, scrub and
     # upload about 2: the job's limit stays above its steps' so the always()
@@ -376,18 +402,25 @@ jobs:
 
       # Break-glass: the builds still need a report to publish, one that says
       # the release was not gated and why, and that never becomes a baseline.
+      # A dry run takes the same report: its reason is the fixed one resolve
+      # wrote, never the caller's.
       - name: The skipped-by-request report
         id: skipped
         if: needs.resolve.outputs.skip == 'true'
         env:
-          REASON: ${{ inputs.skip_reason }}
+          REASON: ${{ needs.resolve.outputs.dry == 'true' && needs.resolve.outputs.dry_reason || inputs.skip_reason }}
+          DRY: ${{ needs.resolve.outputs.dry }}
         run: |
           set -euo pipefail
           mkdir -p gate
           python3 olcbox/scripts/gate-merge-reports.py skipped --reason "$REASON" \
             --engine-commit "$ENGINE_SHA" --engine-ref "$ENGINE_VERSION" --app-version "$APP_VERSION" \
             --mode "$MODE" --run-url "$RUN_URL" --out-json gate/gate-report.json --out-md gate/gate-report.md
-          echo "::warning title=Release gate::skipped by request: nothing this run builds or uploads to a store is gated; a published release says so in its notes, with the reason"
+          if [ "$DRY" = true ]; then
+            echo "::notice title=Release gate::dry run: no leg was walked and no room was joined; the report says so"
+          else
+            echo "::warning title=Release gate::skipped by request: nothing this run builds or uploads to a store is gated; a published release says so in its notes, with the reason"
+          fi
 
       - name: Checkout olcrtc at the gated revision
         if: needs.resolve.outputs.skip != 'true'

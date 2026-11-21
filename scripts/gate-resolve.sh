@@ -14,8 +14,11 @@
 #                               what tells the two apart.
 #   GATE_CALL_ENGINE_SHA, GATE_CALL_ENGINE_VERSION, GATE_CALL_APP_VERSION,
 #   GATE_CALL_SKIP, GATE_CALL_SKIP_REASON, GATE_CALL_SEVERITY   the caller's inputs
+#   GATE_CALL_DRY               inputs.dry: the caller signs nothing, uploads to
+#                               no store and publishes nothing (release.yml says
+#                               so for every such run), so no leg is walked
 #   GATE_ENGINE_REF, GATE_PROVIDERS, GATE_TRANSPORTS            a manual run's inputs
-#   GITHUB_REF_NAME, GITHUB_SHA, GH_TOKEN
+#   GITHUB_REF, GITHUB_REF_NAME, GITHUB_SHA, GH_TOKEN
 #
 # and writes:
 #   mode                        release | scheduled (the daily run) | pin (a push
@@ -24,7 +27,17 @@
 #   engine_on_proofkit, engine_proofkit_ahead_by, go_version
 #   app_version, current_tag    current_tag is v<app_version> for a release, else empty
 #   severity                    compare severity: warn unless a caller asks for fail
-#   skip                        true only for a release dispatched with gate: skip
+#   skip                        true for a release dispatched with gate: skip, and
+#                               for every dry run: neither walks a leg, and the
+#                               verdict writes the skipped report
+#   dry                         true when the run may join no live room: the
+#                               caller said so, or the run is the gate's own (a
+#                               push, a manual run, the schedule) on a branch
+#                               under rust/, where the Rust core is integrated.
+#                               A release called from there without dry is a run
+#                               that signs, and walks its legs as on main
+#   dry_reason                  the one sentence a dry run's skipped report
+#                               carries; empty when the run is not dry
 #   limited                     true when a manual run left a default provider out
 #                               or named its transports
 #   providers, transports
@@ -48,6 +61,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # engine walks it only when named, as this list does.
 readonly PROVIDERS=(jitsi telemost wbstream salutejazz vkcalls mtslink)
 readonly DEFAULT_PROVIDERS=(jitsi salutejazz vkcalls mtslink)
+# What the skipped report of a dry run says, word for word
+# (scripts/test-release-dry.sh holds the copy it is compared with).
+readonly DRY_REASON="dry run: nothing is signed, uploaded to a store or published, and no live room is joined"
 # Masks shorter than this shred every log line they match (gate-mask.sh).
 readonly MIN=6
 readonly MIN_TOKEN=16
@@ -105,8 +121,27 @@ resolve() {
     esac
   fi
 
+  # Dry: the caller's word, or the gate's own run on a branch under rust/. A
+  # caller's dry that is not plainly false is dry, so a value this cannot read
+  # opens no room.
+  local dry=false dry_reason=""
+  case "${GATE_CALL_DRY:-false}" in
+    false) ;;
+    *) dry=true ;;
+  esac
+  if [ "${mode}" != release ]; then
+    case "${GITHUB_REF:-}" in
+      refs/heads/rust/*) dry=true ;;
+    esac
+  fi
+
   local skip=false reason
-  if [ "${mode}" = release ] && [ "${GATE_CALL_SKIP:-false}" = true ]; then
+  if [ "${dry}" = true ]; then
+    # Before the break-glass skip: a dry run needs no gate_reason, its reason
+    # is the fixed one.
+    skip=true
+    dry_reason="${DRY_REASON}"
+  elif [ "${mode}" = release ] && [ "${GATE_CALL_SKIP:-false}" = true ]; then
     skip=true
     reason="$(trim "${GATE_CALL_SKIP_REASON:-}")"
     [ -n "${reason}" ] || die "gate: skip needs a gate_reason; the release notes print it"
@@ -201,7 +236,7 @@ resolve() {
   local legs
   legs="$(jq -cn '{include: [$ARGS.positional[] | {provider: .}]}' --args "${providers[@]}")"
 
-  echo "gate: ${mode}, engine ${sha:0:12} (${version}), app ${app_version}, legs ${providers[*]}${transports:+, transports ${transports}}, skip ${skip}" >&2
+  echo "gate: ${mode}, engine ${sha:0:12} (${version}), app ${app_version}, legs ${providers[*]}${transports:+, transports ${transports}}, skip ${skip}, dry ${dry}" >&2
   printf '%s\n' \
     "mode=${mode}" \
     "engine_repository=${repo}" \
@@ -216,6 +251,8 @@ resolve() {
     "current_tag=${current_tag}" \
     "severity=${severity}" \
     "skip=${skip}" \
+    "dry=${dry}" \
+    "dry_reason=${dry_reason}" \
     "limited=${limited}" \
     "providers=$(printf '%s\n' "${providers[@]}" | paste -sd, -)" \
     "transports=${transports}" \
