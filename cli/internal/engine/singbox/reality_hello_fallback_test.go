@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	sbtls "github.com/sagernet/sing-box/common/tls"
 	"golang.org/x/net/proxy"
 
 	"github.com/ghostlane-project/ghostlane/cli/internal/engine/olcrtc"
@@ -34,8 +35,13 @@ import (
 // and drops the rest of it.
 const (
 	firstSegment     = 1388
-	helloStallWindow = 4 * time.Second
+	helloStallWindow = sbtls.RealityHelloStallWindow
 )
+
+// rememberedAt is what the process-wide memory holds for the line's server.
+func rememberedAt(port int) sbtls.RealityShortHello {
+	return sbtls.RealityShortHelloAt(sbtls.RealityHelloServer{Address: "127.0.0.1:" + strconv.Itoa(port), ServerName: realitySNI})
+}
 
 // cuttingRelay stands between the front and a server. It keeps the first
 // record (the ClientHello) of every connection it is sent; with cut > 0 only
@@ -267,6 +273,9 @@ func realityServerFor(t *testing.T, bin xrayBin, target string, pg *httptest.Ser
 func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 	const want = "through the short hello"
 	accepting, requiring := serversByHybridRule(t)
+	// The memory is the process's: nothing an earlier test learnt at a port
+	// this one is handed again.
+	sbtls.RealityHelloNetworkReset()
 	target := realityTarget(t)
 	pg := page(t, want)
 
@@ -285,6 +294,9 @@ func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 				if seen := relay.seen(t); len(seen) != 1 || !seen[0].long() {
 					t.Fatalf("hellos %+v: want the one long hello", seen)
 				}
+				if got := rememberedAt(relay.port()); got != sbtls.RealityShortHelloUnknown {
+					t.Fatalf("remembered %q for a server that answered the long hello", got)
+				}
 			})
 
 			relay := newCuttingRelay(t, addr, firstSegment)
@@ -302,6 +314,9 @@ func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 				}
 				if took < helloStallWindow {
 					t.Fatalf("opened after %v: the long hello was not given its %v", took, helloStallWindow)
+				}
+				if got := rememberedAt(relay.port()); got != sbtls.RealityShortHelloWorks {
+					t.Fatalf("remembered %q, want %q", got, sbtls.RealityShortHelloWorks)
 				}
 			})
 			// What worked is remembered for the server: the next dial, from a
@@ -341,6 +356,9 @@ func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 				if took < helloStallWindow {
 					t.Fatalf("failed after %v: the long hello was not given its %v", took, helloStallWindow)
 				}
+				if got := rememberedAt(relay.port()); got != sbtls.RealityShortHelloDoesNotHelp {
+					t.Fatalf("remembered %q, want %q", got, sbtls.RealityShortHelloDoesNotHelp)
+				}
 			})
 			// "It does not help here" is remembered: the next dial sends the
 			// long hello alone and is left to its own timeout, as before.
@@ -355,6 +373,12 @@ func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 				}
 				if len(seen) != 3 || !seen[2].long() {
 					t.Fatalf("hellos %+v: want one more, the long one, and no retry", seen)
+				}
+				// A network change empties the memory: the dial after it is
+				// watched and retried again.
+				sbtls.RealityHelloNetworkReset()
+				if got := rememberedAt(relay.port()); got != sbtls.RealityShortHelloUnknown {
+					t.Fatalf("remembered %q after the network was reset", got)
 				}
 			})
 		})
@@ -416,6 +440,7 @@ func answeringServer(t *testing.T, answer []byte, closeAfter bool) (port int, he
 // second connection and no short hello, however long the rest takes.
 func TestRealityHelloAnsweredIsNeverRetried(t *testing.T) {
 	_, pub := realityKey(t)
+	sbtls.RealityHelloNetworkReset()
 	for _, c := range []struct {
 		name       string
 		answer     []byte
@@ -436,6 +461,9 @@ func TestRealityHelloAnsweredIsNeverRetried(t *testing.T) {
 			seen := describeHellos(t, hellos())
 			if len(seen) != 1 || !seen[0].long() {
 				t.Fatalf("hellos %+v: want the one long hello", seen)
+			}
+			if got := rememberedAt(port); got != sbtls.RealityShortHelloUnknown {
+				t.Fatalf("remembered %q for a server that answered", got)
 			}
 		})
 	}

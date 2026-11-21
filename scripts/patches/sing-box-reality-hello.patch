@@ -21,6 +21,46 @@ Reality + Vision: unpatched, the chrome hello opens on v26.4.25 only and is
 refused by v26.7.11 and v26.11.9; patched, chrome, firefox, safari, ios,
 random and randomized open on all three.
 
+4. A hello nobody answers is retried once with the short hello. The hello of
+   1 to 3 is about 1.8 KB, two TCP segments, and some networks deliver the
+   first segment and never the second (ghostlane-project/ghostlane#166): the
+   server waits for the end of the hello, and every dial hangs until its
+   timeout. The TLS dialer (common/tls/client.go, which already dials again
+   for ECH) watches a Reality hello for 4 s from the start of the handshake.
+   With not one byte of answer it closes that connection and opens one more
+   with the hello sing-box sends without this patch: the fingerprint's own
+   with the X25519MLKEM768 group and share taken out, which fits one
+   segment. Any byte ends the watch: a server that answered is never
+   retried.
+   The outcome is kept per server (address, port, server name) for 10
+   minutes, for at most 64 servers, process-wide. Where the short hello
+   opened the line, later dials send it first. Where it went unanswered too
+   or met a real certificate (a server from Xray-core v26.9.8 on hands it to
+   its camouflage target), later dials send the long hello alone, unwatched,
+   as before. A retry that ends in a reset, a close or a failed connect is
+   not kept, and a failure is not kept over a short hello that worked.
+   NetworkManager.ResetNetwork (route/network.go) empties the memory. Two
+   debug lines: the retry, and the outcome kept. No option.
+   What the retry gives up: its connection is keyed by X25519 alone, as every
+   Reality connection of an unpatched sing-box is; REALITY's authentication
+   is the same for both hellos. Not covered: a handshake on a connection the
+   TLS dialer did not make (the gRPC transport of a `with_grpc` build).
+
+diff -ruN a/common/tls/client.go b/common/tls/client.go
+--- a/common/tls/client.go
++++ b/common/tls/client.go
+@@ -115,6 +115,11 @@
+ }
+ 
+ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {
++	// Ghostlane: a Reality hello nobody answers is retried once, on a new
++	// connection, with the short hello (reality_ghostlane.go).
++	if realityConn, isReality, realityErr := dialRealityWithHelloPlan(ctx, d.dialer, d.config, destination); isReality {
++		return realityConn, realityErr
++	}
+ 	conn, err := d.dialer.DialContext(ctx, N.NetworkTCP, destination)
+ 	if err != nil {
+ 		return nil, err
 diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 --- a/common/tls/reality_client.go
 +++ b/common/tls/reality_client.go
@@ -32,7 +72,28 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	"github.com/sagernet/sing/common/debug"
  	E "github.com/sagernet/sing/common/exceptions"
  	"github.com/sagernet/sing/common/logger"
-@@ -124,27 +123,25 @@
+@@ -49,6 +48,11 @@
+ 	uClient   *UTLSClientConfig
+ 	publicKey []byte
+ 	shortID   [8]byte
++
++	// Ghostlane: for the hello fallback's two debug lines, and what one dial
++	// of it asks of the handshake (nil on every other path).
++	logger       logger.ContextLogger
++	helloAttempt *realityHelloAttempt
+ }
+ 
+ func NewRealityClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions) (Config, error) {
+@@ -77,7 +81,7 @@
+ 		return nil, E.New("invalid short_id")
+ 	}
+ 
+-	var config Config = &RealityClientConfig{ctx, uClient.(*UTLSClientConfig), publicKey, shortID}
++	var config Config = &RealityClientConfig{ctx, uClient.(*UTLSClientConfig), publicKey, shortID, logger, nil}
+ 	if options.KernelRx || options.KernelTx {
+ 		if !C.IsLinux {
+ 			return nil, E.New("kTLS is only supported on Linux")
+@@ -124,27 +128,34 @@
  	uConfig.InsecureSkipVerify = true
  	uConfig.SessionTicketsDisabled = true
  	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
@@ -42,6 +103,9 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 +	// client never strips it. A fingerprint whose hello has no such share in
 +	// this uTLS (firefox, safari, ios, edge, 360, qq, android; `random` four
 +	// times in five) is sent as Chrome's, the one that has it.
++	// The hello fallback's retry asks for the short hello instead: the
++	// fingerprint's own with that share and its group taken out, which is
++	// what sing-box sends without this patch.
  	uConn := utls.UClient(conn, uConfig, e.uClient.id)
  	verifier.UConn = uConn
  	err := uConn.BuildHandshakeState()
@@ -53,18 +117,24 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 -			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
 -				return curveID != utls.X25519MLKEM768
 -			})
-+	if !realityHelloOffersHybridFirst(uConn) {
+-		}
+-		if ks, ok := extension.(*utls.KeyShareExtension); ok {
+-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
+-				return share.Group != utls.X25519MLKEM768
+-			})
++	if e.helloAttempt != nil && e.helloAttempt.short {
++		realityHelloStripHybrid(uConn)
++		err = uConn.BuildHandshakeState()
++		if err != nil {
++			return nil, err
++		}
++	} else if !realityHelloOffersHybridFirst(uConn) {
 +		uConn = utls.UClient(conn, uConfig, utls.HelloChrome_Auto)
 +		verifier.UConn = uConn
 +		err = uConn.BuildHandshakeState()
 +		if err != nil {
 +			return nil, err
  		}
--		if ks, ok := extension.(*utls.KeyShareExtension); ok {
--			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
--				return share.Group != utls.X25519MLKEM768
--			})
--		}
 -	}
 -	err = uConn.BuildHandshakeState()
 -	if err != nil {
@@ -72,7 +142,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	}
  
  	if len(uConfig.NextProtos) > 0 {
-@@ -168,9 +165,12 @@
+@@ -168,9 +179,12 @@
  	}
  	binary.BigEndian.PutUint64(hello.SessionId, uint64(nowTime.Unix()))
  
@@ -88,15 +158,66 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	binary.BigEndian.PutUint32(hello.SessionId[4:], uint32(time.Now().Unix()))
  	copy(hello.SessionId[8:], e.shortID[:])
  	if debug.Enabled {
+@@ -210,6 +224,9 @@
+ 	}
+ 
+ 	err = uConn.HandshakeContext(ctx)
++	if e.helloAttempt != nil {
++		e.helloAttempt.realCertificate = verifier.realCertificate
++	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -256,6 +273,8 @@
+ 		e.uClient.Clone().(*UTLSClientConfig),
+ 		e.publicKey,
+ 		e.shortID,
++		e.logger,
++		nil,
+ 	}
+ }
+ 
+@@ -264,6 +283,10 @@
+ 	serverName string
+ 	authKey    []byte
+ 	verified   bool
++
++	// Ghostlane: the server showed a certificate that is not REALITY's own,
++	// so the hello went to its camouflage target.
++	realCertificate bool
+ }
+ 
+ func (c *realityVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+@@ -277,6 +300,7 @@
+ 			return nil
+ 		}
+ 	}
++	c.realCertificate = true
+ 	opts := x509.VerifyOptions{
+ 		DNSName:       c.serverName,
+ 		Intermediates: x509.NewCertPool(),
 diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 --- a/common/tls/reality_ghostlane.go
 +++ b/common/tls/reality_ghostlane.go
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,240 @@
 +//go:build with_utls
 +
 +package tls
 +
-+import utls "github.com/metacubex/utls"
++import (
++	"context"
++	"net"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/sing/common"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++
++	utls "github.com/metacubex/utls"
++)
 +
 +// RealityAnnouncedVersion is the client version a Reality hello announces in
 +// its session id. Ghostlane's patch (scripts/patches/sing-box-reality-hello.patch
@@ -125,3 +246,421 @@ diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 +	}
 +	return false
 +}
++
++// realityHelloStripHybrid takes the X25519MLKEM768 group and key share out
++// of a built hello, exactly as sing-box does for every Reality hello without
++// this patch: the short hello is that one, not a new one.
++func realityHelloStripHybrid(uConn *utls.UConn) {
++	for _, extension := range uConn.Extensions {
++		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
++			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
++				return curveID != utls.X25519MLKEM768
++			})
++		}
++		if ks, ok := extension.(*utls.KeyShareExtension); ok {
++			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
++				return share.Group != utls.X25519MLKEM768
++			})
++		}
++	}
++}
++
++// realityHelloAttempt is one handshake of the hello fallback: which hello it
++// sends, and how it ended.
++type realityHelloAttempt struct {
++	short bool
++	// Not one byte came back within the window.
++	unanswered bool
++	// The server showed a certificate that is not REALITY's own.
++	realCertificate bool
++}
++
++// realityFirstByteWatch closes a connection that has delivered no byte when
++// its window is up. Any byte ends the watch for good: a server that answered
++// got the hello, whatever it made of it.
++type realityFirstByteWatch struct {
++	net.Conn
++	answered atomic.Bool
++	access   sync.Mutex
++	gaveUp   bool
++	timer    *time.Timer
++}
++
++func watchRealityFirstByte(conn net.Conn, window time.Duration) *realityFirstByteWatch {
++	w := &realityFirstByteWatch{Conn: conn}
++	w.access.Lock()
++	w.timer = time.AfterFunc(window, w.giveUp)
++	w.access.Unlock()
++	return w
++}
++
++func (w *realityFirstByteWatch) giveUp() {
++	w.access.Lock()
++	defer w.access.Unlock()
++	if w.answered.Load() {
++		return
++	}
++	w.gaveUp = true
++	_ = w.Conn.Close()
++}
++
++func (w *realityFirstByteWatch) Read(p []byte) (int, error) {
++	n, err := w.Conn.Read(p)
++	if n > 0 && !w.answered.Load() {
++		w.access.Lock()
++		if !w.gaveUp {
++			w.answered.Store(true)
++			w.timer.Stop()
++		}
++		w.access.Unlock()
++	}
++	return n, err
++}
++
++// end stops the watch and says whether it gave the connection up.
++func (w *realityFirstByteWatch) end() bool {
++	w.access.Lock()
++	defer w.access.Unlock()
++	w.timer.Stop()
++	return w.gaveUp
++}
++
++func (w *realityFirstByteWatch) Upstream() any {
++	return w.Conn
++}
++
++func (w *realityFirstByteWatch) ReaderReplaceable() bool {
++	return w.answered.Load()
++}
++
++func (w *realityFirstByteWatch) WriterReplaceable() bool {
++	return true
++}
++
++// dialRealityWithHelloPlan dials a Reality server for the TLS dialer
++// (client.go), the one place that both connects and shakes hands and so can
++// connect again. It reports false, having done nothing, when the config is
++// not a Reality client's or the short hello is known not to help at this
++// server: the dial then runs as it does without the fallback.
++//
++//  1. With nothing remembered for the server the long hello is sent and
++//     watched. When not one byte of answer arrives within
++//     RealityHelloStallWindow, that connection is closed and one more is
++//     made, once, with the short hello, watched the same way.
++//  2. A server that answers is never retried: any byte ends the watch, an
++//     alert or a handshake that then fails included.
++//  3. The retry's outcome is remembered for the server. It opened the line:
++//     later dials start with the short hello. It went unanswered too, or met
++//     a real certificate (a server from Xray-core v26.9.8 on hands a hello
++//     without the hybrid share to its camouflage target): the dial fails
++//     with the stall as its error and later dials are left alone. A retry
++//     that ends any other way (a reset, a close, a failed connect) fails the
++//     dial with the stall and is not remembered: it says nothing about the
++//     hello.
++//
++// What the retry gives up: the connection it opens is keyed by X25519 alone,
++// as every Reality connection of an unpatched sing-box is. REALITY's own
++// authentication is the same for both hellos. Whoever can drop the second
++// segment of a hello can force the retry, and can as well drop the whole
++// connection.
++//
++// Not covered: a handshake on a connection somebody else dialed
++// (RealityClientConfig.Client and ClientHandshake, which the gRPC transport
++// of a `with_grpc` build uses), and a Reality client under kTLS.
++func dialRealityWithHelloPlan(ctx context.Context, dialer N.Dialer, config Config, destination M.Socksaddr) (Conn, bool, error) {
++	e, isReality := config.(*RealityClientConfig)
++	if !isReality {
++		return nil, false, nil
++	}
++	server := RealityHelloServer{Address: destination.String(), ServerName: e.ServerName()}
++	recalled, epoch := realityHelloMemory.Recall(server, time.Now())
++	switch recalled {
++	case RealityShortHelloDoesNotHelp:
++		return nil, false, nil
++	case RealityShortHelloWorks:
++		conn, _, err := e.dialWithHello(ctx, dialer, destination, true, 0)
++		if err != nil {
++			realityHelloMemory.Forget(server, epoch)
++		}
++		return conn, true, err
++	}
++
++	conn, attempt, stall := e.dialWithHello(ctx, dialer, destination, false, RealityHelloStallWindow)
++	if !attempt.unanswered {
++		return conn, true, stall
++	}
++	e.helloDebug(ctx, "reality: no answer to the hello from ", destination, " in ", RealityHelloStallWindow, ", one retry with the short hello")
++
++	conn, attempt, err := e.dialWithHello(ctx, dialer, destination, true, RealityHelloStallWindow)
++	verdict := RealityShortHelloUnknown
++	switch {
++	case err == nil:
++		verdict = RealityShortHelloWorks
++	case attempt.unanswered || attempt.realCertificate:
++		verdict = RealityShortHelloDoesNotHelp
++	}
++	if realityHelloMemory.Remember(server, epoch, verdict, time.Now()) {
++		e.helloDebug(ctx, "reality: the short hello ", verdict, " at ", destination, ", remembered for ", RealityHelloMemoryTTL)
++	}
++	if err != nil {
++		return nil, true, stall
++	}
++	return conn, true, nil
++}
++
++func (e *RealityClientConfig) helloDebug(ctx context.Context, args ...any) {
++	if e.logger != nil {
++		e.logger.DebugContext(ctx, args...)
++	}
++}
++
++// dialWithHello makes one connection and one handshake: with the short hello
++// or the long one, watched for a first byte when window is not zero.
++func (e *RealityClientConfig) dialWithHello(ctx context.Context, dialer N.Dialer, destination M.Socksaddr, short bool, window time.Duration) (Conn, realityHelloAttempt, error) {
++	attempt := &realityHelloAttempt{short: short}
++	conn, err := dialer.DialContext(ctx, N.NetworkTCP, destination)
++	if err != nil {
++		return nil, *attempt, err
++	}
++	config := *e
++	config.helloAttempt = attempt
++	var watch *realityFirstByteWatch
++	if window > 0 {
++		watch = watchRealityFirstByte(conn, window)
++		conn = watch
++	}
++	tlsConn, err := config.ClientHandshake(ctx, conn)
++	if watch != nil && watch.end() {
++		attempt.unanswered = true
++		err = E.New("reality: no answer to the hello in ", window)
++	}
++	if err != nil {
++		conn.Close()
++		return nil, *attempt, err
++	}
++	return tlsConn, *attempt, nil
++}
+diff -ruN a/common/tls/reality_ghostlane_stub.go b/common/tls/reality_ghostlane_stub.go
+--- a/common/tls/reality_ghostlane_stub.go
++++ b/common/tls/reality_ghostlane_stub.go
+@@ -0,0 +1,15 @@
++//go:build !with_utls
++
++package tls
++
++import (
++	"context"
++
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++// Without uTLS there is no Reality client and nothing to plan.
++func dialRealityWithHelloPlan(ctx context.Context, dialer N.Dialer, config Config, destination M.Socksaddr) (Conn, bool, error) {
++	return nil, false, nil
++}
+diff -ruN a/common/tls/reality_hello_ghostlane.go b/common/tls/reality_hello_ghostlane.go
+--- a/common/tls/reality_hello_ghostlane.go
++++ b/common/tls/reality_hello_ghostlane.go
+@@ -0,0 +1,179 @@
++package tls
++
++import (
++	"sync"
++	"time"
++)
++
++// Ghostlane: what the Reality hello fallback remembers (the dial itself is in
++// reality_ghostlane.go; scripts/patches/sing-box-reality-hello.patch in
++// ghostlane-project/ghostlane).
++//
++// A Reality hello with the X25519MLKEM768 key share is about 1.8 KB and
++// leaves in two TCP segments. Some networks deliver the first and never the
++// second, retransmissions included: the server waits for the end of the
++// hello and the client for an answer. The short hello, the one sing-box
++// sends without the patch, has no such share and fits one segment.
++const (
++	// RealityHelloStallWindow is how long a watched hello may go without one
++	// byte of answer, from the start of the TLS handshake on a connected
++	// socket. A lost segment is sent again after about one second and again
++	// two seconds later: four seconds let both through, so a path that
++	// merely loses a packet is not read as one that eats the hello.
++	RealityHelloStallWindow = 4 * time.Second
++	// RealityHelloMemoryTTL is how long one server's outcome is kept: the
++	// dials of a session do not each pay the stall, and a path that heals
++	// gets the long hello back within minutes.
++	RealityHelloMemoryTTL = 10 * time.Minute
++	// RealityHelloMemoryCapacity is how many servers are remembered; one
++	// more pushes the oldest out.
++	RealityHelloMemoryCapacity = 64
++)
++
++// RealityShortHello is what is known of the short hello at one server.
++type RealityShortHello int
++
++const (
++	// RealityShortHelloUnknown: nothing is remembered. The long hello is
++	// sent and watched.
++	RealityShortHelloUnknown RealityShortHello = iota
++	// RealityShortHelloWorks: it opened the line after the long hello had
++	// gone unanswered. Dials send it first, unwatched.
++	RealityShortHelloWorks
++	// RealityShortHelloDoesNotHelp: it went unanswered as well, or the
++	// server handed it to its camouflage target. Dials send the long hello
++	// alone, unwatched, as without the fallback.
++	RealityShortHelloDoesNotHelp
++)
++
++func (v RealityShortHello) String() string {
++	switch v {
++	case RealityShortHelloWorks:
++		return "works"
++	case RealityShortHelloDoesNotHelp:
++		return "does not help"
++	default:
++		return "unknown"
++	}
++}
++
++// RealityHelloServer is one server as the memory knows it: the address
++// dialed ("host:port") and the server name the hello asks for.
++type RealityHelloServer struct {
++	Address    string
++	ServerName string
++}
++
++type realityHelloEntry struct {
++	server  RealityHelloServer
++	verdict RealityShortHello
++	until   time.Time
++}
++
++// RealityHelloMemory holds the outcomes, oldest first. Every method takes
++// the time, so nothing here owns a clock, a goroutine or a timer. The zero
++// value is an empty memory.
++type RealityHelloMemory struct {
++	access  sync.Mutex
++	entries []realityHelloEntry
++	epoch   uint64
++}
++
++// Recall returns what is remembered for the server at `now`, and the
++// memory's epoch: Clear moves it on, and an outcome a dial brings back from
++// an earlier epoch is not written.
++func (m *RealityHelloMemory) Recall(server RealityHelloServer, now time.Time) (RealityShortHello, uint64) {
++	m.access.Lock()
++	defer m.access.Unlock()
++	return m.recall(server, now), m.epoch
++}
++
++func (m *RealityHelloMemory) recall(server RealityHelloServer, now time.Time) RealityShortHello {
++	for index, entry := range m.entries {
++		if entry.server != server {
++			continue
++		}
++		if !entry.until.After(now) {
++			m.entries = append(m.entries[:index], m.entries[index+1:]...)
++			return RealityShortHelloUnknown
++		}
++		return entry.verdict
++	}
++	return RealityShortHelloUnknown
++}
++
++// Remember writes the verdict for the server and says whether it did.
++// Nothing is written for a dial that began before the memory was last
++// cleared, and "does not help" is not written over an unexpired "works": a
++// burst of dials that stall together retry together, and the one retry that
++// meets a loss would otherwise turn the fallback off for all of them.
++func (m *RealityHelloMemory) Remember(server RealityHelloServer, epoch uint64, verdict RealityShortHello, now time.Time) bool {
++	m.access.Lock()
++	defer m.access.Unlock()
++	if epoch != m.epoch || verdict == RealityShortHelloUnknown {
++		return false
++	}
++	if verdict == RealityShortHelloDoesNotHelp && m.recall(server, now) == RealityShortHelloWorks {
++		return false
++	}
++	kept := m.entries[:0]
++	for _, entry := range m.entries {
++		if entry.until.After(now) && entry.server != server {
++			kept = append(kept, entry)
++		}
++	}
++	if len(kept) >= RealityHelloMemoryCapacity {
++		kept = append(kept[:0], kept[len(kept)-RealityHelloMemoryCapacity+1:]...)
++	}
++	m.entries = append(kept, realityHelloEntry{server, verdict, now.Add(RealityHelloMemoryTTL)})
++	return true
++}
++
++// Forget takes the server out, unless the dial began before the memory was
++// last cleared: what is there now was learnt after it.
++func (m *RealityHelloMemory) Forget(server RealityHelloServer, epoch uint64) {
++	m.access.Lock()
++	defer m.access.Unlock()
++	if epoch != m.epoch {
++		return
++	}
++	for index, entry := range m.entries {
++		if entry.server == server {
++			m.entries = append(m.entries[:index], m.entries[index+1:]...)
++			return
++		}
++	}
++}
++
++// Clear empties the memory and starts a new epoch.
++func (m *RealityHelloMemory) Clear() {
++	m.access.Lock()
++	defer m.access.Unlock()
++	m.entries = nil
++	m.epoch++
++}
++
++// Len is how many servers are held, expired ones included until they are
++// next looked at.
++func (m *RealityHelloMemory) Len() int {
++	m.access.Lock()
++	defer m.access.Unlock()
++	return len(m.entries)
++}
++
++// The process-wide memory: every Reality outbound of every instance.
++var realityHelloMemory RealityHelloMemory
++
++// RealityHelloNetworkReset empties the process-wide memory: the network the
++// outcomes were seen on is gone (route.NetworkManager.ResetNetwork). A dial
++// under way learnt its outcome on the old network and writes nothing.
++func RealityHelloNetworkReset() {
++	realityHelloMemory.Clear()
++}
++
++// RealityShortHelloAt is what the process-wide memory holds for the server
++// now.
++func RealityShortHelloAt(server RealityHelloServer) RealityShortHello {
++	verdict, _ := realityHelloMemory.Recall(server, time.Now())
++	return verdict
++}
+diff -ruN a/route/network.go b/route/network.go
+--- a/route/network.go
++++ b/route/network.go
+@@ -15,6 +15,7 @@
+ 	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/common/settings"
+ 	"github.com/sagernet/sing-box/common/taskmonitor"
++	"github.com/sagernet/sing-box/common/tls"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/option"
+ 	"github.com/sagernet/sing-tun"
+@@ -452,6 +453,10 @@
+ }
+ 
+ func (r *NetworkManager) ResetNetwork() {
++	// Ghostlane: what the Reality hello fallback learnt was learnt on the
++	// network that is gone.
++	tls.RealityHelloNetworkReset()
++
+ 	if r.connectionManager != nil {
+ 		r.connectionManager.CloseAll()
+ 	}
