@@ -145,6 +145,12 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // -Polcbox.labSuffix=.rustlab: a lab build that installs next to the store app
+            // (its own applicationId), for a phone test of the Rust core. Never on a release.
+            providers.gradleProperty("olcbox.labSuffix").orNull?.let {
+                applicationIdSuffix = it
+                versionNameSuffix = "-" + it.trimStart('.')
+            }
 
             isMinifyEnabled = false
             isShrinkResources = false

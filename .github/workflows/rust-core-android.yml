@@ -303,6 +303,30 @@ jobs:
           [ "$(unzip -l "$rel" | grep -c 'libghostlane_core.so')" -eq 3 ]
           { echo '### Release (R8) keeps the Rust core classes'; echo "APK: $(stat -c %s "$rel") bytes"; } >> "$GITHUB_STEP_SUMMARY"
 
+      # A phone test build: the Rust switch ON by default, its own applicationId
+      # (org.proofkit.app.rustlab) so it installs next to the store app. Built after the
+      # checked APKs, so it never feeds the e2e job.
+      - name: Lab APK for a phone (Rust core on, installs next to the store app)
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          cp -r androidApp/build/outputs/apk/github/debug "$RUNNER_TEMP/checked-debug"
+          ./gradlew :androidApp:assembleGithubDebug -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" \
+            -Polcbox.rustCoreDefault=true -Polcbox.labSuffix=.rustlab 2>&1 | tail -20
+          mkdir -p "$RUNNER_TEMP/lab"
+          cp androidApp/build/outputs/apk/github/debug/*.apk "$RUNNER_TEMP/lab/"
+          rm -rf androidApp/build/outputs/apk/github/debug && cp -r "$RUNNER_TEMP/checked-debug" androidApp/build/outputs/apk/github/debug
+          ls -l "$RUNNER_TEMP/lab"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-core-lab-apk
+          path: ${{ runner.temp }}/lab/
+          retention-days: 14
+
       - name: What the core adds to the APK, per ABI
         working-directory: olcbox
         run: |
