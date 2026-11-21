@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own

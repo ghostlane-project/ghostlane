@@ -7,7 +7,7 @@ switches over only when none of its rows is left behind without a reason.
 | File | What it holds |
 | --- | --- |
 | `inventory.txt` | One line per feature: `id \| platforms \| source \| what`. Read from the tree, not from memory. A platform is listed only where today's build has the feature. |
-| `android.txt`, `ios.txt`, `macos.txt`, `linux.txt`, `windows.txt`, `cli.txt` | One row per feature of that platform: `id \| status \| tests \| note`. |
+| `rows/<id>.txt` | One small file per feature, with one row for each platform that has it: `platform \| status \| tests \| note` (the platform in full: android, ios, macos, linux, windows, cli). A task that moves a feature edits that feature's file alone, so tasks that flip neighbouring features do not meet in one file. |
 | `sizes.txt` | The size of each shipped artefact beside today's Go build. |
 
 Status of a row:
@@ -26,6 +26,6 @@ A test id is a file in the tree, or `file::name`, where `name` has to occur in t
 feature with no row, a row for a feature (or a platform) the inventory does not list, a test id
 that does not exist, a `proven` or `partial` row with no test, and a `retired` or `partial` row with
 no note. It also reads the tree for what it names (the link parser's schemes, the routing modes,
-the carriers and transports, the settings, the command line's commands, flags and variables) and
+the carriers and transports, every cell of the link parser's accept matrix (`cell.<protocol>[.<security>].<transport>`), the settings, the command line's commands, flags and variables) and
 fails when the inventory leaves one out. A new feature is a new inventory line, and a row on each
 platform it is listed for, in the same change.

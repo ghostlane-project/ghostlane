@@ -1,0 +1,5 @@
+android | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path
+ios | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path
+macos | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path
+linux | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path
+windows | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path

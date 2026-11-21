@@ -41,7 +41,7 @@ import.vless.type.httpupgrade        | a,i,m,l,w,c | sharedUI/src/commonMain/kot
 import.vless.type.http               | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::"http", "h2" | VLESS over HTTP/2 (type=http, older links h2)
 import.vless.reality-params          | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::pbk | Reality keys: public key, short id, server name, fingerprint, flow
 import.vless.security-none           | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::security | security=none is VLESS with no TLS
-import.vless.allowinsecure           | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::allowInsecure | allowInsecure is read on ordinary TLS and ignored under Reality
+import.vless.allowinsecure | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::allowInsecure | allowInsecure is read on ordinary TLS and ignored under Reality
 import.vless.alpn                    | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::alpn | A link's ALPN is read for WebSocket and HTTPUpgrade (WebTunnel links)
 import.hysteria2.params              | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::obfs-password | Hysteria2 parameters: Salamander password, pinSHA256, insecure, server name
 import.refuse.unsupported            | a,i,m,l,w | README.MD::is left out at | A link the app cannot carry is left out at import (an SS plugin, Trojan over Reality, VMess over kcp or QUIC)
@@ -84,24 +84,24 @@ transport.datachannel                | a,i,m,l,w,c | sharedUI/src/commonMain/kot
 transport.vp8channel                 | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::TRANSPORT_VP8CHANNEL | olcRTC inside the carrier's video (vp8channel)
 transport.seichannel                 | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::TRANSPORT_SEICHANNEL | olcRTC over SEI frames (seichannel)
 olcrtc.vp8-options                   | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/LocationConfig.kt::vp8Fps | vp8channel frame rate and batch size
-olcrtc.udp                           | a,m,l,w | sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/OlcRtcUdpRelay.kt::OlcRtcUdpRelay | UDP carried through a room
+olcrtc.udp | a,i,m,l,w | sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/OlcRtcUdpRelay.kt::OlcRtcUdpRelay | UDP carried through a room
 olcrtc.chrome-dtls                   | a,i,m,l,w | README.MD::opens olcRTC's encrypted connection the way | The experimental switch that opens the encrypted connection the way Chrome does
 carry.vless.reality.tcp              | a,i,m,l,w,c | README.MD::VLESS + Reality, over TCP, gRPC or HTTP/2 | VLESS Reality over TCP, Vision flow included
 carry.vless.reality.grpc             | a,i,m,l,w | README.MD::VLESS + Reality, over TCP, gRPC or HTTP/2 | VLESS Reality over gRPC
 carry.vless.reality.http             | a,m,l,w | README.MD::HTTP/2 (`type=http`) | VLESS Reality over HTTP/2
 carry.vless.reality.xhttp            | a,i,m,l,w,c | README.MD::XHTTP | VLESS Reality over XHTTP (packet-up)
-carry.vless.tls.tcp                  | a,m,l,w | README.MD::VLESS over TLS, incl. behind a CDN | VLESS over ordinary TLS on TCP
+carry.vless.tls.tcp | a,m,l,w,c | README.MD::VLESS over TLS, incl. behind a CDN | VLESS over ordinary TLS on TCP
 carry.vless.tls.ws                   | a,i,m,l,w | README.MD::WebSocket | VLESS over TLS and WebSocket (WebTunnel, behind a CDN)
 carry.vless.tls.httpupgrade          | a,i,m,l,w | README.MD::HTTPUpgrade | VLESS over TLS and HTTPUpgrade (WebTunnel)
 carry.vless.tls.http                 | a,m,l,w | README.MD::HTTP/2 | VLESS over TLS and HTTP/2
-carry.vless.none                     | a,m,l,w | README.MD::`security=none` is VLESS with no TLS | VLESS with no TLS at all
-carry.vless.allowinsecure            | a,m,l,w | README.MD::`allowInsecure` is | A link's allowInsecure is honoured on ordinary TLS
+carry.vless.none | a,m,l,w,c | README.MD::`security=none` is VLESS with no TLS | VLESS with no TLS at all
+carry.vless.allowinsecure | a,m,l,w,c | README.MD::`allowInsecure` is | A link's allowInsecure is honoured on ordinary TLS
 carry.reality.fingerprints           | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality ClientHello fingerprints by name
-carry.reality.fp-android-360         | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality with fp=android or fp=360
+carry.reality.fp-android-360 | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality with fp=android or fp=360
 carry.hysteria2                      | a,i,m,l,w,c | README.MD::Hysteria2, with Salamander obfuscation | Hysteria2
 carry.hysteria2.salamander           | a,i,m,l,w,c | README.MD::Salamander | Hysteria2 with Salamander obfuscation
 carry.hysteria2.pin                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::pinSHA256 | Hysteria2 verified by a pinned certificate fingerprint
-carry.hysteria2.insecure             | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::insecure | Hysteria2 with insecure=1 and no pin
+carry.hysteria2.insecure | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::insecure | Hysteria2 with insecure=1 and no pin
 carry.hysteria2.udp-blocked-failover | i | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/UdpBlockedFailover.kt::UdpBlockedFailover | On iOS a Hysteria2 that carries nothing moves to the same exit over a TCP transport, once per connect
 carry.trojan                         | a,m,l,w | README.MD::Trojan | Trojan, over TCP, WebSocket, gRPC and the other transports its link names
 carry.shadowsocks                    | a,m,l,w | README.MD::Shadowsocks, AEAD and 2022 | Shadowsocks, AEAD methods
@@ -273,3 +273,41 @@ dist.windows.exe                     | w | README.MD::EXE, MSI and a portable zi
 dist.windows.msi                     | w | README.MD::EXE, MSI and a portable zip | The Windows MSI
 dist.windows.portable                | w | README.MD::EXE, MSI and a portable zip | The Windows portable zip
 dist.linux.appimage                  | l | README.MD::AppImage | The Linux AppImage
+
+# The cells of the link parser's accept matrix (protocol, security, transport) that a build writes,
+# and the features found by reading the builders that the README does not name.
+tunnel.ipv6-claimed | m,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/SingBoxConfig.kt::IPv6 is claimed and refused | The desktop tun claims IPv6 and refuses it, so a dual-stack machine does not go around the tunnel
+carry.xhttp.modes | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/XrayConfig.kt::xhttp.mode | The XHTTP mode a link names (auto, packet-up, stream-up, stream-one), not only packet-up
+cell.vless.reality.tcp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and TCP
+cell.vless.reality.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and gRPC
+cell.vless.reality.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and WebSocket
+cell.vless.reality.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and HTTPUpgrade
+cell.vless.reality.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and HTTP/2
+cell.vless.reality.xhttp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and XHTTP
+cell.vless.tls.tcp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and TCP
+cell.vless.tls.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and gRPC
+cell.vless.tls.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and WebSocket
+cell.vless.tls.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and HTTPUpgrade
+cell.vless.tls.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and HTTP/2
+cell.vless.tls.xhttp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and XHTTP
+cell.vless.none.tcp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and TCP
+cell.vless.none.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and gRPC
+cell.vless.none.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and WebSocket
+cell.vless.none.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and HTTPUpgrade
+cell.vless.none.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and HTTP/2
+cell.vless.none.xhttp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and XHTTP
+cell.trojan.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and TCP
+cell.trojan.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and gRPC
+cell.trojan.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and WebSocket
+cell.trojan.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and HTTPUpgrade
+cell.trojan.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and HTTP/2
+cell.vmess.tls.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and TCP
+cell.vmess.tls.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and gRPC
+cell.vmess.tls.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and WebSocket
+cell.vmess.tls.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and HTTPUpgrade
+cell.vmess.tls.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and HTTP/2
+cell.vmess.none.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and TCP
+cell.vmess.none.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and gRPC
+cell.vmess.none.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and WebSocket
+cell.vmess.none.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and HTTPUpgrade
+cell.vmess.none.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and HTTP/2

@@ -1,0 +1,1 @@
+ios | proven | scripts/test-ios-direct-resolver.sh, iosApp/Tests/DirectResolverTests.swift | The extension's own code, held without the core

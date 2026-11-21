@@ -1,0 +1,3 @@
+macos | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxyTest.kt::DesktopLanProxyTest | The listener's rules are held; the listener is sing-box's and is not the Rust core yet
+linux | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxyTest.kt::DesktopLanProxyTest | The listener's rules are held; the listener is sing-box's and is not the Rust core yet
+windows | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxyTest.kt::DesktopLanProxyTest | The listener's rules are held; the listener is sing-box's and is not the Rust core yet

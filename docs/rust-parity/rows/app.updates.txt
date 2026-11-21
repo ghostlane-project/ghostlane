@@ -1,0 +1,4 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | The update decision is held; the installers are not exercised
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | The update decision is held; the installers are not exercised
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | The update decision is held; the installers are not exercised
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | The update decision is held; the installers are not exercised

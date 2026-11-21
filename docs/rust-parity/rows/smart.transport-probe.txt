@@ -1,0 +1,4 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice of transports is held; a probe through a throw-away Rust core is not run
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice of transports is held; a probe through a throw-away Rust core is not run
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice of transports is held; a probe through a throw-away Rust core is not run
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice of transports is held; a probe through a throw-away Rust core is not run

@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core

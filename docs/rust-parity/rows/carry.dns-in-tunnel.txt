@@ -1,0 +1,6 @@
+android | not-proven | - | -
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayConfigIosCoreTest.kt::globalFakesAddressesRefusesHttpsAndForwardsTheRestThroughTheLine | The config's DNS shape is held; no name is resolved through a running core yet
+macos | not-proven | - | -
+linux | not-proven | - | -
+windows | not-proven | - | -
+cli | not-proven | - | -

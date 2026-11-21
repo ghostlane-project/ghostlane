@@ -1,0 +1,5 @@
+android | retired | - | Transport retired by the maintainers; not ported to the Rust core
+macos | retired | - | Transport retired by the maintainers; not ported to the Rust core
+linux | retired | - | Transport retired by the maintainers; not ported to the Rust core
+windows | retired | - | Transport retired by the maintainers; not ported to the Rust core
+cli | retired | - | Transport retired by the maintainers; not ported to the Rust core

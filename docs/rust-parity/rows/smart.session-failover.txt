@@ -1,0 +1,4 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SessionFailoverTest.kt::SessionFailoverTest | The decision logic is held; the candidates' checks on a Rust core are not run
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SessionFailoverTest.kt::SessionFailoverTest | The decision logic is held; the candidates' checks on a Rust core are not run
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SessionFailoverTest.kt::SessionFailoverTest | The decision logic is held; the candidates' checks on a Rust core are not run
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SessionFailoverTest.kt::SessionFailoverTest | The decision logic is held; the candidates' checks on a Rust core are not run

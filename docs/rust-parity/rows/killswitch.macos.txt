@@ -1,0 +1,1 @@
+macos | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/MacKillSwitchTest.kt::MacKillSwitchTest | The rules it writes are held; the helper on a Mac is not run

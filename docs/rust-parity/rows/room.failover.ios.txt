@@ -1,0 +1,1 @@
+ios | partial | scripts/test-ios-room-list.sh, iosApp/Tests/RoomListTests.swift | The list of rooms and its refresh are held; the handover into a running Rust core is not run

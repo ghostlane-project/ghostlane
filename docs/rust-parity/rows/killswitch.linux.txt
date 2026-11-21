@@ -1,0 +1,1 @@
+linux | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxKillSwitchTest.kt::LinuxKillSwitchTest | The rules it writes are held; a real tun in a namespace is not run

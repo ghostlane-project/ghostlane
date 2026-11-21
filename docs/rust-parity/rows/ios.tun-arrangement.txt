@@ -1,0 +1,1 @@
+ios | partial | scripts/test-ios-tun-arrangement.sh, iosApp/Tests/TunArrangementTests.swift | The arrangement is held; it still reads the Go-era configs beside the core's own, and no packet runs

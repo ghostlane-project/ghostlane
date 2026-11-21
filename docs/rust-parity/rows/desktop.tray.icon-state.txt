@@ -1,0 +1,3 @@
+macos | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/desktop/DesktopTrayIconTest.kt::DesktopTrayIconTest | The icon's look for each state is held; the tray itself is not exercised
+linux | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/desktop/DesktopTrayIconTest.kt::DesktopTrayIconTest | The icon's look for each state is held; the tray itself is not exercised
+windows | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/desktop/DesktopTrayIconTest.kt::DesktopTrayIconTest | The icon's look for each state is held; the tray itself is not exercised

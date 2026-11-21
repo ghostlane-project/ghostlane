@@ -1,0 +1,1 @@
+ios | partial | scripts/test-ios-memory-relief.sh, iosApp/Tests/MemoryReliefTests.swift | The policy is held; the extension's memory under the Rust core is not measured

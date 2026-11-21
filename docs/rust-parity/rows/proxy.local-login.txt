@@ -1,0 +1,2 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SocksLoginTest.kt::SocksLoginTest | The login's generation is held; the core's listener asking for it is the iPhone's reference config only
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SocksLoginTest.kt::SocksLoginTest, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayConfigIosCoreTest.kt::oneInboundSocksOnLoopbackWithTheLoginAndUdp | The login and the core's inbound config are held; a refused login on a running core is not run
