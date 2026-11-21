@@ -265,7 +265,8 @@ class RustCoreVpnE2ETest {
     private fun shellUdp(host: String, port: Int, payload: String): String {
         val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("sh")
         ParcelFileDescriptor.AutoCloseOutputStream(input).use {
-            it.write("(echo $payload; sleep 3) | toybox nc -u -w 5 $host $port\n".toByteArray())
+            // toybox nc -u never ends on its own (run 4 sat 15 min here): timeout ends it.
+            it.write("(echo $payload; sleep 3) | toybox timeout 8 toybox nc -u -w 5 $host $port; exit\n".toByteArray())
             it.flush()
         }
         return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
