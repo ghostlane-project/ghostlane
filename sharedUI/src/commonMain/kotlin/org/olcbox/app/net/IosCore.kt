@@ -275,16 +275,13 @@ object IosCore {
             "the Rust core's config is written for Reality, Reality gRPC, WebTunnel, Hysteria2 and XHTTP Reality lines"
         }
         refusal(spec)?.let { throw IllegalArgumentException("the Rust core cannot run this line: $it") }
-        val bypass = routing as? Routing.RuleBased
-        // What sing-box's iOS shape builds (SingBoxConfig.renderIos), and no more.
-        require(bypass == null || (bypass.policy is Routing.Policy.Bypass && bypass.custom.isEmpty)) {
-            "the iOS shape builds bypass routing only"
-        }
-        require(bypass == null || geodata != null) {
+        val rules = effective(routing) as? Routing.RuleBased
+        require(rules == null || rules.policy != Routing.Policy.BlockedOnly) { BLOCKED_ONLY_REFUSAL }
+        require(rules == null || rules.policy !is Routing.Policy.Bypass || geodata != null) {
             "Bypass Russia on the Rust core carries its lists inline: pass XrayGeodata.lists()"
         }
-        val lists = geodata.takeIf { bypass != null }
-        val directResolver = bypass?.let { directResolverAddress(it.directDns) }
+        val plan = rules?.let { RulePlan(it, geodata.takeIf { _ -> it.policy is Routing.Policy.Bypass }) }
+        val directResolver = rules?.let { directResolverAddress(it.directDns) }
 
         return buildJsonObject {
             // xray-rust reads no `log`: the embedding decides where its lines
@@ -299,12 +296,42 @@ object IosCore {
             putJsonArray("outbounds") {
                 addOutbound(spec, line)
                 // No settings: a name handed here is resolved through
-                // `dns.servers`, which under the bypass is dns-direct alone.
-                if (bypass != null) addJsonObject { put("tag", "direct"); put("protocol", "freedom") }
-                addDnsOutbound(directResolver, lists)
+                // `dns.servers`, which under the rules is dns-direct alone.
+                if (plan != null) addJsonObject { put("tag", "direct"); put("protocol", "freedom") }
+                addDnsOutbound(directResolver, plan)
             }
-            putRouting(lists)
+            putRouting(plan)
         }.toString()
+    }
+
+    /** Why the Rust core does not run the blocked-only mode yet: the Go cores route it from sing-box's lists. */
+    const val BLOCKED_ONLY_REFUSAL =
+        "the Rust core does not run the blocked-only mode yet (it needs Re:filter's lists in Xray's form): use another mode or the Go cores"
+
+    /**
+     * [routing] as the core's config builds it. Global's policy with none of the user's direct
+     * rules sends everything through the line, whatever its tunnel rules say: it is built as
+     * Global, names no resolver of the network, and comes out as Global's config byte for byte.
+     */
+    fun effective(routing: Routing): Routing =
+        if (routing is Routing.RuleBased && routing.policy == Routing.Policy.Tunnel && routing.custom.direct.isEmpty()) {
+            Routing.Global
+        } else {
+            routing
+        }
+
+    /**
+     * The user's own rules and the policy's lists, in Xray's inline spelling: `domain:` is the name
+     * and every name under it, as sing-box's `domain_suffix` the Go path writes. Each entry is in
+     * one of the user's lists only (CustomRules.of: the tunnel's wins). No `geosite:`/`geoip:`: the
+     * core is handed no `.dat` file on the phone.
+     */
+    private class RulePlan(rules: Routing.RuleBased, val lists: XrayGeodata.Lists?) {
+        val policy = rules.policy
+        val directNames = rules.custom.direct.domains.map { "domain:$it" }
+        val directIps = rules.custom.direct.cidrs
+        val tunnelNames = rules.custom.tunnel.domains.map { "domain:$it" }
+        val tunnelIps = rules.custom.tunnel.cidrs
     }
 
     /**
@@ -526,7 +553,7 @@ object IosCore {
      * `dns-direct`. The first rule that matches wins, so the forward rule is
      * last.
      */
-    private fun JsonArrayBuilder.addDnsOutbound(directResolver: String?, lists: XrayGeodata.Lists?) {
+    private fun JsonArrayBuilder.addDnsOutbound(directResolver: String?, plan: RulePlan?) {
         addJsonObject {
             put("tag", "dns-out"); put("protocol", "dns")
             putJsonObject("settings") {
@@ -537,11 +564,26 @@ object IosCore {
                     put("rewritePort", 53)
                 }
                 putJsonArray("rules") {
-                    if (lists != null) {
-                        addJsonObject {
-                            put("action", "direct")
-                            putJsonArray("domain") { lists.domains.forEach { add(it) } }
+                    if (plan != null) {
+                        // The user's own rules ahead of the region's: a direct name is asked of the
+                        // network, every type; a tunnel name is answered as every name the lists
+                        // leave to the tunnel, even when the region's list holds it: a fake A (AAAA
+                        // empty) and every other type through the line, nothing asked of the
+                        // network. (`hijack` answers A and AAAA only and returns its rCode for the
+                        // rest, so the forward comes first; HTTPS stays refused, as for every name.)
+                        // Under Global no tunnel rule: unclaimed names are the tunnel's already.
+                        names("direct", plan.directNames)
+                        if (plan.policy != Routing.Policy.Tunnel && plan.tunnelNames.isNotEmpty()) {
+                            addJsonObject {
+                                put("action", "forward")
+                                put("qType", QTYPES_FORWARDED)
+                                putJsonArray("domain") { plan.tunnelNames.forEach { add(it) } }
+                                put("address", XrayConfig.REMOTE_DNS_SERVER); put("port", 53)
+                                put("outboundTag", LINE)
+                            }
+                            names("hijack", plan.tunnelNames, RCODE_REFUSED)
                         }
+                        plan.lists?.let { names("direct", it.domains) }
                     }
                     addJsonObject {
                         put("action", "return")
@@ -567,7 +609,7 @@ object IosCore {
      * Everything else falls to `out`. `AsIs`: no name is resolved just to try
      * the address rules against it.
      */
-    private fun JsonObjectBuilder.putRouting(lists: XrayGeodata.Lists?) {
+    private fun JsonObjectBuilder.putRouting(plan: RulePlan?) {
         putJsonObject("routing") {
             put("domainStrategy", "AsIs")
             putJsonArray("rules") {
@@ -577,29 +619,46 @@ object IosCore {
                     put("network", "tcp,udp"); put("port", 53)
                     put("outboundTag", "dns-out")
                 }
-                if (lists != null) {
+                if (plan != null) {
                     addJsonObject {
                         put("type", "field")
                         putJsonArray("inboundTag") { add(DNS_DIRECT) }
                         put("outboundTag", "direct")
                     }
-                    addJsonObject {
-                        put("type", "field")
-                        putJsonArray("ip") { XrayConfig.PRIVATE_RANGES.forEach { add(it) } }
-                        put("outboundTag", "direct")
-                    }
-                    addJsonObject {
-                        put("type", "field")
-                        putJsonArray("domain") { lists.domains.forEach { add(it) } }
-                        put("outboundTag", "direct")
-                    }
-                    addJsonObject {
-                        put("type", "field")
-                        putJsonArray("ip") { lists.cidrs.forEach { add(it) } }
-                        put("outboundTag", "direct")
+                    route("ip", XrayConfig.PRIVATE_RANGES, "direct")
+                    // The user's rules win over the region's lists, as on the Go path
+                    // (SingBoxConfig.addPolicyRouteRules). Xray ANDs a rule's fields, so names and
+                    // addresses are rules of their own (sing-box ORs them in one).
+                    route("domain", plan.directNames, "direct")
+                    route("ip", plan.directIps, "direct")
+                    route("domain", plan.tunnelNames, LINE)
+                    route("ip", plan.tunnelIps, LINE)
+                    plan.lists?.let {
+                        route("domain", it.domains, "direct")
+                        route("ip", it.cidrs, "direct")
                     }
                 }
             }
+        }
+    }
+
+    /** A dns-out rule for [domains]; none for an empty list, which would be no condition and match every name. */
+    private fun JsonArrayBuilder.names(action: String, domains: List<String>, rCode: Int? = null) {
+        if (domains.isEmpty()) return
+        addJsonObject {
+            put("action", action)
+            putJsonArray("domain") { domains.forEach { add(it) } }
+            if (rCode != null) put("rCode", rCode)
+        }
+    }
+
+    /** A routing rule on one field; none for an empty list: the core refuses a rule with no condition, and the config with it. */
+    private fun JsonArrayBuilder.route(field: String, values: List<String>, outbound: String) {
+        if (values.isEmpty()) return
+        addJsonObject {
+            put("type", "field")
+            putJsonArray(field) { values.forEach { add(it) } }
+            put("outboundTag", outbound)
         }
     }
 }

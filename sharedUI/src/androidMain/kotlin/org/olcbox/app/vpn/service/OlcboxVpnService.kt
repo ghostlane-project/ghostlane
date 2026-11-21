@@ -39,6 +39,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -50,6 +51,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -66,6 +68,7 @@ import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
 import org.olcbox.app.data.datasource.AndroidLocations
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.createProxyHttpClient
+import org.olcbox.app.data.datasource.withProxyAuthentication
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.model.LocationConfig
@@ -98,6 +101,12 @@ import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
+import org.olcbox.app.vpn.rooms.OlcrtcRoomKeeper
+import org.olcbox.app.vpn.rooms.OlcrtcRoomList
+import org.olcbox.app.vpn.rooms.RoomFetchOutcome
+import org.olcbox.app.vpn.rooms.RoomMemoryFile
+import org.olcbox.app.vpn.rooms.RoomMemoryRecord
+import org.olcbox.app.vpn.rooms.fetchRoomList
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
@@ -228,6 +237,17 @@ class OlcboxVpnService : VpnService() {
     /** The Rust core engine runs the transport instead of the Go cores (RustCore.resolve); off by default. */
     @Volatile private var rustCore = false
     private var rustRoomsJob: Job? = null
+    /**
+     * The running olcRTC start's room keeper and its HTTP client (startRustRoomKeeper), swapped
+     * under [rustKeeperLock]: a superseded start and the main thread's stop can meet here.
+     */
+    @Volatile private var rustRoomKeeper: OlcrtcRoomKeeper? = null
+    private var rustRoomsHttp: io.ktor.client.HttpClient? = null
+    private val rustKeeperLock = Any()
+    /** A pending core reset after a network change (resetRustCoreForNetwork). */
+    private var rustResetJob: Job? = null
+    /** The running core line's config names the network's resolver (a Bypass line). */
+    @Volatile private var rustCoreBypass = false
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
 
@@ -349,6 +369,8 @@ class OlcboxVpnService : VpnService() {
                 is VpnStatus.Connected -> {
                     if (isBenignWifiRefresh(previousTransport, nextTransport)) {
                         addLog("Keeping transport on refreshed Wi-Fi network")
+                    } else if (rustCore && resetRustCoreForNetwork()) {
+                        // The Rust core line keeps its tun and its config; see resetRustCoreForNetwork.
                     } else {
                         requestTransportRecovery(
                             reason = "Upstream network changed",
@@ -1420,6 +1442,9 @@ class OlcboxVpnService : VpnService() {
         // A core binds no network of its own; see startTransport.
         unbindProcessFromNetwork()
         val login = SocksLogin.of(socksUsername, socksPassword)
+        // Whether core.json names this network's resolver (the Bypass's direct side): such a
+        // line is restarted on a network change rather than reset (resetRustCoreForNetwork).
+        var namesNetworkResolver = false
         val json = RustCore.testConfig?.invoke(port, login) ?: run {
             val raw = location.rawLink ?: error("core location has no link")
             var spec = LinkParser.parse(raw) ?: error("unparseable core link")
@@ -1431,20 +1456,18 @@ class OlcboxVpnService : VpnService() {
                 spec = IosCore.pinHost(spec, address)
             }
             IosCore.refusal(spec)?.let { error("the Rust core refuses this line: $it") }
-            val routing = routingFor(upstream)
-            // What the core builds: Global, or a region's Bypass with its lists inline (as iOS). The
-            // user's own rules and the blocked-only policy are the Go path's for now.
-            val bypass = routing as? Routing.RuleBased
-            if (bypass != null) {
-                check(bypass.policy is Routing.Policy.Bypass && bypass.custom.isEmpty) {
-                    "the Rust core runs Global and region Bypass routing only; custom rules and the blocked-only mode need the Go cores"
-                }
-            }
+            // What the core builds: Global or a region's Bypass with its lists inline (as iOS), each
+            // with the user's own direct and tunnel rules ahead of the lists (IosCore.effective: tunnel
+            // rules alone under Global are Global). The blocked-only mode is the Go path's for now.
+            val routing = IosCore.effective(routingFor(upstream))
+            val rules = routing as? Routing.RuleBased
+            namesNetworkResolver = rules != null
+            check(rules?.policy != Routing.Policy.BlockedOnly) { IosCore.BLOCKED_ONLY_REFUSAL }
             XrayConfig.buildIosCore(
                 spec,
                 login ?: error("the Rust core needs the tun's SOCKS login"),
                 routing = routing,
-                geodata = (bypass?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) },
+                geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) },
                 socksPort = port,
                 verboseLogs = verboseDebugLogs
             )
@@ -1457,6 +1480,7 @@ class OlcboxVpnService : VpnService() {
         )
         activeCorePort = port
         activeCoreLogin = login
+        rustCoreBypass = namesNetworkResolver
         if (!waitForSocksPortOpen(port, MOBILE_READY_TIMEOUT_MS) || !backend.isCoreRunning()) {
             error("Rust core SOCKS not ready on $port")
         }
@@ -1490,12 +1514,13 @@ class OlcboxVpnService : VpnService() {
         val directRules = OlcrtcDirectRules.forRouting(routingFor(upstream))
         addLog("Starting olcRTC (Rust core) provider=${config.bypassProvider}, transport=${config.transport}")
         lastMobileProvider = config.bypassProvider
+        val keeper = startRustRoomKeeper(backend, config, port)
         backend.startOlc(
             RustOlcParams(
                 provider = config.bypassProvider,
                 transport = config.transport,
-                room = config.id,
-                failoverRooms = config.failoverRoomIds,
+                room = keeper.rooms.primary,
+                failoverRooms = keeper.rooms.extras,
                 keyHex = config.key,
                 deviceId = deviceIdentityProvider.hwid().orEmpty(),
                 socksHost = socksListenHost,
@@ -1515,44 +1540,182 @@ class OlcboxVpnService : VpnService() {
                 addLog("rtc: $line")
                 Log.v("olcrtc", LogScrubber.default.scrub(line))
                 handleRtcLine(line)
-            }
+            },
+            onSessionOpened = keeper::onSessionOpened
         )
         if (requestedGeneration != generation) error("olcRTC start superseded")
         addLog("olcRTC (Rust core) ready on $socksListenHost:$port")
         markRtcConnected()
-        keepRustRoomsCurrent(backend, config)
+        keeper.armed()
+        followStoredRooms(keeper, config)
     }
 
     /**
-     * The room list of the running client follows the app's store, as RoomKeeper.swift keeps it
-     * current on iOS: the app refreshes a subscription's `##rooms` into the stored location, and
-     * the engine, which re-reads its list at every hop, is handed the new one. On this platform the
-     * app process is the service's own, so the store is the source and nothing is fetched here.
-     * Only the number of rooms is logged.
+     * A Rust core line meets a new network as iOS's tunnel does (PacketTunnelProvider: NWPathMonitor
+     * → CoreEngine.resetNetwork): the core closes what it holds on the old path; the tun, core.json
+     * and the SOCKS port stay. It waits the grace a restart waits, so a flapping network settles
+     * first, and a newer change replaces a pending reset. Not for a line whose core.json names the
+     * network's resolver (a bypass: [rustCoreBypass]), nor olcRTC (no core port): false, and the
+     * caller restarts them; nor a core that is gone or a reset that fails: those restart from here.
+     *
+     * On the ConnectivityManager callback's thread: nothing here takes the engine's lock (a stop
+     * can hold it), the job does.
      */
-    private fun keepRustRoomsCurrent(backend: RustCoreBackend, started: LocationConfig) {
+    private fun resetRustCoreForNetwork(): Boolean {
+        val backend = RustCore.backend ?: return false
+        val port = activeCorePort ?: return false
+        if (rustCoreBypass) return false
+        val resetGeneration = generation
+        rustResetJob?.cancel()
+        rustResetJob = scope.launch {
+            delay(NETWORK_STABILITY_GRACE_MS)
+            if (resetGeneration != generation || activeCorePort != port) return@launch
+            runCatching { check(backend.isCoreRunning()) { "the core is not running" }; backend.resetNetwork() }
+                .onSuccess { addLog("Network changed: Rust core reset $it connection(s), the tun stays") }
+                .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    addLog("Rust core reset after a network change failed (${it::class.simpleName}): restarting the line")
+                    if (resetGeneration == generation) {
+                        requestTransportRecovery(reason = "Upstream network changed", fullRestart = false)
+                    }
+                }
+        }
+        return true
+    }
+
+    /**
+     * The room keeper of an olcRTC start (OlcrtcRoomKeeper, RoomKeeper.swift's port), begun before
+     * the engine so that its first session is counted. The start's rooms are the stored location's
+     * and, after them, the ones the last running client was handed for the same carrier and key
+     * (RoomMemoryRecord, a day at most): a restart reads the store again, and the store holds only
+     * what the app's own refresh wrote, which can predate a rotation the client followed.
+     *
+     * The subscription is asked through the engine's own SOCKS port, as the app's refresh asks
+     * while connected (OlcboxVpnState.channelProxy) and as iOS asks through its tun: where the
+     * list matters, the tunnel is the way to it. The first session refreshes too: on iOS the app
+     * does that on Connected, here the app's screen may not be running at all (always-on).
+     */
+    private suspend fun startRustRoomKeeper(backend: RustCoreBackend, config: LocationConfig, port: Int): OlcrtcRoomKeeper {
+        stopRustRoomKeeper()
+        val memory = RoomMemoryFile(File(filesDir, RUST_ROOM_MEMORY_FILE))
+        val remembered = memory.load()?.rooms(config.bypassProvider, RoomMemoryRecord.keyDigest(config.key), nowSeconds())
+        val initial = RoomMemoryRecord.initialRooms(config.id, config.failoverRoomIds, remembered)
+        val url = subscriptionUrlFor(config)
+        val proxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
+            AndroidSocksProxySettings.connectHost(socksListenHost), port, socksUsername, socksPassword
+        )
+        return synchronized(rustKeeperLock) {
+            stopRustRoomKeeperLocked()
+            val http = createProxyHttpClient(
+                proxy,
+                connectTimeoutMs = RUST_ROOMS_CONNECT_TIMEOUT_MS,
+                requestTimeoutMs = RUST_ROOMS_REQUEST_TIMEOUT_MS,
+                socketTimeoutMs = RUST_ROOMS_CONNECT_TIMEOUT_MS
+            )
+            lateinit var keeper: OlcrtcRoomKeeper
+            keeper = OlcrtcRoomKeeper(
+                parent = scope,
+                carrier = config.bypassProvider,
+                keyHex = config.key,
+                subscriptionUrl = url,
+                initial = initial,
+                // Not the first session: it opens inside the engine's start, and a fetch then would
+                // hold the process's proxy-login lock (withProxyAuthentication) across the tunnel's
+                // verification. The keeper is asked once the line is verified instead (setStatus).
+                refreshOnFirstSession = false,
+                nowMs = SystemClock::elapsedRealtime,
+                io = object : OlcrtcRoomKeeper.Io {
+                    override suspend fun fetch(url: String): RoomFetchOutcome = withContext(Dispatchers.IO) {
+                        val hwid = deviceIdentityProvider.hwid()
+                        withProxyAuthentication(proxy) { fetchRoomList(http, url, hwid) }
+                    }
+
+                    override fun apply(rooms: OlcrtcRoomList.Parsed) {
+                        // A stopped keeper's last apply must not land on the next start's engine.
+                        check(rustRoomKeeper === keeper) { "superseded" }
+                        backend.setRooms(rooms.primary, rooms.extras)
+                    }
+
+                    override fun remember(rooms: OlcrtcRoomList.Parsed) =
+                        memory.save(RoomMemoryRecord.of(rooms, config.bypassProvider, config.key, nowSeconds()))
+
+                    override fun log(line: String) = addLog(line)
+                }
+            )
+            rustRoomsHttp = http
+            rustRoomKeeper = keeper
+            keeper.begin()
+            keeper
+        }
+    }
+
+    /**
+     * The subscription address of the stored location that runs: the active entry when it is this
+     * carrier's and key's, else the first such entry (a smart connect may run another). Never logged.
+     */
+    private suspend fun subscriptionUrlFor(config: LocationConfig): String? {
+        val bundle = runCatching { storedBundle() }.getOrNull() ?: return null
+        val ours = bundle.locations.filter { entry ->
+            val loc = entry.location.normalized()
+            loc.key.equals(config.key, ignoreCase = true) && OlcrtcRoomList.sameCarrier(loc.bypassProvider, config.bypassProvider)
+        }
+        val entry = ours.firstOrNull { it.storageId == bundle.activeLocationId } ?: ours.firstOrNull()
+        return entry?.subscriptionUrl?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * The app's own refresh, while it runs, writes the location's rooms to the store: the keeper is
+     * handed each new list of this carrier and key, as the iPhone app's message hands it to its
+     * tunnel (IosVpnManager.pushRoomsToRunningTunnel). Only a list that changed is handed over.
+     */
+    private fun followStoredRooms(keeper: OlcrtcRoomKeeper, started: LocationConfig) {
+        synchronized(rustKeeperLock) { followStoredRoomsLocked(keeper, started) }
+    }
+
+    private fun followStoredRoomsLocked(keeper: OlcrtcRoomKeeper, started: LocationConfig) {
+        if (rustRoomKeeper !== keeper) return
         rustRoomsJob?.cancel()
         rustRoomsJob = scope.launch {
-            var applied = listOf(started.id) + started.failoverRoomIds
-            while (true) {
-                delay(RUST_ROOMS_REFRESH_MS)
-                val stored = runCatching { storedBundle() }.getOrNull() ?: continue
-                val now = stored.locations.firstOrNull { it.storageId == stored.activeLocationId }
-                    ?.location?.normalized() ?: continue
-                // Only the same group: same key and carrier. Another location is a restart's business.
-                if (now.key != started.key || now.bypassProvider != started.bypassProvider) continue
-                val list = listOf(now.id) + now.failoverRoomIds
-                if (list == applied || !backend.isOlcRunning()) continue
-                runCatching { backend.setRooms(now.id, now.failoverRoomIds) }
-                    .onSuccess { applied = list; addLog("olcRTC rooms refreshed: ${list.size}") }
+            var seen: List<String> = started.failoverRooms()
+            repository.changes.drop(1).collect {
+                val bundle = runCatching { storedBundle() }.getOrNull() ?: return@collect
+                val now = bundle.locations
+                    .map { it.storageId to it.location.normalized() }
+                    .filter { (_, loc) ->
+                        loc.key.equals(started.key, ignoreCase = true) &&
+                            OlcrtcRoomList.sameCarrier(loc.bypassProvider, started.bypassProvider)
+                    }
+                    .let { ours -> (ours.firstOrNull { it.first == bundle.activeLocationId } ?: ours.firstOrNull())?.second }
+                    ?: return@collect
+                val list = now.failoverRooms()
+                if (list == seen) return@collect
+                seen = list
+                keeper.fromStore(OlcrtcRoomList.Parsed.of(now.id, now.failoverRoomIds), now.bypassProvider, now.key)
             }
         }
     }
 
-    /** iOS's stop order: the olc client, then the xray core; each a no-op when it is not running. */
-    private fun stopRustEngines() {
+    private fun stopRustRoomKeeper() {
+        synchronized(rustKeeperLock) { stopRustRoomKeeperLocked() }
+    }
+
+    private fun stopRustRoomKeeperLocked() {
         rustRoomsJob?.cancel()
         rustRoomsJob = null
+        rustRoomKeeper?.stop()
+        rustRoomKeeper = null
+        rustRoomsHttp?.close()
+        rustRoomsHttp = null
+    }
+
+    private fun nowSeconds(): Long = System.currentTimeMillis() / 1000
+
+    /** iOS's stop order: the olc client, then the xray core; each a no-op when it is not running. */
+    private fun stopRustEngines() {
+        stopRustRoomKeeper()
+        rustResetJob?.cancel()
+        rustResetJob = null
+        rustCoreBypass = false
         val backend = RustCore.backend ?: return
         runCatching { backend.stopOlc(RustOlcParams.STOP_TIMEOUT_MS) }
             .onFailure { addLog("Rust olcRTC stop failed: ${it.message ?: it}") }
@@ -2263,6 +2426,8 @@ class OlcboxVpnService : VpnService() {
         // Also tear down any active sing-box / Xray core (no-op if none running).
         runCatching { stopCoreProcesses() }
         if (rustCore) stopRustEngines()
+        // A START that turned the switch off still ends the keeper and its fetches (Rust fields only).
+        stopRustRoomKeeper()
         if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
             lastJitsiStopCompletedAtMs = System.currentTimeMillis()
         }
@@ -2823,6 +2988,9 @@ class OlcboxVpnService : VpnService() {
         if (status is VpnStatus.Connected && connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) {
             sessionVerified = true
         }
+        // A verified olcRTC line on the Rust core asks its subscription for the current rooms, as
+        // the iPhone app does on Connected (throttled by the keeper: a re-verify does not re-ask).
+        if (status is VpnStatus.Connected) rustRoomKeeper?.refreshNow("connected")
         if (status is VpnStatus.Connected) {
             val (username, password) = upstreamLogin()
             OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
@@ -3074,8 +3242,11 @@ class OlcboxVpnService : VpnService() {
          * short here. The iOS tunnel waits 35 s for the same start.
          */
         private const val OLCRTC_READY_TIMEOUT_MS = 35_000L
-        /** RoomKeeper.swift's periodicRefresh. */
-        private const val RUST_ROOMS_REFRESH_MS = 5 * 60 * 1000L
+        /** The last room list a Rust olcRTC client was handed (RoomMemoryRecord), in filesDir. */
+        private const val RUST_ROOM_MEMORY_FILE = "olcrtc-rooms.json"
+        /** RoomKeeper.swift's URLSession: 20 s without a byte, 30 s for the whole request. */
+        private const val RUST_ROOMS_CONNECT_TIMEOUT_MS = 20_000L
+        private const val RUST_ROOMS_REQUEST_TIMEOUT_MS = 30_000L
         private const val MOBILE_STOP_TIMEOUT_MS = 5_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L

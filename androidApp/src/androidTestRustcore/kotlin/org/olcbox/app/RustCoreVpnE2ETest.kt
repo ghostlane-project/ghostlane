@@ -202,6 +202,17 @@ class RustCoreVpnE2ETest {
             val after = tunInterfaceBytes() ?: 0L
             say("RESULT tun0 bytes $before -> $after")
             assertTrue("tun0 carried the fetch", after > before)
+
+            // What a network change does to a core line (resetRustCoreForNetwork): the core closes
+            // what it holds and carries on behind the same tun; the next connection is dialled afresh.
+            val closed = RustCoreEngine.resetNetwork()
+            say("RESULT resetNetwork closed $closed connection(s)")
+            assertTrue("resetNetwork answers a count", closed >= 0)
+            assertTrue("the core still runs after the reset", RustCoreEngine.isCoreRunning())
+            val again = shellFetch("192.0.2.1", 80, "GET /e2e-after-reset HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
+            assertTrue("a fetch after the reset is answered: '$again'", again.contains(nonce))
+            assertEquals("the server saw the second request", hitsBefore + 2, hits.get())
+            assertTrue("still connected after the reset", OlcboxVpnState.status.value is VpnStatus.Connected)
         } finally {
             context.startService(
                 Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME).setAction(OlcboxVpnActions.ACTION_STOP_VPN)
@@ -336,6 +347,34 @@ class RustCoreVpnE2ETest {
             assertTrue("the name was resolved", logCount("resolved to an address") > resolvedBefore)
             assertFalse("the core is running", !RustCoreEngine.isCoreRunning())
             say("RESULT hostname + Bypass Russia: the core started")
+        } finally {
+            stopAndWait()
+        }
+    }
+
+    @Test
+    fun theUsersOwnRulesUnderGlobalStartTheCore() {
+        consent()
+        // Global with the user's own direct rules (a name and a range) and a tunnel rule: the
+        // config names the network's resolver and writes the rules inline; the core on the device
+        // must take it. As above, only the start is asserted.
+        val link = "vless://11111111-1111-1111-1111-111111111111@192.0.2.9:443" +
+            "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
+            "&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#r"
+        saveProfile(
+            link,
+            RoutingSettings(
+                mode = RoutingMode.Global,
+                directRules = listOf("example.com", "10.8.0.0/16"),
+                tunnelRules = listOf("example.org")
+            )
+        )
+        val readyBefore = logCount("Rust core ready on")
+        try {
+            context.startForegroundService(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
+            waitFor("the core to start with the user's rules", 60_000) { logCount("Rust core ready on") > readyBefore }
+            assertTrue("the core is running", RustCoreEngine.isCoreRunning())
+            say("RESULT Global + the user's direct/tunnel rules: the core started")
         } finally {
             stopAndWait()
         }

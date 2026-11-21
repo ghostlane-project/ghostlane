@@ -160,13 +160,19 @@ object RustCoreEngine : RustCoreBackend {
         val core = handle ?: return@synchronized 0L
         val closed = LongByReference()
         val error = PointerByReference()
-        if (ffi.xray_core_reset_network(core, closed, error) != 0) freeError(error)
+        if (ffi.xray_core_reset_network(core, closed, error) != 0) throw failure("reset", error)
         closed.value
     }
 
-    override fun startOlc(params: RustOlcParams, protect: (Long) -> Boolean, log: (String) -> Unit) {
+    override fun startOlc(
+        params: RustOlcParams,
+        protect: (Long) -> Boolean,
+        log: (String) -> Unit,
+        onSessionOpened: (room: String) -> Unit
+    ) {
         val rt = runtime()
         val protectFd = protect
+        val sessionOpened = onSessionOpened
         setLogWriter(object : LogWriter {
             override fun writeLog(msg: String) = log(msg)
         })
@@ -185,9 +191,12 @@ object RustCoreEngine : RustCoreBackend {
         rt.setSocksListenHost(params.socksHost)
         rt.setProvider(params.provider)
         // Each session the engine opens (the first, every hop, every reconnect) is reported; the
-        // room's name is not logged, only that it happened.
+        // room's name is not logged, only that it happened. The room keeper is told the room.
         rt.setSessionListener(object : SessionListener {
-            override fun onSessionOpened(room: String, sessionId: String) = log("olcRTC session opened")
+            override fun onSessionOpened(room: String, sessionId: String) {
+                log("olcRTC session opened")
+                sessionOpened(room)
+            }
         })
         setRooms(params.room, params.failoverRooms)
         rt.setDeviceId(params.deviceId)

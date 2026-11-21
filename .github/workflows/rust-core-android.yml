@@ -283,6 +283,19 @@ jobs:
           ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
             -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -120
 
+      # The Rust path's parts that need no device, on the JVM: the olcRTC room keeper (list,
+      # refusal, fetch, timing, memory), the core's config with the user's own rules, hev's.
+      # pr-checks.yml runs the whole jvmTest on a PR; a lab branch gets none without this.
+      - name: Host tests of the Rust path
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew :sharedUI:jvmTest --tests "org.olcbox.app.vpn.rooms.*" --tests "org.olcbox.app.net.*" \
+            --tests "org.olcbox.app.vpn.HevTunnelConfigTest" --stacktrace 2>&1 | tail -80
+
       # A release build (minified, R8) keeps what the core needs: the engine the service
       # finds by name, the UniFFI bindings, JNA. Unsigned; nothing is published.
       - name: Release APK with the core keeps the engine, the bindings and JNA

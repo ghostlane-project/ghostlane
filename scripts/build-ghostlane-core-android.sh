@@ -55,8 +55,17 @@ if [ "$(git -C "$src" rev-parse HEAD 2>/dev/null || true)" != "$GHOSTLANE_CORE_C
 fi
 test "$(git -C "$src" rev-parse HEAD)" = "$GHOSTLANE_CORE_COMMIT"
 
-rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal \
+rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal --component rustfmt \
     --target aarch64-linux-android --target armv7-linux-androideabi --target x86_64-linux-android >/dev/null
+rustup component add --toolchain "$GHOSTLANE_CORE_TOOLCHAIN" rustfmt >/dev/null
+# bindgen formats boring-sys's bindings with rustfmt; without one it writes the whole module on one
+# line with a space before every colon. boring-sys (5.5.0 to 5.6.0, build/main.rs
+# ensure_err_lib_enum_is_named) names ErrLib by finding "ERR_LIB_SSL:" in that text and, when it
+# does not, guesses `_bindgen_ty_1`, which on armv7 and x86_64 is Bionic's anonymous REG_* enum
+# (sys/ucontext.h) and leaves `pub use _bindgen_ty_1 as ErrLib` unresolved (runs 4-6). arm64's
+# ucontext.h has no such enum, so it built by the luck of the numbering. The toolchain's own
+# rustfmt, named directly (the rustup proxy fails under `cargo +<toolchain>`):
+RUSTFMT="$(rustup which --toolchain "$GHOSTLANE_CORE_TOOLCHAIN" rustfmt)"; export RUSTFMT
 cargo_="cargo +$GHOSTLANE_CORE_TOOLCHAIN"
 
 page="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
@@ -65,6 +74,15 @@ rm -rf "$jni" "$chk" "$OUT/kotlin"; mkdir -p "$jni" "$chk"
 report="$OUT/report.txt"; : > "$report"
 say() { echo "$*" | tee -a "$report"; }
 say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring; armv7 and x86_64 fall back to none if their boring build fails, see BORING lines)"
+# boring-sys's bindings as rustfmt wrote them, and the enum ErrLib names (see RUSTFMT above).
+boring_bindings() {
+  local b errlib
+  b=$(ls -t "$src/target/$1/release/build"/boring-sys-*/out/bindings.rs 2>/dev/null | head -1)
+  [ -n "$b" ] || { echo "no boring-sys bindings for $1"; return 1; }
+  errlib=$(grep -E '^pub use +_bindgen_ty_[0-9]+ +as ErrLib;$' "$b" | tr -s ' ' || true)
+  [ -n "$errlib" ] && [ "$(wc -l < "$b")" -gt 1000 ] || { echo "bindings not formatted by rustfmt ($(wc -l < "$b") lines)"; return 1; }
+  echo "bindings $(wc -l < "$b" | tr -d ' ') lines, $errlib"
+}
 
 # <Rust target>:<ABI>:<NDK clang prefix>:<NDK sysroot triple>
 for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-android \
@@ -100,10 +118,8 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   start=$(date +%s)
   features="--features boring"
   if [ "$target" = armv7-linux-androideabi ] || [ "$target" = x86_64-linux-android ]; then
-    # boring-sys's bindgen on armv7 and x86_64 (runs 4-5; arm64 builds) (run 4: bindings.rs's `pub use
-    # _bindgen_ty_1 as ErrLib` unresolved): clang gets the Android target
-    # explicitly, not cargo's bare armv7-linux-androideabi.
-    export "BINDGEN_EXTRA_CLANG_ARGS_${low}=--target=$clang$api"
+    # boring-sys's ErrLib on armv7 and x86_64: fixed by RUSTFMT above. Until a run proves it on
+    # both, a failure still falls back to no boring so the other ABIs' results stay usable.
     if ! (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target"); then
       # One attempt with boring; if it still fails, this ABI ships without it
       # (the report says so) so the other ABIs' results stay usable.
@@ -131,10 +147,18 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   done
   say "ALIGN $abi: every LOAD segment 16 KiB-aligned ($aligns)"
 
-  # BoringSSL linked: its strings survive stripping (str0m's own DTLS has none).
-  if strings -a "$lib" | grep -q -E 'BoringSSL|boringssl'; then n=present; else n=ABSENT; fi
-  say "BORING $abi: BoringSSL strings $n"
-  [ "$n" = present ] || [ -z "$features" ] || { echo "BORING $abi: not linked" >&2; exit 1; }
+  # BoringSSL linked: the build with the feature succeeded and boring-sys's bindings are rustfmt's
+  # with ErrLib named. Its strings alone prove nothing: AWS-LC (a BoringSSL fork, aws-lc-sys)
+  # carries them too, and run 5 printed "present" for an armv7 build without boring.
+  if [ -n "$features" ]; then
+    if bnd=$(boring_bindings "$target"); then
+      say "BORING $abi: linked, $bnd"
+    else
+      echo "BORING $abi: built with boring, but $bnd" >&2; exit 1
+    fi
+  else
+    say "BORING $abi: NOT linked (built without the feature)"
+  fi
 
   "$bin/llvm-nm" -D --defined-only "$lib" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$chk/exports-$abi.txt"
   "$bin/llvm-nm" -D --undefined-only "$lib" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u > "$chk/imports-$abi.txt"

@@ -43,7 +43,7 @@ adb logcat -d -v time > "$out/logcat.txt" 2>&1 || true
 grep -h 'RustCoreE2E' "$out/logcat.txt" | sed -E 's/^.*RustCoreE2E *\( *[0-9]+\): //' > "$out/results.txt" || true
 cat "$out/results.txt"
 tail -30 "$out/am.txt"
-if ! grep -q '^OK (6 tests)' "$out/am.txt"; then
+if ! grep -q '^OK (7 tests)' "$out/am.txt"; then
   grep -E ' (E|F)/(AndroidRuntime|DEBUG|libc|TestRunner|ghostlane-core)' "$out/logcat.txt" | tail -60
   exit 1
 fi

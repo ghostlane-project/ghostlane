@@ -274,12 +274,15 @@ object XrayConfig {
      *  - under Bypass Russia, the names on [geodata]'s lists are resolved for
      *    real by the network's own resolver and leave directly, as do their
      *    addresses and the local network; everything else rides the tunnel;
+     *  - the user's own direct and tunnel rules (Android), ahead of the
+     *    region's lists, under Global or a bypass ([IosCore.effective]);
      *  - `log` at warning (debug with [verboseLogs]) and no access log.
      *
      * [spec] must be one of [IosCoreLine] that the core takes: [IosCore.refusal]
      * says why one is not, and this throws IllegalArgumentException for it.
-     * [routing] is Global or a bypass; under a bypass [geodata] carries the
-     * region's lists inline, as [buildXhttp] does.
+     * [routing] is Global or a bypass, either with the user's rules, not the
+     * blocked-only mode ([IosCore.BLOCKED_ONLY_REFUSAL]); under a bypass
+     * [geodata] carries the region's lists inline, as [buildXhttp] does.
      */
     fun buildIosCore(
         spec: OutboundSpec,

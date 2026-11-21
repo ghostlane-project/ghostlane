@@ -38,11 +38,23 @@ interface RustCoreBackend {
     fun stopCore()
     fun isCoreRunning(): Boolean
 
-    /** The network moved: the core closes what it holds on the old path. Returns the connections it closed. */
+    /**
+     * The network moved: the core closes what it holds on the old path. Returns the connections it
+     * closed (0 when no core runs); throws with the core's message when the reset fails.
+     */
     fun resetNetwork(): Long
 
-    /** Starts the olcRTC client and waits until it is ready. Throws with the engine's message. */
-    fun startOlc(params: RustOlcParams, protect: (Long) -> Boolean, log: (String) -> Unit)
+    /**
+     * Starts the olcRTC client and waits until it is ready. Throws with the engine's message.
+     * [onSessionOpened] is told the room of every session the engine opens (the first, every
+     * hop, every reconnect), on the engine's thread: it must not block (OlcrtcRoomKeeper queues).
+     */
+    fun startOlc(
+        params: RustOlcParams,
+        protect: (Long) -> Boolean,
+        log: (String) -> Unit,
+        onSessionOpened: (room: String) -> Unit
+    )
 
     /** Stops the olcRTC client, if one runs. Never throws. */
     fun stopOlc(timeoutMs: Long)
