@@ -72,6 +72,27 @@ class HevTunnelConfigTest {
         }
     }
 
+    // The Rust core's password inbound refuses a UDP ASSOCIATE for 0.0.0.0:0, so its
+    // UDP rides hev's FWD UDP lane (iOS: TunArrangement.hevUdp = "tcp").
+    @Test
+    fun theRustCoreAsksForHevsUdpInTcpLane() {
+        val yaml = HevTunnelConfig.yaml(
+            mtu = 1500, ipv4 = "10.0.88.88", socksAddress = "127.0.0.1", socksPort = 10808,
+            corePort = 10810, username = "u", password = "p", udp = "tcp"
+        )
+        assertEquals(listOf("  udp: 'tcp'"), socks5Block(yaml).filter { it.startsWith("  udp") })
+    }
+
+    // Anything but 'tcp' or 'udp' is 'udp': a typo must not switch the lane.
+    @Test
+    fun anUnknownUdpModeIsUdpAssociate() {
+        val yaml = HevTunnelConfig.yaml(
+            mtu = 1500, ipv4 = "10.0.88.88", socksAddress = "127.0.0.1", socksPort = 10808,
+            corePort = null, username = "u", password = "p", udp = "fwd"
+        )
+        assertEquals(listOf("  udp: 'udp'"), socks5Block(yaml).filter { it.startsWith("  udp") })
+    }
+
     // olcRTC refuses a client that offers no login when it was started with one.
     @Test
     fun olcrtcIsReachedOnItsPortWithTheLogin() {
