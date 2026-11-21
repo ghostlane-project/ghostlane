@@ -96,7 +96,7 @@ impl<F: Formatter> Formatter for GoStrings<F> {
     ) -> io::Result<()> {
         let mut rest = fragment;
         while let Some(at) = rest.find(['<', '>', '&', '\u{2028}', '\u{2029}']) {
-            writer.write_all(rest[..at].as_bytes())?;
+            writer.write_all(&rest.as_bytes()[..at])?;
             let (escape, width) = match rest.as_bytes()[at] {
                 b'<' => ("\\u003c", 1),
                 b'>' => ("\\u003e", 1),

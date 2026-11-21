@@ -120,7 +120,7 @@ list:
     - a: 1
       b:
         - x
-        - y
+        - \"y\"
       c: |-
         one
         two
