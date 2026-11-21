@@ -25,7 +25,8 @@ the Linux command names its own set in [cli.md](cli.md#first-connection).
 
 olcRTC opens a WebRTC media session to a public meeting service and moves
 traffic inside it, so what stays on the wire is a call the network already
-carries. We maintain the engine at
+carries. Its relays hold a fixed number of slots, and the app shows how full
+each room is before you join one. We maintain the engine at
 [ghostlane-project/olcrtc](https://github.com/ghostlane-project/olcrtc); it has
 our own UDP wire, multi-key support and metering.
 

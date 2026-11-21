@@ -57,26 +57,27 @@ what crosses it drops them on shape rather than on content. olcRTC opens a WebRT
 session to a public meeting service and moves traffic inside it, so what stays on the
 wire is a call the network already carries.
 
-It speaks the ordinary protocols too, because a call-shaped tunnel costs bandwidth and
-is not needed until it is, and the moment you need the fallback is the worst possible
+Ghostlane speaks the ordinary protocols too, because a call-shaped tunnel costs bandwidth
+and is not needed until it is, and the moment you need the fallback is the worst possible
 moment to be installing a second app.
 
-It is a client, not a service: you bring a server list from your provider, and the app
-turns it into servers you can connect to. It is free, there is no account, nothing to
+The app is a client, not a service: you bring a server list from your provider, and the
+app turns it into servers you can connect to. It is free, there is no account, nothing to
 sign up for, and nothing to buy here.
 
 ## What it does
 
 - **One tap to connect**, with the session's elapsed time and traffic on screen.
-- **Rooms that show how full they are.** olcRTC relays hold a fixed number of slots, and the app shows each room's occupancy before you join one.
-- **Smart connect.** Another transport when one is blocked, olcRTC in the same country when nothing else gets through (Android and the desktop).
-- **Your provider's list.** By link, QR code or file, with the plan's quota and expiry read from the list's own headers. See [server lists](docs/server-lists.md).
-- **Routing.** Everything through the tunnel; Russia, Iran or China direct; or only blocked sites through the tunnel, with rules of your own on top. See [routing](docs/routing.md).
-- **A tunnel that holds.** On Android and the desktop a reconnect or another server happens behind the tunnel. A kill switch on iPhone and the Linux desktop, always-on VPN on Android.
-- **More than phones.** Android TV, TUN and proxy modes wherever the platform has both, and each server of a list exported for a router (Podkop on OpenWrt, XKeen on Keenetic).
-- **Four languages.** English, Russian, Chinese and Persian.
-- **No account, no analytics, nothing collected.** See the [privacy policy](docs/privacy.md). The diagnostics log replaces server addresses with short tags, so the file is safe to send.
-- **And the rest**, platform by platform: [docs/features.md](docs/features.md).
+- **Rooms that show how full they are**: each olcRTC room's occupancy, before you join one.
+- **Smart connect** (Android and the desktop): another transport when one is blocked, then olcRTC in the same country.
+- **Your provider's list** by link, QR code or file, with the plan's quota and expiry. See [server lists](docs/server-lists.md).
+- **Routing**: everything through the tunnel; Russia, Iran or China direct; or only blocked sites. See [routing](docs/routing.md).
+- **A tunnel that holds**: a kill switch on iPhone and the Linux desktop, always-on VPN on Android.
+- **Nothing collected**: no account, no analytics. See the [privacy policy](docs/privacy.md).
+
+Android TV, exports for routers (Podkop on OpenWrt, XKeen on Keenetic), TUN and proxy
+modes where the platform has both, four languages (English, Russian, Chinese, Persian) and
+the rest, platform by platform: [docs/features.md](docs/features.md).
 
 ## Protocols
 
@@ -88,18 +89,26 @@ sign up for, and nothing to buy here.
 
 olcRTC rides six meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls,
 MTS Link and Jitsi. On iPhone one Rust library, `ghostlane-core`, runs in place of
-sing-box and Xray, for a narrower set of lines. More in [docs/protocols.md](docs/protocols.md).
+sing-box and Xray and connects to fewer kinds of server: see
+[On iPhone](docs/protocols.md#on-iphone). More in [docs/protocols.md](docs/protocols.md).
 
 ## Download
 
 | Platform | Where it comes from |
 | --- | --- |
-| iOS | The [App Store](https://apps.apple.com/app/id6795355210). [TestFlight](https://testflight.apple.com/join/sU7aTHQv) gets every release the day it is cut; the App Store follows after App Review, so it can be a version or two behind |
-| Android | [Google Play](https://play.google.com/store/apps/details?id=org.proofkit.app), or the universal and `armeabi-v7a` APKs on the [Releases](https://github.com/ghostlane-project/ghostlane/releases) page. The same app installs on Android TV |
-| macOS | Signed and notarised DMG, one per architecture |
-| Windows | EXE, MSI and a portable zip |
-| Linux | AppImage |
-| Linux servers | `ghostlane-cli`: deb, rpm, apk, Arch and tarballs for amd64/arm64/armv7 with a signed installer, signed [apt and dnf repositories](https://ghostlane-project.github.io/ghostlane/) and a Docker image (`ghcr.io/ghostlane-project/ghostlane-cli`). A headless daemon with tun (optional kill switch) and proxy modes: [docs/cli.md](docs/cli.md) |
+| iOS | The [App Store](https://apps.apple.com/app/id6795355210), or [TestFlight](https://testflight.apple.com/join/sU7aTHQv) |
+| Android | [Google Play](https://play.google.com/store/apps/details?id=org.proofkit.app), or the universal and `armeabi-v7a` APKs on [Releases](https://github.com/ghostlane-project/ghostlane/releases). The same app installs on Android TV |
+| macOS | [Releases](https://github.com/ghostlane-project/ghostlane/releases): a signed and notarised DMG, one per architecture |
+| Windows | [Releases](https://github.com/ghostlane-project/ghostlane/releases): EXE, MSI and a portable zip |
+| Linux | [Releases](https://github.com/ghostlane-project/ghostlane/releases): AppImage |
+| Linux servers | `ghostlane-cli`, a headless daemon: [docs/cli.md](docs/cli.md) |
+
+TestFlight gets every release the day it is cut; the App Store follows after App Review,
+so it can be a version or two behind. `ghostlane-cli` runs in tun (optional kill switch)
+and proxy modes, and comes as deb, rpm, apk, Arch packages and tarballs for
+amd64/arm64/armv7 with a signed installer, from signed
+[apt and dnf repositories](https://ghostlane-project.github.io/ghostlane/) and as a Docker
+image (`ghcr.io/ghostlane-project/ghostlane-cli`).
 
 Everything except the App Store build is produced by the release workflow on public
 GitHub Actions runners and published with SHA256 sums and a build provenance attestation.
