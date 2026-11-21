@@ -6,7 +6,9 @@
 #     in a file that names the core: xray-rust, XRAY_RUST, GHOSTLANE_CORE,
 #     ghostlane-core, rust-core, RUST_CORE) stands anywhere under .github or scripts;
 #   - a workflow that reads the pin, directly or through a script that does, does not name the pin file in each `paths:`
-#     list it has, or has no `pin` input on its workflow_dispatch.
+#     list it has, or has no `pin` input on its workflow_dispatch;
+#   - a sealed workflow (SEALED below: one that must build the pin and nothing
+#     else, or that builds no core at all) has a `pin` input.
 # It then proves itself: each rule is planted in a temp copy and must fail.
 #
 #   scripts/p6-tests/pin.sh [root]     root defaults to the repository
@@ -33,14 +35,27 @@ PIN = "scripts/ghostlane-core-pin.sh"
 HEX = re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])")
 CORE_WORDS = re.compile(r"xray-rust|XRAY_RUST|GHOSTLANE_CORE|ghostlane-core|rust-core|RUST_CORE", re.I)
 READS = re.compile(r"ghostlane-core-pin|ghostlane-core-resolve|build-ghostlane-core|GHOSTLANE_CORE_")
+# Workflows that name a reader and must NOT take another commit of the core.
+# The rule for them is the reverse one: a `pin` input fails.
+SEALED = {
+    "release.yml": "a release builds the pin and nothing else: an override would sign and publish another commit",
+    "release-dry.yml": "it reads the release workflows' text and builds no core",
+}
+
+
+def is_test(rel):
+    """A test names the scripts it checks; that does not make it, or what
+    names it, a reader of the pin."""
+    return os.path.basename(rel).startswith(("test-", "test_"))
 
 
 def readers(root):
     """Scripts that read the pin: they name the pin file, the resolver or
-    GHOSTLANE_CORE_, or name another reader (to a fixed point)."""
+    GHOSTLANE_CORE_, or name another reader (to a fixed point). Tests are left
+    out: they name scripts without running the core."""
     scripts = {}
     for rel, p in files(root):
-        if rel.startswith("scripts/") and not rel.startswith(SKIP_DIRS) and rel != PIN:
+        if rel.startswith("scripts/") and not rel.startswith(SKIP_DIRS) and rel != PIN and not is_test(rel):
             t = read(p)
             if t is not None:
                 scripts[rel] = t
@@ -106,6 +121,11 @@ def check(root):
         on = doc.get(True, doc.get("on")) or {}
         if not isinstance(on, dict):
             on = {k: None for k in ([on] if isinstance(on, str) else on)}
+        if n in SEALED:
+            wd = on.get("workflow_dispatch")
+            if isinstance(wd, dict) and isinstance(wd.get("inputs"), dict) and "pin" in wd["inputs"]:
+                bad.append("%s is sealed and may take no `pin` input: %s" % (n, SEALED[n]))
+            continue
         for ev in ("push", "pull_request"):
             paths = (on.get(ev) or {}).get("paths") if isinstance(on.get(ev), dict) else None
             if paths is not None and not any(fnmatch.fnmatch(PIN, g) for g in paths):
@@ -140,6 +160,12 @@ def selftest(root):
                 "on:\n  push:\n    paths:\n      - a\n  workflow_dispatch:\njobs:\n  a:\n"
                 "    steps:\n      - run: bash scripts/fetch-wrapped-core.sh\n")),
     }
+    def seal_broken(d):
+        p = d + "/.github/workflows/release.yml"
+        t = read(p)
+        assert "      platforms:\n" in t, "release.yml has no platforms input to plant beside"
+        open(p, "w").write(t.replace("      platforms:\n", "      pin:\n        type: string\n      platforms:\n", 1))
+    probes["a pin input on the sealed release workflow"] = seal_broken
     for what, plant in probes.items():
         tmp = tempfile.mkdtemp()
         try:
