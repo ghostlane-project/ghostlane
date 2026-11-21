@@ -29,6 +29,7 @@ on:
     paths:
       - .github/workflows/rust-core-android.yml
       - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
       - scripts/build-ghostlane-core-android.sh
       - 'scripts/rust-core-android-*.sh'
       - scripts/olcrtc-pin.sh
@@ -45,6 +46,7 @@ on:
     paths:
       - .github/workflows/rust-core-android.yml
       - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
       - scripts/build-ghostlane-core-android.sh
       - 'scripts/rust-core-android-*.sh'
       - scripts/olcrtc-pin.sh
@@ -56,6 +58,11 @@ on:
       - '*.gradle.kts'
       - gradle.properties
   workflow_dispatch:
+    inputs:
+      pin:
+        description: Build this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -104,10 +111,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             out/core/src/target
-          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
           restore-keys: rust-core-android-
 
       - name: Build
+        env:
+          GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
         run: |
           set +e -uo pipefail
           bash scripts/build-ghostlane-core-android.sh out/core 2>&1 | tee out-build.log
@@ -129,7 +138,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             out/core/src/target
-          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
 
       - name: Artifact (without the source and the target directory)
         run: |
