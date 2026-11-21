@@ -173,7 +173,119 @@ jobs:
           }
           Get-Content (Join-Path $dir 'stub.log')
 
+      - name: Wintun from the official signed release
+        shell: pwsh
+        env:
+          WINTUN_VERSION: "0.14.1"
+          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+        run: |
+          $dl = Join-Path $env:RUNNER_TEMP 'wintun-dl'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          $zip = Join-Path $dl 'wintun.zip'
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$($env:WINTUN_VERSION).zip" -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $env:WINTUN_SHA256) { throw "wintun zip sha256 $got, expected $($env:WINTUN_SHA256)" }
+          Expand-Archive $zip -DestinationPath $dl
+          $dll = Join-Path $dl 'wintun\bin\amd64\wintun.dll'
+          Get-FileHash -Algorithm SHA256 $dll | Format-List
+          $sig = Get-AuthenticodeSignature $dll
+          "signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw 'wintun.dll signature is not valid' }
+          $out = Join-Path $env:RUNNER_TEMP 'run'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item $dll $out
+
+      - name: Runner facts
+        shell: pwsh
+        run: |
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          [Environment]::OSVersion.VersionString
+          "admin: " + ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Get-NetAdapter | Format-Table Name, InterfaceDescription, Status
+          Get-NetRoute -AddressFamily IPv4 -DestinationPrefix 0.0.0.0/0 | Format-Table
+
+      - uses: msys2/setup-msys2@v2.34.0
+        with:
+          msystem: MSYS
+          update: false
+          install: gcc make
+
+      - name: Build hev.exe under MSYS2
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          src="$PWD/androidApp/src/main/jni/hev-socks5-tunnel"
+          rm -rf "$RUNNER_TEMP/hev-src"
+          cp -r "$src" "$RUNNER_TEMP/hev-src"
+          cd "$RUNNER_TEMP/hev-src"
+          echo "MSYSTEM=$MSYSTEM"; gcc --version | head -1; make --version | head -1
+          make REV_ID=spike -j2
+          ls -la bin
+          cp bin/hev-socks5-tunnel.exe "$RUNNER_TEMP/run/hev.exe" 2>/dev/null || cp bin/hev-socks5-tunnel "$RUNNER_TEMP/run/hev.exe"
+          echo '--- DLLs hev.exe imports (objdump)'
+          objdump -p "$RUNNER_TEMP/run/hev.exe" | grep 'DLL Name' | sort -u
+          echo '--- ldd'
+          ldd "$RUNNER_TEMP/run/hev.exe" | tee "$RUNNER_TEMP/ldd.txt"
+          # Beside hev.exe: every DLL ldd resolves under the MSYS2 tree.
+          grep -o '/usr/bin/[A-Za-z0-9_.+-]*\.dll' "$RUNNER_TEMP/ldd.txt" | sort -u | while read -r d; do
+            echo "bundle $d"; cp "$d" "$RUNNER_TEMP/run/"
+          done
+          ls -la "$RUNNER_TEMP/run"
+
+      - name: Bring hev.exe up on Wintun
+        shell: pwsh
+        run: |
+          $run = Join-Path $env:RUNNER_TEMP 'run'
+          @"
+          tunnel:
+            name: hevtun
+            mtu: 1500
+            ipv4: 198.18.0.1
+          socks5:
+            port: 1080
+            address: 127.0.0.1
+            udp: 'udp'
+          misc:
+            log-file: stderr
+            log-level: debug
+          "@ | Set-Content -Encoding ascii (Join-Path $run 'config.yml')
+          Get-Content (Join-Path $run 'config.yml')
+          $p = Start-Process -FilePath (Join-Path $run 'hev.exe') -ArgumentList 'config.yml' -WorkingDirectory $run `
+            -RedirectStandardOutput (Join-Path $run 'hev.out') -RedirectStandardError (Join-Path $run 'hev.err') -PassThru -NoNewWindow
+          $up = $false
+          for ($i = 0; $i -lt 40; $i++) {
+            if ($p.HasExited) { break }
+            $a = Get-NetAdapter -Name hevtun -ErrorAction SilentlyContinue
+            if ($a -and (Get-NetIPAddress -InterfaceAlias hevtun -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object IPAddress -eq '198.18.0.1')) { $up = $true; break }
+            Start-Sleep -Milliseconds 500
+          }
+          "hev exited: $($p.HasExited)"; if ($p.HasExited) { "exit code: $($p.ExitCode)" }
+          Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          if (-not $up) { throw 'the hevtun adapter did not come up with 198.18.0.1' }
+          Get-NetAdapter -Name hevtun | Format-List Name, InterfaceDescription, Status, MtuSize, InterfaceIndex, DriverFileName
+          Get-NetIPAddress -InterfaceAlias hevtun | Format-Table IPAddress, PrefixLength, AddressFamily
+          Get-DnsClientServerAddress -InterfaceAlias hevtun | Format-Table
+          # By hand: the one route that sends the test's address into the tun.
+          # On-link, because Wintun is a layer 3 device.
+          New-NetRoute -DestinationPrefix 203.0.113.0/24 -InterfaceAlias hevtun -NextHop 0.0.0.0 | Format-List DestinationPrefix, NextHop, InterfaceAlias
+          route print -4
+
       - name: Fetch and datagram through the tun
         shell: pwsh
         run: |
           & (Join-Path $env:RUNNER_TEMP 'lab\tun-test.ps1')
+
+      - name: Logs and clean-up (observed, never fails)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $run = Join-Path $env:RUNNER_TEMP 'run'
+          '--- stub log'; Get-Content (Join-Path $env:RUNNER_TEMP 'lab\stub.log') -ErrorAction SilentlyContinue
+          '--- hev stdout/stderr'; Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          '--- adapters before the kill'; Get-NetAdapter | Format-Table Name, Status
+          Get-Process hev -ErrorAction SilentlyContinue | ForEach-Object { taskkill /F /PID $_.Id }
+          Start-Sleep -Seconds 3
+          '--- adapters after taskkill /F (does Wintun leave the adapter behind?)'
+          Get-NetAdapter | Format-Table Name, Status
+          Get-NetRoute -DestinationPrefix 203.0.113.0/24 -ErrorAction SilentlyContinue | Format-Table
