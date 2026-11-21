@@ -33,9 +33,10 @@
 #   --max-depth N        nesting limit (default 10)
 #
 # The allow list is one file per artefact that may still hold Go today. The
-# file is named like the artefact with its version replaced by VERSION
-# (Ghostlane-VERSION-android-release.apk); README* and dot files are not
-# entries. The list only shrinks: an artefact that was opened completely, is
+# file is named like the artefact with its version replaced by VERSION and
+# ".allow" added (Ghostlane-VERSION-android-release.apk.allow: the suffix keeps
+# .gitignore's *.apk, *.exe and the like from swallowing an entry); other files
+# are not entries. The list only shrinks: an artefact that was opened completely, is
 # clean, and still has a file fails as STALE. Remove the file in the commit
 # that flips the artefact.
 #
@@ -505,9 +506,8 @@ def allow_entries(d):
     out = set()
     if d and os.path.isdir(d):
         for n in os.listdir(d):
-            if n.startswith(".") or n.upper().startswith("README"):
-                continue
-            out.add(n)
+            if n.endswith(".allow") and not n.startswith("."):
+                out.add(n[:-len(".allow")])
     return out
 
 
@@ -568,7 +568,7 @@ def main(argv):
             status = "NOT OPENED on this runner (a DMG is opened on macOS only; only its raw bytes and name were read)"
             code = 0
         elif listed:
-            status = "FAIL: STALE allow list entry, the artefact is clean: remove no-go-allow.d/" + key
+            status = "FAIL: STALE allow list entry, the artefact is clean: remove no-go-allow.d/" + key + ".allow"
             code = 1
         else:
             status = "OK: clean"
@@ -579,7 +579,7 @@ def main(argv):
             worst = 3
         lines = ["%s: %s" % (name, status),
                  "  opened %d container(s), read %d file(s)%s" % (len(sc.opened), sc.leaves,
-                                                                  ", allow list file: " + key if (listed or suggest) else "")]
+                                                                  ", allow list file: " + key + ".allow" if (listed or suggest) else "")]
         for ch, sg in gos[:25]:
             lines.append("  GO  %s\n      %s" % (ch, "; ".join(sg[:6])))
         if len(gos) > 25:

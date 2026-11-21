@@ -239,19 +239,26 @@ cp "$tmp/l/cleanset/zip/app.apk" "$tmp/art/Ghostlane-1.0.473-android-play.apk"
 echo "# a task flips it" > "$tmp/allow/README.md"
 out=$("$check" --allow-dir "$tmp/allow" "$tmp/art/Ghostlane-1.0.472-android-release.apk" 2>&1); rc=$?
 [ $rc -eq 1 ] && ok "dirty and unlisted fails" || { bad "dirty and unlisted (exit $rc)"; echo "$out"; }
-: > "$tmp/allow/Ghostlane-VERSION-android-release.apk"
+: > "$tmp/allow/Ghostlane-VERSION-android-release.apk.allow"
 out=$("$check" --allow-dir "$tmp/allow" "$tmp/art/Ghostlane-1.0.472-android-release.apk" 2>&1); rc=$?
 [ $rc -eq 0 ] && printf '%s' "$out" | grep -q ALLOWED && ok "dirty and listed passes, and says Go is still in it" || { bad "dirty and listed (exit $rc)"; echo "$out"; }
 out=$("$check" --allow-dir "$tmp/allow" "$tmp/art/Ghostlane-1.0.999-android-release.apk" 2>&1); rc=$?
 [ $rc -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (exit $rc)"
-: > "$tmp/allow/Ghostlane-VERSION-android-play.apk"
+: > "$tmp/allow/Ghostlane-VERSION-android-play.apk.allow"
 out=$("$check" --allow-dir "$tmp/allow" "$tmp/art/Ghostlane-1.0.473-android-play.apk" 2>&1); rc=$?
 [ $rc -eq 1 ] && printf '%s' "$out" | grep -q STALE && ok "clean and still listed fails as STALE" || { bad "stale entry (exit $rc)"; echo "$out"; }
-rm "$tmp/allow/Ghostlane-VERSION-android-play.apk"
+rm "$tmp/allow/Ghostlane-VERSION-android-play.apk.allow"
 out=$("$check" --allow-dir "$tmp/allow" "$tmp/art/Ghostlane-1.0.473-android-play.apk" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok "clean and unlisted passes" || { bad "clean and unlisted (exit $rc)"; echo "$out"; }
 out=$("$check" --allow-dir "$tmp/allow" --summary "$tmp/summary.md" "$tmp/art/Ghostlane-1.0.472-android-release.apk" 2>&1) || true
 grep -q 'lib/arm64-v8a/libhello.so' "$tmp/summary.md" && ok "the summary names the file inside" || bad "summary"
+
+# every file of the real list is an entry (a stray name would never be read)
+stray=0
+for f in "$here"/no-go-allow.d/*; do
+  case "$(basename "$f")" in README.md|*.allow) ;; *) stray=1; echo "not an entry: $f" ;; esac
+done
+[ $stray -eq 0 ] && ok "every file of no-go-allow.d is an entry or the README" || bad "stray file in no-go-allow.d"
 
 # ---------------------------------------------------------------- part B
 echo "== B. a stripped Go hello, planted at every nesting"
