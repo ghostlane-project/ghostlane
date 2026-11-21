@@ -40,8 +40,6 @@ import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.data.model.RoutingSettings
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.DesktopChannelProbe
-import org.olcbox.app.net.DesktopSingBoxController
-import org.olcbox.app.net.DesktopXrayController
 import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
@@ -57,7 +55,6 @@ import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.util.nowMillis
-import org.olcbox.app.vpn.desktop.CoreShape
 import org.olcbox.app.vpn.desktop.DeadProcess
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
@@ -81,6 +78,12 @@ import org.olcbox.app.vpn.desktop.SessionEndpoint
 import org.olcbox.app.vpn.desktop.SingBoxTunTraffic
 import org.olcbox.app.vpn.desktop.TunnelTraffic
 import org.olcbox.app.vpn.desktop.WindowsTunController
+import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
+import org.olcbox.app.vpn.desktop.engine.DesktopEngines
+import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
+import org.olcbox.app.vpn.desktop.engine.FrontRequest
+import org.olcbox.app.vpn.desktop.engine.LineRequest
+import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -240,7 +243,14 @@ class DesktopVpnManager private constructor(
      * per attempt, so it cannot be worked out again.
      */
     private var windowsTunInterface: String? = null
-    private val windowsTunCore = org.olcbox.app.net.DesktopSingBoxController(onOutput = ::onWindowsTunOutput)
+
+    /**
+     * What carries this manager's lines ([org.olcbox.app.vpn.desktop.engine.DesktopEngine]):
+     * the session's line, the Windows tun's core and the probes.
+     */
+    private val engine = DesktopEngines.create(
+        DesktopEngineHost(log = ::addLog, windowsTunOutput = ::onWindowsTunOutput)
+    )
 
     /** The tun core said the system's filtering engine refused `strict_route`; see [startWindowsTun]. */
     @Volatile
@@ -263,48 +273,10 @@ class DesktopVpnManager private constructor(
      */
     private var macTunActive = false
 
-    // Unified client: sing-box / Xray cores for vless/hy2/xhttp locations (exec'd
-    // bundled binaries). The tun/PAC targets `activeCorePort` when a core is active
-    // (null = olcrtc's own SOCKS port).
-    // Forward the cores' own output into the app log: when an outbound fails the
-    // core says why on its first lines, and that used to go to a temp file nobody read.
-    private val singBoxCore = org.olcbox.app.net.DesktopSingBoxController(
-        onOutput = { line -> addLog(line) }
-    )
-    private val xrayCore = org.olcbox.app.net.DesktopXrayController(
-        onOutput = { line -> addLog(line) }
-    )
+    // Unified client: the engine's cores for vless/hy2/xhttp locations. The
+    // tun/PAC targets `activeCorePort` when a core is active (null = olcrtc's
+    // own SOCKS port).
     private var activeCorePort: Int? = null
-
-    /**
-     * The core of a line a session probes while it looks for another one
-     * ([lookAtOtherLines]): a candidate's own, beside the session's, which is
-     * not touched.
-     *
-     * One pair, kept, where the probe before a connect makes a pair for every
-     * probe. A look tries one line at a time, so one pair is enough, and a
-     * session that is stopped can then stop a probe that is running with
-     * everything else it stops ([cancelProcessJobs]). Left to the probe's own
-     * coroutine, the core is stopped when that coroutine next runs, and after
-     * Quit it never does: the process would outlive the app.
-     */
-    private val lookSingBox = DesktopSingBoxController()
-    private val lookXray = DesktopXrayController()
-    private val lookStarter = TransportProbe.Starter { spec, config ->
-        if (TransportProbe.usesXray(spec)) {
-            lookXray.start(config)
-            object : TransportProbe.Core {
-                override fun isRunning(): Boolean = lookXray.isRunning()
-                override suspend fun stop() = lookXray.stop()
-            }
-        } else {
-            lookSingBox.start(config)
-            object : TransportProbe.Core {
-                override fun isRunning(): Boolean = lookSingBox.isRunning()
-                override suspend fun stop() = lookSingBox.stop()
-            }
-        }
-    }
 
     /** The question [networkPresent] has open, while it has one. */
     @Volatile private var networkQuestion: Deferred<Boolean>? = null
@@ -533,23 +505,7 @@ class DesktopVpnManager private constructor(
 
     // Smart connect: the location's core, alone, on its own port and config.
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
-        TransportProbe.passes(locationConfig) { spec, config ->
-            if (TransportProbe.usesXray(spec)) {
-                val xray = DesktopXrayController()
-                xray.start(config)
-                object : TransportProbe.Core {
-                    override fun isRunning(): Boolean = xray.isRunning()
-                    override suspend fun stop() = xray.stop()
-                }
-            } else {
-                val singBox = DesktopSingBoxController()
-                singBox.start(config)
-                object : TransportProbe.Core {
-                    override fun isRunning(): Boolean = singBox.isRunning()
-                    override suspend fun stop() = singBox.stop()
-                }
-            }
-        }
+        TransportProbe.passes(locationConfig, starter = engine.probes.fresh)
 
     override suspend fun measureCurrentChannel(): Long? {
         if (status.value !is VpnStatus.Connected) return null
@@ -888,7 +844,7 @@ class DesktopVpnManager private constructor(
                     )
                     if (coreRouting is Routing.Rules) {
                         frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
-                        coresAlive = singBoxCore::isRunning
+                        coresAlive = engine.line.frontAlive
                     }
                 } else {
                     coresAlive = startDesktopCore(
@@ -1006,7 +962,7 @@ class DesktopVpnManager private constructor(
                     requestGeneration = requestGeneration
                 )
             } else {
-                if (!singBoxCore.isRunning() && !xrayCore.isRunning()) {
+                if (!engine.line.anyRunning()) {
                     error("core exited before desktop proxy was enabled")
                 }
                 // hev is watched behind a core line as it is behind a room.
@@ -1016,7 +972,7 @@ class DesktopVpnManager private constructor(
                     startTunExitWatcher(tunProcess ?: error("TUN process is missing"))
                 }
             }
-            if (frontPort != null && !singBoxCore.isRunning()) {
+            if (frontPort != null && !engine.line.frontAlive()) {
                 error("sing-box front exited before desktop proxy was enabled")
             }
 
@@ -1051,7 +1007,7 @@ class DesktopVpnManager private constructor(
                     port = tunVerifyPort,
                     requestGeneration = requestGeneration,
                     lineAlive = {
-                        if (isOlcrtc) process?.isAlive == true else singBoxCore.isRunning() || xrayCore.isRunning()
+                        if (isOlcrtc) process?.isAlive == true else engine.line.anyRunning()
                     }
                 )
                 else -> org.olcbox.app.net.TunnelVerifier.verify(
@@ -1241,7 +1197,7 @@ class DesktopVpnManager private constructor(
             val verifyPassword = UUID.randomUUID().toString()
             val trafficApi = newTrafficApi()
             val interfaceName = windowsTunInterfaceName(windowsTunSessionId, requestGeneration, attempt)
-            windowsTunCore.start(
+            engine.windowsTun.start(
                 org.olcbox.app.net.SingBoxConfig.buildDesktopTun(
                     corePort = socksPort,
                     verifyPort = verifyPort,
@@ -1267,7 +1223,7 @@ class DesktopVpnManager private constructor(
                 requestGeneration, verifyPort, verifyUsername, verifyPassword,
                 interfaceName, overallDeadline
             )
-            ready = windowsTunExit != null && windowsTunCore.isRunning()
+            ready = windowsTunExit != null && engine.windowsTun.isRunning()
             if (ready) {
                 windowsTunVerifyProxy = SubscriptionFetchProxy(
                     "127.0.0.1", verifyPort, verifyUsername, verifyPassword
@@ -1277,7 +1233,7 @@ class DesktopVpnManager private constructor(
                 tunnelTraffic = trafficApi?.let { SingBoxTunTraffic(it.port, it.secret, ownBinaries = bypassPaths) }
                 break
             }
-            windowsTunCore.stopNow()
+            engine.windowsTun.stopNow()
             // It answered names for as long as it stood, carrying or not.
             windowsTunController.forgetTunnelAnswers()
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
@@ -1287,7 +1243,7 @@ class DesktopVpnManager private constructor(
             }
         }
         if (!ready) error("Windows TUN did not carry its HTTPS verification request after retries; see the core log")
-        tunProcess = windowsTunCore.runningProcess() ?: error("Windows TUN core exited")
+        tunProcess = engine.windowsTun.runningProcess() ?: error("Windows TUN core exited")
         if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
         startTunExitWatcher(tunProcess!!)
         addLog("Windows TUN ready; carrier processes bypass via $physicalInterface")
@@ -1315,7 +1271,7 @@ class DesktopVpnManager private constructor(
         // ProcessHandle.Info.command() may be empty on Windows. Exact process
         // paths are useful when present; known resolved binaries are the safe
         // fallback for the process bypass rule.
-        val running = listOfNotNull(process, singBoxCore.runningProcess(), xrayCore.runningProcess())
+        val running = (listOfNotNull(process) + engine.line.runningProcesses())
             .mapNotNull { it.info().command().orElse(null) }
         val bundled = buildList<Path> {
             runCatching { DesktopNativeAssets.resolveSingBoxBinary() }.getOrNull()?.let { add(it) }
@@ -1339,7 +1295,7 @@ class DesktopVpnManager private constructor(
         overallDeadline: Long
     ): org.olcbox.app.net.TunnelExit? {
         val deadline = minOf(overallDeadline, System.currentTimeMillis() + WINDOWS_TUN_READY_TIMEOUT_MS)
-        while (System.currentTimeMillis() < deadline && windowsTunCore.isRunning()) {
+        while (System.currentTimeMillis() < deadline && engine.windowsTun.isRunning()) {
             if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
             val exit = org.olcbox.app.net.TunnelVerifier.verify(
                 socksHost = "127.0.0.1",
@@ -1679,36 +1635,24 @@ class DesktopVpnManager private constructor(
                     "go into the tunnel while it is up; it may not connect until you disconnect and connect"
             )
         }
-        // Which processes must be alive once the port answers. A port that
-        // answers proves nothing about who answers.
-        val shape = LineConfigs.shapeOf(spec, routing)
-        val alive = shape.alive()
-        // Xray does not route; sing-box does, so under rules it goes in front
-        // and Xray takes a port of its own behind it.
-        val xrayPort = if (shape == CoreShape.XrayBehindSingBox) allocateVerifyPort(port) else port
-        val configs = LineConfigs.core(
-            spec,
-            port = port,
-            xrayPort = xrayPort,
-            routing = routing,
-            verboseLogs = verboseLogs,
-            login = login,
-            serverResolver = serverResolver,
-            autoDetectInterface = besideTun,
-            bindInterface = boundInterface
+        val started = engine.line.start(
+            LineRequest(
+                spec = spec,
+                kind = "${location.kind}",
+                port = port,
+                routing = routing,
+                verboseLogs = verboseLogs,
+                login = login,
+                serverResolver = serverResolver,
+                autoDetectInterface = besideTun,
+                bindInterface = boundInterface,
+                anotherPort = ::allocateVerifyPort
+            )
         )
-        configs.xray?.let { xrayCore.start(it) }
-        configs.singBox?.let { singBoxCore.start(it) }
-        addLog(
-            when (shape) {
-                CoreShape.XrayBehindSingBox ->
-                    "Xray/xhttp core on 127.0.0.1:$xrayPort behind a sing-box front on 127.0.0.1:$port"
-                CoreShape.Xray -> "Xray/xhttp core starting on 127.0.0.1:$port"
-                CoreShape.SingBox -> "sing-box core (${location.kind}) starting on 127.0.0.1:$port"
-            }
-        )
+        val alive = started.alive
+        addLog(started.said)
         if (!waitForCoreSocks(port) || !alive()) {
-            val exit = if (xhttp != null) xrayCore.exitCodeOrNull() else singBoxCore.exitCodeOrNull()
+            val exit = started.exitCode()
             error(
                 "core SOCKS not ready on 127.0.0.1:$port" +
                     (exit?.let { " (core exited with code $it — see the lines above)" } ?: "")
@@ -1739,8 +1683,8 @@ class DesktopVpnManager private constructor(
     ): Int {
         stopDesktopCores()
         val port = heldPort ?: allocateCorePort()
-        singBoxCore.start(
-            LineConfigs.front(
+        engine.line.startFront(
+            FrontRequest(
                 enginePort = socksSettings.port,
                 engineUsername = socksSettings.username,
                 enginePassword = socksSettings.password,
@@ -1751,10 +1695,10 @@ class DesktopVpnManager private constructor(
             )
         )
         addLog("sing-box front for olcRTC starting on 127.0.0.1:$port")
-        if (!waitForCoreSocks(port) || !singBoxCore.isRunning()) {
+        if (!waitForCoreSocks(port) || !engine.line.frontAlive()) {
             error(
                 "sing-box front not running on 127.0.0.1:$port" +
-                    (singBoxCore.exitCodeOrNull()?.let { " (exited with code $it — see the lines above)" } ?: "")
+                    (engine.line.frontExitCode()?.let { " (exited with code $it — see the lines above)" } ?: "")
             )
         }
         activeCorePort = port
@@ -1817,16 +1761,8 @@ class DesktopVpnManager private constructor(
     }.getOrDefault(false)
 
     private fun stopDesktopCores() {
-        singBoxCore.stopNow()
-        xrayCore.stopNow()
+        engine.line.stopNow()
         activeCorePort = null
-    }
-
-    /** Whether every process of a line of this shape runs. */
-    private fun CoreShape.alive(): () -> Boolean {
-        val singBox = this != CoreShape.Xray
-        val xray = this != CoreShape.SingBox
-        return { (!singBox || singBoxCore.isRunning()) && (!xray || xrayCore.isRunning()) }
     }
 
     /**
@@ -2049,9 +1985,9 @@ class DesktopVpnManager private constructor(
             }
             DesktopOs.Windows -> {
                 // A tun that was up, or one a cancelled start left running.
-                val tunWasUp = tunProcess != null || windowsTunCore.isRunning()
+                val tunWasUp = tunProcess != null || engine.windowsTun.isRunning()
                 runCatching {
-                    windowsTunCore.stopNow()
+                    engine.windowsTun.stopNow()
                     windowsTunExit = null
                     windowsTunVerifyProxy = null
                     windowsTunInterface = null
@@ -2142,8 +2078,7 @@ class DesktopVpnManager private constructor(
         // After the job that runs them: a probe's core that a look had
         // running goes now, with the session, and not when the cancelled job
         // gets to its own cleanup.
-        lookSingBox.stopNow()
-        lookXray.stopNow()
+        engine.probes.stopKept()
 
         logJob?.cancel()
         logJob = null
@@ -2487,7 +2422,7 @@ class DesktopVpnManager private constructor(
                 scope.launch {
                     mutex.withLock {
                         if (requestGeneration != generation || sessionLine !== line) return@withLock
-                        val exitCode = singBoxCore.exitCodeOrNull() ?: xrayCore.exitCodeOrNull()
+                        val exitCode = engine.line.exitCodeOrNull()
                         handleUnexpectedProcessExit(
                             which = DeadProcess.Core,
                             logMessage = "core process exited unexpectedly" +
@@ -2862,11 +2797,11 @@ class DesktopVpnManager private constructor(
             else -> socks
         }
         val coresAlive: (() -> Boolean)? = when {
-            fronted -> singBoxCore::isRunning
+            fronted -> engine.line.frontAlive
             isOlcrtc -> null
             else -> {
                 val spec = location.rawLink?.let(LinkParser::parse) ?: error("unparseable core link")
-                LineConfigs.shapeOf(spec, coreRouting).alive()
+                engine.line.alive(spec, coreRouting)
             }
         }
         return SessionLine(
@@ -3442,7 +3377,7 @@ class DesktopVpnManager private constructor(
             },
             autoDetectInterface = line.desktopMode == DesktopMode.LinuxTun,
             bindInterface = boundInterface,
-            starter = lookStarter
+            starter = engine.probes.kept
         )
 
     /**
@@ -4076,42 +4011,3 @@ internal fun preferredVerifyPort(corePort: Int): Int {
  */
 internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
     if (daemon == MacOsTunnelDaemon.Registration.Enabled) DesktopMode.MacTun else DesktopMode.SystemProxy
-
-/** Where a session's routing rules are applied, if anywhere. */
-internal enum class DesktopRulesHome {
-    /** Everything through the tunnel: no rules asked for, or no way out for a direct socket. */
-    Nowhere,
-
-    /** The proxy's core, or for olcRTC the sing-box front before the engine. */
-    Core,
-
-    /** The macOS tunnel daemon; the core behind it stays as it was. */
-    Daemon,
-
-    /** The olcRTC engine itself, from its direct rules. */
-    Engine
-}
-
-/**
- * Where [mode] can apply the rules [needsRules] asks for. A rule that sends a
- * connection direct needs a socket that leaves outside the tunnel:
- *
- * - the proxy's sockets are ordinary ones;
- * - the macOS daemon binds its own to the physical interface;
- * - in the Linux tunnel only root's traffic keeps the main table, and of what
- *   runs there only the olcRTC engine runs as root. A core runs as the user and
- *   reaches its server bound to the physical interface (startDesktopCore); its
- *   rules have not been moved there;
- * - in the Windows tunnel nothing does yet.
- *
- * The proxy keeps its front for olcRTC: it also does what the engine cannot,
- * "only blocked sites" and a tunnel rule under a whole-TLD entry.
- */
-internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
-    when {
-        !needsRules -> DesktopRulesHome.Nowhere
-        mode == DesktopMode.SystemProxy -> DesktopRulesHome.Core
-        mode == DesktopMode.MacTun -> DesktopRulesHome.Daemon
-        mode == DesktopMode.LinuxTun && isOlcrtc -> DesktopRulesHome.Engine
-        else -> DesktopRulesHome.Nowhere
-    }
