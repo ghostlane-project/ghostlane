@@ -2,10 +2,10 @@
 # One pin: the app names exactly one commit of the Rust core, in
 # scripts/ghostlane-core-pin.sh. Fails when
 #   - the pin file does not hold exactly one 40-hex GHOSTLANE_CORE_COMMIT;
-#   - a second 40-hex commit of the core (the pin's own value again, or a hash on
-#     a line that names the core: xray-rust, XRAY_RUST, GHOSTLANE_CORE,
-#     ghostlane-core) stands anywhere under .github or scripts;
-#   - a workflow that reads the pin does not name the pin file in each `paths:`
+#   - a second 40-hex commit of the core (the pin's own value again, or any hash
+#     in a file that names the core: xray-rust, XRAY_RUST, GHOSTLANE_CORE,
+#     ghostlane-core, rust-core, RUST_CORE) stands anywhere under .github or scripts;
+#   - a workflow that reads the pin, directly or through a script that does, does not name the pin file in each `paths:`
 #     list it has, or has no `pin` input on its workflow_dispatch.
 # It then proves itself: each rule is planted in a temp copy and must fail.
 #
@@ -31,8 +31,26 @@ import yaml
 
 PIN = "scripts/ghostlane-core-pin.sh"
 HEX = re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])")
-CORE_WORDS = re.compile(r"xray-rust|XRAY_RUST|GHOSTLANE_CORE|ghostlane-core", re.I)
+CORE_WORDS = re.compile(r"xray-rust|XRAY_RUST|GHOSTLANE_CORE|ghostlane-core|rust-core|RUST_CORE", re.I)
 READS = re.compile(r"ghostlane-core-pin|ghostlane-core-resolve|build-ghostlane-core|GHOSTLANE_CORE_")
+
+
+def readers(root):
+    """Scripts that read the pin: they name the pin file, the resolver or
+    GHOSTLANE_CORE_, or name another reader (to a fixed point)."""
+    scripts = {}
+    for rel, p in files(root):
+        if rel.startswith("scripts/") and not rel.startswith(SKIP_DIRS) and rel != PIN:
+            t = read(p)
+            if t is not None:
+                scripts[rel] = t
+    found = {r for r, t in scripts.items() if READS.search(t)}
+    while True:
+        more = {r for r, t in scripts.items() if r not in found
+                and any(os.path.basename(f) in t for f in found)}
+        if not more:
+            return found
+        found |= more
 SKIP_DIRS = ("scripts/p6-tests/", "scripts/patches/")
 
 
@@ -69,16 +87,20 @@ def check(root):
         t = read(p)
         if t is None:
             continue
+        # By file, not by line: a file that names the core anywhere (a checkout's
+        # repository and its ref stand on two lines) may hold no 40-hex value.
+        names_core = bool(CORE_WORDS.search(t))
         for i, line in enumerate(t.splitlines(), 1):
             for h in HEX.findall(line):
-                if h == pin or CORE_WORDS.search(line):
+                if h == pin or names_core:
                     bad.append("%s:%d: a second copy of a core commit (%s...); read %s" % (rel, i, h[:8], PIN))
+    rdrs = readers(root)
     wf = os.path.join(root, ".github/workflows")
     for n in sorted(os.listdir(wf)) if os.path.isdir(wf) else []:
         if not n.endswith((".yml", ".yaml")):
             continue
         t = read(os.path.join(wf, n))
-        if t is None or not READS.search(t):
+        if t is None or not (READS.search(t) or any(os.path.basename(r) in t for r in rdrs)):
             continue
         doc = yaml.safe_load(t) or {}
         on = doc.get(True, doc.get("on")) or {}
@@ -108,6 +130,15 @@ def selftest(root):
         "no pin input": lambda d: open(d + "/.github/workflows/z.yml", "w").write(
             "on:\n  push:\n    paths:\n      - scripts/ghostlane-core-pin.sh\n  workflow_dispatch:\n"
             "jobs: {}\n# scripts/ghostlane-core-pin.sh\n"),
+        "checkout ref on the next line": lambda d: open(d + "/.github/workflows/y.yml", "w").write(
+            "on: push\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n"
+            "        with:\n          repository: ghostlane-project/xray-rust\n          ref: " + "2" * 40 + "\n"),
+        "reader behind a wrapper script": lambda d: (
+            open(d + "/scripts/fetch-wrapped-core.sh", "w").write(
+                "#!/usr/bin/env bash\n. scripts/ghostlane-core-pin.sh\n"),
+            open(d + "/.github/workflows/w.yml", "w").write(
+                "on:\n  push:\n    paths:\n      - a\n  workflow_dispatch:\njobs:\n  a:\n"
+                "    steps:\n      - run: bash scripts/fetch-wrapped-core.sh\n")),
     }
     for what, plant in probes.items():
         tmp = tempfile.mkdtemp()
