@@ -1,9 +1,12 @@
 import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -200,6 +203,94 @@ val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
     outputDir.set(generatedAppInfoDir)
 }
 
+// The Rust core's config writer (net/core) has one file per kind of line under
+// net/core/lines, and beside the tests a fixture and a surface fragment per
+// kind. Something has to name them all: which kind a link belongs to is asked
+// of every kind. Common Kotlin cannot look a directory up when it runs, and a
+// list kept by hand is one file that every new kind would edit, several of them
+// at a time. So the list is made here from the directory: a new kind of line
+// is new files there and nothing else.
+//
+// For each list, the objects declared by the files whose names end with the
+// list's suffix: a file `Trojan.kt` declares `object Trojan`, a file
+// `TrojanFixture.kt` declares `object TrojanFixture`.
+abstract class GenerateCoreIndexTask : DefaultTask() {
+    /** The `lines` directory the index is made of. */
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val linesDir: DirectoryProperty
+
+    /** One list each: `<name of the val>|<type of its elements>|<what a file's name ends with, before .kt>`. */
+    @get:Input
+    abstract val lists: ListProperty<String>
+
+    /** The package of the objects under [linesDir]. */
+    @get:Input
+    abstract val linesPackage: Property<String>
+
+    /** The package the index is written in. */
+    @get:Input
+    abstract val indexPackage: Property<String>
+
+    @get:Input
+    abstract val fileName: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val dir = linesDir.get().asFile
+        val files = dir.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".kt") }.sortedBy { it.name }
+        val text = StringBuilder()
+        text.append("// Made by the build from the files of ").append(dir.name).append("/ (")
+            .append(linesPackage.get()).append("). Not kept in git and not edited: add a file there.\n")
+        text.append("package ").append(indexPackage.get()).append("\n")
+        for (list in lists.get()) {
+            val parts = list.split('|')
+            if (parts.size != 3) throw GradleException("a list is name|type|suffix: $list")
+            val objects = files.filter { it.name.removeSuffix(".kt").endsWith(parts[2]) }.map { file ->
+                val name = file.name.removeSuffix(".kt")
+                if (!Regex("\\bobject\\s+" + Regex.escape(name) + "\\b").containsMatchIn(file.readText())) {
+                    throw GradleException("${file.path} must declare `object $name`: the index of ${dir.name}/ names each file's object")
+                }
+                name
+            }
+            text.append("\ninternal val ").append(parts[0]).append(": List<").append(parts[1]).append("> = listOf(\n")
+            objects.forEach { text.append("    ").append(linesPackage.get()).append('.').append(it).append(",\n") }
+            text.append(")\n")
+        }
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        val packageDir = out.resolve(indexPackage.get().replace('.', '/'))
+        packageDir.mkdirs()
+        packageDir.resolve(fileName.get()).writeText(text.toString())
+    }
+}
+
+val generateCoreLineIndex by tasks.registering(GenerateCoreIndexTask::class) {
+    linesDir.set(layout.projectDirectory.dir("src/commonMain/kotlin/org/olcbox/app/net/core/lines"))
+    lists.set(listOf("coreLineIndex|org.olcbox.app.net.core.CoreLine|"))
+    linesPackage.set("org.olcbox.app.net.core.lines")
+    indexPackage.set("org.olcbox.app.net.core.index")
+    fileName.set("CoreLineIndex.kt")
+    outputDir.set(layout.buildDirectory.dir("generated/source/coreLineIndex/commonMain"))
+}
+
+val generateCoreTestIndex by tasks.registering(GenerateCoreIndexTask::class) {
+    linesDir.set(layout.projectDirectory.dir("src/commonTest/kotlin/org/olcbox/app/net/core/lines"))
+    lists.set(
+        listOf(
+            "coreFixtureIndex|org.olcbox.app.net.core.CoreLineFixture|Fixture",
+            "coreSurfaceIndex|org.olcbox.app.net.CoreSurfaceFragment|Surface",
+        )
+    )
+    linesPackage.set("org.olcbox.app.net.core.lines")
+    indexPackage.set("org.olcbox.app.net.core.index")
+    fileName.set("CoreTestIndex.kt")
+    outputDir.set(layout.buildDirectory.dir("generated/source/coreTestIndex/commonTest"))
+}
+
 // sing-box and Xray come prebuilt from the iOS Frameworks workflow rather than
 // being compiled here: they need Go and the sagernet gomobile fork, and twenty
 // minutes of a macOS runner that has already been spent once.
@@ -301,6 +392,10 @@ kotlin {
     sourceSets {
         commonMain {
             kotlin.srcDir(generateAppInfo)
+            kotlin.srcDir(generateCoreLineIndex)
+        }
+        commonTest {
+            kotlin.srcDir(generateCoreTestIndex)
         }
 
         // The two JVM targets share one implementation of anything that is

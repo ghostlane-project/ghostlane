@@ -9,10 +9,18 @@
 #     goes, and what the Rust writer needs of it is its own;
 #   - a shared file of net/core names the lines package: a kind's shape, refusal
 #     and outbound are its own file's, and the shared files know no kind;
+#   - a kind came without its files: a kind is lines/<Kind>.kt in the app,
+#     lines/<Kind>Fixture.kt and lines/<Kind>Surface.kt beside the tests, and
+#     its reference configs, each with its Bypass Russia twin; a fixture or a
+#     fragment of no kind fails too, and so does a list of kinds kept by hand
+#     (the build makes it from the directories) or a build that does not;
 #   - scripts/check-rust-core-configs.sh does not hand every *core-*.json
 #     reference config to the core, or hands it another file;
 #   - the rust_core scope of PR Checks does not start on such a file.
-# It then proves itself: each rule is broken in a copy and must fail.
+# It then proves itself: each rule is broken in a copy and must fail, and a
+# kind added to a copy as files alone, with no other file edited, must pass.
+# (Which reference a case needs is Kotlin's to say: CoreRegistry, run by the
+# Gradle checks.)
 #
 #   scripts/p6-tests/core-lines.sh [root]     root defaults to the repository
 # Needs bash, python3 and grep.
@@ -30,6 +38,13 @@ REFERENCES = "sharedUI/src/jvmTest/resources/reference-configs"
 PARSE = "scripts/check-rust-core-configs.sh"
 CHECKS = ".github/workflows/pr-checks.yml"
 LINES_PACKAGE = "org.olcbox.app.net.core.lines"
+TESTS = "sharedUI/src/commonTest/kotlin/org/olcbox/app/net/core"
+TEST_LINES = TESTS + "/lines"
+BUILD = "sharedUI/build.gradle.kts"
+# The one reference config that is no case's, and so has no twin.
+ALONE = "bypass-ios-core-bundled-lists.json"
+# What a kind's two files beside the tests are, by the end of their names.
+BESIDE = {"Fixture": "CoreLineFixture", "Surface": "CoreSurfaceFragment"}
 
 # What the parse script must take and must leave, by name.
 CORE_NAMES = ["core-a.json", "bypass-core-a.json", "ios-core-b.json", "bypass-ios-core-b.json"]
@@ -107,6 +122,43 @@ def shared_know_no_kind(root):
     return bad
 
 
+def registry(root):
+    bad = []
+    found = kinds(root)
+    d = os.path.join(root, TEST_LINES)
+    beside = sorted(n[:-3] for n in os.listdir(d) if n.endswith(".kt")) if os.path.isdir(d) else []
+    for kind in found:
+        for ending, base in BESIDE.items():
+            name = kind + ending
+            text = read(os.path.join(d, name + ".kt"))
+            if text is None:
+                bad.append("registry: the kind %s has no %s/%s.kt" % (kind, TEST_LINES, name))
+            elif not re.search(r"\bobject\s+%s\s*:\s*%s\b" % (re.escape(name), base), text):
+                bad.append("registry: %s/%s.kt does not declare `object %s : %s`" % (TEST_LINES, name, name, base))
+    for name in beside:
+        for ending in BESIDE:
+            if name.endswith(ending) and name[:-len(ending)] not in found:
+                bad.append("registry: %s/%s.kt is of no kind under %s" % (TEST_LINES, name, LINES))
+    # The list of kinds is the build's, made from the two directories.
+    for src in (CORE, TESTS):
+        if os.path.exists(os.path.join(root, src, "index")):
+            bad.append("registry: %s/index is a list kept by hand: the build makes it from lines/" % src)
+    build = read(os.path.join(root, BUILD)) or ""
+    for need in ("kotlin.srcDir(generateCoreLineIndex)", "kotlin.srcDir(generateCoreTestIndex)",
+                 '"%s"' % LINES.split("/", 1)[1], '"%s"' % TEST_LINES.split("/", 1)[1]):
+        if need not in build:
+            bad.append("registry: %s does not make the lists of kinds (%s is not in it)" % (BUILD, need))
+    refs = os.path.join(root, REFERENCES)
+    names = set(n for n in os.listdir(refs) if re.fullmatch(r".*core-.*\.json", n)) if os.path.isdir(refs) else set()
+    if not names:
+        bad.append("registry: no reference config (*core-*.json) under %s" % REFERENCES)
+    for n in sorted(names - {ALONE}):
+        twin = n[len("bypass-"):] if n.startswith("bypass-") else "bypass-" + n
+        if twin not in names:
+            bad.append("registry: the reference config %s has no %s beside it" % (n, twin))
+    return bad
+
+
 def parse_script(root):
     """The real script, run on stand-in references with a stand-in core."""
     script = read(os.path.join(root, PARSE))
@@ -167,7 +219,8 @@ def scope(root):
 
 
 # Each rule under the word its failures begin with.
-RULES = {"layout": layout, "go-builder": no_go_builder, "shared": shared_know_no_kind, "parse": parse_script, "scope": scope}
+RULES = {"layout": layout, "go-builder": no_go_builder, "shared": shared_know_no_kind, "registry": registry,
+         "parse": parse_script, "scope": scope}
 
 
 def check(root):
@@ -187,9 +240,27 @@ def append(root, rel, more):
         f.write(more)
 
 
+def write(root, rel, text):
+    p = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        f.write(text)
+
+
+def new_kind(root):
+    """A kind added as its files alone: no file that was there is touched."""
+    write(root, LINES + "/Added.kt", "internal object Added : CoreLine {\n    override fun refusal(spec: OutboundSpec): String? = null\n}\n")
+    write(root, TEST_LINES + "/AddedFixture.kt", "object AddedFixture : CoreLineFixture\n")
+    write(root, TEST_LINES + "/AddedSurface.kt", "object AddedSurface : CoreSurfaceFragment\n")
+    write(root, TEST_LINES + "/AddedTest.kt", "class AddedTest\n")
+    for name in ("core-added.json", "bypass-core-added.json"):
+        write(root, REFERENCES + "/" + name, "{}")
+
+
 def selftest(root):
     """Break each rule in a copy of what the rules read: every one must be found."""
     kind = kinds(root)[0]
+    reference = sorted(n for n in os.listdir(os.path.join(root, REFERENCES)) if n.startswith("bypass-") and n != ALONE)[0]
     probes = {
         "layout: a shared file gone": lambda d: os.remove(os.path.join(d, CORE, "CoreStream.kt")),
         "layout: a kind's file that declares another object": lambda d: edit(
@@ -202,22 +273,44 @@ def selftest(root):
         "go-builder: IosCore.kt": lambda d: append(d, IOS, "private val x = SingBoxConfig.X\n"),
         "shared: a shared file importing a kind": lambda d: append(
             d, CORE + "/CoreRefusal.kt", "import %s.%s\n" % (LINES_PACKAGE, kind)),
+        "registry: a kind with no fixture": lambda d: os.remove(os.path.join(d, TEST_LINES, kind + "Fixture.kt")),
+        "registry: a kind with no surface fragment": lambda d: os.remove(os.path.join(d, TEST_LINES, kind + "Surface.kt")),
+        "registry: a fixture that declares another object": lambda d: edit(
+            d, "%s/%sFixture.kt" % (TEST_LINES, kind), "object %sFixture" % kind, "object Some%sFixture" % kind),
+        "registry: a fixture of no kind": lambda d: write(d, TEST_LINES + "/GhostFixture.kt", "object GhostFixture : CoreLineFixture\n"),
+        "registry: a fragment of no kind": lambda d: write(d, TEST_LINES + "/GhostSurface.kt", "object GhostSurface : CoreSurfaceFragment\n"),
+        "registry: a kind's file alone": lambda d: write(
+            d, LINES + "/Bare.kt", "internal object Bare : CoreLine {\n    override fun refusal(spec: OutboundSpec): String? = null\n}\n"),
+        "registry: a list of kinds kept by hand": lambda d: write(
+            d, CORE + "/index/CoreLineIndex.kt", "internal val coreLineIndex = listOf(%s)\n" % kind),
+        "registry: a build that lists no kinds": lambda d: edit(d, BUILD, "kotlin.srcDir(generateCoreLineIndex)", ""),
+        "registry: a build that lists no fixtures": lambda d: edit(d, BUILD, "kotlin.srcDir(generateCoreTestIndex)", ""),
+        "registry: a reference with no Bypass Russia twin": lambda d: os.remove(os.path.join(d, REFERENCES, reference)),
+        "registry: a Bypass Russia reference alone": lambda d: write(d, REFERENCES + "/bypass-core-alone.json", "{}"),
         "parse: the old glob": lambda d: edit(d, PARSE, '"$references"/*core-*.json', '"$references"/ios-core-*.json'),
         "parse: every reference": lambda d: edit(d, PARSE, '"$references"/*core-*.json', '"$references"/*.json'),
         "scope: the old names": lambda d: edit(d, CHECKS, "[^/]*core-[^/]*", "(bypass-)?ios-core-"),
     }
     def copy():
         tmp = tempfile.mkdtemp()
-        for rel in (CORE, PARSE, CHECKS, IOS):
+        for rel in (CORE, TEST_LINES, PARSE, CHECKS, IOS, BUILD):
             src, dst = os.path.join(root, rel), os.path.join(tmp, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copytree(src, dst) if os.path.isdir(src) else shutil.copy(src, dst)
+        # The references by their names: no rule here reads what is in them.
+        for name in os.listdir(os.path.join(root, REFERENCES)):
+            write(tmp, REFERENCES + "/" + name, "{}")
         return tmp
 
     tmp = copy()
     try:
         if check(tmp):
             return ["self-test: the copy fails before anything is broken in it"]
+        # A kind is its files: added to the copy with nothing else edited, every rule still passes.
+        new_kind(tmp)
+        added = check(tmp)
+        if added:
+            return ["self-test: a kind added as files alone fails (%s)" % added[0]]
     finally:
         shutil.rmtree(tmp)
     for what, plant in probes.items():
@@ -240,6 +333,6 @@ for b in bad:
     print("FAIL " + b)
 if bad:
     sys.exit(1)
-print("ok   the core's config writer is net/core, each kind in its file, and every *core-*.json is asked about"
-      " (and the test finds each rule broken)")
+print("ok   the core's config writer is net/core, each kind is its files and nothing else, and every *core-*.json"
+      " is asked about (and the test finds each rule broken)")
 PY

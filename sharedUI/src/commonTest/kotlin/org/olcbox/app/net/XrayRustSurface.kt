@@ -5,6 +5,59 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.olcbox.app.net.core.CoreLine
+import org.olcbox.app.net.core.index.coreSurfaceIndex
+
+/**
+ * How one object of a config is held to the core's field lists: called with
+ * the value and its JSON path, it reports through the [SurfaceWalk] it runs in.
+ */
+typealias SurfaceCheck = SurfaceWalk.(value: JsonElement?, path: String) -> Unit
+
+/** One reading of a config: [found] is every field the core would refuse and every object nothing checked, as JSON paths. */
+class SurfaceWalk {
+    val found = mutableListOf<String>()
+
+    /** [value], an object at [path], may hold the [accepted] keys and no other. Nothing is said of a value that is absent. */
+    fun check(value: JsonElement?, path: String, accepted: Set<String>) {
+        val obj = value as? JsonObject ?: run {
+            if (value != null) found.add("$path is not an object")
+            return
+        }
+        obj.keys.filterNot { it in accepted }.forEach { found.add("$path.$it") }
+    }
+
+    /** Each object of the array at [path], with its own path. */
+    fun JsonElement?.each(path: String, block: (JsonObject, String) -> Unit) {
+        (this as? JsonArray)?.forEachIndexed { i, item ->
+            val obj = item as? JsonObject
+            if (obj == null) found.add("$path[$i] is not an object") else block(obj, "$path[$i]")
+        }
+    }
+}
+
+/**
+ * What one kind of line adds to the surface: the outbound protocols it writes
+ * and the objects it writes under `streamSettings`, each with its check. A
+ * kind's fragment is an object in a file `<Kind>Surface.kt` beside its
+ * fixture (commonTest `net/core/lines`), and that file is its registration:
+ * the build lists the fragments from the directory.
+ *
+ * A fragment names every object its kind writes, by key, with the check of
+ * the field list copied from the core's `surface.rs`. What more than one kind
+ * writes has its check in [XrayRustSurface] ([XrayRustSurface.TLS_SETTINGS],
+ * [XrayRustSurface.VLESS_OUTBOUND] and the others); what only this kind
+ * writes has its list and its check in the fragment's own file.
+ */
+interface CoreSurfaceFragment {
+    val line: CoreLine
+
+    /** `outbounds[].protocol` values the kind writes, each with the check of the outbound's `settings`. */
+    val protocols: Map<String, SurfaceCheck>
+
+    /** The objects the kind writes under `streamSettings`, by key. */
+    val stream: Map<String, SurfaceCheck>
+}
 
 /**
  * The fields xray-rust's parser accepts in the objects `core.json` writes,
@@ -21,10 +74,14 @@ import kotlinx.serialization.json.jsonPrimitive
  * fails to connect.
  *
  * Narrower than the core where this config is narrower: only the objects and
- * protocols [XrayConfig.buildIosCore] writes are known, and an object anywhere
- * else is reported as unchecked, so a new one has to be added here, from the
- * core's own list, to pass. `realitySettings` is checked against the fields
- * the core reads (it ignores others) and `log` against the core's `LOG`.
+ * protocols the writer in `net/core` writes are known, and an object anywhere
+ * else is reported as unchecked, so a new one has to be added, from the
+ * core's own list, to pass. What every config holds (the root, `log`, `dns`,
+ * the inbound, the `freedom` and `dns` outbounds, the routing) is checked
+ * here; what a kind of line writes is checked by that kind's
+ * [CoreSurfaceFragment], which adds its own protocol and its own objects
+ * without an edit of this file. `realitySettings` is checked against the
+ * fields the core reads (it ignores others) and `log` against the core's `LOG`.
  */
 object XrayRustSurface {
     val ROOT = setOf("log", "inbounds", "outbounds", "routing", "observatory", "dns", "policy", "reverse", "remarks", "meta")
@@ -43,10 +100,6 @@ object XrayRustSurface {
     val SOCKS_ACCOUNT = setOf("user", "pass")
     val SNIFFING = setOf("enabled", "destOverride", "metadataOnly", "routeOnly", "domainsExcluded", "ipsExcluded", "excludedDomains")
     val OUTBOUND = setOf("tag", "protocol", "settings", "streamSettings", "mux", "proxySettings", "sendThrough", "targetStrategy")
-    val VLESS = setOf("address", "port", "level", "email", "id", "flow", "seed", "encryption", "reverse", "testpre", "testseed", "vnext")
-    val VLESS_SERVER = setOf("address", "port", "users")
-    val VLESS_USER = setOf("id", "encryption", "flow", "level", "email", "security", "testpre", "testseed", "reverse")
-    val HYSTERIA = setOf("version", "address", "port")
     val FREEDOM = setOf(
         "fragment", "domainStrategy", "targetStrategy", "redirect", "userLevel", "proxyProtocol", "finalRules",
         "ipsBlocked", "noises", "noise",
@@ -61,6 +114,17 @@ object XrayRustSurface {
         "rawSettings", "wsSettings", "httpupgradeSettings", "grpcSettings", "xhttpSettings", "splithttpSettings",
         "kcpSettings", "hysteriaSettings", "masqueSettings", "xdriveSettings", "finalmask", "sockopt",
     )
+    val ROUTING = setOf("domainStrategy", "rules", "balancers")
+    val ROUTING_RULE = setOf(
+        "type", "inboundTag", "network", "port", "domain", "domains", "ip", "sourceIP", "source", "sourcePort",
+        "localIP", "localPort", "user", "protocol", "attrs", "localOS", "outboundTag", "balancerTag", "ruleTag",
+    )
+
+    // What more than one kind of line writes (CoreSupport's VLESS settings, CoreStream's
+    // transports, TLS and Reality): a kind's fragment names the ones its kind writes.
+    val VLESS = setOf("address", "port", "level", "email", "id", "flow", "seed", "encryption", "reverse", "testpre", "testseed", "vnext")
+    val VLESS_SERVER = setOf("address", "port", "users")
+    val VLESS_USER = setOf("id", "encryption", "flow", "level", "email", "security", "testpre", "testseed", "reverse")
     val TLS = setOf(
         "serverName", "allowInsecure", "fingerprint", "alpn", "pinnedPeerCertSha256", "verifyPeerCertByName",
         "enableSessionResumption",
@@ -80,128 +144,119 @@ object XrayRustSurface {
         "scMaxConcurrentPosts", "scMaxBufferedPosts", "scStreamUpServerSecs", "serverMaxHeaderBytes", "h2Params",
         "xmux", "downloadSettings", "extra", "h2StreamReceiveWindow",
     )
-    val HYSTERIA_TRANSPORT = setOf("version", "auth")
-    val FINALMASK = setOf("tcp", "udp", "quicParams")
-    val FINALMASK_ENTRY = setOf("type", "settings")
-    val SALAMANDER = setOf("password", "packetSize")
-    val QUIC_PARAMS = setOf(
-        "congestion", "debug", "bbrProfile", "brutalUp", "brutalDown", "udpHop", "initStreamReceiveWindow",
-        "maxStreamReceiveWindow", "initConnectionReceiveWindow", "maxConnectionReceiveWindow", "maxIdleTimeout",
-        "keepAlivePeriod", "disablePathMTUDiscovery", "maxIncomingStreams", "disableChromeParrot", "disableGSO",
-        "disableStatelessReset", "brutalDisableLossCompensation",
-    )
-    val ROUTING = setOf("domainStrategy", "rules", "balancers")
-    val ROUTING_RULE = setOf(
-        "type", "inboundTag", "network", "port", "domain", "domains", "ip", "sourceIP", "source", "sourcePort",
-        "localIP", "localPort", "user", "protocol", "attrs", "localOS", "outboundTag", "balancerTag", "ruleTag",
+
+    /** An object that may hold the [accepted] keys and no other, with nothing checked inside it. */
+    fun fields(accepted: Set<String>): SurfaceCheck = { value, path -> check(value, path, accepted) }
+
+    // The checks of those objects, for the fragments of the kinds that write them.
+    val TLS_SETTINGS: SurfaceCheck = fields(TLS)
+    val REALITY_SETTINGS: SurfaceCheck = fields(REALITY)
+    val WS_SETTINGS: SurfaceCheck = fields(WEBSOCKET)
+    val HTTPUPGRADE_SETTINGS: SurfaceCheck = fields(HTTPUPGRADE)
+    val GRPC_SETTINGS: SurfaceCheck = fields(GRPC)
+    val XHTTP_SETTINGS: SurfaceCheck = fields(XHTTP)
+
+    /** A VLESS outbound's `settings`: its one server and that server's users. */
+    val VLESS_OUTBOUND: SurfaceCheck = { settings, path ->
+        if (settings != null) {
+            check(settings, path, VLESS)
+            (settings as? JsonObject)?.get("vnext").each("$path.vnext") { server, at ->
+                check(server, at, VLESS_SERVER)
+                server["users"].each("$at.users") { user, userAt -> check(user, userAt, VLESS_USER) }
+            }
+        }
+    }
+
+    private val DNS_OUTBOUND_SETTINGS: SurfaceCheck = { settings, path ->
+        if (settings != null) {
+            check(settings, path, DNS_OUTBOUND)
+            (settings as? JsonObject)?.get("rules").each("$path.rules") { rule, at -> check(rule, at, DNS_RULE) }
+        }
+    }
+
+    /** The outbounds every config may hold beside its line. */
+    private val SHARED_PROTOCOLS: Map<String, SurfaceCheck> = mapOf(
+        "freedom" to fields(FREEDOM),
+        "dns" to DNS_OUTBOUND_SETTINGS,
     )
 
-    /** The `streamSettings` objects this walker knows, by key. */
-    private val STREAM_OBJECTS = mapOf(
-        "tlsSettings" to TLS,
-        "realitySettings" to REALITY,
-        "wsSettings" to WEBSOCKET,
-        "httpupgradeSettings" to HTTPUPGRADE,
-        "grpcSettings" to GRPC,
-        "xhttpSettings" to XHTTP,
-        "hysteriaSettings" to HYSTERIA_TRANSPORT,
-    )
+    /**
+     * The checks each key is declared with, in the order they are declared.
+     * Two kinds that write one object name one check (the vals above) and it
+     * runs once. Two that declare a key each with a check of its own are both
+     * held to both: the core has one list for an object, so where two copies
+     * of it disagree a config fails here and is not let through by whichever
+     * happened to come last.
+     */
+    private fun declared(maps: List<Map<String, SurfaceCheck>>): Map<String, List<SurfaceCheck>> =
+        maps.flatMap { it.entries }.groupBy({ it.key }, { it.value }).mapValues { it.value.distinct() }
 
     /**
      * Every field of [config] the core would refuse, and every object this
      * walker does not know, as JSON paths. Empty for a config the core's
-     * field lists accept.
+     * field lists accept. [fragments] are the kinds whose protocols and
+     * objects are known: every registered one, or one kind's alone, to hold
+     * its config to what that kind declares.
      */
-    fun violations(config: JsonObject): List<String> {
-        val found = mutableListOf<String>()
-        fun check(value: JsonElement?, path: String, accepted: Set<String>) {
-            val obj = value as? JsonObject ?: run {
-                if (value != null) found.add("$path is not an object")
-                return
+    fun violations(config: JsonObject, fragments: List<CoreSurfaceFragment> = coreSurfaceIndex): List<String> {
+        val protocols = declared(listOf(SHARED_PROTOCOLS) + fragments.map { it.protocols })
+        val streamObjects = declared(fragments.map { it.stream })
+        val walk = SurfaceWalk()
+        with(walk) {
+            check(config, "$", ROOT)
+            check(config["log"], "$.log", LOG)
+            config["dns"]?.let { dns ->
+                check(dns, "$.dns", DNS)
+                val dnsFields = dns as? JsonObject
+                check(dnsFields?.get("fakeIp"), "$.dns.fakeIp", FAKE_IP)
+                dnsFields?.get("servers").each("$.dns.servers") { server, path -> check(server, path, DNS_SERVER) }
+                if (dnsFields?.get("hosts") != null) found.add("$.dns.hosts is not checked here")
             }
-            obj.keys.filterNot { it in accepted }.forEach { found.add("$path.$it") }
-        }
-        fun JsonElement?.each(path: String, block: (JsonObject, String) -> Unit) {
-            (this as? JsonArray)?.forEachIndexed { i, item ->
-                val obj = item as? JsonObject
-                if (obj == null) found.add("$path[$i] is not an object") else block(obj, "$path[$i]")
-            }
-        }
-
-        check(config, "$", ROOT)
-        check(config["log"], "$.log", LOG)
-        config["dns"]?.let { dns ->
-            check(dns, "$.dns", DNS)
-            val fields = dns as? JsonObject
-            check(fields?.get("fakeIp"), "$.dns.fakeIp", FAKE_IP)
-            fields?.get("servers").each("$.dns.servers") { server, path -> check(server, path, DNS_SERVER) }
-            if (fields?.get("hosts") != null) found.add("$.dns.hosts is not checked here")
-        }
-        config["inbounds"].each("$.inbounds") { inbound, path ->
-            check(inbound, path, INBOUND)
-            if (inbound["protocol"]?.jsonPrimitive?.content != "socks") found.add("$path.protocol is not socks")
-            inbound["settings"]?.let { settings ->
-                check(settings, "$path.settings", SOCKS_SETTINGS)
-                (settings as? JsonObject)?.get("accounts").each("$path.settings.accounts") { account, at -> check(account, at, SOCKS_ACCOUNT) }
-            }
-            check(inbound["sniffing"], "$path.sniffing", SNIFFING)
-        }
-        config["outbounds"].each("$.outbounds") { outbound, path ->
-            check(outbound, path, OUTBOUND)
-            val settings = outbound["settings"]
-            when (val protocol = outbound["protocol"]?.jsonPrimitive?.content) {
-                "vless" -> settings?.let { s ->
-                    check(s, "$path.settings", VLESS)
-                    (s as? JsonObject)?.get("vnext").each("$path.settings.vnext") { server, at ->
-                        check(server, at, VLESS_SERVER)
-                        server["users"].each("$at.users") { user, userAt -> check(user, userAt, VLESS_USER) }
-                    }
+            config["inbounds"].each("$.inbounds") { inbound, path ->
+                check(inbound, path, INBOUND)
+                if (inbound["protocol"]?.jsonPrimitive?.content != "socks") found.add("$path.protocol is not socks")
+                inbound["settings"]?.let { settings ->
+                    check(settings, "$path.settings", SOCKS_SETTINGS)
+                    (settings as? JsonObject)?.get("accounts").each("$path.settings.accounts") { account, at -> check(account, at, SOCKS_ACCOUNT) }
                 }
-                "hysteria" -> check(settings, "$path.settings", HYSTERIA)
-                "freedom" -> check(settings, "$path.settings", FREEDOM)
-                "dns" -> settings?.let { s ->
-                    check(s, "$path.settings", DNS_OUTBOUND)
-                    (s as? JsonObject)?.get("rules").each("$path.settings.rules") { rule, at -> check(rule, at, DNS_RULE) }
+                check(inbound["sniffing"], "$path.sniffing", SNIFFING)
+            }
+            config["outbounds"].each("$.outbounds") { outbound, path ->
+                check(outbound, path, OUTBOUND)
+                val protocol = outbound["protocol"]?.jsonPrimitive?.content
+                val settings = protocol?.let { protocols[it] }
+                if (settings != null) {
+                    settings.forEach { it.invoke(walk, outbound["settings"], "$path.settings") }
+                } else {
+                    found.add("$path.protocol $protocol is not checked here")
                 }
-                else -> found.add("$path.protocol $protocol is not checked here")
-            }
-            listOf("mux", "proxySettings").forEach { key ->
-                if (outbound[key] != null) found.add("$path.$key is not checked here")
-            }
-            outbound["streamSettings"]?.let { stream ->
-                val at = "$path.streamSettings"
-                check(stream, at, STREAM)
-                (stream as? JsonObject)?.forEach { (key, value) ->
-                    val accepted = STREAM_OBJECTS[key]
-                    when {
-                        accepted != null -> check(value, "$at.$key", accepted)
-                        key == "finalmask" -> {
-                            check(value, "$at.finalmask", FINALMASK)
-                            (value as? JsonObject)?.get("udp").each("$at.finalmask.udp") { mask, maskAt ->
-                                check(mask, maskAt, FINALMASK_ENTRY)
-                                if (mask["type"]?.jsonPrimitive?.content != "salamander") {
-                                    found.add("$maskAt.type is not checked here")
-                                }
-                                check(mask["settings"], "$maskAt.settings", SALAMANDER)
-                            }
-                            (value as? JsonObject)?.get("quicParams")?.let { check(it, "$at.finalmask.quicParams", QUIC_PARAMS) }
-                            if ((value as? JsonObject)?.get("tcp") != null) found.add("$at.finalmask.tcp is not checked here")
+                listOf("mux", "proxySettings").forEach { key ->
+                    if (outbound[key] != null) found.add("$path.$key is not checked here")
+                }
+                outbound["streamSettings"]?.let { stream ->
+                    val at = "$path.streamSettings"
+                    check(stream, at, STREAM)
+                    (stream as? JsonObject)?.forEach { (key, value) ->
+                        val known = streamObjects[key]
+                        when {
+                            known != null -> known.forEach { it.invoke(walk, value, "$at.$key") }
+                            value is JsonObject || value is JsonArray -> found.add("$at.$key is not checked here")
+                            else -> Unit
                         }
-                        value is JsonObject || value is JsonArray -> found.add("$at.$key is not checked here")
-                        else -> Unit
                     }
                 }
             }
+            config["routing"]?.let { routing ->
+                check(routing, "$.routing", ROUTING)
+                (routing as? JsonObject)?.get("rules").each("$.routing.rules") { rule, at -> check(rule, at, ROUTING_RULE) }
+                if ((routing as? JsonObject)?.get("balancers") != null) found.add("$.routing.balancers is not checked here")
+            }
+            listOf("observatory", "policy", "reverse", "meta").forEach { key ->
+                if (config[key] != null) found.add("$.$key is not checked here")
+            }
         }
-        config["routing"]?.let { routing ->
-            check(routing, "$.routing", ROUTING)
-            (routing as? JsonObject)?.get("rules").each("$.routing.rules") { rule, at -> check(rule, at, ROUTING_RULE) }
-            if ((routing as? JsonObject)?.get("balancers") != null) found.add("$.routing.balancers is not checked here")
-        }
-        listOf("observatory", "policy", "reverse", "meta").forEach { key ->
-            if (config[key] != null) found.add("$.$key is not checked here")
-        }
-        return found
+        // One path once, when two checks of one object both name it.
+        return walk.found.distinct()
     }
 
     /** [violations] of a JSON text. */

@@ -70,12 +70,15 @@ internal fun JsonObjectBuilder.putTransport(transport: TransportSpec) {
  * `h2, http/1.1` (a browser's offer, ProofKit's WebTunnel links) and turns any
  * other list, or none, into `http/1.1` alone, the fingerprint those links
  * avoid. [pin] is a certificate's SHA-256 as [CoreSupport.pin] spells it.
+ * [insecure] is the link's own wish to waive certificate checks, handed on by
+ * a kind that carries such links.
  */
 internal fun JsonObjectBuilder.putTls(
     serverName: String,
     fingerprint: String? = null,
     alpn: List<String> = emptyList(),
     pin: String? = null,
+    @Suppress("UNUSED_PARAMETER") insecure: Boolean = false,
 ) {
     put("security", "tls")
     putJsonObject("tlsSettings") {

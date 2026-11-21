@@ -12,6 +12,15 @@ import org.olcbox.app.net.core.index.coreLineIndex
  * named by a hostname is pinned to an address, and the outbound it writes.
  * The shared files of `net/core` know no kind; they reach one through this
  * interface and [CoreLines].
+ *
+ * A kind is added as files and nothing else, so that several can be added at
+ * a time: `lines/<Kind>.kt` here, declaring `object <Kind> : CoreLine`;
+ * beside the tests `lines/<Kind>Fixture.kt` (its links) and
+ * `lines/<Kind>Surface.kt` (what its outbound may hold); and a reference
+ * config for each of the fixture's cases. No list names the kinds by hand:
+ * the build makes it from the directory (`GenerateCoreIndexTask` in this
+ * module's build file), and the tests fail for a kind that came without one
+ * of its files (`CoreRegistry`).
  */
 interface CoreLine {
     /**
@@ -50,7 +59,7 @@ interface CoreLine {
 
 /** The kinds of line the Rust core runs, and which of them a link belongs to. */
 object CoreLines {
-    /** Every kind under `net/core/lines`. */
+    /** Every kind under `net/core/lines`, by the name of its file: the list the build makes. */
     val all: List<CoreLine> get() = coreLineIndex
 
     /** The kind [spec] belongs to among [lines], by its shape alone; null when it is no kind's. */
