@@ -15,7 +15,9 @@
 #     it calls the gate dry.
 #   - .github/workflows/gate.yml and scripts/gate-resolve.sh. A dry call, and
 #     any run of the gate's own on a branch under rust/, take the skipped
-#     report with one fixed reason and walk no leg. A push to a branch under
+#     report with one fixed reason and walk no leg. A leg is any job that
+#     holds a secret or calls scripts/gate-run.sh for more than its entries
+#     that join no room: a leg needs no secret. A push to a branch under
 #     rust/ starts no gate at all.
 #
 # Then it proves itself: each violation is planted in a copy and must be found.
@@ -64,10 +66,19 @@ ROOMS = ("GATE_TELEMOST_ROOMS", "GATE_WBSTREAM_ROOMS", "GATE_WBSTREAM_TOKEN", "G
 GATE_USES = "./.github/workflows/gate.yml"
 # The one reason a dry run's skipped report carries (scripts/gate-resolve.sh).
 DRY_REASON = "dry run: nothing is signed, uploaded to a store or published, and no live room is joined"
-# What every job of gate.yml that holds a secret asks for, each of the three:
-# resolve's verdict, the caller's own word, and the ref for a run nobody called.
+# What every leg of gate.yml asks for, each of the three: resolve's verdict,
+# the caller's own word, and the ref for a run nobody called.
 LEG_GUARDS = ("needs.resolve.outputs.skip != 'true'", "!inputs.dry",
               "!(!inputs.mode && startsWith(github.ref, 'refs/heads/rust/'))")
+# A leg needs no secret: the salutejazz leg makes its own rooms, and jitsi's
+# host list is optional. So a job is a leg by what it runs as well.
+# scripts/gate-run.sh is the one way from gate.yml into the engine's suite
+# (scripts/test_gate_scripts.py keeps the engine's own names out of the
+# workflow), `run` is its entry that joins a room, and these are its entries
+# that join none. A call with any other word after the script's name, one
+# this cannot read included (a variable, a quoted word, none), makes a leg.
+NO_ROOM = ("paths", "unit", "plan", "summary", "render", "compare", "merge")
+RUNNER = re.compile(r"gate-run\.sh(\S*)[ \t]*(\S*)")
 GATE_PATHS = ["scripts/cores-pins.sh", "scripts/olcrtc-pin.sh", "scripts/gate-*", ".github/workflows/gate.yml"]
 
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
@@ -367,6 +378,18 @@ def check_release(doc):
     return bad + secret_scan(doc, label)
 
 
+def room_calls(job):
+    """Each call of scripts/gate-run.sh in a job that may join a room: every
+    mention whose next word is not plainly one of NO_ROOM. Any string of the
+    job counts, not only a step's script."""
+    found = []
+    for _, text in walk(job):
+        for m in RUNNER.finditer(text):
+            if m.group(1) not in ("", '"', "'") or m.group(2) not in NO_ROOM:
+                found.append(norm(m.group(0)))
+    return list(dict.fromkeys(found))
+
+
 def check_gate(doc):
     bad = []
     label = "gate.yml"
@@ -390,13 +413,19 @@ def check_gate(doc):
     for name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        if not any(True for path, text in walk(job) for _ in secret_reads(path, text)):
+        why = []
+        if any(True for path, text in walk(job) for _ in secret_reads(path, text)):
+            why.append("holds a secret")
+        calls = room_calls(job)
+        if calls:
+            why.append("can join a room (%s)" % ", ".join(calls))
+        if not why:
             continue
         terms = conjuncts(unwrap(job["if"])) if "if" in job else None
         missing = [g for g in LEG_GUARDS if terms is None or g not in terms]
         if missing or "resolve" not in needs_of(job):
-            bad.append("%s, job %s: holds a secret, so its if must ask for each of %s (missing: %s)" % (
-                label, name, list(LEG_GUARDS), missing or "needs: resolve"))
+            bad.append("%s, job %s: %s, so its if must ask for each of %s (missing: %s)" % (
+                label, name, " and ".join(why), list(LEG_GUARDS), missing or "needs: resolve"))
     verdict = jobs.get("verdict") if isinstance(jobs.get("verdict"), dict) else {}
     skipped = [s for s in steps_of(verdict) if s.get("id") == "skipped"]
     want = "${{ needs.resolve.outputs.dry == 'true' && needs.resolve.outputs.dry_reason || inputs.skip_reason }}"
