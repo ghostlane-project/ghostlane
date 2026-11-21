@@ -84,11 +84,14 @@ jobs:
 
           def handle(c):
               try:
-                  c.settimeout(60)
+                  c.settimeout(8)
                   log('ACCEPT %s:%d' % c.getpeername())
-                  n = recvn(c, 2)[1]
-                  recvn(c, n)
+                  hs = recvn(c, 2)
+                  n = hs[1]
+                  log('HELLO ver=%d nmethods=%d' % (hs[0], n))
+                  log('METHODS %s' % recvn(c, n).hex())
                   c.sendall(b'\x05\x00')
+                  log('REPLIED no-auth')
                   cmd = recvn(c, 3)[1]
                   host, port = read_addr(c)
                   if cmd == 1:
