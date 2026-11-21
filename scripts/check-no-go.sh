@@ -56,7 +56,7 @@ import bz2, gzip, lzma, mmap, os, re, shutil, subprocess, sys, tarfile, tempfile
 
 HERE = os.environ.get("NOGO_HERE", ".")
 GO_NAMES = {"libgojni", "libsingboxcore", "libxraycore", "sing-box", "xray", "olcrtc", "olcrtcmobile"}
-GO_PREFIXES = ("libolcrtc", "olcrtcmobile", "libgojni", "libsingboxcore", "libxraycore")
+GO_PREFIXES = ("libolcrtc", "olcrtc-", "olcrtcmobile", "libgojni", "libsingboxcore", "libxraycore")
 SECTION_NAMES = [b".go.buildinfo", b".note.go.buildid", b".gopclntab", b".gosymtab",
                  b"__go_buildinfo", b"__gopclntab", b"__gosymtab", b"go.buildid"]
 SYMBOLS = [b"runtime.goexit", b"runtime.gopanic", b"go.itab.", b"go:itab.", b"_cgo_"]
@@ -71,6 +71,11 @@ def name_is_go(name):
     n = name.lower()
     stem = n.split(".")[0]
     return stem in GO_NAMES or n.startswith(GO_PREFIXES)
+
+
+def dir_is_go(name):
+    # only a bundle directory is a Go core; a directory named xray holds the app's own rule lists
+    return name.lower().startswith("olcrtcmobile")
 
 
 def normalise(base):
@@ -316,13 +321,23 @@ def ar_member_names(path):
 
 
 def un_tar(path, dest):
+    # member by member: regular files and directories are read; a link or a special file holds
+    # no bytes, so it is kept as an empty file of the same name (the name check still sees it)
     with tarfile.open(path, "r:*") as t:
-        try:
-            t.extractall(dest, filter="data")
-        except TypeError:
-            for m in t.getmembers():
-                safe_join(dest, m.name)
-            t.extractall(dest)
+        for m in t:
+            out = safe_join(dest, m.name)
+            if out == dest:
+                continue
+            if m.isdir():
+                os.makedirs(out, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            if os.path.lexists(out) and (os.path.islink(out) or os.path.isdir(out)):
+                continue
+            src = t.extractfile(m) if m.isreg() else None
+            with open(out, "wb") as o:
+                if src is not None:
+                    shutil.copyfileobj(src, o, 1 << 20)
 
 
 def un_zip(path, dest):
@@ -497,7 +512,7 @@ class Walker:
         for dp, dns, fns in os.walk(root):
             rel = os.path.relpath(dp, root)
             for d in list(dns):
-                if name_is_go(d):
+                if dir_is_go(d):
                     c = chain + "!/" + (d if rel == "." else rel + "/" + d)
                     self.s.hit(c, ["name:%s/" % d])
             for fn in fns:

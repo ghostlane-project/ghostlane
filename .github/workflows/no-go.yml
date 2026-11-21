@@ -11,7 +11,7 @@ name: No Go in what ships
 #                   toolchain to make the planted hello (a test fixture, never a
 #                   shipped file) and plants a stripped one with no build id at
 #                   each nesting.
-#   plan, scan      the check on every asset of a published release (the latest
+#   plan, scan      (by hand only) the check on every asset of a published release (the latest
 #                   one, or release_tag), one job per asset, downloaded with the
 #                   run's own token. A DMG is opened on macOS; an ubuntu job
 #                   never gets one. A run of this workflow that is red names, per
@@ -28,7 +28,12 @@ name: No Go in what ships
 # no entry for it, fix the build, or (for a first dry run of a new artefact)
 # have `check-no-go.sh --suggest FILE` print the file name the entry would have.
 #
-# Runs on a push or a pull request that touches what it reads, and by hand.
+# A push or a pull request that touches what the workflow reads runs the self-test
+# only. The scan jobs run by hand: the allow list says what the artefacts built
+# from one commit may hold, and the latest published release is built from another
+# commit, so reading the branch's list against it would turn red by construction
+# the day the first entry is deleted. Judge the list against the artefacts of the
+# same commit (the release job, or a dispatch with run_id).
 # It is not part of the release gate and starts nothing live.
 on:
   workflow_dispatch:
@@ -96,6 +101,7 @@ jobs:
 
   plan:
     name: What to check
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -145,6 +151,7 @@ jobs:
   scan:
     name: ${{ matrix.name }}
     needs: plan
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
