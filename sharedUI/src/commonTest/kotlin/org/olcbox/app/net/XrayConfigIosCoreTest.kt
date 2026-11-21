@@ -231,16 +231,21 @@ class XrayConfigIosCoreTest {
         assertFailsWith<IllegalArgumentException>("a bypass carries its lists") {
             XrayConfig.buildIosCore(reality, login, bypass)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<IllegalArgumentException>("blocked-only needs Re:filter's lists the app does not carry in Xray's form") {
             XrayConfig.buildIosCore(reality, login, Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.BlockedOnly), geodata = lists)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<IllegalArgumentException>("a bypass with the user's rules still carries its lists") {
             XrayConfig.buildIosCore(
                 reality, login,
                 Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.Bypass("ru"), CustomRules.of(listOf("example.com"), emptyList())),
-                geodata = lists,
             )
         }
+        // The user's own rules (Android's Rust path): built, see CoreCustomRoutingTest.
+        XrayConfig.buildIosCore(
+            reality, login,
+            Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.Bypass("ru"), CustomRules.of(listOf("example.com"), emptyList())),
+            geodata = lists,
+        )
     }
 
     @Test fun realityVision() {
