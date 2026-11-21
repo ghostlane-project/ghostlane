@@ -105,32 +105,37 @@ class RustCoreConfigDumpTest {
     }
 
     /**
-     * The iPhone's thirteen are among them under the names its own tests
-     * read, and what its entry point writes ([XrayConfig.buildIosCore]) is the
-     * shared writer's config, byte for byte: the references hold both.
+     * The iPhone's thirteen as its own entry point writes them
+     * ([XrayConfig.buildIosCore]), under the names its own tests read: each is
+     * its reference config byte for byte, and the shared writer's config for
+     * the same case. The parity ledger names this test for the iPhone's lines.
      */
-    @Test fun theIphonesConfigsAreTheSharedWritersOwn() = runTest {
+    @Test fun dumpIosCoreConfigs() = runTest {
         val byName = configs().toMap()
-        for (line in IosCoreLine.entries) {
+        val iphone = IosCoreLine.entries.flatMap { line ->
             val spec = IosCoreFixtures.spec(line)
-            assertEquals(
-                XrayConfig.buildIosCore(spec, IosCoreFixtures.login),
-                byName.getValue("ios-core-${line.slug}").invoke(),
-                line.slug,
+            listOf(
+                "ios-core-${line.slug}" to XrayConfig.buildIosCore(spec, IosCoreFixtures.login),
+                "bypass-ios-core-${line.slug}" to XrayConfig.buildIosCore(
+                    spec, IosCoreFixtures.login, routing = bypass, geodata = IosCoreFixtures.lists,
+                ),
             )
-            assertEquals(
-                XrayConfig.buildIosCore(spec, IosCoreFixtures.login, routing = bypass, geodata = IosCoreFixtures.lists),
-                byName.getValue("bypass-ios-core-${line.slug}").invoke(),
-                "bypass ${line.slug}",
-            )
-        }
-        assertEquals(
-            XrayConfig.buildIosCore(
+        } + (
+            CoreRegistry.BUNDLED_LISTS to XrayConfig.buildIosCore(
                 IosCoreFixtures.spec(IosCoreLine.RealityVision), IosCoreFixtures.login, routing = bypass, geodata = XrayGeodata.lists(),
-            ),
-            byName.getValue("bypass-ios-core-bundled-lists").invoke(),
+            )
         )
-        assertEquals(IosCoreLine.entries.size * 2 + 1, byName.keys.count { "ios-core-" in it })
+        assertEquals(IosCoreLine.entries.size * 2 + 1, iphone.size)
+        assertEquals(iphone.size, byName.keys.count { "ios-core-" in it })
+        // Every config is attempted before any reference is held to it, so
+        // one run names every one that moved.
+        val failures = iphone.mapNotNull { (name, json) ->
+            runCatching {
+                assertEquals(byName.getValue(name).invoke(), json, "$name: the iPhone's entry point and the shared writer part")
+                dump(name, json)
+            }.exceptionOrNull()?.let { "$name: ${it.message?.take(400)}" }
+        }
+        assertEquals(emptyList<String>(), failures)
     }
 
     /**
