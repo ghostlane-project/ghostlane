@@ -95,9 +95,10 @@ jobs:
       - name: Build
         if: ${{ !cancelled() }}
         run: cargo build --locked --workspace
+      # every test of every crate, though an earlier one failed: one run says all
       - name: Tests
         if: ${{ !cancelled() }}
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --no-fail-fast
       - name: Clippy, warnings denied
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
