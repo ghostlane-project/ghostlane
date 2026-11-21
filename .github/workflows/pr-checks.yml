@@ -721,7 +721,7 @@ jobs:
       - name: Which commit of the core
         run: |
           set -euo pipefail
-          shellcheck scripts/ghostlane-core-resolve.sh scripts/pin-move.sh
+          shellcheck -x scripts/ghostlane-core-resolve.sh scripts/pin-move.sh
           bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
 
       # Restored and saved as two steps, so a CLI built once is kept even
