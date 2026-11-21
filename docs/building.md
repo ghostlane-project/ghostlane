@@ -9,7 +9,7 @@ Everything below is for building the app yourself; the [downloads](../README.MD#
 | Platform and modes | What carries the packets | Engines |
 | --- | --- | --- |
 | Android: TUN, proxy | `VpnService` + `hev-socks5-tunnel` | sing-box and Xray as packaged native binaries, olcRTC bound in-process |
-| iOS: System VPN | `hev-socks5-tunnel` in front of every engine: sing-box (Reality, Hysteria2, WebTunnel), Xray (xhttp), olcRTC | all three in one `Cores.xcframework` inside the extension |
+| iOS: System VPN | `hev-socks5-tunnel` in front of one engine | `ghostlane-core`, one Rust library inside the extension: its core runs Reality, Hysteria2, WebTunnel and xhttp, its olcRTC client the rooms |
 | macOS: TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
 | Windows: TUN, proxy | supervised sing-box TUN + Wintun, which in a session that starts on a core's line answers every name itself and refuses port 53 beside the tunnel (`strict_route`); OS proxy settings otherwise | as macOS |
 | Linux: TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | as macOS |
@@ -19,7 +19,10 @@ owning the tun in front of a second Go engine buffers every connection twice and
 serves it with twice the goroutines; a speed test killed the extension outright.
 sing-box's gVisor tun alone cost about 20 MB more than the same sing-box behind
 `hev-socks5-tunnel`, so its own lines moved behind it too. The measurements and
-what replaced it are in [ios-one-go-runtime.md](ios-one-go-runtime.md).
+what replaced it are in [ios-one-go-runtime.md](ios-one-go-runtime.md). The
+extension now links no Go engine at all: `hev-socks5-tunnel` owns the tun on
+every line, and behind it runs `ghostlane-core`, built at the commit in
+`scripts/ghostlane-core-pin.sh`.
 
 ## Requirements
 
@@ -28,7 +31,7 @@ what replaced it are in [ios-one-go-runtime.md](ios-one-go-runtime.md).
 | JVM | JDK 21, what CI builds with; the Android source and target level is 17 |
 | Android | Android Studio, SDK 37, NDK 28.2.13676358 |
 | Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
-| iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags |
+| iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags, and builds `ghostlane-core` with `scripts/build-ghostlane-core-ios.sh`, which needs `rustup` and `git` |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root). The kill switch needs the kernel's `dummy` device; without it the tunnel comes up without the switch, and the log says so |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
 

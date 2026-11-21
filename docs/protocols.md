@@ -17,6 +17,10 @@ A link that asks for something the app cannot carry is left out at import
 rather than added as a server that can never connect: a Shadowsocks plugin or
 stream cipher, Trojan over Reality, VMess over mKCP or QUIC.
 
+The engines in the table are those of the Android and desktop apps. The iPhone
+runs a narrower set on an engine of its own (see [On iPhone](#on-iphone)), and
+the Linux command names its own set in [cli.md](cli.md#first-connection).
+
 ## olcRTC and the meeting services
 
 olcRTC opens a WebRTC media session to a public meeting service and moves
@@ -84,3 +88,13 @@ engine has stopped, when its own restart is asking already.
 One engine runs at a time. What hands it the packets is the platform's business,
 and the platforms differ: the [platform matrix](building.md#platform-matrix)
 says how.
+
+## On iPhone
+
+The iPhone's packet tunnel carries no sing-box and no Xray. One Rust library,
+`ghostlane-core`, runs there behind `hev-socks5-tunnel`: its core carries VLESS
+over Reality (TCP or gRPC), VLESS over TLS on WebSocket or HTTPUpgrade,
+Hysteria2 and XHTTP with Reality, and its olcRTC client carries the rooms. A
+line outside that set, or one the core refuses, is not started: the connect
+fails with the reason. The cases are `IosCore.refusal` in the shared Kotlin
+sources.
