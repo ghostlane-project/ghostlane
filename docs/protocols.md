@@ -92,7 +92,9 @@ says how.
 
 ## On iPhone
 
-The iPhone's packet tunnel carries no sing-box and no Xray. One Rust library,
+This section describes the source at `main`, which is ahead of the App Store
+release: the released app runs the engines of the table above. At `main` the
+iPhone's packet tunnel carries no sing-box and no Xray. One Rust library,
 `ghostlane-core`, runs there behind `hev-socks5-tunnel`: its core carries VLESS
 over Reality (TCP or gRPC), VLESS over TLS on WebSocket or HTTPUpgrade,
 Hysteria2 and XHTTP with Reality, and its olcRTC client carries the rooms. A

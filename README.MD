@@ -88,9 +88,7 @@ the rest, platform by platform: [docs/features.md](docs/features.md).
 | XHTTP | Xray |
 
 olcRTC rides six meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls,
-MTS Link and Jitsi. On iPhone one Rust library, `ghostlane-core`, runs in place of
-sing-box and Xray and connects to fewer kinds of server: see
-[On iPhone](docs/protocols.md#on-iphone). More in [docs/protocols.md](docs/protocols.md).
+MTS Link and Jitsi. More in [docs/protocols.md](docs/protocols.md).
 
 ## Download
 
