@@ -1,0 +1,179 @@
+name: rust-windows-lab
+
+# The Windows spike (W0): does hev-socks5-tunnel, built as hev.exe under MSYS2,
+# bring a Wintun adapter up on a hosted runner and carry a TCP fetch and a UDP
+# datagram to a loopback SOCKS5 stub? Evidence only: nothing here ships.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/rust-windows-lab.yml
+      - docs/spikes/windows-hev.md
+  pull_request:
+    branches: [rust/all]
+    paths:
+      - .github/workflows/rust-windows-lab.yml
+      - docs/spikes/windows-hev.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-windows-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hev-windows:
+    name: hev.exe with Wintun
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write the SOCKS5 stub and the tun test
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'lab'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          @'
+          import socket, struct, threading, sys
+
+          LOG = open(sys.argv[1], 'a', buffering=1)
+
+          def log(m):
+              LOG.write(m + '\n')
+              LOG.flush()
+
+          def recvn(s, n):
+              b = b''
+              while len(b) < n:
+                  c = s.recv(n - len(b))
+                  if not c:
+                      raise EOFError
+                  b += c
+              return b
+
+          def read_addr(s):
+              atyp = recvn(s, 1)[0]
+              if atyp == 1:
+                  host = socket.inet_ntoa(recvn(s, 4))
+              elif atyp == 3:
+                  host = recvn(s, recvn(s, 1)[0]).decode()
+              elif atyp == 4:
+                  host = socket.inet_ntop(socket.AF_INET6, recvn(s, 16))
+              else:
+                  raise ValueError('atyp %d' % atyp)
+              return host, struct.unpack('!H', recvn(s, 2))[0]
+
+          def parse_udp(d):
+              atyp = d[3]
+              if atyp == 1:
+                  host, o = socket.inet_ntoa(d[4:8]), 8
+              elif atyp == 3:
+                  host, o = d[5:5 + d[4]].decode(), 5 + d[4]
+              else:
+                  host, o = socket.inet_ntop(socket.AF_INET6, d[4:20]), 20
+              return host, struct.unpack('!H', d[o:o + 2])[0], d[:o + 2], d[o + 2:]
+
+          def udp_relay(u):
+              while True:
+                  d, a = u.recvfrom(65535)
+                  host, port, hdr, pl = parse_udp(d)
+                  log('UDP %s:%d %d' % (host, port, len(pl)))
+                  u.sendto(hdr + b'echo:' + pl, a)
+
+          def handle(c):
+              try:
+                  c.settimeout(60)
+                  n = recvn(c, 2)[1]
+                  recvn(c, n)
+                  c.sendall(b'\x05\x00')
+                  cmd = recvn(c, 3)[1]
+                  host, port = read_addr(c)
+                  if cmd == 1:
+                      log('CONNECT %s:%d' % (host, port))
+                      c.sendall(b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+                      buf = b''
+                      while b'\r\n\r\n' not in buf:
+                          x = c.recv(4096)
+                          if not x:
+                              return
+                          buf += x
+                      body = b'hev-spike-tcp-ok\n'
+                      c.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
+                  elif cmd == 3:
+                      u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                      u.bind(('127.0.0.1', 0))
+                      p = u.getsockname()[1]
+                      log('ASSOCIATE hint %s:%d relay 127.0.0.1:%d' % (host, port, p))
+                      threading.Thread(target=udp_relay, args=(u,), daemon=True).start()
+                      c.sendall(b'\x05\x00\x00\x01\x7f\x00\x00\x01' + struct.pack('!H', p))
+                      while c.recv(1):
+                          pass
+                  else:
+                      log('CMD %d refused' % cmd)
+                      c.sendall(b'\x05\x07\x00\x01' + b'\x00' * 6)
+              except Exception as e:
+                  log('connection error %r' % (e,))
+              finally:
+                  c.close()
+
+          srv = socket.socket()
+          srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          srv.bind(('127.0.0.1', 1080))
+          srv.listen(16)
+          log('READY')
+          while True:
+              c, _ = srv.accept()
+              threading.Thread(target=handle, args=(c,), daemon=True).start()
+          '@ | Set-Content -Encoding ascii (Join-Path $dir 'stub.py')
+          @'
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'lab\stub.log'
+          $failed = @()
+
+          # TCP: a plain HTTP fetch to an address that only the tun can carry.
+          try {
+            $r = Invoke-WebRequest -Uri 'http://203.0.113.10:8080/' -UseBasicParsing -TimeoutSec 15
+            if ($r.Content -notmatch 'hev-spike-tcp-ok') { $failed += "tcp: wrong body: $($r.Content)" }
+            else { Write-Host "TCP fetch: $($r.StatusCode) $($r.Content.Trim())" }
+          } catch { $failed += "tcp: $($_.Exception.Message)" }
+
+          # UDP: one datagram, one echo through UDP ASSOCIATE.
+          try {
+            $u = New-Object System.Net.Sockets.UdpClient
+            $u.Client.ReceiveTimeout = 10000
+            $u.Connect('203.0.113.10', 5300)
+            $bytes = [Text.Encoding]::ASCII.GetBytes('ping-udp')
+            [void]$u.Send($bytes, $bytes.Length)
+            $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+            $got = [Text.Encoding]::ASCII.GetString($u.Receive([ref]$ep))
+            if ($got -ne 'echo:ping-udp') { $failed += "udp: wrong reply: $got" }
+            else { Write-Host "UDP echo: $got" }
+          } catch { $failed += "udp: $($_.Exception.Message)" }
+
+          Write-Host '--- stub log'
+          if (Test-Path $log) { Get-Content $log }
+          $seen = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
+          if ($seen -notmatch 'CONNECT 203\.0\.113\.10:8080') { $failed += 'stub saw no CONNECT to 203.0.113.10:8080' }
+          if ($seen -notmatch 'UDP 203\.0\.113\.10:5300 8') { $failed += 'stub saw no datagram for 203.0.113.10:5300' }
+          if ($failed.Count) { $failed | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
+          Write-Host 'OK: TCP and UDP went through the tun to the stub'
+          '@ | Set-Content -Encoding ascii (Join-Path $dir 'tun-test.ps1')
+
+      - name: Start the stub
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'lab'
+          python --version
+          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log')) `
+            -RedirectStandardError (Join-Path $dir 'stub.err') -NoNewWindow
+          for ($i = 0; $i -lt 30; $i++) {
+            try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
+          }
+          Get-Content (Join-Path $dir 'stub.log')
+
+      - name: Fetch and datagram through the tun
+        shell: pwsh
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'lab\tun-test.ps1')
