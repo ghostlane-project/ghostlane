@@ -71,8 +71,13 @@ LEG_GUARDS = ("needs.resolve.outputs.skip != 'true'", "!inputs.dry",
 GATE_PATHS = ["scripts/cores-pins.sh", "scripts/olcrtc-pin.sh", "scripts/gate-*", ".github/workflows/gate.yml"]
 
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
-TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])secrets(?![A-Za-z0-9_-])")
+# GitHub reads context names in any case, so the search does too. The names
+# that are let through are spelled one way, below.
+TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])secrets(?![A-Za-z0-9_-])", re.I)
 NAME = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)")
+# Outside the braces this found, only what is shaped like a read counts: the
+# word alone is a sentence in a script.
+SHAPED = re.compile(r"\.[A-Za-z_]|\[")
 
 
 def norm(text):
@@ -154,6 +159,25 @@ def expressions(path, text):
     return found
 
 
+def secret_reads(path, text):
+    """Each read of the secrets context in a string: (name or None for the
+    context whole, the expression it stands in or None when it stands in none
+    this could parse). A string with ${{ in it is searched whole, not only
+    inside the braces found: a `}}` inside a quoted text ends the match early,
+    and what follows it is still read by GitHub."""
+    spans = [(m.start(1), m.end(1), norm(m.group(1))) for m in EXPR.finditer(text)]
+    if path and path[-1] == "if" and not spans:
+        spans = [(0, len(text), norm(text))]
+    if not spans and "${{" not in text:
+        return
+    for m in TOKEN.finditer(text):
+        inside = next((e for a, b, e in spans if a <= m.start() < b), None)
+        if inside is None and not SHAPED.match(text, m.end()):
+            continue
+        name = NAME.match(text, m.end())
+        yield (name.group(1) if name else None), inside
+
+
 def needs_of(job):
     needs = job.get("needs") or []
     return [needs] if isinstance(needs, str) else list(needs)
@@ -220,15 +244,13 @@ def secret_refusal(doc, name, expr, path, text):
 def secret_scan(doc, label):
     bad = []
     for path, text in walk(doc):
-        for expr in expressions(path, text):
-            for m in TOKEN.finditer(expr):
-                name = NAME.match(expr, m.end())
-                if not name:
-                    bad.append("%s, %s: reads the secrets context whole" % (label, where(doc, path)))
-                    continue
-                why = secret_refusal(doc, name.group(1), expr, path, text)
-                if why:
-                    bad.append("%s, %s: secrets.%s %s" % (label, where(doc, path), name.group(1), why))
+        for name, expr in secret_reads(path, text):
+            if name is None:
+                bad.append("%s, %s: reads the secrets context whole" % (label, where(doc, path)))
+                continue
+            why = secret_refusal(doc, name, expr, path, text)
+            if why:
+                bad.append("%s, %s: secrets.%s %s" % (label, where(doc, path), name, why))
     return bad
 
 
@@ -368,7 +390,7 @@ def check_gate(doc):
     for name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        if not any(TOKEN.search(e) for path, text in walk(job) for e in expressions(path, text)):
+        if not any(True for path, text in walk(job) for _ in secret_reads(path, text)):
             continue
         terms = conjuncts(unwrap(job["if"])) if "if" in job else None
         missing = [g for g in LEG_GUARDS if terms is None or g not in terms]
@@ -393,7 +415,7 @@ def check_dry_workflow(doc):
         if isinstance(job, dict) and wide(job.get("permissions")):
             bad.append("%s, job %s: has more than read permissions" % (label, name))
     for path, text in walk(doc):
-        if any(TOKEN.search(e) for e in expressions(path, text)):
+        if any(True for _ in secret_reads(path, text)):
             bad.append("%s, %s: reads a secret" % (label, where(doc, path)))
     return bad
 
@@ -674,6 +696,12 @@ def selftest(release, gate, scripts):
          lambda d: j(d)["build-linux"]["steps"].append({"run": "true", "env": {"ALL": "${{ toJSON(secrets) }}"}}), "reads the secrets context whole"),
         ("a secret by index",
          lambda d: j(d)["build-linux"]["steps"].append({"run": "true", "env": {"K": "${{ secrets['NEW'] }}"}}), "reads the secrets context whole"),
+        ("a secret spelled in another case",
+         lambda d: j(d)["build-linux"]["steps"].append({"run": "true", "env": {"K": "${{ SECRETS.NEW }}"}}), "secrets.NEW is read where a dry run reaches"),
+        ("a secret behind a brace in a quoted text",
+         lambda d: j(d)["build-linux"]["steps"].append({"run": "true", "env": {"K": "${{ format('}}{0}', secrets.NEW) }}"}}), "secrets.NEW is read where a dry run reaches"),
+        ("a guarded value in another case, which is not the guard",
+         lambda d: j(d)["build-linux"]["steps"].append({"run": "true", "env": {"K": "${{ %s && Secrets.NEW || '' }}" % SIGNED}}), "secrets.NEW is read where a dry run reaches"),
         ("secrets: inherit",
          lambda d: j(d)["gate"].update({"secrets": "inherit"}), "hands every secret to another workflow"),
         ("a room handed to another job",
