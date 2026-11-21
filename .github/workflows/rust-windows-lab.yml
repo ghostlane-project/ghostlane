@@ -1,0 +1,417 @@
+name: rust-windows-lab
+
+# The Windows spike (W0): does hev-socks5-tunnel, built as hev.exe under MSYS2,
+# bring a Wintun adapter up on a hosted runner and carry a TCP fetch and a UDP
+# datagram to a loopback SOCKS5 stub? Evidence only: nothing here ships.
+on:
+  workflow_dispatch:
+  push:
+    # Branches only: path filters are not evaluated for tag pushes.
+    branches: ['**']
+    paths:
+      - .github/workflows/rust-windows-lab.yml
+      - docs/spikes/windows-hev.md
+  pull_request:
+    branches: [rust/all]
+    paths:
+      - .github/workflows/rust-windows-lab.yml
+      - docs/spikes/windows-hev.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-windows-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hev-windows:
+    name: hev.exe with Wintun (${{ matrix.variant }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # The MSYS2 build of the vendored tree is a control that stays red (see
+    # docs/spikes/windows-hev.md): it must not hide the two native variants.
+    continue-on-error: ${{ matrix.variant == 'msys-intree' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The tree under androidApp, built as the Makefile's msys branch says.
+          - variant: msys-intree
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "false"
+          # The release zip upstream publishes for Windows (a native build).
+          - variant: upstream-zip
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "false"
+          # The same release, built from its tag on the runner.
+          - variant: msvc-source
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "false"
+    env:
+      VARIANT: ${{ matrix.variant }}
+      STUB_DELAY: ${{ matrix.delay }}
+      HEV_CFLAGS: ${{ matrix.cflags }}
+      HEV_PIPELINE: ${{ matrix.pipeline }}
+      HEV_STRACE: ${{ matrix.strace }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write the SOCKS5 stub and the tun test
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'lab'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          @'
+          import socket, struct, threading, sys, time
+
+          LOG = open(sys.argv[1], 'a', buffering=1)
+          BIND = sys.argv[2]
+          DELAY = float(sys.argv[3])
+
+          def snd(c, b):
+              time.sleep(DELAY)
+              c.sendall(b)
+
+          def log(m):
+              LOG.write(m + '\n')
+              LOG.flush()
+
+          def recvn(s, n):
+              b = b''
+              while len(b) < n:
+                  c = s.recv(n - len(b))
+                  if not c:
+                      raise EOFError
+                  b += c
+              return b
+
+          def read_addr(s):
+              atyp = recvn(s, 1)[0]
+              if atyp == 1:
+                  host = socket.inet_ntoa(recvn(s, 4))
+              elif atyp == 3:
+                  host = recvn(s, recvn(s, 1)[0]).decode()
+              elif atyp == 4:
+                  host = socket.inet_ntop(socket.AF_INET6, recvn(s, 16))
+              else:
+                  raise ValueError('atyp %d' % atyp)
+              return host, struct.unpack('!H', recvn(s, 2))[0]
+
+          def parse_udp(d):
+              atyp = d[3]
+              if atyp == 1:
+                  host, o = socket.inet_ntoa(d[4:8]), 8
+              elif atyp == 3:
+                  host, o = d[5:5 + d[4]].decode(), 5 + d[4]
+              else:
+                  host, o = socket.inet_ntop(socket.AF_INET6, d[4:20]), 20
+              return host, struct.unpack('!H', d[o:o + 2])[0], d[:o + 2], d[o + 2:]
+
+          def udp_relay(u):
+              while True:
+                  d, a = u.recvfrom(65535)
+                  host, port, hdr, pl = parse_udp(d)
+                  log('UDP %s:%d %d' % (host, port, len(pl)))
+                  u.sendto(hdr + b'echo:' + pl, a)
+
+          def handle(c):
+              try:
+                  c.settimeout(8)
+                  log('ACCEPT %s:%d' % c.getpeername())
+                  hs = recvn(c, 2)
+                  n = hs[1]
+                  log('HELLO ver=%d nmethods=%d' % (hs[0], n))
+                  log('METHODS %s' % recvn(c, n).hex())
+                  snd(c, b'\x05\x00')
+                  log('REPLIED no-auth')
+                  cmd = recvn(c, 3)[1]
+                  host, port = read_addr(c)
+                  if cmd == 1:
+                      log('CONNECT %s:%d' % (host, port))
+                      snd(c, b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+                      buf = b''
+                      while b'\r\n\r\n' not in buf:
+                          x = c.recv(4096)
+                          if not x:
+                              return
+                          buf += x
+                      body = b'hev-spike-tcp-ok\n'
+                      snd(c, b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
+                  elif cmd == 3:
+                      u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                      u.bind((BIND, 0))
+                      p = u.getsockname()[1]
+                      log('ASSOCIATE hint %s:%d relay %s:%d' % (host, port, BIND, p))
+                      threading.Thread(target=udp_relay, args=(u,), daemon=True).start()
+                      snd(c, b'\x05\x00\x00\x01' + socket.inet_aton(BIND) + struct.pack('!H', p))
+                      while c.recv(1):
+                          pass
+                  else:
+                      log('CMD %d refused' % cmd)
+                      snd(c, b'\x05\x07\x00\x01' + b'\x00' * 6)
+              except Exception as e:
+                  log('connection error %r' % (e,))
+              finally:
+                  c.close()
+
+          srv = socket.socket()
+          srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          srv.bind((BIND, 1080))
+          srv.listen(16)
+          log('READY')
+          while True:
+              c, _ = srv.accept()
+              threading.Thread(target=handle, args=(c,), daemon=True).start()
+          '@ | Set-Content -Encoding ascii (Join-Path $dir 'stub.py')
+          @'
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'lab\stub.log'
+          $failed = @()
+
+          # TCP: a plain HTTP fetch to an address that only the tun can carry.
+          try {
+            $r = Invoke-WebRequest -Uri 'http://203.0.113.10:8080/' -UseBasicParsing -TimeoutSec 15
+            $body = if ($r.Content -is [byte[]]) { [Text.Encoding]::ASCII.GetString($r.Content) } else { [string]$r.Content }
+            if ($body -notmatch 'hev-spike-tcp-ok') { $failed += "tcp: wrong body: $body" }
+            else { Write-Host "TCP fetch: $($r.StatusCode) $($body.Trim())" }
+          } catch { $failed += "tcp: $($_.Exception.Message)" }
+
+          # UDP: one datagram, one echo through UDP ASSOCIATE.
+          try {
+            $u = New-Object System.Net.Sockets.UdpClient
+            $u.Client.ReceiveTimeout = 10000
+            $u.Connect('203.0.113.10', 5300)
+            $bytes = [Text.Encoding]::ASCII.GetBytes('ping-udp')
+            [void]$u.Send($bytes, $bytes.Length)
+            $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+            $got = [Text.Encoding]::ASCII.GetString($u.Receive([ref]$ep))
+            if ($got -ne 'echo:ping-udp') { $failed += "udp: wrong reply: $got" }
+            else { Write-Host "UDP echo: $got" }
+          } catch { $failed += "udp: $($_.Exception.Message)" }
+
+          Write-Host '--- stub log'
+          if (Test-Path $log) { Get-Content $log }
+          $seen = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
+          if ($seen -notmatch 'CONNECT 203\.0\.113\.10:8080') { $failed += 'stub saw no CONNECT to 203.0.113.10:8080' }
+          if ($seen -notmatch 'UDP 203\.0\.113\.10:5300 8') { $failed += 'stub saw no datagram for 203.0.113.10:5300' }
+          if ($failed.Count) { $failed | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
+          Write-Host 'OK: TCP and UDP went through the tun to the stub'
+          '@ | Set-Content -Encoding ascii (Join-Path $dir 'tun-test.ps1')
+
+      - name: Wintun from the official signed release
+        shell: pwsh
+        env:
+          WINTUN_VERSION: "0.14.1"
+          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+        run: |
+          $dl = Join-Path $env:RUNNER_TEMP 'wintun-dl'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          $zip = Join-Path $dl 'wintun.zip'
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$($env:WINTUN_VERSION).zip" -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $env:WINTUN_SHA256) { throw "wintun zip sha256 $got, expected $($env:WINTUN_SHA256)" }
+          Expand-Archive $zip -DestinationPath $dl
+          $dll = Join-Path $dl 'wintun\bin\amd64\wintun.dll'
+          Get-FileHash -Algorithm SHA256 $dll | Format-List
+          $sig = Get-AuthenticodeSignature $dll
+          "signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw 'wintun.dll signature is not valid' }
+          $out = Join-Path $env:RUNNER_TEMP 'run'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item $dll $out
+
+      - name: Runner facts
+        shell: pwsh
+        run: |
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          [Environment]::OSVersion.VersionString
+          "admin: " + ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Get-NetAdapter | Format-Table Name, InterfaceDescription, Status
+          Get-NetRoute -AddressFamily IPv4 -DestinationPrefix 0.0.0.0/0 | Format-Table
+
+      - uses: msys2/setup-msys2@v2.34.0
+        if: matrix.variant == 'msys-intree'
+        with:
+          msystem: MSYS
+          update: false
+          install: gcc make
+
+      - name: Build hev.exe under MSYS2
+        if: matrix.variant == 'msys-intree'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          # hev's README: symlinks must be native for the build under MSYS2.
+          export MSYS=winsymlinks:native
+          T="$(cygpath -u "$RUNNER_TEMP")"
+          src="$PWD/androidApp/src/main/jni/hev-socks5-tunnel"
+          echo "core.symlinks=$(git config core.symlinks || echo unset)"
+          ls -l "$src/third-part/yaml/include/yaml.h" "$src/third-part/hev-task-system/include/hev-task.h"
+          rm -rf "$T/hev-src"
+          cp -a "$src" "$T/hev-src"
+          cd "$T/hev-src"
+          echo "MSYSTEM=$MSYSTEM"; gcc --version | head -1; make --version | head -1
+          make REV_ID=spike CFLAGS="$HEV_CFLAGS" -j2
+          ls -la bin
+          cp bin/hev-socks5-tunnel.exe "$T/run/hev.exe" 2>/dev/null || cp bin/hev-socks5-tunnel "$T/run/hev.exe"
+          echo '--- DLLs hev.exe imports (objdump)'
+          objdump -p "$T/run/hev.exe" | grep 'DLL Name' | sort -u
+          echo '--- ldd'
+          ldd "$T/run/hev.exe" | tee "$T/ldd.txt"
+          # Beside hev.exe: every DLL ldd resolves under the MSYS2 tree.
+          grep -o '/usr/bin/[A-Za-z0-9_.+-]*\.dll' "$T/ldd.txt" | sort -u | while read -r d; do
+            echo "bundle $d"; cp "$d" "$T/run/"
+          done
+          ls -la "$T/run"
+
+      - name: Upstream release zip, pinned by sha256
+        if: matrix.variant == 'upstream-zip'
+        shell: pwsh
+        env:
+          HEV_ZIP_VERSION: "2.20.0"
+          HEV_ZIP_SHA256: 34fb2bef8000c2c6f948694caeaaf90ee0c307a124e8e436485953804b06c99d
+        run: |
+          $dl = Join-Path $env:RUNNER_TEMP 'hev-zip'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          $zip = Join-Path $dl 'hev.zip'
+          Invoke-WebRequest -Uri "https://github.com/heiher/hev-socks5-tunnel/releases/download/$($env:HEV_ZIP_VERSION)/hev-socks5-tunnel-win-x64.zip" -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $env:HEV_ZIP_SHA256) { throw "hev zip sha256 $got, expected $($env:HEV_ZIP_SHA256)" }
+          Expand-Archive $zip -DestinationPath $dl
+          Get-ChildItem -Recurse $dl | Format-Table FullName, Length
+          Get-FileHash -Algorithm SHA256 (Join-Path $dl 'hev-socks5-tunnel\wintun.dll') | Format-List
+          Copy-Item (Join-Path $dl 'hev-socks5-tunnel\hev-socks5-tunnel.exe') (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
+
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: matrix.variant == 'msvc-source'
+        with:
+          arch: x64
+
+      - name: Build upstream's tag with clang for MSVC
+        if: matrix.variant == 'msvc-source'
+        shell: pwsh
+        env:
+          HEV_TAG: "2.20.0"
+          HEV_TAG_COMMIT: 75dbc1e9ace6c70d3d1b94df7c283efe1de7effc
+          MAKE_VERSION: "4.4.1"
+        run: |
+          choco install make --version=$env:MAKE_VERSION --no-progress -y
+          Add-Content $env:GITHUB_PATH 'C:\Program Files\Git\usr\bin'
+          $env:PATH += ';C:\Program Files\Git\usr\bin;C:\ProgramData\chocolatey\bin'
+          $src = Join-Path $env:RUNNER_TEMP 'hev-up'
+          git clone --depth 1 --branch $env:HEV_TAG --recurse-submodules --shallow-submodules https://github.com/heiher/hev-socks5-tunnel.git $src
+          Set-Location $src
+          $head = git rev-parse HEAD
+          if ($head -ne $env:HEV_TAG_COMMIT) { throw "tag $($env:HEV_TAG) is $head, expected $($env:HEV_TAG_COMMIT)" }
+          git submodule status
+          clang --version
+          make --version
+          make -j4
+          if ($LASTEXITCODE -ne 0) { throw "make failed: $LASTEXITCODE" }
+          Get-ChildItem bin | Format-Table Name, Length
+          Copy-Item bin\hev-socks5-tunnel.exe (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
+          '--- imports (dumpbin /dependents)'
+          dumpbin /dependents (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
+
+      # One step on purpose: a process started in a step does not survive it
+      # (the stub and hev both died at the end of their own steps, run 3 and 4).
+      - name: Stub, hev.exe on Wintun, fetch and datagram
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'lab'
+          python --version
+          $bind = '127.0.0.1'
+          if ($env:VARIANT -eq 'host-address') { $bind = (Find-NetRoute -RemoteIPAddress 8.8.8.8 | Select-Object -First 1).IPAddress }
+          "variant $($env:VARIANT): stub on $bind, reply delay $($env:STUB_DELAY) s"
+          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log'), $bind, $env:STUB_DELAY) `
+            -RedirectStandardError (Join-Path $dir 'stub.err') -NoNewWindow
+          for ($i = 0; $i -lt 30; $i++) {
+            try { $c = New-Object Net.Sockets.TcpClient($bind, 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
+          }
+          Get-Content (Join-Path $dir 'stub.log')
+
+          $run = Join-Path $env:RUNNER_TEMP 'run'
+          @"
+          tunnel:
+            name: hevtun
+            mtu: 1500
+            ipv4: 198.18.0.1
+          socks5:
+            port: 1080
+            address: $bind
+            udp: 'udp'
+            pipeline: $($env:HEV_PIPELINE)
+          misc:
+            log-file: stderr
+            log-level: debug
+          "@ | Set-Content -Encoding ascii (Join-Path $run 'config.yml')
+          Get-Content (Join-Path $run 'config.yml')
+          $exe = Join-Path $run 'hev.exe'; $hevArgs = @('config.yml')
+          if ($env:HEV_STRACE -eq 'true') { $exe = 'C:\msys64\usr\bin\strace.exe'; $hevArgs = @('-o', 'trace.txt', './hev.exe', 'config.yml') }
+          $p = Start-Process -FilePath $exe -ArgumentList $hevArgs -WorkingDirectory $run `
+            -RedirectStandardOutput (Join-Path $run 'hev.out') -RedirectStandardError (Join-Path $run 'hev.err') -PassThru -NoNewWindow
+          $up = $false
+          for ($i = 0; $i -lt 40; $i++) {
+            if ($p.HasExited) { break }
+            $a = Get-NetAdapter -Name hevtun -ErrorAction SilentlyContinue
+            if ($a -and (Get-NetIPAddress -InterfaceAlias hevtun -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object IPAddress -eq '198.18.0.1')) { $up = $true; break }
+            Start-Sleep -Milliseconds 500
+          }
+          "hev exited: $($p.HasExited)"; if ($p.HasExited) { "exit code: $($p.ExitCode)" }
+          Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          if (-not $up) { throw 'the hevtun adapter did not come up with 198.18.0.1' }
+          Get-NetAdapter -Name hevtun | Format-List Name, InterfaceDescription, Status, MtuSize, InterfaceIndex, DriverFileName
+          Get-NetIPAddress -InterfaceAlias hevtun | Format-Table IPAddress, PrefixLength, AddressFamily
+          Get-DnsClientServerAddress -InterfaceAlias hevtun | Format-Table
+          # By hand: the one route that sends the test's address into the tun.
+          # On-link, because Wintun is a layer 3 device.
+          New-NetRoute -DestinationPrefix 203.0.113.0/24 -InterfaceAlias hevtun -NextHop 0.0.0.0 | Format-List DestinationPrefix, NextHop, InterfaceAlias
+          route print -4
+          '--- Find-NetRoute for the test address'
+          Find-NetRoute -RemoteIPAddress 203.0.113.10 | Format-Table IPAddress, InterfaceAlias, NextHop, DestinationPrefix
+          '--- adapter counters before the test'
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
+          '--- one ping from the tun address, for the counters'
+          ping -n 2 -w 1000 -S 198.18.0.1 203.0.113.10; $null = $LASTEXITCODE; $global:LASTEXITCODE = 0
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
+          '--- the test'
+          & (Join-Path $env:RUNNER_TEMP 'lab\tun-test.ps1')
+          $testExit = $LASTEXITCODE
+          '--- hev log after the test'
+          Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets
+          if ($env:HEV_STRACE -eq 'true') {
+            '--- strace: lines that mention sockets, selects and events (last 150)'
+            Get-Content (Join-Path $run 'trace.txt') | Select-String -Pattern 'recv|send|select|poll|connect|socket|WSA|event|osfhandle|fcntl|ioctl' | Select-Object -Last 150 | ForEach-Object { $_.Line }
+            '--- strace: count of lines'; (Get-Content (Join-Path $run 'trace.txt')).Count
+          }
+          '--- taskkill /F on hev: does the adapter go, and the route with it?'
+          taskkill /F /IM hev.exe
+          Start-Sleep -Seconds 3
+          Get-NetAdapter | Format-Table Name, Status
+          Get-NetRoute -DestinationPrefix 203.0.113.0/24 -ErrorAction SilentlyContinue | Format-Table
+          exit $testExit
+
+      - name: Logs and clean-up (observed, never fails)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $run = Join-Path $env:RUNNER_TEMP 'run'
+          '--- stub log'; Get-Content (Join-Path $env:RUNNER_TEMP 'lab\stub.log') -ErrorAction SilentlyContinue
+          '--- hev stdout/stderr'; Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          '--- adapter counters at the end'; Get-NetAdapterStatistics -Name hevtun -ErrorAction SilentlyContinue | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
+          netstat -ano -p tcp | Select-String '1080|8080'
+          '--- adapters before the kill'; Get-NetAdapter | Format-Table Name, Status
+          Get-Process hev -ErrorAction SilentlyContinue | ForEach-Object { taskkill /F /PID $_.Id }
+          Start-Sleep -Seconds 3
+          '--- adapters after taskkill /F (does Wintun leave the adapter behind?)'
+          Get-NetAdapter | Format-Table Name, Status
+          Get-NetRoute -DestinationPrefix 203.0.113.0/24 -ErrorAction SilentlyContinue | Format-Table
