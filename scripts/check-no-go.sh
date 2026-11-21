@@ -52,7 +52,7 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export NOGO_HERE="$here"
 exec python3 -I - "$@" <<'PYEOF'
-import bz2, gzip, lzma, mmap, os, re, shutil, subprocess, sys, tarfile, tempfile, zipfile
+import bz2, gzip, lzma, mmap, os, re, shutil, subprocess, sys, tarfile, tempfile, time, zipfile
 
 HERE = os.environ.get("NOGO_HERE", ".")
 GO_NAMES = {"libgojni", "libsingboxcore", "libxraycore", "sing-box", "xray", "olcrtc", "olcrtcmobile"}
@@ -369,7 +369,11 @@ def attach_dmg(path):
     if sys.platform != "darwin" or not which("hdiutil"):
         raise RuntimeError("a DMG is opened with hdiutil on macOS only")
     mnt = tempfile.mkdtemp(prefix="nogo-dmg-")
-    r = run(["hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-noautoopen", "-mountpoint", mnt, path])
+    for attempt in range(4):
+        r = run(["hdiutil", "attach", "-nobrowse", "-readonly", "-noverify", "-noautoopen", "-mountpoint", mnt, path])
+        if not r.returncode:
+            break
+        time.sleep(3 * (attempt + 1))  # a runner's hdiutil answers "Resource temporarily unavailable" now and then
     if r.returncode:
         raise RuntimeError("hdiutil: " + r.stderr.decode(errors="replace").strip()[-200:])
     return mnt
