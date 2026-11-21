@@ -85,6 +85,7 @@ jobs:
           def handle(c):
               try:
                   c.settimeout(60)
+                  log('ACCEPT %s:%d' % c.getpeername())
                   n = recvn(c, 2)[1]
                   recvn(c, n)
                   c.sendall(b'\x05\x00')
@@ -274,6 +275,13 @@ jobs:
           # On-link, because Wintun is a layer 3 device.
           New-NetRoute -DestinationPrefix 203.0.113.0/24 -InterfaceAlias hevtun -NextHop 0.0.0.0 | Format-List DestinationPrefix, NextHop, InterfaceAlias
           route print -4
+          '--- Find-NetRoute for the test address'
+          Find-NetRoute -RemoteIPAddress 203.0.113.10 | Format-Table IPAddress, InterfaceAlias, NextHop, DestinationPrefix
+          '--- adapter counters before the test'
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
+          '--- one ping from the tun address, for the counters'
+          ping -n 2 -w 1000 -S 198.18.0.1 203.0.113.10
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
 
       - name: Fetch and datagram through the tun
         shell: pwsh
@@ -288,6 +296,8 @@ jobs:
           $run = Join-Path $env:RUNNER_TEMP 'run'
           '--- stub log'; Get-Content (Join-Path $env:RUNNER_TEMP 'lab\stub.log') -ErrorAction SilentlyContinue
           '--- hev stdout/stderr'; Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          '--- adapter counters at the end'; Get-NetAdapterStatistics -Name hevtun -ErrorAction SilentlyContinue | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
+          netstat -ano -p tcp | Select-String '1080|8080'
           '--- adapters before the kill'; Get-NetAdapter | Format-Table Name, Status
           Get-Process hev -ErrorAction SilentlyContinue | ForEach-Object { taskkill /F /PID $_.Id }
           Start-Sleep -Seconds 3
