@@ -489,6 +489,20 @@ jobs:
       - name: Offline tests
         run: python3 scripts/test_gate_scripts.py
 
+      # The program's own checks: every script in scripts/p6-tests/ runs, each
+      # one a plain bash test that exits non-zero on a failure.
+      - name: Script tests (scripts/p6-tests)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          failed=0
+          for t in scripts/p6-tests/*.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
       # The runner's own shellcheck: Ubuntu 24.04's 0.9.0, older than a pip or
       # brew install and stricter in places (SC2015 on `a && b || c`), so check
       # the scripts locally with 0.9.0 as well. The log says which one ran.
