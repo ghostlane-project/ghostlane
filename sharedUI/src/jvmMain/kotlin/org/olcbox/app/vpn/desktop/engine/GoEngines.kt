@@ -6,7 +6,10 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.vpn.desktop.CoreShape
+import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.LineConfigs
+import org.olcbox.app.vpn.desktop.OlcRtcCommand
+import java.nio.file.Path
 
 /**
  * The engine the desktop has always had: the bundled sing-box and Xray, one
@@ -15,6 +18,7 @@ import org.olcbox.app.vpn.desktop.LineConfigs
 internal class GoEngines(host: DesktopEngineHost) : DesktopEngine {
     override val windowsTun: TunCore = GoTunCore(DesktopSingBoxController(onOutput = host.windowsTunOutput))
     override val line: LineEngine = GoLine(host.log)
+    override val room: RoomEngine = GoRoom()
     override val probes: ProbeEngine = GoProbes()
 }
 
@@ -96,6 +100,11 @@ private class GoLine(log: (String) -> Unit) : LineEngine {
     override fun runningProcesses(): List<Process> =
         listOfNotNull(singBoxCore.runningProcess(), xrayCore.runningProcess())
 
+    override fun binaries(): List<Path> = buildList {
+        runCatching { DesktopNativeAssets.resolveSingBoxBinary() }.getOrNull()?.let { add(it) }
+        runCatching { DesktopNativeAssets.resolveXrayBinary() }.getOrNull()?.let { add(it) }
+    }
+
     override fun stopNow() {
         singBoxCore.stopNow()
         xrayCore.stopNow()
@@ -114,6 +123,47 @@ private class GoTunCore(private val core: DesktopSingBoxController) : TunCore {
     override fun isRunning(): Boolean = core.isRunning()
     override fun runningProcess(): Process? = core.runningProcess()
     override fun stopNow() = core.stopNow()
+}
+
+/** The olcRTC engine: one program for a room, told everything in a yaml. */
+private class GoRoom : RoomEngine {
+    override fun binaries(): List<Path> = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
+
+    override val rootBesideLinuxTun: Boolean = true
+
+    override fun launch(binary: Path, request: RoomRequest): RoomLaunch {
+        val command = OlcRtcCommand(
+            binary = binary,
+            location = request.location,
+            socksHost = request.socksHost,
+            socksPort = request.socksPort,
+            socksUser = request.socksUser,
+            socksPass = request.socksPass,
+            dnsServer = request.dnsServer,
+            directRulesFile = request.directRulesFile,
+            dtlsProfile = request.dtlsProfile
+        )
+        return object : RoomLaunch {
+            override val provider: String = OlcRtcCommand.desktopProviderArg(request.location.bypassProvider)
+            override fun config(): String = command.yaml()
+            override fun args(configPath: Path): List<String> = command.args(configPath)
+            override fun saysReady(line: String): Boolean =
+                line.contains("SOCKS5 server listening", ignoreCase = true)
+            override fun saysFailed(line: String): Boolean = isFatalOlcRtcStartupLine(line)
+        }
+    }
+}
+
+private fun isFatalOlcRtcStartupLine(line: String): Boolean {
+    val text = line.lowercase()
+    return "failed to connect link" in text ||
+            "join room failed" in text ||
+            "get room token" in text && "failed" in text ||
+            "transport connect" in text && "failed" in text ||
+            "incompatible olcrtc protocol" in text ||
+            "did not answer the handshake" in text ||
+            "key does not match the peer" in text ||
+            "no peer in room" in text
 }
 
 private class GoProbes : ProbeEngine {

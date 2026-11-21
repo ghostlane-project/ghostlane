@@ -71,18 +71,21 @@ import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.LinuxTunTraffic
 import org.olcbox.app.vpn.desktop.MacOsTunController
 import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
-import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SessionBuild
 import org.olcbox.app.vpn.desktop.SessionEndpoint
 import org.olcbox.app.vpn.desktop.SingBoxTunTraffic
 import org.olcbox.app.vpn.desktop.TunnelTraffic
 import org.olcbox.app.vpn.desktop.WindowsTunController
+import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.DesktopEngines
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
 import org.olcbox.app.vpn.desktop.engine.LineRequest
+import org.olcbox.app.vpn.desktop.engine.RoomLaunch
+import org.olcbox.app.vpn.desktop.engine.RoomRequest
+import org.olcbox.app.vpn.desktop.engine.SessionHooks
 import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
 import java.io.IOException
 import java.net.InetSocketAddress
@@ -248,8 +251,15 @@ class DesktopVpnManager private constructor(
      * What carries this manager's lines ([org.olcbox.app.vpn.desktop.engine.DesktopEngine]):
      * the session's line, the Windows tun's core and the probes.
      */
-    private val engine = DesktopEngines.create(
-        DesktopEngineHost(log = ::addLog, windowsTunOutput = ::onWindowsTunOutput)
+    private val engine: DesktopEngine = DesktopEngines.create(
+        DesktopEngineHost(
+            log = ::addLog,
+            windowsTunOutput = ::onWindowsTunOutput,
+            session = object : SessionHooks {
+                override fun lineDied(what: String) = restartBehindTunForEngine(what)
+                override fun wayOutChanged(interfaceName: String?) = restartBehindTunOnNewWayOut(interfaceName)
+            }
+        )
     )
 
     /** The tun core said the system's filtering engine refused `strict_route`; see [startWindowsTun]. */
@@ -828,7 +838,7 @@ class DesktopVpnManager private constructor(
                         ready = ready,
                         startupFailure = startupFailure,
                         logOutput = true,
-                        privileged = desktopMode == DesktopMode.LinuxTun,
+                        privileged = desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun,
                         byHelper = engineByHelper,
                         directRulesFile = engineRules,
                         dtlsProfile = dtlsProfile,
@@ -1105,6 +1115,7 @@ class DesktopVpnManager private constructor(
             )
             sessionLine = line
             setStatus(VpnStatus.Connected)
+            engine.sessionUp(desktopMode)
             addLog("$transport connected — exit ${exit.label()}")
             startCoreWatcher(line, requestGeneration)
         } catch (e: Exception) {
@@ -1274,9 +1285,8 @@ class DesktopVpnManager private constructor(
         val running = (listOfNotNull(process) + engine.line.runningProcesses())
             .mapNotNull { it.info().command().orElse(null) }
         val bundled = buildList<Path> {
-            runCatching { DesktopNativeAssets.resolveSingBoxBinary() }.getOrNull()?.let { add(it) }
-            runCatching { DesktopNativeAssets.resolveXrayBinary() }.getOrNull()?.let { add(it) }
-            val engines = runCatching { DesktopNativeAssets.resolveOlcRtcBinaryCandidates() }.getOrDefault(emptyList())
+            addAll(engine.line.binaries())
+            val engines = runCatching { engine.room.binaries() }.getOrDefault(emptyList())
             addAll(engines)
             // And where the Mac's helper keeps the copy it runs under the kill switch.
             if (DesktopPaths.os == DesktopOs.MacOS) {
@@ -1894,7 +1904,7 @@ class DesktopVpnManager private constructor(
         dtlsProfile: String,
         dnsServer: String = DesktopDnsResolver.current()
     ): Process {
-        val binaries = DesktopNativeAssets.resolveOlcRtcBinaryCandidates()
+        val binaries = engine.room.binaries()
         var lastException: Exception? = null
 
         addLog("olcRTC resolvers: $dnsServer")
@@ -2079,6 +2089,7 @@ class DesktopVpnManager private constructor(
         // running goes now, with the session, and not when the cancelled job
         // gets to its own cleanup.
         engine.probes.stopKept()
+        engine.sessionDown()
 
         logJob?.cancel()
         logJob = null
@@ -2101,23 +2112,25 @@ class DesktopVpnManager private constructor(
         dtlsProfile: String
     ): Process {
         val config = location.normalized()
-        val provider = OlcRtcCommand.desktopProviderArg(config.bypassProvider)
-        val olcRtcCommand = OlcRtcCommand(
-            binary = binary,
-            location = config,
-            socksHost = socksSettings.host,
-            socksPort = socksSettings.port,
-            socksUser = socksSettings.username,
-            socksPass = socksSettings.password,
-            dnsServer = dnsServer,
-            directRulesFile = directRulesFile,
-            dtlsProfile = dtlsProfile
+        val roomLaunch = engine.room.launch(
+            binary,
+            RoomRequest(
+                location = config,
+                socksHost = socksSettings.host,
+                socksPort = socksSettings.port,
+                socksUser = socksSettings.username,
+                socksPass = socksSettings.password,
+                dnsServer = dnsServer,
+                directRulesFile = directRulesFile,
+                dtlsProfile = dtlsProfile
+            )
         )
+        val provider = roomLaunch.provider
         if (dtlsProfile != OlcrtcDtls.OFF) {
             addLog("olcRTC handshake: $dtlsProfile")
         }
-        val configPath = writeOlcRtcClientConfig(olcRtcCommand)
-        val command = olcRtcCommand.args(configPath)
+        val configPath = writeOlcRtcClientConfig(roomLaunch)
+        val command = roomLaunch.args(configPath)
 
         // The room id is a capability, not a name. Left out of the message rather
         // than left to the scrubber's UUID rule — that is one rule away from a leak.
@@ -2141,7 +2154,7 @@ class DesktopVpnManager private constructor(
                 val said = configPath.resolveSibling("${configPath.fileName}$LINE_OUTPUT_SUFFIX")
                 Files.deleteIfExists(said)
                 Files.createFile(said)
-                macOsTunController.startLine(binary, listOf(configPath.toString()), said)
+                macOsTunController.startLine(binary, command.drop(1), said)
             } else {
                 processBuilder.start()
             }
@@ -2167,11 +2180,11 @@ class DesktopVpnManager private constructor(
                             println(LogScrubber.default.scrub(message))
                         }
 
-                        if (line.contains("SOCKS5 server listening", ignoreCase = true)) {
+                        if (roomLaunch.saysReady(line)) {
                             ready.complete(Unit)
                         }
 
-                        if (isFatalOlcRtcStartupLine(line)) {
+                        if (roomLaunch.saysFailed(line)) {
                             startupFailure.complete(line)
                         }
                     }
@@ -2199,11 +2212,11 @@ class DesktopVpnManager private constructor(
      */
     private fun olcRtcConfigNaming(): String = olcRtcConfigDir().resolve(OLCRTC_CONFIG_PREFIX).toString()
 
-    private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
+    private fun writeOlcRtcClientConfig(launch: RoomLaunch): Path {
         val runtimeDir = olcRtcConfigDir()
         Files.createDirectories(runtimeDir)
         val path = Files.createTempFile(runtimeDir, OLCRTC_CONFIG_PREFIX, ".yaml")
-        Files.writeString(path, command.yaml(), StandardCharsets.UTF_8)
+        Files.writeString(path, launch.config(), StandardCharsets.UTF_8)
         deleteOlcRtcConfig()
         olcRtcConfigPath = path
         return path
@@ -2511,6 +2524,51 @@ class DesktopVpnManager private constructor(
             )
         }
         lineRestartJob = launchLineAttempts(line, requestGeneration)
+    }
+
+    /**
+     * [SessionHooks.lineDied]: an engine that hears of its line's death by
+     * itself reports it as the core watcher does, and the line is restarted
+     * behind what the session holds ([restartLineBehindTun]).
+     */
+    private fun restartBehindTunForEngine(what: String) {
+        val requestGeneration = generation
+        val line = sessionLine ?: return
+        scope.launch {
+            mutex.withLock {
+                if (requestGeneration != generation || sessionLine !== line) return@withLock
+                handleUnexpectedProcessExit(
+                    which = DeadProcess.Core,
+                    logMessage = what,
+                    errorMessage = what,
+                    requestGeneration = requestGeneration
+                )
+            }
+        }
+    }
+
+    /**
+     * [SessionHooks.wayOutChanged]: the interface the machine leaves by is
+     * another one, and a line bound to the old one carries nothing. Whatever
+     * of the line runs is stopped and the line is started again behind the
+     * standing tun, as a line that died is: every attempt reads the interface
+     * anew. With a restart already running there is nothing to add.
+     */
+    private fun restartBehindTunOnNewWayOut(interfaceName: String?) {
+        val requestGeneration = generation
+        val line = sessionLine ?: return
+        scope.launch {
+            mutex.withLock {
+                if (requestGeneration != generation || sessionLine !== line) return@withLock
+                if (lineRestartJob != null) return@withLock
+                addLog("The machine now leaves by ${interfaceName ?: "no interface"}")
+                val running = process
+                process = null
+                stopDesktopCores()
+                stopProcess(running)
+                restartLineBehindTun(line, requestGeneration)
+            }
+        }
     }
 
     /**
@@ -3669,7 +3727,7 @@ class DesktopVpnManager private constructor(
             ready = ready,
             startupFailure = startupFailure,
             logOutput = true,
-            privileged = line.desktopMode == DesktopMode.LinuxTun,
+            privileged = line.desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun,
             byHelper = line.desktopMode == DesktopMode.MacTun &&
                 macOsTunController.runsLineUnder(_socksProxySettings.value.killSwitch),
             directRulesFile = line.engineRules,
@@ -3922,18 +3980,6 @@ class DesktopVpnManager private constructor(
         /** How the file of an engine's config begins its name; see [olcRtcConfigNaming]. */
         const val OLCRTC_CONFIG_PREFIX = "olcrtc-client-"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
-
-        internal fun isFatalOlcRtcStartupLine(line: String): Boolean {
-            val text = line.lowercase()
-            return "failed to connect link" in text ||
-                    "join room failed" in text ||
-                    "get room token" in text && "failed" in text ||
-                    "transport connect" in text && "failed" in text ||
-                    "incompatible olcrtc protocol" in text ||
-                    "did not answer the handshake" in text ||
-                    "key does not match the peer" in text ||
-                    "no peer in room" in text
-        }
     }
 }
 

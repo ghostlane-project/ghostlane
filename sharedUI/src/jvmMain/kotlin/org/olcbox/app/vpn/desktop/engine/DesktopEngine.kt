@@ -1,10 +1,13 @@
 package org.olcbox.app.vpn.desktop.engine
 
+import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.vpn.DesktopMode
+import java.nio.file.Path
 
 /**
  * What carries the lines of a desktop session.
@@ -25,8 +28,51 @@ internal interface DesktopEngine {
     /** The core that owns the Windows tun, apart from the session's line. */
     val windowsTun: TunCore
 
+    /** A room: what is run for it. The manager runs it. */
+    val room: RoomEngine
+
     /** Cores that try a line beside the session's and are thrown away. */
     val probes: ProbeEngine
+
+    /**
+     * The session's first line passed its check: the session is Connected in
+     * [mode]. An engine that watches something for a session, the interface
+     * the machine leaves by for one, begins here and reports through
+     * [SessionHooks].
+     */
+    fun sessionUp(mode: DesktopMode) {}
+
+    /**
+     * The session is being stopped. It may come more than once, and with no
+     * session up.
+     */
+    fun sessionDown() {}
+}
+
+/**
+ * What an engine may ask of the session it carries. The answer to both is the
+ * restart behind the tun: what the session holds, the tun or in proxy mode
+ * the system's proxy setting, is not touched, and the line is started again
+ * behind it for as long as the session lasts.
+ *
+ * May be called from any thread and at any time; a call with no session up,
+ * or for a session that has ended since, does nothing.
+ */
+internal interface SessionHooks {
+    /**
+     * The engine learned by itself that the session's line is gone: its
+     * program said so, or ended. [what] is the log's line. The manager also
+     * asks [LineEngine.alive] on its own clock, so an engine that only
+     * answers that question never needs this.
+     */
+    fun lineDied(what: String)
+
+    /**
+     * The interface the machine leaves by changed ([interfaceName], or null
+     * when there is none now). Whatever of the line runs is stopped and
+     * started again, bound to what is there now.
+     */
+    fun wayOutChanged(interfaceName: String?)
 }
 
 /** What an engine is given by the manager it serves. */
@@ -34,7 +80,8 @@ internal class DesktopEngineHost(
     /** The app's log; what a line's processes print goes there. */
     val log: (String) -> Unit,
     /** Where the Windows tun's core is read: the manager looks for what the system refused. */
-    val windowsTunOutput: (String) -> Unit
+    val windowsTunOutput: (String) -> Unit,
+    val session: SessionHooks
 )
 
 /** Which engine a manager gets. One place, so that changing it touches no manager. */
@@ -116,6 +163,9 @@ internal interface LineEngine {
     /** The line's own processes, for a tun that lets them out by their paths. */
     fun runningProcesses(): List<Process>
 
+    /** The programs a line may run, for the same tun when a process does not say its path. */
+    fun binaries(): List<Path>
+
     /** Stops the line and the front, and returns when they are gone. Not a coroutine: stop paths are not. */
     fun stopNow()
 }
@@ -126,6 +176,58 @@ internal interface TunCore {
     fun isRunning(): Boolean
     fun runningProcess(): Process?
     fun stopNow()
+}
+
+/**
+ * A room as the session's endpoint: the SOCKS listener it opens, with its
+ * login, and what it is told about the machine.
+ */
+internal class RoomRequest(
+    val location: LocationConfig,
+    val socksHost: String,
+    val socksPort: Int,
+    val socksUser: String,
+    val socksPass: String,
+    val dnsServer: String,
+    /** A file of the destinations the room's program dials itself, or null for none. */
+    val directRulesFile: Path?,
+    val dtlsProfile: String
+)
+
+/**
+ * What is run for a room. The manager writes [config] into a file only the
+ * user reads, runs [args] (itself, as root, or through the Mac's helper),
+ * reads what the program prints and watches it; nothing secret is in [args].
+ */
+internal interface RoomLaunch {
+    /** How the program names the carrier, for the log. */
+    val provider: String
+
+    /** The text of the file the program reads. */
+    fun config(): String
+
+    /** The command line: the program, then what it is given, with the file's path in it. */
+    fun args(configPath: Path): List<String>
+
+    /** [line], printed by the program, says the room's listener is open. */
+    fun saysReady(line: String): Boolean
+
+    /** [line] says this start has failed for good. */
+    fun saysFailed(line: String): Boolean
+}
+
+internal interface RoomEngine {
+    /** The programs that can carry a room, the preferred one first; the next is tried when one does not start. */
+    fun binaries(): List<Path>
+
+    fun launch(binary: Path, request: RoomRequest): RoomLaunch
+
+    /**
+     * Whether a room's program has to be root in the Linux tunnel, where only
+     * root's traffic keeps the main table. False for one that binds its
+     * sockets to the physical interface instead.
+     */
+    val rootBesideLinuxTun: Boolean
 }
 
 internal interface ProbeEngine {
