@@ -406,7 +406,8 @@ says so in one line, and another server in that session is the full restart it
 used to be.
 
 The same two things carry a session that goes to another server by itself, when
-its own has stopped answering (smart connect; README, Protocols). A server it
+its own has stopped answering (smart connect;
+[protocols.md](protocols.md#smart-connect)). A server it
 considers is checked first by a core of its own, started beside the tun: that
 core is one of the named binaries and leaves as the session's own does, and it
 asks the same resolvers. A tun that started without the rule lets neither that
