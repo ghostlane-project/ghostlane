@@ -457,6 +457,13 @@ class Walker:
                     return
                 s.no(chain, "%s: %s" % (container, str(e).replace("\n", " ")[:240]))
                 return
+            if container == "pe":
+                # 7z lists a PE's own sections as files: they are the bytes already read
+                for sec in (".text", ".data", ".rdata", ".idata", ".pdata", ".reloc", ".bss", ".tls", ".edata", ".CRT", ".xdata"):
+                    try:
+                        os.unlink(os.path.join(tmp, sec))
+                    except OSError:
+                        pass
             s.opened.append((chain, container))
             self.tree(tmp, chain, depth + 1)
         finally:
