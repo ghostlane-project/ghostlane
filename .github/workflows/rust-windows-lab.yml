@@ -162,18 +162,6 @@ jobs:
           Write-Host 'OK: TCP and UDP went through the tun to the stub'
           '@ | Set-Content -Encoding ascii (Join-Path $dir 'tun-test.ps1')
 
-      - name: Start the stub
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'lab'
-          python --version
-          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log')) `
-            -RedirectStandardError (Join-Path $dir 'stub.err') -NoNewWindow
-          for ($i = 0; $i -lt 30; $i++) {
-            try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
-          }
-          Get-Content (Join-Path $dir 'stub.log')
-
       - name: Wintun from the official signed release
         shell: pwsh
         env:
@@ -238,9 +226,20 @@ jobs:
           done
           ls -la "$T/run"
 
-      - name: Bring hev.exe up on Wintun
+      # One step on purpose: a process started in a step does not survive it
+      # (the stub and hev both died at the end of their own steps, run 3 and 4).
+      - name: Stub, hev.exe on Wintun, fetch and datagram
         shell: pwsh
         run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'lab'
+          python --version
+          Start-Process python -ArgumentList @((Join-Path $dir 'stub.py'), (Join-Path $dir 'stub.log')) `
+            -RedirectStandardError (Join-Path $dir 'stub.err') -NoNewWindow
+          for ($i = 0; $i -lt 30; $i++) {
+            try { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', 1080); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 }
+          }
+          Get-Content (Join-Path $dir 'stub.log')
+
           $run = Join-Path $env:RUNNER_TEMP 'run'
           @"
           tunnel:
@@ -280,13 +279,20 @@ jobs:
           '--- adapter counters before the test'
           Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
           '--- one ping from the tun address, for the counters'
-          ping -n 2 -w 1000 -S 198.18.0.1 203.0.113.10
+          ping -n 2 -w 1000 -S 198.18.0.1 203.0.113.10; $null = $LASTEXITCODE; $global:LASTEXITCODE = 0
           Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets, SentBytes, ReceivedBytes
-
-      - name: Fetch and datagram through the tun
-        shell: pwsh
-        run: |
+          '--- the test'
           & (Join-Path $env:RUNNER_TEMP 'lab\tun-test.ps1')
+          $testExit = $LASTEXITCODE
+          '--- hev log after the test'
+          Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
+          Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets
+          '--- taskkill /F on hev: does the adapter go, and the route with it?'
+          taskkill /F /IM hev.exe
+          Start-Sleep -Seconds 3
+          Get-NetAdapter | Format-Table Name, Status
+          Get-NetRoute -DestinationPrefix 203.0.113.0/24 -ErrorAction SilentlyContinue | Format-Table
+          exit $testExit
 
       - name: Logs and clean-up (observed, never fails)
         if: always()
