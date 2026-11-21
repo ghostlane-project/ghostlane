@@ -51,4 +51,44 @@ class DesktopEngineSeamTest {
         """.trimIndent()
         assertTrue(asItWas in text, "desktopRulesHome in RulesHome.kt is not the function the manager had")
     }
+
+    @Test
+    fun theManagerNamesNoRoomCommand() {
+        assertFalse("OlcRtcCommand" in manager, "DesktopVpnManager.kt still names OlcRtcCommand; a room's command belongs to GoEngines.kt")
+        assertTrue("OlcRtcCommand" in engineFile("GoEngines.kt").readText(), "GoEngines.kt builds the room's command")
+        // What the room's program prints is its engine's to read.
+        assertFalse("SOCKS5 server listening" in manager, "the manager still reads the olcRTC engine's own words")
+    }
+
+    /** Which programs a line runs is the engine's to say, down to their paths. */
+    @Test
+    fun theManagerResolvesNoProgramOfALine() {
+        for (name in listOf("resolveSingBoxBinary", "resolveXrayBinary", "resolveOlcRtcBinaryCandidates")) {
+            assertFalse(name in manager, "DesktopVpnManager.kt still calls DesktopNativeAssets.$name")
+        }
+    }
+
+    /**
+     * The two things an engine may ask of a session, and that the manager
+     * answers both with the restart behind the tun.
+     */
+    @Test
+    fun anEngineCanAskForTheRestartBehindTheTun() {
+        val seam = engineFile("DesktopEngine.kt").readText()
+        assertTrue("interface SessionHooks" in seam, "DesktopEngine.kt has no SessionHooks")
+        for (hook in listOf("fun lineDied(", "fun wayOutChanged(")) {
+            assertTrue(hook in seam, "SessionHooks has no $hook")
+            assertTrue("override $hook" in manager, "the manager does not answer $hook")
+        }
+        for (answer in listOf("restartBehindTunForEngine", "restartBehindTunOnNewWayOut")) {
+            val body = manager.substringAfter("private fun $answer(", "").substringBefore("\n    }\n")
+            assertTrue(
+                "restartLineBehindTun(" in body || "handleUnexpectedProcessExit(" in body,
+                "$answer does not end in the restart behind the tun"
+            )
+        }
+        // An interface watch has a session to belong to: told when one is up and when it goes.
+        assertTrue("engine.sessionUp(" in manager, "the manager does not tell the engine a session is up")
+        assertTrue("engine.sessionDown()" in manager, "the manager does not tell the engine a session is stopped")
+    }
 }
