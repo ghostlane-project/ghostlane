@@ -18,12 +18,43 @@ name: Rust core for Android
 # loopback server the test runs, a fetch from the shell uid through the tun,
 # then stop and the service, the core and the tun fd gone.
 #
-# Emulator only: no device, no store track, no live carrier room, no secret.
-# Runs on a push to a lab/rust-core-* branch or by hand, never on main.
+# Emulator only: no device, no store track, no live carrier room. The one
+# secret is the crypt1 client key of the lab APK step.
+# Runs on rust/all and on pull requests into it, when what it builds or reads
+# changed, or by hand; never on main and never on every push to a task branch.
 on:
   push:
     branches:
-      - 'lab/rust-core-*'
+      - rust/all
+    paths:
+      - .github/workflows/rust-core-android.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/build-ghostlane-core-android.sh
+      - 'scripts/rust-core-android-*.sh'
+      - scripts/olcrtc-pin.sh
+      - scripts/cores-pins.sh
+      - 'lab/rust-core-android/**'
+      - 'androidApp/**'
+      - 'sharedUI/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - gradle.properties
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-core-android.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/build-ghostlane-core-android.sh
+      - 'scripts/rust-core-android-*.sh'
+      - scripts/olcrtc-pin.sh
+      - scripts/cores-pins.sh
+      - 'lab/rust-core-android/**'
+      - 'androidApp/**'
+      - 'sharedUI/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - gradle.properties
   workflow_dispatch:
 
 permissions:
