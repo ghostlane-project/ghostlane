@@ -6,6 +6,8 @@ name: rust-windows-lab
 on:
   workflow_dispatch:
   push:
+    # Branches only: path filters are not evaluated for tag pushes.
+    branches: ['**']
     paths:
       - .github/workflows/rust-windows-lab.yml
       - docs/spikes/windows-hev.md
