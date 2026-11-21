@@ -138,7 +138,7 @@ jobs:
                               return
                           buf += x
                       body = b'hev-spike-tcp-ok\n'
-                      snd(c, b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
+                      snd(c, b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
                   elif cmd == 3:
                       u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                       u.bind((BIND, 0))
@@ -173,8 +173,9 @@ jobs:
           # TCP: a plain HTTP fetch to an address that only the tun can carry.
           try {
             $r = Invoke-WebRequest -Uri 'http://203.0.113.10:8080/' -UseBasicParsing -TimeoutSec 15
-            if ($r.Content -notmatch 'hev-spike-tcp-ok') { $failed += "tcp: wrong body: $($r.Content)" }
-            else { Write-Host "TCP fetch: $($r.StatusCode) $($r.Content.Trim())" }
+            $body = if ($r.Content -is [byte[]]) { [Text.Encoding]::ASCII.GetString($r.Content) } else { [string]$r.Content }
+            if ($body -notmatch 'hev-spike-tcp-ok') { $failed += "tcp: wrong body: $body" }
+            else { Write-Host "TCP fetch: $($r.StatusCode) $($body.Trim())" }
           } catch { $failed += "tcp: $($_.Exception.Message)" }
 
           # UDP: one datagram, one echo through UDP ASSOCIATE.
