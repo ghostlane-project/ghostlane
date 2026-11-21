@@ -1,0 +1,70 @@
+name: Release dry run guard
+
+# A release run that signs nothing must be unable to sign, upload or publish,
+# and must start no live leg of the release gate. scripts/test-release-dry.sh
+# reads that off release.yml and gate.yml and runs the two scripts that decide
+# it (scripts/release-guard.sh, scripts/gate-resolve.sh) against a local
+# stand-in for GitHub, then plants each violation in a copy and expects to
+# find it. Nothing here builds, signs, dispatches or calls another workflow.
+#
+# On a push or a pull request that touches what the test reads, and by hand.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+      - rust/all
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/gate.yml
+      - .github/workflows/release-dry.yml
+      - scripts/release-guard.sh
+      - scripts/test-release-dry.sh
+      - scripts/gate-resolve.sh
+      - scripts/gate-run.sh
+      - scripts/gate-api.sh
+      - scripts/gate-merge-reports.py
+      - scripts/olcrtc-pin.sh
+  push:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/gate.yml
+      - .github/workflows/release-dry.yml
+      - scripts/release-guard.sh
+      - scripts/test-release-dry.sh
+      - scripts/gate-resolve.sh
+      - scripts/gate-run.sh
+      - scripts/gate-api.sh
+      - scripts/gate-merge-reports.py
+      - scripts/olcrtc-pin.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dry-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: A dry run signs and publishes nothing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The runner's image carries it today; asked for so that an image
+      # without it fails here, by name, and not inside the test.
+      - name: PyYAML
+        run: python3 -I -c 'import yaml' 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-yaml
+
+      - name: The release guard, read from the workflows
+        run: scripts/test-release-dry.sh
+
+      # The runner's own shellcheck, as the gate's scripts are checked.
+      - name: shellcheck and bash -n
+        run: |
+          set -euo pipefail
+          shellcheck --version
+          shellcheck -x scripts/release-guard.sh scripts/test-release-dry.sh
+          for f in scripts/release-guard.sh scripts/test-release-dry.sh; do bash -n "$f"; done
