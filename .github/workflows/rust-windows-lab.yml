@@ -27,6 +27,9 @@ jobs:
     name: hev.exe with Wintun (${{ matrix.variant }})
     runs-on: windows-latest
     timeout-minutes: 30
+    # The MSYS2 build of the vendored tree is a control that stays red (see
+    # docs/spikes/windows-hev.md): it must not hide the two native variants.
+    continue-on-error: ${{ matrix.variant == 'msys-intree' }}
     strategy:
       fail-fast: false
       matrix:
