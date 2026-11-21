@@ -7,12 +7,13 @@
 docs/rust-parity/ holds:
 
   inventory.txt   one line per feature:   id | platforms | source | what
-  <platform>.txt  one line per feature that platform's build has today:
-                                          id | status | tests | note
+  rows/<id>.txt   one small file per feature, one line per platform whose build
+                  has it today:           platform | status | tests | note
   sizes.txt       the artefact sizes beside today's Go build
 
 Platforms are android, ios, macos, linux, windows and cli (inventory.txt names
-them by their short letters a, i, m, l, w, c). Status is one of
+them by their short letters a, i, m, l, w, c; a row names them in full). A task
+that moves a feature on a platform edits that feature's file alone. Status is one of
 
   proven       the tests named prove the feature on the Rust core
   partial      the tests named prove part of it; the note says what is still open
@@ -30,7 +31,8 @@ id does not exist; a proven or partial row with no test; a retired or partial
 row with no note; a not-proven or retired row that names a test (it would be
 proven, or partial); and a feature the tree knows (a link scheme, a routing
 mode, a carrier, a transport, a setting, a CLI command, flag or variable) that
-the inventory leaves out.
+the inventory leaves out, among them every cell of the link parser's accept
+matrix (protocol, security, transport) as `cell.<protocol>[.<security>].<transport>`.
 
 Needs python 3 and nothing else.
 """
@@ -50,6 +52,9 @@ PLATFORMS = {
 }
 STATUSES = ("proven", "partial", "not-proven", "retired")
 LEDGER = os.path.join("docs", "rust-parity")
+ROWS = os.path.join(LEDGER, "rows")
+# What each protocol that takes a transport can be wrapped in (None: one way only).
+SECURITIES = {"Vless": ["reality", "tls", "none"], "Trojan": [None], "Vmess": ["tls", "none"]}
 SIZES_HEADER = "artefact | go build (bytes) | rust build (bytes) | note"
 
 NET = "sharedUI/src/commonMain/kotlin/org/olcbox/app/net"
@@ -149,6 +154,26 @@ def tree_features(root):
         fields = data_class_fields(root, rel, cls)
         need("the settings of " + cls, ["setting." + f for f in fields or []])
 
+    outbound = strip_comments(read(root, NET + "/OutboundSpec.kt"))
+    transports = re.findall(r"data (?:object|class)\s+(\w+)\s*(?:\([^)]*\))?\s*:\s*TransportSpec\b", outbound)
+    m = re.search(r"private fun streamTransport\(.*?\n    \}\n", strip_comments(parser), flags=re.S)
+    stream = set(re.findall(r"TransportSpec\.(\w+)", m.group(0))) if m else set()
+    cells = []
+    for km in re.finditer(r"data class (\w+)\s*\(", outbound):
+        params = balanced(outbound, km.end() - 1)
+        if not re.search(r"\bval transport\s*:", params):
+            continue
+        kind = km.group(1)
+        if kind not in SECURITIES:
+            broken.append("OutboundSpec.%s takes a transport and the ledger has no security rule for it" % kind)
+            continue
+        # Vless reads every transport by `type`; Trojan and VMess only the ones streamTransport builds.
+        names = transports if kind == "Vless" else [t for t in transports if t in stream]
+        for sec in SECURITIES[kind]:
+            for t in names:
+                cells.append("cell." + ".".join(x for x in (kind.lower(), sec, t.lower()) if x))
+    need("the accept matrix (protocol, security, transport)", cells)
+
     commands = read(root, "cli/cmd/ghostlane/commands.go")
     m = re.search(r"func run\(.*?\n\}\n", commands, flags=re.S)
     names = []
@@ -201,25 +226,31 @@ def check(root):
         if fid not in inventory:
             problems.append("%s names %s and the inventory has no such feature" % (why, fid))
 
-    for platform in PLATFORMS.values():
-        rel = os.path.join(LEDGER, platform + ".txt")
-        if not os.path.isfile(os.path.join(root, rel)):
-            problems.append("%s is missing" % rel)
+    names = sorted(os.listdir(os.path.join(root, ROWS))) if os.path.isdir(os.path.join(root, ROWS)) else []
+    covered = {}  # id -> set of platform names that have a row
+    for name in names:
+        rel = os.path.join(ROWS, name)
+        fid = name[:-4]
+        if not name.endswith(".txt"):
+            problems.append("%s: only <feature id>.txt files belong in %s" % (rel, ROWS))
             continue
-        rows = {}
+        if fid not in inventory:
+            problems.append("%s: %s is not in the inventory" % (rel, fid))
+            continue
+        have = covered.setdefault(fid, set())
         for n, cells in table(root, rel):
             where = "%s:%d" % (rel, n)
             if len(cells) != 4 or not cells[0] or not cells[1]:
-                problems.append("%s: a row is `id | status | tests | note`" % where)
+                problems.append("%s: a row is `platform | status | tests | note`" % where)
                 continue
-            fid, status, tests, note = cells
-            if fid in rows:
-                problems.append("%s: %s has two rows" % (where, fid))
+            platform, status, tests, note = cells
+            if platform not in PLATFORMS.values():
+                problems.append("%s: %r is not a platform (%s)" % (where, platform, ", ".join(PLATFORMS.values())))
                 continue
-            rows[fid] = True
-            if fid not in inventory:
-                problems.append("%s: %s is not in the inventory" % (where, fid))
+            if platform in have:
+                problems.append("%s: %s has two rows for %s" % (where, fid, platform))
                 continue
+            have.add(platform)
             if platform not in inventory[fid]:
                 problems.append("%s: %s is not a feature of %s's build today (the inventory does not list it)" %
                                 (where, fid, platform))
@@ -229,18 +260,20 @@ def check(root):
                 continue
             ids = [t.strip() for t in tests.split(",") if t.strip() and t.strip() != "-"]
             if status in ("proven", "partial") and not ids:
-                problems.append("%s: %s is %s and names no test" % (where, fid, status))
+                problems.append("%s: %s on %s is %s and names no test" % (where, fid, platform, status))
             if status in ("not-proven", "retired") and ids:
-                problems.append("%s: %s is %s and names a test; mark it partial or proven" % (where, fid, status))
+                problems.append("%s: %s on %s is %s and names a test; mark it partial or proven" %
+                                (where, fid, platform, status))
             if status in ("partial", "retired") and note in ("", "-"):
-                problems.append("%s: %s is %s and says nothing in its note" % (where, fid, status))
+                problems.append("%s: %s on %s is %s and says nothing in its note" % (where, fid, platform, status))
             for t in ids:
                 why = reference_problem(root, t)
                 if why:
-                    problems.append("%s: the test of %s: %s" % (where, fid, why))
-        for fid, plats in inventory.items():
-            if platform in plats and fid not in rows:
-                problems.append("%s has no row for %s" % (rel, fid))
+                    problems.append("%s: the test of %s on %s: %s" % (where, fid, platform, why))
+    for fid, plats in inventory.items():
+        for platform in PLATFORMS.values():
+            if platform in plats and platform not in covered.get(fid, set()):
+                problems.append("%s has no row for %s on %s" % (os.path.join(ROWS, fid + ".txt"), fid, platform))
 
     sizes = os.path.join(LEDGER, "sizes.txt")
     if not os.path.isfile(os.path.join(root, sizes)):
@@ -271,12 +304,14 @@ def self_test(root):
         return tmp
 
     def first_row(tmp, platform, status):
-        path = os.path.join(tmp, LEDGER, platform + ".txt")
-        lines = open(path, encoding="utf-8").read().split("\n")
-        for i, l in enumerate(lines):
-            cells = [c.strip() for c in l.split("|")]
-            if len(cells) == 4 and cells[1] == status:
-                return path, lines, i
+        rows = os.path.join(tmp, ROWS)
+        for name in sorted(os.listdir(rows)):
+            path = os.path.join(rows, name)
+            lines = open(path, encoding="utf-8").read().split("\n")
+            for i, l in enumerate(lines):
+                cells = [c.strip() for c in l.split("|")]
+                if len(cells) == 4 and cells[0] == platform and cells[1] == status:
+                    return path, lines, i
         raise SystemExit("self-test: no %s row in %s" % (status, platform))
 
     faults = []
@@ -318,20 +353,30 @@ def self_test(root):
         open(path, "w", encoding="utf-8").write("\n".join(lines))
 
     def stray_row(tmp):
-        path = os.path.join(tmp, LEDGER, "android.txt")
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("\nnot.a.feature | not-proven | - | -\n")
+        path = os.path.join(tmp, ROWS, "not.a.feature.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("android | not-proven | - | -\n")
 
     def wrong_platform(tmp):
-        # ios has no Windows tray
-        path = os.path.join(tmp, LEDGER, "ios.txt")
+        # ios has no Shadowsocks
+        path = os.path.join(tmp, ROWS, "carry.shadowsocks.txt")
         with open(path, "a", encoding="utf-8") as f:
-            f.write("\nwindows.uac-elevation | not-proven | - | -\n")
+            f.write("\nios | not-proven | - | -\n")
 
     def unlisted_scheme(tmp):
         path = os.path.join(tmp, LEDGER, "inventory.txt")
         lines = [l for l in open(path, encoding="utf-8").read().split("\n") if not l.startswith("import.link.vmess ")]
         open(path, "w", encoding="utf-8").write("\n".join(lines))
+
+    def unlisted_cell(tmp):
+        path = os.path.join(tmp, LEDGER, "inventory.txt")
+        lines = [l for l in open(path, encoding="utf-8").read().split("\n") if not l.startswith("cell.vmess.tls.grpc ")]
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+
+    def unknown_platform(tmp):
+        path = os.path.join(tmp, ROWS, "import.url.txt")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\nhurd | not-proven | - | -\n")
 
     def bad_status(tmp):
         path, lines, i = first_row(tmp, "ios", "not-proven")
@@ -367,6 +412,8 @@ def self_test(root):
     fault("a row for no feature", stray_row, "is not in the inventory")
     fault("a row for a platform the feature is not on", wrong_platform, "does not list it")
     fault("a link scheme the inventory leaves out", unlisted_scheme, "has no such feature")
+    fault("a protocol, security and transport cell the inventory leaves out", unlisted_cell, "has no such feature")
+    fault("a row for a platform that does not exist", unknown_platform, "is not a platform")
     fault("a status that is none of the four", bad_status, "has status")
     fault("a retired row with no reason", retired_without_reason, "says nothing in its note")
     fault("a source the tree does not have", dangling_source, "the source of")
