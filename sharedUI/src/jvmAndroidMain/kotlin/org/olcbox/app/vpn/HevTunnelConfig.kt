@@ -32,7 +32,10 @@ object HevTunnelConfig {
         socksPort: Int,
         corePort: Int?,
         username: String,
-        password: String
+        password: String,
+        // 'udp' (UDP ASSOCIATE) or 'tcp' (hev's FWD UDP lane, which the Rust core's
+        // password inbound speaks); anything else is 'udp'.
+        udp: String = "udp"
     ): String = buildList {
         add("tunnel:")
         add("  name: tun0")
@@ -51,7 +54,7 @@ object HevTunnelConfig {
         // the tun at all, whichever of them hev was feeding. On an olcRTC room
         // with no datagram lane (Jitsi) the engine's relay is turned off
         // (OlcRtcUdpRelay), and it refuses the association at once.
-        add("  udp: 'udp'")
+        add("  udp: '${if (udp == "tcp") "tcp" else "udp"}'")
         add("  pipeline: false")
         // The login is sent exactly when the server demands one, and the caller
         // is the one who knows: olcRTC always does, and on the tun path so do the
