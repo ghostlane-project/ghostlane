@@ -3,9 +3,13 @@
 #   - OlcboxVpnService.kt names a Go core: the gomobile package (`mobile.`,
 #     `Mobile.`), `singBoxCore`, `xrayCore`, or a class that runs one
 #     (AndroidSingBoxController, AndroidXrayController, AndroidCoreProcess);
-#   - the engine package lacks EngineSession.kt or GoEngineSession.kt, or a
-#     file of the service's package other than engine/GoEngineSession.kt names
-#     a Go core;
+#   - OlcboxVpnService.kt reaches for the Rust engine itself (RustCore.backend,
+#     RustCoreBackend) instead of asking its session;
+#   - the engine package lacks EngineSession.kt, GoEngineSession.kt or
+#     RustEngineSession.kt, or a file of the service's package other than
+#     engine/GoEngineSession.kt names a Go core;
+#   - the Rust core's proxy-mode refusal is written anywhere but in its hook
+#     file, engine/RustProxyMode.kt, or the Rust session does not ask the hook;
 #   - scripts/rust-core-android-e2e.sh does not ask for every test class under
 #     the androidTestRustcore sources, or passes when a class it asked for did
 #     not run, when a test failed, or when there is no class at all. This part
@@ -25,13 +29,27 @@ go_names='(^|[^A-Za-z0-9_])[Mm]obile\.|singBoxCore|xrayCore|AndroidSingBoxContro
 
 [ -f "$svc" ] || { echo "FAIL no service source at $svc"; exit 1; }
 if grep -nE "$go_names" "$svc"; then bad "OlcboxVpnService.kt names a Go core (the lines above)"; fi
-for f in EngineSession GoEngineSession; do
+if grep -nE 'RustCore\.backend|RustCoreBackend' "$svc"; then bad "OlcboxVpnService.kt reaches for the Rust engine (the lines above)"; fi
+for f in EngineSession GoEngineSession RustEngineSession; do
   [ -f "$pkg/engine/$f.kt" ] || bad "engine/$f.kt is missing"
 done
 while IFS= read -r f; do
   case "$f" in "$pkg/engine/GoEngineSession.kt") continue ;; esac
   if grep -qE "$go_names" "$f"; then bad "${f#"$root"/} names a Go core; only engine/GoEngineSession.kt may"; fi
 done < <(find "$pkg" -name '*.kt' | sort)
+
+# ---- the proxy-mode refusal sits behind its hook -----------------------------
+refusal='does not run proxy mode'
+hook="$pkg/engine/RustProxyMode.kt"
+if [ -f "$hook" ] && grep -q "$refusal" "$hook"; then
+  while IFS= read -r f; do
+    [ "$f" = "$hook" ] && continue
+    if grep -q "$refusal" "$f"; then bad "${f#"$root"/} carries the proxy-mode refusal; it belongs in engine/RustProxyMode.kt"; fi
+  done < <(find "$pkg" -name '*.kt' | sort)
+  if ! grep -q 'RustProxyMode\.' "$pkg/engine/RustEngineSession.kt" 2>/dev/null; then bad "RustEngineSession.kt does not ask RustProxyMode"; fi
+else
+  bad "engine/RustProxyMode.kt does not hold the proxy-mode refusal"
+fi
 
 # ---- the e2e script runs every class and notices one that did not run --------
 e2e="$root/scripts/rust-core-android-e2e.sh"
