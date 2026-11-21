@@ -3,6 +3,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Internal
@@ -10,6 +11,7 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.internal.os.OperatingSystem
 import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
@@ -106,6 +108,67 @@ abstract class VerifyNativeResourcesTask : DefaultTask() {
         require(missing.isEmpty()) {
             "Missing desktop native resources:\n" +
                     missing.joinToString(separator = "\n") { "- ${it.relativeTo(root).invariantSeparatorsPath}" }
+        }
+    }
+}
+
+// The native resources each OS's package takes, compared with the recorded
+// lists in gradle/native-<os>.resources.txt. A line is "<arch> <kind> <path>":
+// "generated" is made by a task of this build under
+// build/generated/desktopNativeResources, "bundled" is supplied under
+// src/main/resources by whoever runs the build (see verifyBundledDesktopCores).
+// The lists of all three systems are computed from what this build declares,
+// on any host, so a change to one system's resources shows on the Linux runner.
+abstract class CheckNativeResourceListsTask : DefaultTask() {
+    @get:Input
+    abstract val staged: MapProperty<String, List<String>>
+
+    @get:Input
+    abstract val recordedFiles: MapProperty<String, String>
+
+    // What the host's own tasks write under the generated directory, and what
+    // the host's list says they should: the list is not a second copy of the
+    // truth if the two are compared here.
+    @get:Input
+    abstract val hostDeclared: ListProperty<String>
+
+    @get:Input
+    abstract val hostProduced: ListProperty<String>
+
+    @TaskAction
+    fun check() {
+        val problems = mutableListOf<String>()
+        staged.get().toSortedMap().forEach { (os, lines) ->
+            val now = lines.sorted()
+            println("Native resources staged for $os:")
+            now.forEach { println("  $it") }
+
+            val recordedFile = File(recordedFiles.get().getValue(os))
+            val recorded = if (recordedFile.isFile) {
+                recordedFile.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            } else {
+                problems.add("$os: no recorded list at ${recordedFile.path}")
+                emptyList()
+            }
+            if (recorded != recorded.sorted()) {
+                problems.add("$os: ${recordedFile.name} is not sorted")
+            }
+            (now - recorded.toSet()).forEach { problems.add("$os: staged but not recorded: $it") }
+            (recorded - now.toSet()).forEach { problems.add("$os: recorded but not staged: $it") }
+            if (recorded.size != recorded.toSet().size) {
+                problems.add("$os: ${recordedFile.name} repeats a line")
+            }
+        }
+
+        val declared = hostDeclared.get().sorted()
+        val produced = hostProduced.get().sorted()
+        if (declared != produced) {
+            problems.add("this host's tasks write $produced, its list declares $declared")
+        }
+
+        require(problems.isEmpty()) {
+            "The desktop native resource lists differ from the recorded ones:\n" +
+                    problems.joinToString(separator = "\n") { "- $it" }
         }
     }
 }
@@ -455,29 +518,61 @@ if (currentBuildOs.isWindows) {
     hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
-fun requiredHostNativeResourcePaths(): List<String> = buildList {
-    when {
-        currentBuildOs.isMacOsX -> {
-            add("native/olcrtc-darwin-$hostDesktopArch")
-            add("native/libolcrtc-darwin-$hostDesktopArch.dylib")
+val hostDesktopOs = when {
+    currentBuildOs.isMacOsX -> "macos"
+    currentBuildOs.isWindows -> "windows"
+    currentBuildOs.isLinux -> "linux"
+    else -> ""
+}
+
+fun generatedNativeResourcePaths(os: String, arch: String): List<String> = buildList {
+    when (os) {
+        "macos" -> {
+            add("native/olcrtc-darwin-$arch")
+            add("native/libolcrtc-darwin-$arch.dylib")
             // Absent, the settings row for the system-wide tunnel quietly does
             // not appear and nothing anywhere says why — the bridge is loaded by
             // resource and a missing resource is indistinguishable from a
             // platform that has no such component.
             add("native/libolcboxtunneld.dylib")
         }
-        currentBuildOs.isWindows -> {
+        "windows" -> {
             add("native/olcrtc-windows-amd64.exe")
             add("native/olcrtc-windows-amd64.dll")
             add("native/wintun.dll")
         }
-        currentBuildOs.isLinux -> {
-            add("native/olcrtc-linux-$hostDesktopArch")
-            add("native/libolcrtc-linux-$hostDesktopArch.so")
-            add("native/hev-socks5-tunnel-linux-$hostDesktopArch")
+        "linux" -> {
+            add("native/olcrtc-linux-$arch")
+            add("native/libolcrtc-linux-$arch.so")
+            add("native/hev-socks5-tunnel-linux-$arch")
         }
     }
 }
+
+fun bundledCorePaths(os: String): List<String> {
+    val executableSuffix = if (os == "windows") ".exe" else ""
+    return listOf(
+        "native/sing-box$executableSuffix",
+        "native/xray$executableSuffix"
+    )
+}
+
+fun requiredHostNativeResourcePaths(): List<String> =
+    generatedNativeResourcePaths(hostDesktopOs, hostDesktopArch)
+
+// The architectures a package is built for on each system. Windows names
+// amd64 in its resources whatever the host is.
+val desktopNativeArchs = mapOf(
+    "linux" to listOf("amd64", "arm64"),
+    "macos" to listOf("amd64", "arm64"),
+    "windows" to listOf("amd64")
+)
+
+fun stagedNativeResourceLines(os: String): List<String> =
+    desktopNativeArchs.getValue(os).flatMap { arch ->
+        generatedNativeResourcePaths(os, arch).map { "$arch generated $it" } +
+                bundledCorePaths(os).map { "$arch bundled $it" }
+    }
 
 val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("verifyDesktopNativeResources") {
     dependsOn(hostDesktopNativeAssetTasks.toList())
@@ -492,14 +587,32 @@ val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("ve
 // Requiring the exact resource names here makes every runnable desktop package
 // fail during processResources when its two connection cores were not staged.
 val verifyBundledDesktopCores = tasks.register<VerifyNativeResourcesTask>("verifyBundledDesktopCores") {
-    val executableSuffix = if (currentBuildOs.isWindows) ".exe" else ""
     resourcesDir.set(layout.projectDirectory.dir("src/main/resources"))
-    requiredPaths.set(
-        listOf(
-            "native/sing-box$executableSuffix",
-            "native/xray$executableSuffix"
-        )
+    requiredPaths.set(bundledCorePaths(hostDesktopOs))
+}
+
+val checkDesktopNativeResourceLists = tasks.register<CheckNativeResourceListsTask>("checkDesktopNativeResourceLists") {
+    group = "verification"
+    description = "Compares the native resources each OS's package takes with the recorded lists."
+
+    val generatedRoot = generatedNativeResources.get().asFile
+    desktopNativeArchs.keys.forEach { os ->
+        staged.put(os, stagedNativeResourceLines(os))
+        recordedFiles.put(os, layout.projectDirectory.file("gradle/native-$os.resources.txt").asFile.absolutePath)
+    }
+    hostDeclared.set(requiredHostNativeResourcePaths())
+    hostProduced.set(
+        hostDesktopNativeAssetTasks.flatMap { (it as TaskProvider<*>).get().outputs.files.files }
+            .map { it.relativeTo(generatedRoot).invariantSeparatorsPath }
     )
+}
+
+// Proven where pull requests are compiled, which is a Linux runner. On the
+// other systems the task is there to be run by hand and holds up no build.
+if (currentBuildOs.isLinux) {
+    tasks.named("compileKotlin") {
+        dependsOn(checkDesktopNativeResourceLists)
+    }
 }
 
 tasks.register("buildDesktopNativeAssets") {

@@ -1,0 +1,7 @@
+# The native resources the Windows package takes: "<arch> <kind> <path>", sorted.
+# Compared with the build by :desktopApp:checkDesktopNativeResourceLists.
+amd64 bundled native/sing-box.exe
+amd64 bundled native/xray.exe
+amd64 generated native/olcrtc-windows-amd64.dll
+amd64 generated native/olcrtc-windows-amd64.exe
+amd64 generated native/wintun-amd64.dll
