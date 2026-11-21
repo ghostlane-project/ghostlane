@@ -202,8 +202,8 @@ def selftest(root):
         "go-builder: IosCore.kt": lambda d: append(d, IOS, "private val x = SingBoxConfig.X\n"),
         "shared: a shared file importing a kind": lambda d: append(
             d, CORE + "/CoreRefusal.kt", "import %s.%s\n" % (LINES_PACKAGE, kind)),
-        "parse: the old glob": lambda d: edit(d, PARSE, "/*core-*.json", "/ios-core-*.json"),
-        "parse: every reference": lambda d: edit(d, PARSE, "/*core-*.json", "/*.json"),
+        "parse: the old glob": lambda d: edit(d, PARSE, '"$references"/*core-*.json', '"$references"/ios-core-*.json'),
+        "parse: every reference": lambda d: edit(d, PARSE, '"$references"/*core-*.json', '"$references"/*.json'),
         "scope: the old names": lambda d: edit(d, CHECKS, "[^/]*core-[^/]*", "(bypass-)?ios-core-"),
     }
     def copy():

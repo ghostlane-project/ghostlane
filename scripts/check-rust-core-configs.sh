@@ -3,9 +3,10 @@
 #
 #   scripts/check-rust-core-configs.sh <xray-rust-binary>
 #
-# for each sharedUI/src/jvmTest/resources/reference-configs/ios-core-*.json
-# and bypass-ios-core-*.json, the configs RustCoreConfigDumpTest holds
-# XrayConfig.buildIosCore to:
+# for each sharedUI/src/jvmTest/resources/reference-configs/*core-*.json (the
+# iPhone's ios-core-*.json and bypass-ios-core-*.json, and core-*.json and
+# bypass-core-*.json of every other kind of line), the configs
+# RustCoreConfigDumpTest holds the app's writer (net/core) to, byte for byte:
 #
 #   1. `<xray-rust-binary> config check -config <file>`: the core's parser.
 #      It refuses a whole config over one field it does not know; exit 0 is
@@ -38,9 +39,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 references="$root/sharedUI/src/jvmTest/resources/reference-configs"
 
 shopt -s nullglob
-configs=("$references"/ios-core-*.json "$references"/bypass-ios-core-*.json)
+configs=("$references"/*core-*.json)
 if [ "${#configs[@]}" -eq 0 ]; then
-  echo "no ios-core reference configs under $references" >&2
+  echo "no core.json reference configs (*core-*.json) under $references" >&2
   exit 1
 fi
 
