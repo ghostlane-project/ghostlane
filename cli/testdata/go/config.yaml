@@ -1,0 +1,12 @@
+subscriptions:
+    - url: https://s/sub/a/b?c=olcbox
+      title: t
+      interval_hours: 1
+      added_at: 1970-01-01T00:00:01Z
+selection:
+    subscription: https://s/sub/a/b?c=olcbox
+    selector: DE
+    mode: tun
+proxy:
+    listen: 127.0.0.1
+    port: 1080

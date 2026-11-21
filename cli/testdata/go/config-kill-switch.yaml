@@ -1,0 +1,12 @@
+subscriptions:
+    - url: https://sub.example/sub/a/b?c=olcbox
+      interval_hours: 1
+      added_at: 0001-01-01T00:00:00Z
+selection:
+    subscription: ""
+    selector: DE
+    mode: tun
+    kill_switch: true
+proxy:
+    listen: 127.0.0.1
+    port: 1080
