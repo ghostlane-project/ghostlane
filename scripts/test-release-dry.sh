@@ -744,7 +744,37 @@ def selftest(release, gate, scripts):
         ("a build of another commit",
          lambda d: j(d)["build-linux"]["steps"][0]["with"].update({"ref": "main"}), "checks out another commit"),
     )
+    # A leg needs no secret: the salutejazz leg makes its own rooms, and jitsi's
+    # host list is optional. So a job is a leg by what it runs, and these hold
+    # no secret at all.
+    def leg(entry="run", **more):
+        return dict({"runs-on": "ubuntu-latest", "needs": "resolve", "env": {"GATE_PROVIDER": "salutejazz"},
+                     "steps": [{"run": 'olcbox/scripts/gate-run.sh %s cli "$RUNNER_TEMP/cli"' % entry}]}, **more)
+
+    def strip_suite(d):
+        """Today's legs with every secret taken out of them and their `if` cut."""
+        suite = j(d)["suite"]
+        suite.pop("if")
+        for step in suite["steps"]:
+            env = step.get("env") or {}
+            for key in [k for k, v in env.items() if any(True for _ in secret_reads((), str(v)))]:
+                del env[key]
+
+    all_three = " && ".join(LEG_GUARDS)
     gate_plants = (
+        ("a leg that needs no secret",
+         lambda d: j(d).update({"jazz": leg()}), "job jazz: can join a room (gate-run.sh run)"),
+        ("a leg that needs no secret and asks resolve alone, as the unit tests do",
+         lambda d: j(d).update({"jazz": leg(**{"if": LEG_GUARDS[0]})}), "job jazz: can join a room (gate-run.sh run)"),
+        ("a leg that needs no secret and does not need resolve",
+         lambda d: j(d).update({"jazz": dict(leg(**{"if": all_three}), needs=[])}), "job jazz: can join a room (gate-run.sh run)"),
+        ("a leg whose entry is a variable",
+         lambda d: j(d).update({"jazz": leg('"$ENTRY"')}), 'job jazz: can join a room (gate-run.sh "$ENTRY")'),
+        ("the suite run from the unit tests' job",
+         lambda d: j(d)["unit"]["steps"].append({"run": 'olcbox/scripts/gate-run.sh run mobile "$RUNNER_TEMP/mobile"'}),
+         "job unit: can join a room (gate-run.sh run)"),
+        ("today's legs with every secret taken out and their if cut",
+         strip_suite, "job suite: can join a room (gate-run.sh run)"),
         ("a push trigger without the rust/ exclusion",
          lambda d: d[True if True in d else "on"]["push"].update({"branches": ["**"]}), "a push starts the gate on every branch but those under rust/"),
         ("the exclusion before the match",
@@ -767,6 +797,14 @@ def selftest(release, gate, scripts):
          "must take a dry run's fixed reason"),
     )
     bad = planted(release, check_release, release_plants) + planted(gate, check_gate, gate_plants)
+
+    # And the other way round: a leg without a secret that asks for all three
+    # is let through, so the check refuses the missing guard and not the leg.
+    mutant = copy.deepcopy(gate)
+    j(mutant)["jazz"] = leg(**{"if": all_three})
+    for line in check_gate(mutant):
+        if "job jazz" in line:
+            bad.append("self-test: a leg that asks for all three was refused: %s" % line)
 
     # The two scripts too: with the rule cut out of a copy, the check must go red.
     cuts = (
