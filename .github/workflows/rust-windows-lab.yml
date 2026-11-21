@@ -31,15 +31,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: loopback
+          - variant: o0
             delay: "0"
-          - variant: loopback-slow-reply
-            delay: "0.2"
-          - variant: host-address
+            cflags: "-O0"
+            pipeline: "false"
+            strace: "false"
+          - variant: pipeline
             delay: "0"
+            cflags: ""
+            pipeline: "true"
+            strace: "false"
+          - variant: strace
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "true"
     env:
       VARIANT: ${{ matrix.variant }}
       STUB_DELAY: ${{ matrix.delay }}
+      HEV_CFLAGS: ${{ matrix.cflags }}
+      HEV_PIPELINE: ${{ matrix.pipeline }}
+      HEV_STRACE: ${{ matrix.strace }}
     steps:
       - uses: actions/checkout@v7
 
@@ -235,7 +247,7 @@ jobs:
           cp -a "$src" "$T/hev-src"
           cd "$T/hev-src"
           echo "MSYSTEM=$MSYSTEM"; gcc --version | head -1; make --version | head -1
-          make REV_ID=spike -j2
+          make REV_ID=spike CFLAGS="$HEV_CFLAGS" -j2
           ls -la bin
           cp bin/hev-socks5-tunnel.exe "$T/run/hev.exe" 2>/dev/null || cp bin/hev-socks5-tunnel "$T/run/hev.exe"
           echo '--- DLLs hev.exe imports (objdump)'
@@ -275,12 +287,15 @@ jobs:
             port: 1080
             address: $bind
             udp: 'udp'
+            pipeline: $($env:HEV_PIPELINE)
           misc:
             log-file: stderr
             log-level: debug
           "@ | Set-Content -Encoding ascii (Join-Path $run 'config.yml')
           Get-Content (Join-Path $run 'config.yml')
-          $p = Start-Process -FilePath (Join-Path $run 'hev.exe') -ArgumentList 'config.yml' -WorkingDirectory $run `
+          $exe = Join-Path $run 'hev.exe'; $hevArgs = @('config.yml')
+          if ($env:HEV_STRACE -eq 'true') { $exe = 'C:\msys64\usr\bin\strace.exe'; $hevArgs = @('-o', 'trace.txt', './hev.exe', 'config.yml') }
+          $p = Start-Process -FilePath $exe -ArgumentList $hevArgs -WorkingDirectory $run `
             -RedirectStandardOutput (Join-Path $run 'hev.out') -RedirectStandardError (Join-Path $run 'hev.err') -PassThru -NoNewWindow
           $up = $false
           for ($i = 0; $i -lt 40; $i++) {
@@ -312,6 +327,11 @@ jobs:
           '--- hev log after the test'
           Get-Content (Join-Path $run 'hev.out'), (Join-Path $run 'hev.err') -ErrorAction SilentlyContinue
           Get-NetAdapterStatistics -Name hevtun | Format-List Name, SentUnicastPackets, ReceivedUnicastPackets
+          if ($env:HEV_STRACE -eq 'true') {
+            '--- strace: lines that mention sockets, selects and events (last 150)'
+            Get-Content (Join-Path $run 'trace.txt') | Select-String -Pattern 'recv|send|select|poll|connect|socket|WSA|event|osfhandle|fcntl|ioctl' | Select-Object -Last 150 | ForEach-Object { $_.Line }
+            '--- strace: count of lines'; (Get-Content (Join-Path $run 'trace.txt')).Count
+          }
           '--- taskkill /F on hev: does the adapter go, and the route with it?'
           taskkill /F /IM hev.exe
           Start-Sleep -Seconds 3
