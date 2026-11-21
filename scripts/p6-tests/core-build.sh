@@ -9,18 +9,20 @@
 #     on a file that is not there;
 #   - a dispatch's pin=<sha> is another build: the stamp names the other
 #     commit, a short hash is refused, and a musl stamp also names the script
-#     that makes its cross compiler;
+#     that makes its cross compiler; another Rust toolchain is another stamp;
 #   - a second run on the same pin compiles nothing: with the first run's
 #     output in place, both build scripts keep it, say so, write 0 to
 #     compiled.txt and start neither cargo nor rustup (stand-ins that would
-#     fail the run are first on PATH). The same output under another commit is
-#     not kept;
+#     fail the run are first on PATH). The same output under another commit or
+#     another Rust toolchain is not kept, nor for Android under another NDK,
+#     and the Android script with no NDK named keeps nothing;
 #   - .github/workflows/core-build.yml keeps its shape: pushes to rust/all and
 #     pull requests into it, both on its own paths, and a dispatch with `pin`
 #     wired to the scripts; read-only permissions and no secret; one macOS
 #     job; only the Windows job may fail; every build job restores a cache
-#     keyed by the commit, the target and the hash of its scripts, and has the
-#     step that fails when a cached build compiled something; every target of
+#     keyed by the commit, the Rust toolchain (and for Android the NDK), the
+#     target and the hash of its scripts, and has the step that fails when a
+#     cached build compiled something; every target of
 #     the plan is named. Each rule is then planted broken in a copy and must
 #     be found.
 #
@@ -31,7 +33,7 @@ set -euo pipefail
 # sets it (a dispatch with pin=<sha> sets the override for every job): the
 # test starts from none of it, and names each case's own.
 unset GHOSTLANE_CORE_PIN_OVERRIDE GHOSTLANE_CORE_SRC GHOSTLANE_CORE_FAST GHOSTLANE_CORE_KEEP_GOING \
-  GHOSTLANE_CORE_LINK_PROOF GHOSTLANE_MUSL_TOOLCHAIN_DIR NM
+  GHOSTLANE_CORE_LINK_PROOF GHOSTLANE_MUSL_TOOLCHAIN_DIR NM GHOSTLANE_CORE_TOOLCHAIN ANDROID_NDK_VERSION
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 host="$root/scripts/build-ghostlane-core-host.sh"
 android="$root/scripts/build-ghostlane-core-android.sh"
@@ -111,6 +113,17 @@ case "$s_pin" in "$pin "*) ok "with no override the stamp names the pin" ;; *) b
 case "$s_other" in "$other "*) ok "with pin=<sha> the stamp names that commit" ;; *) bad "an override is not in the stamp: $s_other" ;; esac
 case "$s_musl" in *" $(git hash-object "$hev_linux")") ok "a musl stamp names the script that makes its cross compiler" ;; *) bad "a musl stamp does not name build-hev-linux.sh: $s_musl" ;; esac
 expect 2 "a short hash is refused as an override" env GHOSTLANE_CORE_PIN_OVERRIDE=abc123 bash "$host" --stamp aarch64-apple-darwin
+# The toolchain the pin file names, and one it does not: a rustc of another
+# version compiles other code from the same commit.
+toolchain="$(bash "$root/scripts/ghostlane-core-resolve.sh" | sed -n 's/^GHOSTLANE_CORE_TOOLCHAIN=//p')"
+other_toolchain="$toolchain.1"
+s_toolchain="$(GHOSTLANE_CORE_TOOLCHAIN="$other_toolchain" bash "$host" --stamp aarch64-apple-darwin)"
+s_musl_toolchain="$(GHOSTLANE_CORE_TOOLCHAIN="$other_toolchain" bash "$host" --stamp x86_64-unknown-linux-musl)"
+if [ -n "$toolchain" ] && [ "$s_toolchain" != "$s_pin" ] && [ "$s_musl_toolchain" != "$s_musl" ]; then
+  ok "another Rust toolchain is another stamp"
+else
+  bad "the stamp does not name the Rust toolchain: $s_pin under $toolchain, $s_toolchain under $other_toolchain"
+fi
 
 # --- A second run compiles nothing -------------------------------------------
 # Stand-ins that fail the run and leave a mark if a build tool is started.
@@ -146,6 +159,9 @@ rm -f "$tmp/started.txt"
 expect 98 "the same output under another commit is not kept: the host script goes to fetch that commit" \
   sealed env GHOSTLANE_CORE_PIN_OVERRIDE="$other" GHOSTLANE_CORE_SRC="$tmp/src" bash "$host" "$out" aarch64-apple-darwin
 if grep -q '^git init' "$tmp/started.txt" 2> /dev/null; then ok "and it started by making a checkout"; else bad "another commit did not lead to a checkout"; fi
+rm -f "$tmp/started.txt"
+expect 98 "the same output under another Rust toolchain is not kept: the host script goes to build it" \
+  sealed env GHOSTLANE_CORE_TOOLCHAIN="$other_toolchain" GHOSTLANE_CORE_SRC="$tmp/src" bash "$host" "$out" aarch64-apple-darwin x86_64-unknown-linux-musl
 echo "engine yes" >> "$out/stamps/aarch64-apple-darwin"
 sed -i.bak '2d' "$out/stamps/aarch64-apple-darwin"
 rm -f "$tmp/started.txt"
@@ -161,17 +177,33 @@ done
 mkdir -p "$out/kotlin/org"
 echo "// bindings" > "$out/kotlin/org/olc_ffi.kt"
 echo "PIN a first run" > "$out/report.txt"
-echo "$pin shipped $(git hash-object "$android") $(git hash-object "$host")" > "$out/ghostlane-core-android.commit"
+# A first run's record, by the NDK it was linked with: the run names the NDK
+# (core-build.yml's ANDROID_NDK_VERSION), the SDK it lives in is not needed to
+# keep it.
+ndk=28.2.13676358
+other_ndk=29.0.14206865
+echo "$pin shipped rust $toolchain ndk $ndk $(git hash-object "$android") $(git hash-object "$host")" > "$out/ghostlane-core-android.commit"
 rm -f "$tmp/started.txt"
-expect 0 "the Android script keeps a build that is already there, with no NDK named" \
-  sealed env -u ANDROID_NDK_VERSION -u ANDROID_HOME bash "$android" "$out"
+expect 0 "the Android script keeps a build that is already there, with no SDK at hand" \
+  sealed env -u ANDROID_HOME ANDROID_NDK_VERSION="$ndk" bash "$android" "$out"
 if [ "$(cat "$out/compiled.txt" 2> /dev/null)" = 0 ] && grep -q '^KEPT ' "$tmp/out.txt" && [ ! -e "$tmp/started.txt" ]; then
   ok "a kept Android build compiles nothing: no cargo, no rustup, compiled.txt is 0"
 else
   bad "a kept Android build started something or did not say 0"
 fi
-expect 1 "the same Android output under another commit is not kept: the script asks for the NDK to build" \
-  sealed env -u ANDROID_NDK_VERSION -u ANDROID_HOME GHOSTLANE_CORE_PIN_OVERRIDE="$other" bash "$android" "$out"
+# Not kept: the script goes on to build, and stops where it needs the SDK.
+expect 1 "the same Android output under another commit is not kept" \
+  sealed env -u ANDROID_HOME ANDROID_NDK_VERSION="$ndk" GHOSTLANE_CORE_PIN_OVERRIDE="$other" bash "$android" "$out"
+echo "$pin shipped rust $toolchain ndk $ndk $(git hash-object "$android") $(git hash-object "$host")" > "$out/ghostlane-core-android.commit"
+expect 1 "the same Android output under another NDK is not kept" \
+  sealed env -u ANDROID_HOME ANDROID_NDK_VERSION="$other_ndk" bash "$android" "$out"
+echo "$pin shipped rust $toolchain ndk $ndk $(git hash-object "$android") $(git hash-object "$host")" > "$out/ghostlane-core-android.commit"
+expect 1 "the same Android output under another Rust toolchain is not kept" \
+  sealed env -u ANDROID_HOME ANDROID_NDK_VERSION="$ndk" GHOSTLANE_CORE_TOOLCHAIN="$other_toolchain" bash "$android" "$out"
+echo "$pin shipped rust $toolchain ndk $ndk $(git hash-object "$android") $(git hash-object "$host")" > "$out/ghostlane-core-android.commit"
+expect 1 "with no NDK named the Android script keeps nothing: what it would keep depends on the NDK" \
+  sealed env -u ANDROID_HOME -u ANDROID_NDK_VERSION bash "$android" "$out"
+if [ -e "$tmp/started.txt" ]; then bad "an Android build that was not kept started a build tool before the SDK check"; fi
 
 # --- The hev scripts refuse what they cannot build ----------------------------
 expect 2 "build-hev-linux.sh with no arguments is a usage error" bash "$hev_linux"
@@ -216,6 +248,11 @@ BUILDS = {
     "windows": ["scripts/build-ghostlane-core-host.sh"],
 }
 WIRED = "${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}"
+# What else decides a build and so must be in its key: the Rust toolchain the
+# pin file names (the plan job's output, from scripts/ghostlane-core-resolve.sh),
+# and for Android the NDK.
+TOOLCHAIN = "needs.plan.outputs.toolchain"
+NDK = "env.ANDROID_NDK_VERSION"
 
 
 def check(doc):
@@ -256,6 +293,11 @@ def check(doc):
                 bad.append("job %s uses %s, which is not on this workflow's list" % (n, uses))
             if (s.get("env") or {}).get("GHOSTLANE_CORE_PIN_OVERRIDE") is not None:
                 bad.append("a step of job %s overrides GHOSTLANE_CORE_PIN_OVERRIDE" % n)
+    plan = jobs.get("plan") or {}
+    plan_run = " ".join(str(s.get("run", "")) for s in plan.get("steps") or [])
+    if str((plan.get("outputs") or {}).get("toolchain", "")).replace(" ", "") != "${{steps.core.outputs.toolchain}}" \
+            or "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" not in plan_run or "ghostlane-core-resolve.sh" not in plan_run:
+        bad.append("the plan job must give the toolchain the resolver names as its output `toolchain`")
     if not jobs.get("windows", {}).get("continue-on-error"):
         bad.append("the windows job must be allowed to fail until the fork compiles there")
     for n, scripts in BUILDS.items():
@@ -271,6 +313,10 @@ def check(doc):
         key = str(restore[0].get("with", {}).get("key", ""))
         if "needs.plan.outputs.commit" not in key:
             bad.append("the cache key of job %s does not name the commit of the core" % n)
+        if TOOLCHAIN not in key:
+            bad.append("the cache key of job %s does not name the Rust toolchain" % n)
+        if n == "android" and NDK not in key:
+            bad.append("the cache key of job android does not name the NDK")
         if n == "linux" and "matrix.target" not in key:
             bad.append("the cache key of job linux does not name the target")
         m = re.search(r"hashFiles\(([^)]*)\)", key)
@@ -342,6 +388,17 @@ def selftest(doc):
                  .__setitem__("key", "core-build-apple-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}"))
     out += plant("a key without the scripts", lambda d: step(d, "android", lambda s: s.get("id") == "cache")["with"]
                  .__setitem__("key", "core-build-android-${{ needs.plan.outputs.commit }}"))
+    def without(job, what):
+        def change(d):
+            w = step(d, job, lambda s: s.get("id") == "cache")["with"]
+            w["key"] = w["key"].replace(what, "")
+        return change
+    out += plant("an Apple key without the toolchain", without("apple", "-rust-${{ needs.plan.outputs.toolchain }}"))
+    out += plant("a Linux key without the toolchain", without("linux", "-rust-${{ needs.plan.outputs.toolchain }}"))
+    out += plant("a Windows key without the toolchain", without("windows", "-rust-${{ needs.plan.outputs.toolchain }}"))
+    out += plant("an Android key without the toolchain", without("android", "-rust-${{ needs.plan.outputs.toolchain }}"))
+    out += plant("an Android key without the NDK", without("android", "-ndk-${{ env.ANDROID_NDK_VERSION }}"))
+    out += plant("a plan with no toolchain output", lambda d: d["jobs"]["plan"]["outputs"].pop("toolchain"))
     out += plant("a key without the target", lambda d: step(d, "linux", lambda s: s.get("id") == "cache")["with"]
                  .__setitem__("key", "core-build-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}"))
     out += plant("no guard on a cached build", lambda d: d["jobs"]["windows"]["steps"].remove(
@@ -367,5 +424,5 @@ for b in bad:
     print("FAIL " + b)
 if bad:
     sys.exit(1)
-print("ok   core-build.yml: rust/all and its own paths, pin wired, read-only, one macOS job, a cache per commit, target and scripts (and each planted violation is found)")
+print("ok   core-build.yml: rust/all and its own paths, pin wired, read-only, one macOS job, a cache per commit, toolchain (and NDK), target and scripts (and each planted violation is found)")
 PY
