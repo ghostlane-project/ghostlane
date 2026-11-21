@@ -8,15 +8,25 @@
 #     the workspace's release profile as it ships (thin LTO, one codegen
 #     unit), linked by the NDK the app pins at minSdk 23 with
 #     -Wl,-z,max-page-size=16384, stripped, into <output-dir>/jniLibs/<abi>/;
+#     the same library as the linker left it, before the strip, is kept as
+#     its symbols in <output-dir>/symbols/<abi>/ (the workspace's profile
+#     strips at the link; here the strip is a step of its own);
 #   - the UniFFI Kotlin bindings, generated in library mode by olc-ffi's own
 #     uniffi-bindgen from the x86_64 static archive (the stripped .so has
 #     lost the metadata symbols), into <output-dir>/kotlin/ (never committed:
 #     always the library's own);
 #   - the report (<output-dir>/report.txt), each line starting with its kind:
 #     PIN, BUILD, SIZE, ALIGN (every LOAD segment 16 KiB-aligned), BORING
-#     (BoringSSL really linked), IMPORTS (every import in the NDK's API 23
+#     (BoringSSL really linked: read from the unstripped library's own symbol
+#     table by build-ghostlane-core-host.sh --boring-proof; an ABI without
+#     BoringSSL fails the build), IMPORTS (every import in the NDK's API 23
 #     stubs of the NEEDED libraries), EXPORTS (the ABIs export the same
 #     names), BINDINGS.
+# <output-dir>/ghostlane-core-android.commit records what was built (commit,
+# profile, the hashes of this script and of the proof's): an output directory
+# that holds this build already is kept, cargo is not started, and
+# <output-dir>/compiled.txt, the number of crates cargo compiled in this run,
+# says 0.
 # GHOSTLANE_CORE_FAST=1 turns LTO off, for a lab build only.
 # Needs rustup, git, cmake, clang (boring-sys's bindgen) and the NDK at
 # $ANDROID_HOME/ndk/$ANDROID_NDK_VERSION (androidApp/build.gradle.kts'
@@ -33,6 +43,35 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GHOSTLANE_CORE_COMMIT="$(bash "$HERE/ghostlane-core-resolve.sh" "${GHOSTLANE_CORE_PIN_OVERRIDE:-}" |
   sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')"
 export PATH="$HOME/.cargo/bin:$PATH"
+
+profile="shipped"
+if [ "${GHOSTLANE_CORE_FAST:-0}" = "1" ]; then
+    profile="fast"
+    export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+fi
+# The workspace's release profile strips at the link; the library is linked
+# with its symbols instead, kept so, and stripped as a copy below.
+export CARGO_PROFILE_RELEASE_STRIP=false
+
+stamp="$GHOSTLANE_CORE_COMMIT $profile $(git hash-object "$HERE/build-ghostlane-core-android.sh") $(git hash-object "$HERE/build-ghostlane-core-host.sh")"
+kept() {
+  local abi
+  [ -f "$OUT/ghostlane-core-android.commit" ] || return 1
+  [ "$(cat "$OUT/ghostlane-core-android.commit")" = "$stamp" ] || return 1
+  for abi in arm64-v8a armeabi-v7a x86_64; do
+    [ -s "$OUT/jniLibs/$abi/libghostlane_core.so" ] || return 1
+    [ -s "$OUT/symbols/$abi/libghostlane_core.so" ] || return 1
+  done
+  [ -n "$(find "$OUT/kotlin" -name '*.kt' 2>/dev/null | head -1)" ] || return 1
+  [ -s "$OUT/report.txt" ] || return 1
+}
+if kept; then
+  echo "KEPT ghostlane-core for Android: built before from $GHOSTLANE_CORE_COMMIT ($profile), nothing compiled"
+  echo 0 > "$OUT/compiled.txt"
+  exit 0
+fi
+rm -f "$OUT/ghostlane-core-android.commit"
+
 : "${ANDROID_NDK_VERSION:?the NDK the app pins}"
 : "${ANDROID_HOME:?the Android SDK}"
 api=23
@@ -43,12 +82,6 @@ sysroot="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
 export ANDROID_NDK_HOME="$ndk" ANDROID_NDK_ROOT="$ndk"
 export PATH="$bin:$PATH"
 export CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 CARGO_NET_RETRY=5
-
-profile="shipped"
-if [ "${GHOSTLANE_CORE_FAST:-0}" = "1" ]; then
-    profile="fast"
-    export CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-fi
 
 src="${GHOSTLANE_CORE_SRC:-$OUT/src}"
 if [ "$(git -C "$src" rev-parse HEAD 2>/dev/null || true)" != "$GHOSTLANE_CORE_COMMIT" ]; then
@@ -73,11 +106,12 @@ RUSTFMT="$(rustup which --toolchain "$GHOSTLANE_CORE_TOOLCHAIN" rustfmt)"; expor
 cargo_="cargo +$GHOSTLANE_CORE_TOOLCHAIN"
 
 page="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
-jni="$OUT/jniLibs"; chk="$OUT/checks"
-rm -rf "$jni" "$chk" "$OUT/kotlin"; mkdir -p "$jni" "$chk"
+jni="$OUT/jniLibs"; chk="$OUT/checks"; symbols="$OUT/symbols"
+rm -rf "$jni" "$chk" "$symbols" "$OUT/kotlin"; mkdir -p "$jni" "$chk" "$symbols"
 report="$OUT/report.txt"; : > "$report"
+cargo_log="$chk/cargo.log"; : > "$cargo_log"
 say() { echo "$*" | tee -a "$report"; }
-say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring; armv7 and x86_64 fall back to none if their boring build fails, see BORING lines)"
+say "PIN $GHOSTLANE_CORE_COMMIT ($profile, NDK $ANDROID_NDK_VERSION, API $api, features: boring)"
 # boring-sys's bindings as rustfmt wrote them, and the enum ErrLib names (see RUSTFMT above).
 boring_bindings() {
   local b errlib
@@ -120,28 +154,19 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   # finds the NDK's clang on PATH by target triple instead.
   export "AR_${low}=$bin/llvm-ar"
   start=$(date +%s)
-  features="--features boring"
-  if [ "$target" = armv7-linux-androideabi ] || [ "$target" = x86_64-linux-android ]; then
-    # boring-sys's ErrLib on armv7 and x86_64: fixed by RUSTFMT above. Until a run proves it on
-    # both, a failure still falls back to no boring so the other ABIs' results stay usable.
-    if ! (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target"); then
-      # One attempt with boring; if it still fails, this ABI ships without it
-      # (the report says so) so the other ABIs' results stay usable.
-      say "BORING $abi: the build with boring failed, building without it (VK Calls' DTLS is not available on this ABI)"
-      features=""
-    fi
-  fi
-  # shellcheck disable=SC2086
-  { [ "$target" = armv7-linux-androideabi ] || [ "$target" = x86_64-linux-android ]; } && [ -n "$features" ] && [ -f "$src/target/$target/release/libghostlane_core.so" ] \
-    || (cd "$src" && $cargo_ build --locked --release -p ghostlane-core $features --target "$target")
+  # Every ABI is built with boring, and an ABI where that fails fails the
+  # build: a library without BoringSSL cannot join VK Calls or MTS Link.
+  (cd "$src" && $cargo_ build --locked --release -p ghostlane-core --features boring --target "$target") 2>&1 | tee -a "$cargo_log"
   so="$src/target/$target/release/libghostlane_core.so"
   test -f "$so" || { echo "cargo left no $so" >&2; exit 1; }
-  mkdir -p "$jni/$abi"; cp "$so" "$jni/$abi/libghostlane_core.so"
+  mkdir -p "$jni/$abi" "$symbols/$abi"
+  cp "$so" "$symbols/$abi/libghostlane_core.so"
+  cp "$so" "$jni/$abi/libghostlane_core.so"
   lib="$jni/$abi/libghostlane_core.so"
   say "BUILD $abi ($target): $(( $(date +%s) - start )) s"
 
   "$bin/llvm-strip" --strip-unneeded "$lib"
-  say "SIZE $abi: $(wc -c < "$lib" | tr -d ' ') bytes stripped, $(gzip -9 -c "$lib" | wc -c | tr -d ' ') gzip -9"
+  say "SIZE $abi: $(wc -c < "$lib" | tr -d ' ') bytes stripped, $(gzip -9 -c "$lib" | wc -c | tr -d ' ') gzip -9, $(wc -c < "$symbols/$abi/libghostlane_core.so" | tr -d ' ') with its symbols"
 
   "$bin/llvm-readelf" -lW "$lib" > "$chk/readelf-$abi.txt"
   aligns=$(awk '$1 == "LOAD" { print $NF }' "$chk/readelf-$abi.txt" | tr '\n' ' ')
@@ -151,17 +176,18 @@ for quad in aarch64-linux-android:arm64-v8a:aarch64-linux-android:aarch64-linux-
   done
   say "ALIGN $abi: every LOAD segment 16 KiB-aligned ($aligns)"
 
-  # BoringSSL linked: the build with the feature succeeded and boring-sys's bindings are rustfmt's
-  # with ErrLib named. Its strings alone prove nothing: AWS-LC (a BoringSSL fork, aws-lc-sys)
-  # carries them too, and run 5 printed "present" for an armv7 build without boring.
-  if [ -n "$features" ]; then
-    if bnd=$(boring_bindings "$target"); then
-      say "BORING $abi: linked, $bnd"
-    else
-      echo "BORING $abi: built with boring, but $bnd" >&2; exit 1
-    fi
+  # BoringSSL linked: read from the library itself, as the linker left it. Its symbol table must
+  # define BoringSSL's own SSL_CTX_new and DTLS_method (AWS-LC, which the core links too, has
+  # every symbol under a version prefix and no libssl; BoringSSL's strings prove nothing, AWS-LC
+  # carries them, and run 5 printed "present" for an armv7 build without boring). And
+  # boring-sys's bindings are rustfmt's, with ErrLib named.
+  if ! proof=$(NM="$bin/llvm-nm" bash "$HERE/build-ghostlane-core-host.sh" --boring-proof "$symbols/$abi/libghostlane_core.so"); then
+    say "BORING $abi: NOT linked: $proof"; exit 1
+  fi
+  if bnd=$(boring_bindings "$target"); then
+    say "BORING $abi: linked: $proof; $bnd"
   else
-    say "BORING $abi: NOT linked (built without the feature)"
+    echo "BORING $abi: built with boring, but $bnd" >&2; exit 1
   fi
 
   "$bin/llvm-nm" -D --defined-only "$lib" | awk '{print $NF}' | sed 's/@.*//' | sort -u > "$chk/exports-$abi.txt"
@@ -189,11 +215,13 @@ for abi in arm64-v8a armeabi-v7a; do
 done
 
 # Kotlin bindings: uniffi-bindgen runs on the host.
-(cd "$src" && $cargo_ build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen)
+(cd "$src" && $cargo_ build --locked -p olc-ffi --features bindgen --bin uniffi-bindgen) 2>&1 | tee -a "$cargo_log"
 gen="$OUT/kotlin"; mkdir -p "$gen"
 (cd "$src" && target/debug/uniffi-bindgen generate --library "target/x86_64-linux-android/release/libghostlane_core.a" \
     --language kotlin --out-dir "$gen")
 kt=$(find "$gen" -name '*.kt' | head -1)
 [ -n "$kt" ] || { echo "no Kotlin bindings in $gen" >&2; exit 1; }
 say "BINDINGS $(find "$gen" -name '*.kt' | sed "s#$gen/##" | tr '\n' ' ')($(wc -l < "$kt" | tr -d ' ') lines)"
-echo "$GHOSTLANE_CORE_COMMIT $profile" > "$OUT/ghostlane-core-android.commit"
+grep -c '^ *Compiling ' "$cargo_log" > "$OUT/compiled.txt" || true
+echo "COMPILED $(cat "$OUT/compiled.txt") crates in this run"
+echo "$stamp" > "$OUT/ghostlane-core-android.commit"

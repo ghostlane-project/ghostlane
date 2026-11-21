@@ -1,0 +1,532 @@
+name: Core build
+
+# The Rust core, built once per commit of it and kept, for every target the
+# apps ship on:
+#
+#   android   libghostlane_core.so for arm64-v8a, armeabi-v7a and x86_64, with
+#             the UniFFI Kotlin bindings (scripts/build-ghostlane-core-android.sh)
+#   apple     the static library for the iPhone and its simulator and for
+#             macOS on arm64 and x86_64, in ONE macOS job
+#   linux     the static library for musl on x86_64, aarch64 and armv7
+#   windows   x86_64-pc-windows-msvc. The fork does not compile there yet: the
+#             job is allowed to fail, says in its summary which crates stopped
+#             it, and is red, never quietly green.
+# (all but android: scripts/build-ghostlane-core-host.sh), and beside it hev,
+# the tun2socks, as a static program for the three musl targets and as one
+# universal program for macOS (scripts/build-hev-linux.sh, build-hev-macos.sh).
+#
+# The commit is the pin in scripts/ghostlane-core-pin.sh, or a dispatch's
+# pin=<sha>: that is how a commit of the fork is built for every target before
+# the pin moves to it. Where the commit has crates/ghostlane-engine, the
+# desktop program is built for every desktop target as well; each job's
+# summary says which case it was.
+#
+# Every library must carry BoringSSL, and that is read from the built file's
+# own symbol table (build-ghostlane-core-host.sh --boring-proof), not from the
+# cargo command line: a target without it fails its job. A library or a
+# program is linked with its symbols, which are kept beside the stripped copy.
+#
+# What a job built is kept in a cache keyed by the commit of the core, the
+# target and the hash of the scripts that build it. A second run with the same
+# three restores it, the scripts find their own stamp in it and start no
+# cargo, and the step after them fails if cargo compiled anything.
+#
+# Nothing here signs, publishes or joins a carrier room; there is no secret.
+# Runs on rust/all and on pull requests into it when what it builds with
+# changed, or by hand; never on every push to a task branch.
+on:
+  push:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/core-build.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-host.sh
+      - scripts/build-ghostlane-core-android.sh
+      - scripts/build-hev-linux.sh
+      - scripts/build-hev-macos.sh
+      - 'androidApp/src/main/jni/hev-socks5-tunnel/**'
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/core-build.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-host.sh
+      - scripts/build-ghostlane-core-android.sh
+      - scripts/build-hev-linux.sh
+      - scripts/build-hev-macos.sh
+      - 'androidApp/src/main/jni/hev-socks5-tunnel/**'
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Build this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-build-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  cancel-in-progress: true
+
+env:
+  # A dispatch's pin=<sha>; empty is the pin. scripts/ghostlane-core-resolve.sh
+  # checks it, in the first job and again inside each build script.
+  GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  # androidApp/build.gradle.kts ndkVersion (and release.yml's).
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  # The app's own tree of hev-socks5-tunnel, the one Android and the Linux
+  # desktop build today.
+  HEV_SOURCE: androidApp/src/main/jni/hev-socks5-tunnel
+
+jobs:
+  scripts:
+    name: The build scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The runner's own shellcheck (Ubuntu 24.04's 0.9.0); the log says which.
+      - name: They parse, and shellcheck has nothing to say
+        run: |
+          set -euo pipefail
+          shellcheck --version | sed -n 2p
+          for f in scripts/build-ghostlane-core-host.sh scripts/build-ghostlane-core-android.sh \
+                   scripts/build-hev-linux.sh scripts/build-hev-macos.sh scripts/p6-tests/core-build.sh; do
+            bash -n "$f"
+          done
+          shellcheck -x scripts/build-ghostlane-core-host.sh scripts/build-hev-linux.sh \
+            scripts/build-hev-macos.sh scripts/p6-tests/core-build.sh
+          # Older than this workflow, and written before any shellcheck read
+          # it: held to what shellcheck calls an error.
+          shellcheck -x --severity=error scripts/build-ghostlane-core-android.sh
+
+      - name: The proof, the stamps, a kept build and this workflow's shape
+        run: bash scripts/p6-tests/core-build.sh
+
+  plan:
+    name: Which commit of the core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.core.outputs.commit }}
+      engine: ${{ steps.core.outputs.engine }}
+      hev: ${{ steps.core.outputs.hev }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The commit, and whether it has the desktop program
+        id: core
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh "$GHOSTLANE_CORE_PIN_OVERRIDE" > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          # The fork is public: fetched over https with no token. Trees only,
+          # to see whether the commit is there and what it holds.
+          git init -q "$RUNNER_TEMP/core"
+          git -C "$RUNNER_TEMP/core" fetch -q --depth 1 --filter=blob:none \
+            "https://github.com/${GHOSTLANE_CORE_REPO}.git" "$GHOSTLANE_CORE_COMMIT"
+          if [ -n "$(git -C "$RUNNER_TEMP/core" ls-tree --name-only FETCH_HEAD crates/ghostlane-engine/Cargo.toml)" ]; then
+            engine=yes
+            says="has crates/ghostlane-engine: the desktop program is built for every desktop target"
+          else
+            engine=no
+            says="has no crates/ghostlane-engine: only the library is built"
+          fi
+          if [ -n "$GHOSTLANE_CORE_PIN_OVERRIDE" ]; then from="pin=$GHOSTLANE_CORE_PIN_OVERRIDE of this dispatch"; else from="the pin in scripts/ghostlane-core-pin.sh"; fi
+          hev="$(git rev-parse "HEAD:$HEV_SOURCE")"
+          {
+            echo "commit=$GHOSTLANE_CORE_COMMIT"
+            echo "engine=$engine"
+            echo "hev=$hev"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### The core at \`$GHOSTLANE_CORE_COMMIT\`"
+            echo
+            echo "From $from, in ${GHOSTLANE_CORE_REPO}. This commit $says."
+            echo
+            echo "hev-socks5-tunnel: the app's tree \`${hev:0:12}\` ($HEV_SOURCE)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: Android (arm64-v8a, armeabi-v7a, x86_64)
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore the build of this commit
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/android
+          key: core-build-android-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-android.sh', 'scripts/build-ghostlane-core-host.sh') }}
+
+      - name: Room on the disk
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Setup Android SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: The NDK, and cmake and clang for BoringSSL's build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}" > /dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang libclang-dev
+          cmake --version | head -1; clang --version | head -1
+
+      - name: Build
+        env:
+          GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
+        run: |
+          set +e -uo pipefail
+          bash scripts/build-ghostlane-core-android.sh out/android 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo '### ghostlane-core for Android'
+            echo '```'
+            grep -E '^(KEPT|COMPILED) ' out-build.log
+            cat out/android/report.txt 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" -eq 0 ] || { tail -80 out-build.log; exit "$rc"; }
+
+      - name: A build that came from the cache compiled nothing
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          n="$(cat out/android/compiled.txt)"
+          [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
+          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build of this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/android
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-android
+          path: |
+            out/android/jniLibs
+            out/android/symbols
+            out/android/kotlin
+            out/android/checks
+            out/android/report.txt
+          retention-days: 14
+
+  apple:
+    name: Apple (iOS, its simulator, macOS arm64 and x86_64)
+    needs: plan
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore hev for macOS
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-macos
+          key: core-build-hev-macos-${{ needs.plan.outputs.hev }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
+
+      - name: hev-socks5-tunnel for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
+
+      - name: Keep hev for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/hev-macos
+          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
+
+      - name: Restore the build of this commit
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/apple
+          key: core-build-apple-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+
+      - name: Build
+        env:
+          GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
+        run: |
+          set +e -uo pipefail
+          cmake --version | head -1; xcodebuild -version | tr '\n' ' '; echo
+          bash scripts/build-ghostlane-core-host.sh out/apple \
+            aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo '### ghostlane-core for Apple targets, and hev for macOS'
+            echo '```'
+            grep -E '^(KEPT|COMPILED) ' out-build.log
+            cat out/apple/report.txt out/hev-macos/report.txt 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" -eq 0 ] || { tail -80 out-build.log; exit "$rc"; }
+
+      - name: A build that came from the cache compiled nothing
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          n="$(cat out/apple/compiled.txt)"
+          [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
+          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build of this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/apple
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-apple
+          path: |
+            out/apple/lib
+            out/apple/bin
+            out/apple/symbols
+            out/apple/include
+            out/apple/report.txt
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hev-macos
+          path: out/hev-macos
+          retention-days: 14
+
+  linux:
+    name: Linux (${{ matrix.target }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - armv7-unknown-linux-musleabihf
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore the build of this commit
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/linux
+          key: core-build-${{ matrix.target }}-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}
+
+      - name: cmake, clang and lld (BoringSSL's build, and the musl cross compiler)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang lld llvm libclang-dev
+          cmake --version | head -1; clang --version | head -1; ld.lld --version
+
+      - name: Build
+        env:
+          GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
+          # Until the commit has the desktop program: a static program with
+          # BoringSSL is linked for the target all the same, and checked.
+          GHOSTLANE_CORE_LINK_PROOF: "1"
+          TARGET: ${{ matrix.target }}
+        run: |
+          set +e -uo pipefail
+          bash scripts/build-ghostlane-core-host.sh out/linux "$TARGET" 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### ghostlane-core for $TARGET"
+            echo '```'
+            grep -E '^(KEPT|COMPILED) ' out-build.log
+            cat out/linux/report.txt 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" -eq 0 ] || { tail -80 out-build.log; exit "$rc"; }
+
+      - name: A build that came from the cache compiled nothing
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          n="$(cat out/linux/compiled.txt)"
+          [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
+          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build of this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/linux
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-${{ matrix.target }}
+          path: |
+            out/linux/lib
+            out/linux/bin
+            out/linux/symbols
+            out/linux/include
+            out/linux/report.txt
+          retention-days: 14
+
+  hev-linux:
+    name: hev for Linux (musl, three architectures)
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore hev for Linux
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-linux
+          key: core-build-hev-linux-${{ needs.plan.outputs.hev }}-${{ hashFiles('scripts/build-hev-linux.sh') }}
+
+      - name: clang and lld (the musl cross compiler)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang lld llvm
+          clang --version | head -1; ld.lld --version
+
+      - name: hev-socks5-tunnel for the three musl targets
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
+        run: |
+          bash scripts/build-hev-linux.sh "$HEV_SOURCE" out/hev-linux \
+            x86_64-unknown-linux-musl aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
+
+      - name: Summary
+        run: |
+          {
+            echo '### hev-socks5-tunnel for Linux'
+            echo '```'
+            cat out/hev-linux/report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep hev for Linux
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/hev-linux
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hev-linux
+          path: out/hev-linux
+          retention-days: 14
+
+  windows:
+    name: Windows (x86_64-pc-windows-msvc, allowed to fail)
+    needs: plan
+    runs-on: windows-2025
+    timeout-minutes: 120
+    # The fork does not compile for Windows yet. Until it does this job fails,
+    # is shown red, and says why in its summary; the run does not wait for it.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Restore the build of this commit
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/windows
+          key: core-build-windows-${{ needs.plan.outputs.commit }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+
+      - name: Build
+        shell: bash
+        env:
+          # cargo goes on past a crate that fails, so that every crate that
+          # does not compile for Windows is named.
+          GHOSTLANE_CORE_KEEP_GOING: "1"
+        run: |
+          set +e -uo pipefail
+          GHOSTLANE_CORE_SRC="$(cygpath -u "$RUNNER_TEMP")/core-src"
+          export GHOSTLANE_CORE_SRC
+          cmake --version | head -1
+          bash scripts/build-ghostlane-core-host.sh out/windows x86_64-pc-windows-msvc 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo '### ghostlane-core for x86_64-pc-windows-msvc'
+            if [ "$rc" -ne 0 ]; then
+              echo
+              echo '**Not built.** This job is allowed to fail and did: the run stays green without Windows, and nothing for Windows was made.'
+              echo
+            fi
+            echo '```'
+            grep -E '^(KEPT|COMPILED) ' out-build.log
+            cat out/windows/report.txt 2> /dev/null
+            grep -E '^error(\[E[0-9]+\])?: ' out-build.log | sort | uniq -c | sort -rn | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" -eq 0 ] || { tail -80 out-build.log; exit "$rc"; }
+
+      - name: A build that came from the cache compiled nothing
+        if: steps.cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          n="$(cat out/windows/compiled.txt)"
+          [ "$n" = 0 ] || { echo "::error::the cache held this build, and cargo still compiled $n crates"; exit 1; }
+          echo 'Restored from the cache of this commit, target and scripts: cargo compiled 0 crates in this run.' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build of this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/windows
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: core-x86_64-pc-windows-msvc
+          path: |
+            out/windows/lib
+            out/windows/bin
+            out/windows/symbols
+            out/windows/include
+            out/windows/report.txt
+          retention-days: 14
