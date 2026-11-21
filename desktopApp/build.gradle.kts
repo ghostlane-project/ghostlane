@@ -1,20 +1,13 @@
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.Property
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Internal
-import org.gradle.api.tasks.OutputFile
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.internal.os.OperatingSystem
-import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import java.net.URI
-import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.compose.compiler)
@@ -28,59 +21,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.jna)
     implementation(libs.zxing.core)
-}
-
-abstract class DownloadFileTask : DefaultTask() {
-    @get:Input
-    abstract val sourceUrl: Property<String>
-
-    @get:OutputFile
-    abstract val outputFile: RegularFileProperty
-
-    @TaskAction
-    fun download() {
-        val output = outputFile.get().asFile
-        output.parentFile.mkdirs()
-        URI(sourceUrl.get())
-            .toURL()
-            .openStream()
-            .use { input ->
-                output.outputStream().use { outputStream ->
-                    input.copyTo(outputStream)
-                }
-            }
-    }
-}
-
-abstract class ExtractZipEntryTask : DefaultTask() {
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val zipFile: RegularFileProperty
-
-    @get:Input
-    abstract val entrySuffix: Property<String>
-
-    @get:OutputFile
-    abstract val outputFile: RegularFileProperty
-
-    @TaskAction
-    fun extract() {
-        val zip = zipFile.get().asFile
-        val output = outputFile.get().asFile
-        output.parentFile.mkdirs()
-
-        ZipFile(zip).use { archive ->
-            val entry = archive.entries().asSequence()
-                .firstOrNull { it.name.endsWith(entrySuffix.get()) }
-                ?: error("${entrySuffix.get()} entry was not found in ${zip.absolutePath}")
-
-            archive.getInputStream(entry).use { input ->
-                output.outputStream().use { outputStream ->
-                    input.copyTo(outputStream)
-                }
-            }
-        }
-    }
 }
 
 abstract class VerifyNativeResourcesTask : DefaultTask() {
@@ -110,6 +50,67 @@ abstract class VerifyNativeResourcesTask : DefaultTask() {
     }
 }
 
+// The native resources each OS's package takes, compared with the recorded
+// lists in gradle/native-<os>.resources.txt. A line is "<arch> <kind> <path>":
+// "generated" is made by a task of this build under
+// build/generated/desktopNativeResources, "bundled" is supplied under
+// src/main/resources by whoever runs the build (see verifyBundledDesktopCores).
+// The lists of all three systems are computed from what this build declares,
+// on any host, so a change to one system's resources shows on the Linux runner.
+abstract class CheckNativeResourceListsTask : DefaultTask() {
+    @get:Input
+    abstract val staged: MapProperty<String, List<String>>
+
+    @get:Input
+    abstract val recordedFiles: MapProperty<String, String>
+
+    // What the host's own tasks write under the generated directory, and what
+    // the host's list says they should: the list is not a second copy of the
+    // truth if the two are compared here.
+    @get:Input
+    abstract val hostDeclared: ListProperty<String>
+
+    @get:Input
+    abstract val hostProduced: ListProperty<String>
+
+    @TaskAction
+    fun check() {
+        val problems = mutableListOf<String>()
+        staged.get().toSortedMap().forEach { (os, lines) ->
+            val now = lines.sorted()
+            println("Native resources staged for $os:")
+            now.forEach { println("  $it") }
+
+            val recordedFile = File(recordedFiles.get().getValue(os))
+            val recorded = if (recordedFile.isFile) {
+                recordedFile.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            } else {
+                problems.add("$os: no recorded list at ${recordedFile.path}")
+                emptyList()
+            }
+            if (recorded != recorded.sorted()) {
+                problems.add("$os: ${recordedFile.name} is not sorted")
+            }
+            (now - recorded.toSet()).forEach { problems.add("$os: staged but not recorded: $it") }
+            (recorded - now.toSet()).forEach { problems.add("$os: recorded but not staged: $it") }
+            if (recorded.size != recorded.toSet().size) {
+                problems.add("$os: ${recordedFile.name} repeats a line")
+            }
+        }
+
+        val declared = hostDeclared.get().sorted()
+        val produced = hostProduced.get().sorted()
+        if (declared != produced) {
+            problems.add("this host's tasks write $produced, its list declares $declared")
+        }
+
+        require(problems.isEmpty()) {
+            "The desktop native resource lists differ from the recorded ones:\n" +
+                    problems.joinToString(separator = "\n") { "- $it" }
+        }
+    }
+}
+
 val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
     .resolve("olcrtc")
     .absolutePath
@@ -117,7 +118,6 @@ val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
     .orElse(defaultOlcRtcRepo)
 val olcrtcRepoDir = olcrtcRepo.map { rootProject.file(it) }
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
-val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()
 // Installed application name (Ghostlane.app / Ghostlane.exe / Ghostlane.AppImage).
 // NOT an identity: macOS bundleID and the Windows upgradeUuid below are unchanged,
@@ -125,7 +125,6 @@ val currentBuildOs = OperatingSystem.current()
 // hardcoded "Olcbox" directory so existing installs keep their subscriptions.
 val desktopPackageName = "Ghostlane"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
-val wintunVersion = "0.14.1"
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
     currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
@@ -138,8 +137,6 @@ fun desktopArchName(arch: String): String = when (arch.lowercase()) {
     "aarch64", "arm64" -> "arm64"
     else -> error("Unsupported desktop architecture: $arch")
 }
-
-fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
 val hostDesktopArch = desktopArchName(System.getProperty("os.arch"))
 
@@ -248,236 +245,63 @@ fun registerOlcRtcLibraryBuildTask(
     }
 }
 
-val buildOlcRtcDarwinArm64 = registerOlcRtcBuildTask(
-    taskName = "buildOlcRtcDarwinArm64",
-    goos = "darwin",
-    goarch = "arm64",
-    outputName = "olcrtc-darwin-arm64"
-)
-
-val buildOlcRtcDarwinAmd64 = registerOlcRtcBuildTask(
-    taskName = "buildOlcRtcDarwinAmd64",
-    goos = "darwin",
-    goarch = "amd64",
-    outputName = "olcrtc-darwin-amd64"
-)
-
-val buildOlcRtcWindowsAmd64 = registerOlcRtcBuildTask(
-    taskName = "buildOlcRtcWindowsAmd64",
-    goos = "windows",
-    goarch = "amd64",
-    outputName = "olcrtc-windows-amd64.exe"
-)
-
-val buildOlcRtcLinuxAmd64 = registerOlcRtcBuildTask(
-    taskName = "buildOlcRtcLinuxAmd64",
-    goos = "linux",
-    goarch = "amd64",
-    outputName = "olcrtc-linux-amd64"
-)
-
-val buildOlcRtcLinuxArm64 = registerOlcRtcBuildTask(
-    taskName = "buildOlcRtcLinuxArm64",
-    goos = "linux",
-    goarch = "arm64",
-    outputName = "olcrtc-linux-arm64"
-)
-
-val buildOlcRtcLibDarwinArm64 = registerOlcRtcLibraryBuildTask(
-    taskName = "buildOlcRtcLibDarwinArm64",
-    goos = "darwin",
-    goarch = "arm64",
-    outputName = "libolcrtc-darwin-arm64.dylib"
-)
-
-val buildOlcRtcLibDarwinAmd64 = registerOlcRtcLibraryBuildTask(
-    taskName = "buildOlcRtcLibDarwinAmd64",
-    goos = "darwin",
-    goarch = "amd64",
-    outputName = "libolcrtc-darwin-amd64.dylib"
-)
-
-val buildOlcRtcLibLinuxAmd64 = registerOlcRtcLibraryBuildTask(
-    taskName = "buildOlcRtcLibLinuxAmd64",
-    goos = "linux",
-    goarch = "amd64",
-    outputName = "libolcrtc-linux-amd64.so"
-)
-
-val buildOlcRtcLibLinuxArm64 = registerOlcRtcLibraryBuildTask(
-    taskName = "buildOlcRtcLibLinuxArm64",
-    goos = "linux",
-    goarch = "arm64",
-    outputName = "libolcrtc-linux-arm64.so"
-)
-
-val buildOlcRtcLibWindowsAmd64 = registerOlcRtcLibraryBuildTask(
-    taskName = "buildOlcRtcLibWindowsAmd64",
-    goos = "windows",
-    goarch = "amd64",
-    outputName = "olcrtc-windows-amd64.dll"
-)
-
 // The engine embeds its display-name dictionaries since upstream 189d16c and
 // the client yaml no longer names a `data:` directory, so nothing is copied
 // from the engine repo's data/ any more (it is gone there too).
 
-val desktopNativeAssetTasks = mutableListOf<Any>(
-    buildOlcRtcDarwinArm64,
-    buildOlcRtcDarwinAmd64,
-    buildOlcRtcWindowsAmd64,
-    buildOlcRtcLinuxAmd64,
-    buildOlcRtcLinuxArm64,
-    buildOlcRtcLibDarwinArm64,
-    buildOlcRtcLibDarwinAmd64,
-    buildOlcRtcLibLinuxAmd64,
-    buildOlcRtcLibLinuxArm64,
-    buildOlcRtcLibWindowsAmd64
-)
+val desktopNativeAssetTasks = mutableListOf<Any>()
 val hostDesktopNativeAssetTasks = mutableListOf<Any>()
 
-when {
-    currentBuildOs.isMacOsX -> when (hostDesktopArch) {
-        "amd64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinAmd64)
-        }
-        "arm64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinArm64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
-        }
-    }
-    currentBuildOs.isWindows -> {
-        hostDesktopNativeAssetTasks.add(buildOlcRtcWindowsAmd64)
-        hostDesktopNativeAssetTasks.add(buildOlcRtcLibWindowsAmd64)
-    }
-    currentBuildOs.isLinux -> when (hostDesktopArch) {
-        "amd64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxAmd64)
-        }
-        "arm64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxArm64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxArm64)
-        }
-    }
+val hostDesktopOs = when {
+    currentBuildOs.isMacOsX -> "macos"
+    currentBuildOs.isWindows -> "windows"
+    currentBuildOs.isLinux -> "linux"
+    else -> ""
 }
 
-if (currentBuildOs.isLinux) {
-    val buildHevSocks5TunnelLinux = tasks.register<Exec>("buildHevSocks5TunnelLinux") {
-        val outputFile = generatedNativeResources.map {
-            it.file("native/hev-socks5-tunnel-linux-$hostDesktopArch")
-        }
-        val output = outputFile.get().asFile
+// One file per system holds its native resources: the tasks that make them,
+// the list the package must find, and the packing that is the system's own.
+// Each adds its tasks and its lists to what is handed over here.
+val desktopNativeArchs = mutableMapOf<String, List<String>>()
+val generatedNativeResourcePathsByOs = mutableMapOf<String, (String) -> List<String>>()
+val bundledCorePathsByOs = mutableMapOf<String, List<String>>()
 
-        outputs.file(outputFile)
-        workingDir = hevSocks5TunnelSourceDir.asFile
-        commandLine(
-            "sh",
-            "-c",
-            "mkdir -p ${shellQuote(output.parentFile.absolutePath)} && make clean exec && install -m 0755 bin/hev-socks5-tunnel ${shellQuote(output.absolutePath)}"
-        )
+extra["generatedNativeResources"] = generatedNativeResources
+extra["hostDesktopOs"] = hostDesktopOs
+extra["hostDesktopArch"] = hostDesktopArch
+extra["desktopPackageName"] = desktopPackageName
+extra["desktopPackageVersion"] = desktopPackageVersion
+extra["registerOlcRtcBuildTask"] =
+    { taskName: String, goos: String, goarch: String, outputName: String ->
+        registerOlcRtcBuildTask(taskName, goos, goarch, outputName)
     }
-    desktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
-    hostDesktopNativeAssetTasks.add(buildHevSocks5TunnelLinux)
-}
-
-if (currentBuildOs.isMacOsX) {
-    // The JNA bridge the app uses to register the root tunnel daemon.
-    //
-    // Small on purpose: SMAppService is the only part of this that has to be
-    // Swift, and everything it is asked here returns an integer the Kotlin side
-    // names. Polled rather than called back into — a JNA callback arrives on
-    // whatever thread the JVM lends, and marshalling one into an Apple main-queue
-    // callback is a class of crash worth more than an integer read once a second.
-    val buildMacosTunnelDaemonBridge = tasks.register<Exec>("buildMacosTunnelDaemonBridge") {
-        val outputFile = generatedNativeResources.map { it.file("native/libolcboxtunneld.dylib") }
-        val source = layout.projectDirectory.file("nativebridge/OlcboxTunnelDaemon.swift")
-
-        inputs.file(source)
-        outputs.file(outputFile)
-
-        val output = outputFile.get().asFile
-        commandLine(
-            "bash", "-c",
-            """
-            set -euo pipefail
-            mkdir -p "${'$'}(dirname "${'$'}2")"
-            swiftc -O -target "${'$'}(uname -m)-apple-macos13.0" -emit-library \
-                -framework ServiceManagement -framework AppKit -framework Foundation \
-                -o "${'$'}2" "${'$'}1"
-            """.trimIndent(),
-            "bash",
-            source.asFile.absolutePath,
-            output.absolutePath
-        )
-
-        // Same reason the olcRTC libraries are signed where they are made: this
-        // one is produced by the build, travels inside the app's jar, and Apple
-        // scans in there. An unsigned Mach-O in a jar has failed notarisation
-        // before.
-        val signTarget = outputFile.map { it.asFile.absolutePath }
-        val entitlementsPath = layout.projectDirectory.file("macos-entitlements.plist").asFile.absolutePath
-        doLast {
-            val identity = System.getenv("MACOS_SIGN_IDENTITY")
-            if (!identity.isNullOrBlank()) {
-                val exit = ProcessBuilder(
-                    "codesign", "--force", "--timestamp", "--options", "runtime",
-                    "--entitlements", entitlementsPath,
-                    "--sign", identity, signTarget.get()
-                ).inheritIO().start().waitFor()
-                check(exit == 0) { "codesign failed for ${signTarget.get()}" }
-            }
-        }
+extra["registerOlcRtcLibraryBuildTask"] =
+    { taskName: String, goos: String, goarch: String, outputName: String ->
+        registerOlcRtcLibraryBuildTask(taskName, goos, goarch, outputName)
     }
+extra["desktopNativeAssetTasks"] = desktopNativeAssetTasks
+extra["hostDesktopNativeAssetTasks"] = hostDesktopNativeAssetTasks
+extra["desktopNativeArchs"] = desktopNativeArchs
+extra["generatedNativeResourcePathsByOs"] = generatedNativeResourcePathsByOs
+extra["bundledCorePathsByOs"] = bundledCorePathsByOs
 
-    desktopNativeAssetTasks.add(buildMacosTunnelDaemonBridge)
-    hostDesktopNativeAssetTasks.add(buildMacosTunnelDaemonBridge)
-}
+apply(from = "gradle/native-linux.gradle.kts")
+apply(from = "gradle/native-macos.gradle.kts")
+apply(from = "gradle/native-windows.gradle.kts")
 
-if (currentBuildOs.isWindows) {
-    val wintunWindowsOutput = generatedNativeResources.map {
-        it.file("native/wintun.dll")
+fun generatedNativeResourcePaths(os: String, arch: String): List<String> =
+    generatedNativeResourcePathsByOs[os]?.invoke(arch).orEmpty()
+
+fun bundledCorePaths(os: String): List<String> = bundledCorePathsByOs[os].orEmpty()
+
+fun requiredHostNativeResourcePaths(): List<String> =
+    generatedNativeResourcePaths(hostDesktopOs, hostDesktopArch)
+
+fun stagedNativeResourceLines(os: String): List<String> =
+    desktopNativeArchs.getValue(os).flatMap { arch ->
+        generatedNativeResourcePaths(os, arch).map { "$arch generated $it" } +
+                bundledCorePaths(os).map { "$arch bundled $it" }
     }
-
-    val downloadWintunWindowsAmd64 = tasks.register<DownloadFileTask>("downloadWintunWindowsAmd64") {
-        sourceUrl.set("https://www.wintun.net/builds/wintun-$wintunVersion.zip")
-        outputFile.set(layout.buildDirectory.file("tmp/wintun/wintun-$wintunVersion.zip"))
-    }
-
-    val extractWintunWindowsAmd64 = tasks.register<ExtractZipEntryTask>("extractWintunWindowsAmd64") {
-        zipFile.set(downloadWintunWindowsAmd64.flatMap { it.outputFile })
-        entrySuffix.set("/bin/amd64/wintun.dll")
-        outputFile.set(wintunWindowsOutput)
-    }
-
-    desktopNativeAssetTasks.add(extractWintunWindowsAmd64)
-    hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
-}
-
-fun requiredHostNativeResourcePaths(): List<String> = buildList {
-    when {
-        currentBuildOs.isMacOsX -> {
-            add("native/olcrtc-darwin-$hostDesktopArch")
-            add("native/libolcrtc-darwin-$hostDesktopArch.dylib")
-            // Absent, the settings row for the system-wide tunnel quietly does
-            // not appear and nothing anywhere says why — the bridge is loaded by
-            // resource and a missing resource is indistinguishable from a
-            // platform that has no such component.
-            add("native/libolcboxtunneld.dylib")
-        }
-        currentBuildOs.isWindows -> {
-            add("native/olcrtc-windows-amd64.exe")
-            add("native/olcrtc-windows-amd64.dll")
-            add("native/wintun.dll")
-        }
-        currentBuildOs.isLinux -> {
-            add("native/olcrtc-linux-$hostDesktopArch")
-            add("native/libolcrtc-linux-$hostDesktopArch.so")
-            add("native/hev-socks5-tunnel-linux-$hostDesktopArch")
-        }
-    }
-}
 
 val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("verifyDesktopNativeResources") {
     dependsOn(hostDesktopNativeAssetTasks.toList())
@@ -492,14 +316,32 @@ val verifyDesktopNativeResources = tasks.register<VerifyNativeResourcesTask>("ve
 // Requiring the exact resource names here makes every runnable desktop package
 // fail during processResources when its two connection cores were not staged.
 val verifyBundledDesktopCores = tasks.register<VerifyNativeResourcesTask>("verifyBundledDesktopCores") {
-    val executableSuffix = if (currentBuildOs.isWindows) ".exe" else ""
     resourcesDir.set(layout.projectDirectory.dir("src/main/resources"))
-    requiredPaths.set(
-        listOf(
-            "native/sing-box$executableSuffix",
-            "native/xray$executableSuffix"
-        )
+    requiredPaths.set(bundledCorePaths(hostDesktopOs))
+}
+
+val checkDesktopNativeResourceLists = tasks.register<CheckNativeResourceListsTask>("checkDesktopNativeResourceLists") {
+    group = "verification"
+    description = "Compares the native resources each OS's package takes with the recorded lists."
+
+    val generatedRoot = generatedNativeResources.get().asFile
+    desktopNativeArchs.keys.forEach { os ->
+        staged.put(os, stagedNativeResourceLines(os))
+        recordedFiles.put(os, layout.projectDirectory.file("gradle/native-$os.resources.txt").asFile.absolutePath)
+    }
+    hostDeclared.set(requiredHostNativeResourcePaths())
+    hostProduced.set(
+        hostDesktopNativeAssetTasks.flatMap { (it as TaskProvider<*>).get().outputs.files.files }
+            .map { it.relativeTo(generatedRoot).invariantSeparatorsPath }
     )
+}
+
+// Proven where pull requests are compiled, which is a Linux runner. On the
+// other systems the task is there to be run by hand and holds up no build.
+if (currentBuildOs.isLinux) {
+    tasks.named("compileKotlin") {
+        dependsOn(checkDesktopNativeResourceLists)
+    }
 }
 
 tasks.register("buildDesktopNativeAssets") {
@@ -512,28 +354,6 @@ sourceSets {
     main {
         resources.srcDir(generatedNativeResources)
         resources.srcDir(layout.projectDirectory.dir("appIcons"))
-    }
-}
-
-if (currentBuildOs.isWindows) {
-    val jpackageAppRootDir = layout.buildDirectory.dir("compose/binaries/main-release/app")
-
-    tasks.register<Zip>("packageReleasePortableZip") {
-        group = "distribution"
-        description = "Packages a portable Windows zip from the jpackage app image."
-
-        dependsOn("createReleaseDistributable")
-        from(jpackageAppRootDir)
-        archiveFileName.set("$desktopPackageName-$desktopPackageVersion-windows-amd64-portable.zip")
-        destinationDirectory.set(layout.buildDirectory.dir("compose/binaries/main-release/portable"))
-
-        doFirst {
-            val appRoot = jpackageAppRootDir.get().asFile
-            val appEntries = appRoot.listFiles().orEmpty()
-            require(appRoot.isDirectory && appEntries.isNotEmpty()) {
-                "Windows portable app image was not created at ${appRoot.absolutePath}"
-            }
-        }
     }
 }
 
@@ -625,199 +445,5 @@ compose.desktop {
                 }
             }
         }
-    }
-}
-
-if (currentBuildOs.isLinux) {
-    val appImageTool = providers.environmentVariable("APPIMAGETOOL").orElse("appimagetool")
-    val jpackageAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
-    val appDir = layout.buildDirectory.dir("compose/binaries/main-release/appimage/AppDir")
-    val linuxIconFile = layout.projectDirectory.file("appIcons/LinuxIcon.png")
-    val appImageFile = layout.buildDirectory.file(
-        "compose/binaries/main-release/appimage/$desktopPackageName-$desktopPackageVersion-$hostDesktopArch.AppImage"
-    )
-
-    val prepareReleaseLinuxAppDir = tasks.register<Exec>("prepareReleaseLinuxAppDir") {
-        group = "distribution"
-        description = "Prepares the AppDir layout used by appimagetool."
-
-        dependsOn("packageReleaseAppImage")
-        inputs.dir(jpackageAppDir)
-        inputs.file(linuxIconFile)
-        outputs.dir(appDir)
-
-        commandLine(
-            "sh",
-            "-c",
-            """
-            set -eu
-
-            source_dir="${'$'}1"
-            target_dir="${'$'}2"
-            icon_file="${'$'}3"
-
-            rm -rf "${'$'}target_dir"
-            mkdir -p "${'$'}target_dir"
-            cp -R "${'$'}source_dir/." "${'$'}target_dir/"
-
-            cat > "${'$'}target_dir/AppRun" <<'APPRUN'
-            #!/bin/sh
-            HERE="${'$'}(dirname "${'$'}(readlink -f "${'$'}0")")"
-            exec "${'$'}HERE/bin/$desktopPackageName" "${'$'}@"
-            APPRUN
-            chmod +x "${'$'}target_dir/AppRun"
-
-            cat > "${'$'}target_dir/org.olcbox.app.desktopApp.desktop" <<'DESKTOP'
-            [Desktop Entry]
-            Type=Application
-            Name=$desktopPackageName
-            Exec=$desktopPackageName %u
-            Icon=olcbox
-            Categories=Network;Utility;
-            MimeType=x-scheme-handler/ghostlane;x-scheme-handler/proofkit;
-            Terminal=false
-            DESKTOP
-
-            cp "${'$'}icon_file" "${'$'}target_dir/olcbox.png"
-            """.trimIndent(),
-            "prepareReleaseLinuxAppDir",
-            jpackageAppDir.get().asFile.absolutePath,
-            appDir.get().asFile.absolutePath,
-            linuxIconFile.asFile.absolutePath
-        )
-    }
-
-    val packageReleaseLinuxAppImage = tasks.register<Exec>("packageReleaseLinuxAppImage") {
-        group = "distribution"
-        description = "Packages the Linux desktop app as a real .AppImage file."
-
-        dependsOn(prepareReleaseLinuxAppDir)
-        inputs.dir(appDir)
-        outputs.file(appImageFile)
-
-        commandLine(
-            appImageTool.get(),
-            appDir.get().asFile.absolutePath,
-            appImageFile.get().asFile.absolutePath
-        )
-    }
-
-    tasks.matching { it.name == "packageReleaseDistributionForCurrentOS" }.configureEach {
-        dependsOn(packageReleaseLinuxAppImage)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// macOS: the root tunnel daemon.
-//
-// Unlike the NetworkExtension attempt this replaces, nothing here is restricted:
-// no provisioning profile, no entitlement that needs Apple's blessing, no App ID
-// registered in a portal. A Developer ID signature and notarisation — both of
-// which every macOS build already has — are the whole requirement. That is why
-// this path can ship on a macOS 26 where sysextd refuses to activate any new
-// system extension at all; see docs/macos-tunnel-daemon.md.
-// ---------------------------------------------------------------------------
-if (currentBuildOs.isMacOsX) {
-    val daemonSourceDir = layout.projectDirectory.dir("tunneldaemon")
-    val daemonAppImageDir =
-        layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName.app")
-    val daemonStageDir = layout.buildDirectory.dir("macos/tunneldaemon")
-
-    val embedMacosTunnelDaemon = tasks.register<Exec>("embedMacosTunnelDaemon") {
-        group = "distribution"
-        description = "Builds, signs and embeds the root tunnel daemon into the .app."
-
-        dependsOn("createReleaseDistributable")
-        inputs.dir(daemonSourceDir)
-        outputs.dir(daemonStageDir)
-
-        commandLine(
-            "bash",
-            "-c",
-            """
-            set -euo pipefail
-
-            app_dir="${'$'}1"
-            src="${'$'}2"
-            stage="${'$'}3"
-            core_src="${'$'}4"
-            entitlements="${'$'}5"
-
-            identity="${'$'}{MACOS_SIGN_IDENTITY:-}"
-            if [ -z "${'$'}identity" ]; then
-                echo "No signing identity — building without the tunnel daemon."
-                echo "An unsigned daemon cannot pass its own peer check and SMAppService will"
-                echo "not register it, so shipping one would only move the failure later."
-                mkdir -p "${'$'}stage"
-                exit 0
-            fi
-
-            if [ ! -d "${'$'}app_dir" ]; then
-                echo "no app image at ${'$'}app_dir — this task ran against the wrong output" >&2
-                exit 1
-            fi
-
-            rm -rf "${'$'}stage"
-            mkdir -p "${'$'}stage"
-
-            # SystemConfiguration is for the system's resolver (SystemNames.swift).
-            swiftc -O -target "${'$'}(uname -m)-apple-macos13.0" \
-                -framework Foundation -framework Security -framework SystemConfiguration \
-                -o "${'$'}stage/ProofKitTunnelDaemon" \
-                "${'$'}src/PeerAuthority.swift" "${'$'}src/GroupExec.swift" "${'$'}src/TunnelChild.swift" \
-                "${'$'}src/TrafficHold.swift" "${'$'}src/SystemNames.swift" "${'$'}src/LineChild.swift" "${'$'}src/Daemon.swift" \
-                "${'$'}src/main.swift"
-
-            # The core the daemon execs has to be a loose file in the bundle. It is
-            # otherwise only inside the jar, where a root daemon cannot reach it and
-            # could not verify a signature on it if it could.
-            mkdir -p "${'$'}app_dir/Contents/Resources"
-            cp "${'$'}core_src" "${'$'}app_dir/Contents/Resources/sing-box"
-            chmod 0755 "${'$'}app_dir/Contents/Resources/sing-box"
-
-            mkdir -p "${'$'}app_dir/Contents/Library/LaunchDaemons"
-            cp "${'$'}src/org.olcbox.app.desktopApp.tunneld.plist" \
-               "${'$'}app_dir/Contents/Library/LaunchDaemons/"
-            cp "${'$'}stage/ProofKitTunnelDaemon" "${'$'}app_dir/Contents/MacOS/ProofKitTunnelDaemon"
-
-            # Inside out. The outer signature seals what is nested, so anything
-            # signed after the app is signed invalidates the app.
-            codesign --force --timestamp --options runtime \
-                --sign "${'$'}identity" "${'$'}app_dir/Contents/Resources/sing-box"
-            codesign --force --timestamp --options runtime \
-                --identifier "org.olcbox.app.desktopApp.tunneld" \
-                --sign "${'$'}identity" "${'$'}app_dir/Contents/MacOS/ProofKitTunnelDaemon"
-            codesign --force --timestamp --options runtime \
-                --entitlements "${'$'}entitlements" \
-                --sign "${'$'}identity" "${'$'}app_dir"
-            codesign --verify --deep --strict --verbose=2 "${'$'}app_dir"
-
-            if [ ! -x "${'$'}app_dir/Contents/MacOS/ProofKitTunnelDaemon" ]; then
-                echo "the tunnel daemon is not in the app image" >&2
-                exit 1
-            fi
-
-            # The daemon refuses any peer that does not satisfy PeerAuthority's
-            # requirement string. A build whose app signature does not satisfy it
-            # ships a daemon nothing can talk to, and the only symptom is the word
-            # "unauthorized" with nothing to say which side is wrong.
-            if ! codesign -dr - "${'$'}app_dir" 2>&1 | grep -q "org.olcbox.app.desktopApp"; then
-                echo "the app's designated requirement does not name the identifier the" >&2
-                echo "daemon pins — every command would be refused as unauthorized." >&2
-                exit 1
-            fi
-            echo "embedded: tunnel daemon + core"
-            """.trimIndent(),
-            "bash",
-            daemonAppImageDir.get().asFile.absolutePath,
-            daemonSourceDir.asFile.absolutePath,
-            daemonStageDir.get().asFile.absolutePath,
-            layout.projectDirectory.file("src/main/resources/native/sing-box").asFile.absolutePath,
-            layout.projectDirectory.file("macos-entitlements.plist").asFile.absolutePath
-        )
-    }
-
-    tasks.matching { it.name == "packageReleaseDmg" }.configureEach {
-        dependsOn(embedMacosTunnelDaemon)
     }
 }
