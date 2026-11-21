@@ -352,8 +352,8 @@ def self_test(root):
         text = open(path, encoding="utf-8").read()
         lines = text.split("\n")
         for i, l in enumerate(lines):
-            if l.startswith("import.link.vless |"):
-                cells = [c.strip() for c in l.split("|")]
+            cells = [c.strip() for c in l.split("|")]
+            if cells[0] == "import.link.vless":
                 cells[2] = "README.MD::a feature the readme never had"
                 lines[i] = " | ".join(cells)
                 break

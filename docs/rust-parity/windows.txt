@@ -1,3 +1,162 @@
 # windows: one row for each feature of this platform's build that the inventory lists.
 # id | status | tests | note
 # status: proven, partial, not-proven or retired (docs/rust-parity/README.md).
+import.url                          | not-proven | - | -
+import.paste                        | not-proven | - | -
+import.file                         | not-proven | - | -
+import.body.base64                  | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/SubscriptionBodyCodecTest.kt::SubscriptionBodyCodecTest | shared Kotlin, no engine on its path
+import.body.json                    | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::exportsAndImportsBundleV5WithActiveLocation, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::bundleRestoreUpdatesMatchingStorageIds | shared Kotlin, no engine on its path
+import.olcrtc.line                  | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsLegacyOlcRtcUriWithClientIdAndMimoName, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsSalutejazzOlcRtcUri, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsVkcallsOlcRtcUri, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsMtslinkOlcRtcUri, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsJitsiOlcRtcUriWithRoomUrl | shared Kotlin, no engine on its path
+import.olcrtc.transport-options     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::configShareRoundTripsTransportOptions, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::keepsTheTransportALinkAskedForWhenTheProviderCannotCarryIt | shared Kotlin, no engine on its path
+import.olcrtc.list-fields           | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsOlcRtcSubscriptionAndAppliesLocalNames | shared Kotlin, no engine on its path
+import.olcrtc.room-fields           | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsOlcRtcSubscriptionAndAppliesLocalNames | shared Kotlin, no engine on its path
+import.olcrtc.rooms-group           | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/datasource/JvmLocationsDataSourceImplTest.kt::keepsFailoverRoomsAcrossASaveAndLoad | The rooms are parsed and kept; the engine's hop to them is a separate row
+import.crypt1                       | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/crypt/CryptCodecTest.kt::CryptCodecTest, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::importsCryptLinkDecryptingToInlineOlcrtc | shared Kotlin, no engine on its path
+import.partner-link                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/PartnerLinkResolverTest.kt::PartnerLinkResolverTest | shared Kotlin, no engine on its path
+import.link.vless                   | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesVlessReality | shared Kotlin, no engine on its path
+import.link.hysteria2               | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesHysteria2 | shared Kotlin, no engine on its path
+import.link.hy2                     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::hy2AliasAndNoObfs | shared Kotlin, no engine on its path
+import.link.trojan                  | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::trojanOverWebSocketWithEverythingSpelledOut | shared Kotlin, no engine on its path
+import.link.ss                      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::shadowsocksSip002WithABase64Userinfo, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::shadowsocks2022WithAPlainUserinfo, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::shadowsocksTheLegacyWholeBase64Way | shared Kotlin, no engine on its path
+import.link.vmess                   | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::vmessInV2rayNsShapeWithStringNumbers | shared Kotlin, no engine on its path
+import.vless.type.tcp               | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesVlessReality | shared Kotlin, no engine on its path
+import.vless.type.xhttp             | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesVlessXhttp | shared Kotlin, no engine on its path
+import.vless.type.grpc              | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesVlessGrpcAndDropsTcpOnlyFlow | shared Kotlin, no engine on its path
+import.vless.type.ws                | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::vlessOverWebSocketAndHttpUpgrade | shared Kotlin, no engine on its path
+import.vless.type.httpupgrade       | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::vlessOverWebSocketAndHttpUpgrade | shared Kotlin, no engine on its path
+import.vless.type.http              | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::typeHttpIsTheHttpTransportNotPlainTcp | shared Kotlin, no engine on its path
+import.vless.reality-params         | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesVlessReality | shared Kotlin, no engine on its path
+import.vless.security-none          | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::securityNoneIsNoTlsAtAll | shared Kotlin, no engine on its path
+import.vless.allowinsecure          | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::allowInsecureIsReadOnOrdinaryTlsAndIgnoredUnderReality | shared Kotlin, no engine on its path
+import.vless.alpn                   | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayConfigIosCoreTest.kt::proofKitsWebTunnelLinkOffersABrowsersAlpn | shared Kotlin, no engine on its path
+import.hysteria2.params             | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::parsesHysteria2 | shared Kotlin, no engine on its path
+import.refuse.unsupported           | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::trojanItCannotSpeakIsRefused, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::shadowsocksWithAPluginOrAStreamCipherIsRefused, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserProtocolsTest.kt::vmessItCannotSpeakIsRefused | shared Kotlin, no engine on its path
+import.tag.utf8                     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/LinkParserTest.kt::decodesMultiByteTagsAsUtf8 | shared Kotlin, no engine on its path
+list.header.profile-title           | not-proven | - | -
+list.header.subscription-userinfo   | not-proven | - | -
+list.header.support-url             | not-proven | - | -
+list.header.profile-web-page-url    | not-proven | - | -
+list.header.profile-update-interval | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::subscriptionHeaderSetsIntervalAndIdentityHeaders | shared Kotlin, no engine on its path
+list.header.announce                | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::anAnnouncementIsKeptDecodedAndCappedUntilTheProviderSendsZero | shared Kotlin, no engine on its path
+list.header.fallback-url            | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::aListThatDoesNotAnswerIsAskedAtItsSpareAddress | shared Kotlin, no engine on its path
+list.header.new-url                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::aListThatMovedIsFiledAtItsNewAddress | shared Kotlin, no engine on its path
+list.device-headers                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/device/DeviceDescriptionTest.kt::DeviceDescriptionTest, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::subscriptionIdentityRequestNamesTheDevice, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::aDeviceIdThatCannotBeReadIsNotSentAndNotReplaced | shared Kotlin, no engine on its path
+list.device-refused                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::aDeviceRefusalMakesNoSecondRequest, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::aRefusedListIsAskedAgainWhenDueAndServedOnceTheHostLetsTheDeviceIn | shared Kotlin, no engine on its path
+list.plan-info                      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SubscriptionMetaLineTest.kt::SubscriptionMetaLineTest | shared Kotlin, no engine on its path
+list.refresh.manual                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::refreshSingleSubscriptionPreservesOtherSubscriptions, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::failedSingleSubscriptionRefreshDoesNotDropExistingSubscription | shared Kotlin, no engine on its path
+list.remove                         | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/LocationsRepositoryImplTest.kt::deleteSubscriptionRemovesAListItsHostRefused | shared Kotlin, no engine on its path
+list.remove.location                | not-proven | - | -
+list.group-by-provider              | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/components/kit/PkBoardModelTest.kt::PkBoardModelTest | shared Kotlin, no engine on its path
+list.router-export                  | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/RouterExportDumpTest.kt::RouterExportDumpTest | shared Kotlin, no engine on its path
+list.share.qr                       | not-proven | - | -
+board.occupancy                     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcStatusTest.kt::OlcrtcStatusTest | shared Kotlin, no engine on its path
+board.latency.tunnel                | not-proven | - | -
+board.latency.icmp-tcp              | not-proven | - | -
+board.latency.olcrtc-room           | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ChannelLatencyTest.kt::ChannelLatencyTest | The decision is held; a measurement through a Rust core handle is not run
+location.manual-edit                | not-proven | - | -
+room.check                          | not-proven | - | -
+room.failover.engine                | not-proven | - | -
+room.failure-reasons                | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | shared Kotlin, no engine on its path
+carrier.telemost                    | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+carrier.wbstream                    | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+carrier.jitsi                       | not-proven | - | -
+carrier.salutejazz                  | not-proven | - | -
+carrier.vkcalls                     | not-proven | - | -
+carrier.mtslink                     | not-proven | - | -
+transport.datachannel               | not-proven | - | -
+transport.vp8channel                | not-proven | - | -
+transport.seichannel                | retired | - | Transport retired by the maintainers; not ported to the Rust core
+olcrtc.vp8-options                  | not-proven | - | -
+olcrtc.udp                          | not-proven | - | -
+olcrtc.chrome-dtls                  | not-proven | - | -
+carry.vless.reality.tcp             | not-proven | - | -
+carry.vless.reality.grpc            | not-proven | - | -
+carry.vless.reality.http            | not-proven | - | -
+carry.vless.reality.xhttp           | not-proven | - | -
+carry.vless.tls.tcp                 | not-proven | - | -
+carry.vless.tls.ws                  | not-proven | - | -
+carry.vless.tls.httpupgrade         | not-proven | - | -
+carry.vless.tls.http                | not-proven | - | -
+carry.vless.none                    | not-proven | - | -
+carry.vless.allowinsecure           | not-proven | - | -
+carry.reality.fingerprints          | not-proven | - | -
+carry.reality.fp-android-360        | not-proven | - | -
+carry.hysteria2                     | not-proven | - | -
+carry.hysteria2.salamander          | not-proven | - | -
+carry.hysteria2.pin                 | not-proven | - | -
+carry.hysteria2.insecure            | not-proven | - | -
+carry.trojan                        | not-proven | - | -
+carry.shadowsocks                   | not-proven | - | -
+carry.shadowsocks.2022              | not-proven | - | -
+carry.vmess                         | not-proven | - | -
+carry.hostname-servers              | not-proven | - | -
+carry.dns-in-tunnel                 | not-proven | - | -
+carry.udp                           | not-proven | - | -
+mode.tun                            | not-proven | - | -
+mode.proxy                          | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/DesktopProxyModeTest.kt::DesktopProxyModeTest | The mode's logic is held; the listener is not the Rust core yet
+proxy.os-settings                   | not-proven | - | -
+proxy.socks-settings                | not-proven | - | -
+tunnel.network-migration            | not-proven | - | -
+tunnel.supervise                    | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LineSupervisionTest.kt::LineSupervisionTest | The supervision logic is held; the process it supervises is not the Rust core yet
+tunnel.switch-server                | not-proven | - | -
+tunnel.verify                       | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run
+windows.uac-elevation               | not-proven | - | -
+windows.wintun-dns-guard            | not-proven | - | -
+desktop.tray.menu                   | not-proven | - | -
+desktop.tray.icon-state             | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/desktop/DesktopTrayIconTest.kt::DesktopTrayIconTest | The icon's look for each state is held; the tray itself is not exercised
+desktop.close-to-tray               | not-proven | - | -
+lan.share                           | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxyTest.kt::DesktopLanProxyTest | The listener's rules are held; the listener is sing-box's and is not the Rust core yet
+lan.pinned-network                  | not-proven | - | -
+lan.port-proof                      | not-proven | - | -
+lan.recheck                         | not-proven | - | -
+lan.windows-firewall                | not-proven | - | -
+lan.regenerate                      | not-proven | - | -
+lan.interface-choice                | not-proven | - | -
+routing.mode.global                 | not-proven | - | -
+routing.mode.bypassrussia           | not-proven | - | -
+routing.mode.bypassiran             | not-proven | - | -
+routing.mode.bypasschina            | not-proven | - | -
+routing.mode.blockedonly            | not-proven | - | -
+routing.rules.direct                | not-proven | - | -
+routing.rules.tunnel                | not-proven | - | -
+routing.lists.bundled               | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayGeodataTest.kt::XrayGeodataTest, sharedUI/src/commonTest/kotlin/org/olcbox/app/net/RuleSetsTest.kt::RuleSetsTest | The lists are held to their pinned hashes; the core's reading of them on each platform is not run
+routing.room-direct-rules           | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/OlcrtcDirectRulesTest.kt::OlcrtcDirectRulesTest | The rules written for the engine are held; the engine's own handling is not run on the Rust core
+smart.transport-probe               | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice of transports is held; a probe through a throw-away Rust core is not run
+smart.olcrtc-fallback               | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | The choice is held; a probe through a Rust core is not run
+smart.session-failover              | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SessionFailoverTest.kt::SessionFailoverTest | The decision logic is held; the candidates' checks on a Rust core are not run
+smart.candidate-check               | not-proven | - | -
+setting.autoSelectLowest            | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/LowestConnectionTest.kt::LowestConnectionTest, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::lowestCanBelongToOneSubscription | shared Kotlin, no engine on its path
+setting.lowestSubscriptionUrls      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::lowestCanBelongToOneSubscription | shared Kotlin, no engine on its path
+setting.autoUpdate                  | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.updateIntervalHours         | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.notifyOnUpdate              | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.refreshOnOpen               | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.pingOnLaunch                | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.connectOnLaunch             | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.sort                        | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.preventDuplicates           | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.collapsible                 | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; the screen row is not exercised on its own
+setting.smartConnect                | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; what it switches is the smart-connect rows
+setting.lastKnownGoodTransport      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/SmartConnectTest.kt::SmartConnectTest | shared Kotlin, no engine on its path
+setting.foldedSubscriptionUrls      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::whatIsFoldedIsWrittenAndReadBack, sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/render/FoldedListTest.kt::FoldedListTest | shared Kotlin, no engine on its path
+setting.pinnedLocations             | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::pinsAreWrittenAndReadBackInOrder, sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/render/PinnedRoomsTest.kt::PinnedRoomsTest | shared Kotlin, no engine on its path
+setting.transportFilter             | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::theTransportChosenIsWrittenAndReadBack | shared Kotlin, no engine on its path
+setting.mode                        | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/RoutingSettingsTest.kt::savedModeComesBack, sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/RoutingSettingsTest.kt::serialNamesAreStable | shared Kotlin, no engine on its path
+setting.verboseDebugLogs            | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/HomeScreenModelSettingsTest.kt::HomeScreenModelSettingsTest | The setting is held; what it changes in the core's log is not exercised on the Rust core
+setting.olcrtcChromeDtls            | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/RoutingSettingsTest.kt::theChromeHandshakeIsOffUntilSwitchedOnAndComesBackUnderItsName | The setting is held; the engine's handshake it switches is not exercised on the Rust core
+setting.directRules                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/RoutingSettingsTest.kt::theNewModeAndTheUsersRulesComeBackAndOldBundlesStillRead | shared Kotlin, no engine on its path
+setting.tunnelRules                 | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/datasource/RoutingSettingsTest.kt::theNewModeAndTheUsersRulesComeBackAndOldBundlesStillRead | shared Kotlin, no engine on its path
+setting.app-update-interval         | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | shared Kotlin, no engine on its path
+app.updates                         | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/update/AppUpdateServiceTest.kt::AppUpdateServiceTest | The update decision is held; the installers are not exercised
+diag.log.export                     | not-proven | - | -
+diag.log.scrub                      | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+ui.language                         | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/ui/LocalizationTest.kt::LocalizationTest | shared Kotlin, no engine on its path
+ui.one-tap-connect                  | not-proven | - | -
+ui.onboarding                       | not-proven | - | -
+ui.vpn-disclosure                   | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/components/DisclosureBlocksTest.kt::DisclosureBlocksTest | shared Kotlin, no engine on its path
+ui.configurator                     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/admin/AdminGateTest.kt::AdminGateTest | shared Kotlin, no engine on its path
+connect.failure-reasons             | not-proven | - | -
+session.traffic                     | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/ui/features/home/SessionTrafficTest.kt::SessionTrafficTest | shared Kotlin, no engine on its path
+dist.windows.exe                    | not-proven | - | -
+dist.windows.msi                    | not-proven | - | -
+dist.windows.portable               | not-proven | - | -
