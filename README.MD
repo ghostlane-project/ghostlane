@@ -116,7 +116,8 @@ it carries no self-updater for that reason. To build it yourself: [docs/building
 ## The project
 
 Ghostlane is open source and actively maintained: Kotlin Multiplatform and Compose, one
-codebase for Android, iOS, macOS, Windows and Linux. It is developed together with
+codebase for Android, iOS, macOS, Windows and Linux. It grew out of the open-source
+[olcbox](https://github.com/alananisimov/olcbox) client. It is developed together with
 **[olcRTC](https://github.com/ghostlane-project/olcrtc)**, the transport engine it is
 built around; the two repositories are one project, released separately and pinned to
 each other. Every release is gated on a suite that moves real traffic through real
