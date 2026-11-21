@@ -31,21 +31,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: o0
-            delay: "0"
-            cflags: "-O0"
-            pipeline: "false"
-            strace: "false"
-          - variant: pipeline
-            delay: "0"
-            cflags: ""
-            pipeline: "true"
-            strace: "false"
-          - variant: strace
+          # The tree under androidApp, built as the Makefile's msys branch says.
+          - variant: msys-intree
             delay: "0"
             cflags: ""
             pipeline: "false"
-            strace: "true"
+            strace: "false"
+          # The release zip upstream publishes for Windows (a native build).
+          - variant: upstream-zip
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "false"
+          # The same release, built from its tag on the runner.
+          - variant: msvc-source
+            delay: "0"
+            cflags: ""
+            pipeline: "false"
+            strace: "false"
     env:
       VARIANT: ${{ matrix.variant }}
       STUB_DELAY: ${{ matrix.delay }}
@@ -228,12 +231,14 @@ jobs:
           Get-NetRoute -AddressFamily IPv4 -DestinationPrefix 0.0.0.0/0 | Format-Table
 
       - uses: msys2/setup-msys2@v2.34.0
+        if: matrix.variant == 'msys-intree'
         with:
           msystem: MSYS
           update: false
           install: gcc make
 
       - name: Build hev.exe under MSYS2
+        if: matrix.variant == 'msys-intree'
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -259,6 +264,55 @@ jobs:
             echo "bundle $d"; cp "$d" "$T/run/"
           done
           ls -la "$T/run"
+
+      - name: Upstream release zip, pinned by sha256
+        if: matrix.variant == 'upstream-zip'
+        shell: pwsh
+        env:
+          HEV_ZIP_VERSION: "2.20.0"
+          HEV_ZIP_SHA256: 34fb2bef8000c2c6f948694caeaaf90ee0c307a124e8e436485953804b06c99d
+        run: |
+          $dl = Join-Path $env:RUNNER_TEMP 'hev-zip'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          $zip = Join-Path $dl 'hev.zip'
+          Invoke-WebRequest -Uri "https://github.com/heiher/hev-socks5-tunnel/releases/download/$($env:HEV_ZIP_VERSION)/hev-socks5-tunnel-win-x64.zip" -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $env:HEV_ZIP_SHA256) { throw "hev zip sha256 $got, expected $($env:HEV_ZIP_SHA256)" }
+          Expand-Archive $zip -DestinationPath $dl
+          Get-ChildItem -Recurse $dl | Format-Table FullName, Length
+          Get-FileHash -Algorithm SHA256 (Join-Path $dl 'hev-socks5-tunnel\wintun.dll') | Format-List
+          Copy-Item (Join-Path $dl 'hev-socks5-tunnel\hev-socks5-tunnel.exe') (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
+
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: matrix.variant == 'msvc-source'
+        with:
+          arch: x64
+
+      - name: Build upstream's tag with clang for MSVC
+        if: matrix.variant == 'msvc-source'
+        shell: pwsh
+        env:
+          HEV_TAG: "2.20.0"
+          HEV_TAG_COMMIT: 75dbc1e9ace6c70d3d1b94df7c283efe1de7effc
+          MAKE_VERSION: "4.4.1"
+        run: |
+          choco install make --version=$env:MAKE_VERSION --no-progress -y
+          Add-Content $env:GITHUB_PATH 'C:\Program Files\Git\usr\bin'
+          $env:PATH += ';C:\Program Files\Git\usr\bin;C:\ProgramData\chocolatey\bin'
+          $src = Join-Path $env:RUNNER_TEMP 'hev-up'
+          git clone --depth 1 --branch $env:HEV_TAG --recurse-submodules --shallow-submodules https://github.com/heiher/hev-socks5-tunnel.git $src
+          Set-Location $src
+          $head = git rev-parse HEAD
+          if ($head -ne $env:HEV_TAG_COMMIT) { throw "tag $($env:HEV_TAG) is $head, expected $($env:HEV_TAG_COMMIT)" }
+          git submodule status
+          clang --version
+          make --version
+          make -j4
+          if ($LASTEXITCODE -ne 0) { throw "make failed: $LASTEXITCODE" }
+          Get-ChildItem bin | Format-Table Name, Length
+          Copy-Item bin\hev-socks5-tunnel.exe (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
+          '--- imports (dumpbin /dependents)'
+          dumpbin /dependents (Join-Path $env:RUNNER_TEMP 'run\hev.exe')
 
       # One step on purpose: a process started in a step does not survive it
       # (the stub and hev both died at the end of their own steps, run 3 and 4).
