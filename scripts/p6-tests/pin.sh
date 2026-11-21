@@ -13,6 +13,18 @@
 # Needs bash, python3 and PyYAML.
 set -euo pipefail
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+# The resolver: the pin with no argument or an empty one, an override as given,
+# anything that is not 40 lowercase hex refused.
+res="$root/scripts/ghostlane-core-resolve.sh"
+pin_commit="$(sed -n 's/^GHOSTLANE_CORE_COMMIT=//p' "$root/scripts/ghostlane-core-pin.sh")"
+other="$(printf 'c%.0s' $(seq 40))"
+fail=0
+[ "$(bash "$res" | sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')" = "$pin_commit" ] || { echo "FAIL resolver: no argument is not the pin"; fail=1; }
+[ "$(bash "$res" '' | sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')" = "$pin_commit" ] || { echo "FAIL resolver: an empty argument is not the pin"; fail=1; }
+[ "$(bash "$res" "$other" | sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')" = "$other" ] || { echo "FAIL resolver: an override is not used"; fail=1; }
+if bash "$res" abc123 >/dev/null 2>&1; then echo "FAIL resolver: a short hash was accepted"; fail=1; fi
+[ "$fail" -eq 0 ] || exit 1
 exec python3 -I - "$root" <<'PY'
 import fnmatch, os, re, shutil, sys, tempfile
 import yaml

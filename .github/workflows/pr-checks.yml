@@ -21,9 +21,14 @@ on:
         description: Build the iPhone tunnel extension unsigned and run its Swift tests
         type: boolean
         default: false
+      pin:
+        description: Build the Rust core CLI at this commit (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh, and check the reference configs with it
+        type: string
+        default: ''
   pull_request:
     branches:
       - main
+      - rust/all
   push:
 
 permissions:
@@ -111,7 +116,7 @@ jobs:
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
           changed=$(git diff --name-only "$base" HEAD || true)
-          if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$'; then
+          if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
             echo 'Apple compilation runs: this change touches the shared Kotlin.' >> "$GITHUB_STEP_SUMMARY"
           else
@@ -122,7 +127,7 @@ jobs:
           # workflow, the engine pin it must match, or the sing-box tree it
           # compiles (the patch, the script that applies it, the Xray servers its
           # Reality end-to-end dials) changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$'; then
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -134,7 +139,7 @@ jobs:
           # a resolver of the Mac's tun is one of them (with_dhcp), and only a
           # Mac can tell it is gone. Not on a change to this file alone: a Mac's
           # minutes are billed tenfold.
-          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^scripts/singbox-tags\.sh$'; then
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^scripts/singbox-tags\.sh$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -159,7 +164,7 @@ jobs:
           # service calls. A step of the Gradle job runs it on the runner, on a
           # change to it, to its test, to the number the service reads from
           # it, or to this file.
-          if grep -qE '^androidApp/src/main/jni/|^scripts/test-android-hev-restart\.sh$|^scripts/android-hev-restart/|^sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun\.kt$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^androidApp/src/main/jni/|^scripts/test-android-hev-restart\.sh$|^scripts/android-hev-restart/|^sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun\.kt$|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
           else
             echo 'android_tun2socks=false' >> "$GITHUB_OUTPUT"
@@ -167,7 +172,7 @@ jobs:
           # What the sing-box tag lists save is sized by three more builds of
           # it, minutes of the Gradle job, so only when the lists, the tree
           # they compile or this file changed.
-          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
           else
             echo 'singbox_size=false' >> "$GITHUB_OUTPUT"
@@ -176,7 +181,7 @@ jobs:
           # the script that asks it, or this file (which pins the core) changed.
           # The references change with every change to what the app writes
           # for the core, which the Gradle job's dump test enforces.
-          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/(bypass-)?ios-core-|^scripts/check-rust-core-configs\.sh$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/(bypass-)?ios-core-|^scripts/check-rust-core-configs\.sh$|^scripts/ghostlane-core-resolve\.sh$|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'rust_core=true' >> "$GITHUB_OUTPUT"
           else
             echo 'rust_core=false' >> "$GITHUB_OUTPUT"
@@ -694,37 +699,30 @@ jobs:
   # CLI is built once per pin and cached (25 MB).
   rust-core-configs:
     needs: scope
-    if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true'
+    # Skipped scope (a dispatch) does not skip this job: !cancelled() asks it
+    # again, and a dispatch runs it only with a pin to try.
+    if: >-
+      !cancelled() &&
+      ((github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.pin != ''))
     name: "Rust core: the app's core.json"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # The one pin of the core on this branch. It moves to
-      # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
-      # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: 77f14eb8, the head
-      # of the fork's gl/vision-padding-copy on its ghostlane after the
-      # third integration and its CI fixes, 1d60607f
-      # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
-      # Chrome 156 hello, rustls from ghostlane-project/shaped-rustls
-      # b0dc21a7; then dns-forward, whose `forward` rule core.json writes,
-      # the gitleaks exception for the olcRTC vectors and the fork's
-      # AGENTS.md scope; then lean-futures-r2, byte-budget-relay,
-      # h2-read-buffer-r2, byte-budget-windows-r3 and a Vision buffer fix,
-      # memory work that leaves the config parser as it was; then the fork's
-      # guards in a workflow of their own, a quinn-proto test fix, a gitleaks
-      # exception for str0m's example keys and a doc fix, none of them in
-      # the config parser; then tls-send-limit and vision-padding-copy, how
-      # a TLS session and a padded Vision frame are written, with the config
-      # parser untouched). A parser older than dns-forward refuses the
-      # references. Bump it with the copy of the core's field lists in
-      # XrayRustSurface.
-      XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: 77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77
+      # The core is the one commit scripts/ghostlane-core-pin.sh names, read by
+      # scripts/ghostlane-core-resolve.sh in the first step (a dispatch's `pin`
+      # input overrides it for that run). No second copy of it lives here.
+      PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Which commit of the core
+        run: |
+          set -euo pipefail
+          shellcheck scripts/ghostlane-core-resolve.sh scripts/pin-move.sh
+          bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
 
       # Restored and saved as two steps, so a CLI built once is kept even
       # when the check after it fails.
@@ -733,7 +731,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/rust-core-cli
-          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.XRAY_RUST_COMMIT }}-v1
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
 
       # The project's own CLI build (its README: cargo build --locked -p
       # xray-cli) with --release, from exactly the pinned commit, with the
@@ -748,9 +746,9 @@ jobs:
           set -euo pipefail
           src="$RUNNER_TEMP/xray-rust"
           git init -q "$src"
-          git -C "$src" fetch -q --depth 1 "https://github.com/${XRAY_RUST_REPO}.git" "$XRAY_RUST_COMMIT"
+          git -C "$src" fetch -q --depth 1 "https://github.com/${GHOSTLANE_CORE_REPO}.git" "$GHOSTLANE_CORE_COMMIT"
           git -C "$src" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
-          test "$(git -C "$src" rev-parse HEAD)" = "$XRAY_RUST_COMMIT"
+          test "$(git -C "$src" rev-parse HEAD)" = "$GHOSTLANE_CORE_COMMIT"
           toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$src/rust-toolchain.toml")"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           (cd "$src" && cargo "+$toolchain" build --locked --release -p xray-cli)
