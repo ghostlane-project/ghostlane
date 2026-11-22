@@ -155,7 +155,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           changed="$RUNNER_TEMP/changed.txt"
           ok=0
           case "$EVENT" in

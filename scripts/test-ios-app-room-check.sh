@@ -290,7 +290,7 @@ scan() {
     hits="$(nm "$f" 2> /dev/null | grep -E "$GO_SYMBOLS" | head -n 5 || true)"
     if [ -n "$hits" ]; then
       echo "FAIL Go symbols in ${f#"$app"/}:"
-      echo "$hits" | sed 's/^/       /'
+      sed 's/^/       /' <<< "$hits"
       failed=1
     else
       echo "ok   no Go symbols in ${f#"$app"/}, $(wc -c < "$f" | tr -d ' ') bytes"
