@@ -277,7 +277,7 @@ run() {
 
 # scan <app-bundle>
 scan() {
-  local app bin f n=0 failed=0 hits exports
+  local app bin f n=0 failed=0 hits hit exports
   local files=()
   [ -d "$1" ] || die "no app at $1: the build did not make one"
   app="$(cd "$1" && pwd)"
@@ -290,7 +290,7 @@ scan() {
     hits="$(nm "$f" 2> /dev/null | grep -E "$GO_SYMBOLS" | head -n 5 || true)"
     if [ -n "$hits" ]; then
       echo "FAIL Go symbols in ${f#"$app"/}:"
-      sed 's/^/       /' <<< "$hits"
+      while IFS= read -r hit; do echo "       $hit"; done <<< "$hits"
       failed=1
     else
       echo "ok   no Go symbols in ${f#"$app"/}, $(wc -c < "$f" | tr -d ' ') bytes"
