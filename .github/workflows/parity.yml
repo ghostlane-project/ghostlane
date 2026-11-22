@@ -24,8 +24,7 @@ on:
       - scripts/parity-ledger.py
       - .github/workflows/parity.yml
       - README.MD
-      - docs/cli.md
-      - docs/lan-sharing.md
+      - docs/*.md
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/**
       - cli/cmd/ghostlane/**
