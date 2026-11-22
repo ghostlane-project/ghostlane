@@ -138,7 +138,7 @@ class RustSplitE2ETest {
 
         // The app's restart for an edited list: another start inside the session.
         val applied = d.logCount("Split tunneling:")
-        d.startVpn(d.startIntent(login, "proxy_selected", proxy = listOf(d.testPackage)))
+        d.startVpn(d.startIntent(login, "proxy_selected", proxyApps = listOf(d.testPackage)))
         d.waitFor("the edited list to be applied", 60_000) { d.logCount("Split tunneling:") > applied && d.connected() }
         // The interface is handed over once Android built the new one: until then the old
         // one may still carry the shell. Within half a minute it must not.
