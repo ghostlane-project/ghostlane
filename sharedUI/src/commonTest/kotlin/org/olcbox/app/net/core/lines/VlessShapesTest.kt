@@ -197,12 +197,66 @@ class VlessShapesTest {
         assertTrue(""""tlsSettings":{"serverName":"vless.example.net","fingerprint":"chrome"}""" in out, out)
 
         val plainWs = spec("vless://$noneId@cdn.example.net:80?security=none&type=ws&path=%2Fp#h")
-        val plainPinned = CoreLines.pinHost(plainWs, "192.0.2.8")
-        assertNull(CoreRefusal.of(plainPinned))
-        assertTrue(
-            """"wsSettings":{"path":"/p","host":"cdn.example.net"},"security":"none"""" in
-                Json.parseToJsonElement(CoreConfig.build(plainPinned, CoreFixtures.login)).jsonObject.toString(),
-        )
+        assertEquals(CoreRefusal.HOSTNAME, CoreRefusal.of(plainWs))
+        for (address in listOf("10.0.0.8", "fd00::8")) {
+            val plainPinned = CoreLines.pinHost(plainWs, address)
+            assertNull(CoreRefusal.of(plainPinned), address)
+            assertTrue(
+                """"wsSettings":{"path":"/p","host":"cdn.example.net"},"security":"none"""" in
+                    Json.parseToJsonElement(CoreConfig.build(plainPinned, CoreFixtures.login)).jsonObject.toString(),
+                address,
+            )
+        }
+        // The same name resolved to a public address: no TLS there is the core's refusal, said before any tunnel.
+        for (address in listOf("192.0.2.8", "203.0.113.5", "2001:db8::8")) {
+            assertEquals(VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER, CoreRefusal.of(CoreLines.pinHost(plainWs, address)), address)
+        }
+    }
+
+    /**
+     * Addresses the core sends VLESS in the clear to: private, loopback and
+     * link-local ones (Go's IsPrivate, IsLoopback and IsLinkLocalUnicast,
+     * an IPv4-mapped address read as IPv4), the fork's own table.
+     */
+    private val privateServers = listOf(
+        "10.42.0.1", "127.0.0.1", "127.255.255.254", "169.254.1.1", "172.16.0.1", "172.31.255.254", "192.168.1.1",
+        "[::1]", "[fc00::1]", "[fdff::1]", "[FD00::1]", "[fe80::1]", "[febf::1]", "[::ffff:10.0.0.1]", "[::ffff:127.0.0.1]",
+    )
+
+    /**
+     * Addresses it refuses VLESS in the clear to: public ones, and the shared,
+     * reserved, documentation, multicast and unspecified ranges with them.
+     */
+    private val publicServers = listOf(
+        "0.0.0.0", "100.64.0.1", "192.0.0.1", "192.0.2.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1",
+        "255.255.255.255", "1.1.1.1", "11.0.0.1", "169.253.255.255", "172.15.255.255", "172.32.0.1", "192.169.0.1",
+        "[::]", "[::2]", "[ff02::1]", "[::ffff:192.0.2.1]", "[::10.0.0.1]", "[2001:db8::1]", "[fe7f::1]", "[fec0::1]",
+        // The core reads no address with a leading zero, so this is a name to it, and not one it exempts.
+        "010.0.0.1",
+    )
+
+    @Test fun noTlsIsCarriedOnlyToAPrivateServer() {
+        val transports =
+            listOf("&type=tcp", "&type=ws&path=%2Fp", "&type=grpc&serviceName=g", "&type=httpupgrade&path=%2Fu", "&type=xhttp&path=%2Fx")
+        for (transport in transports) {
+            for (server in privateServers) {
+                val link = "vless://$noneId@$server:80?security=none&encryption=none$transport#p"
+                assertNull(CoreRefusal.of(spec(link)), link)
+                assertTrue(""""address":"$server"""" in outbound(link).toString(), link)
+            }
+            for (server in publicServers) {
+                val link = "vless://$noneId@$server:80?security=none&encryption=none$transport#p"
+                assertEquals(VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER, CoreRefusal.of(spec(link)), link)
+                val thrown = assertFailsWith<IllegalArgumentException>(link) { CoreConfig.build(spec(link), CoreFixtures.login) }
+                assertTrue(VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER in thrown.message.orEmpty(), link)
+            }
+        }
+        // The rule is for no TLS alone: over ordinary TLS a public server is carried.
+        for (server in listOf("192.0.2.8", "203.0.113.5", "1.1.1.1", "[2001:db8::1]")) {
+            for (transport in listOf("&type=tcp", "&type=grpc&serviceName=g", "&type=xhttp&path=%2Fx")) {
+                assertNull(CoreRefusal.of(spec("vless://$tlsId@$server:443?security=tls&sni=vless.example.com$transport#t")), server)
+            }
+        }
     }
 
     @Test fun theHelloIsTheLinksAsTheCoreNamesIt() {

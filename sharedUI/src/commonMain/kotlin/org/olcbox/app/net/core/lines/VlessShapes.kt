@@ -43,6 +43,15 @@ internal object VlessShapes : CoreLine {
     /** Why a link with Vision and no TLS is refused: Vision runs inside the line's TLS, and there is none. */
     const val VISION_NEEDS_TLS = "the link asks for Vision with no TLS (security=none), and Vision runs only inside TLS or Reality"
 
+    /**
+     * Why a link with no TLS to a public server is refused: the core sends
+     * VLESS in the clear only to a private, loopback or link-local address,
+     * and refuses the whole config at parse for any other.
+     */
+    const val PLAIN_NEEDS_PRIVATE_SERVER =
+        "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear " +
+            "only to a private, loopback or link-local server"
+
     override val shapes: List<String> =
         listOf(TLS, TLS_GRPC, TLS_XHTTP, NONE, NONE_WS, NONE_GRPC, NONE_HTTP_UPGRADE, NONE_XHTTP)
 
