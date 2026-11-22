@@ -168,6 +168,9 @@ class TransportProbeCoreTest {
         }
     }
 
+    /** What a fake is expected to have been asked, typed as it keeps it. */
+    private fun asks(vararg names: Pair<String, DirectDns?>): List<Pair<String, DirectDns?>> = names.toList()
+
     private fun inbound(config: String): JsonObject =
         Json.parseToJsonElement(config).jsonObject["inbounds"]!!.jsonArray.single().jsonObject
 
@@ -222,7 +225,7 @@ class TransportProbeCoreTest {
     @Test fun aServerNamedByAHostnameIsPinnedToTheAddressTheStarterGives() {
         val core = FakeRustCore(address = "203.0.113.7")
         assertTrue(probe(core, link = namedRealityLink))
-        assertEquals(listOf("vpn.example.com" to underneath), core.asked)
+        assertEquals(asks("vpn.example.com" to underneath), core.asked)
         val start = core.started.single()
         val pinned = CoreLines.pinHost(LinkParser.parse(namedRealityLink)!!, "203.0.113.7")
         val (port, login) = listener(start.config)
@@ -243,7 +246,7 @@ class TransportProbeCoreTest {
         assertTrue(probe(core, link = namedRealityLink, resolver = DirectDns.System))
         assertTrue(probe(core, link = namedRealityLink, resolver = null))
         assertEquals(
-            listOf("vpn.example.com" to wifi, "vpn.example.com" to DirectDns.System, "vpn.example.com" to null),
+            asks("vpn.example.com" to wifi, "vpn.example.com" to DirectDns.System, "vpn.example.com" to null),
             core.asked,
         )
         // An address is not a name: nothing is asked for it, whatever the resolver.
@@ -258,7 +261,7 @@ class TransportProbeCoreTest {
         val wifi = DirectDns.Servers(listOf("10.0.0.1"))
         val android = FakeRustCore(serves = false, address = "203.0.113.7")
         assertFalse(withTimeout(20_000) { TransportProbe.passes(location(namedRealityLink), wifi, android) })
-        assertEquals(listOf("vpn.example.com" to wifi), android.asked)
+        assertEquals(asks("vpn.example.com" to wifi), android.asked)
         assertEquals(1, android.stops.get())
         val desktop = FakeRustCore(serves = false, address = "203.0.113.7")
         val passed = withTimeout(20_000) {
@@ -271,7 +274,7 @@ class TransportProbeCoreTest {
             )
         }
         assertFalse(passed)
-        assertEquals(listOf("vpn.example.com" to wifi), desktop.asked)
+        assertEquals(asks("vpn.example.com" to wifi), desktop.asked)
         assertEquals("eth0", desktop.started.single().bindInterface)
         assertEquals(1, desktop.stops.get())
     }
