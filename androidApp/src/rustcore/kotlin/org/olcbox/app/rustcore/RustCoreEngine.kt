@@ -62,6 +62,24 @@ object RustCoreEngine : RustCoreBackend {
 
     override val defaultOn: Boolean get() = BuildConfig.RUST_CORE_DEFAULT
 
+    /**
+     * Test hook: the carrier every olcRTC room is started on, in place of the location's.
+     * `none` makes the room an engine's address dialled directly (`tcp://host:port/name`, the
+     * interop pipe), so a test reaches no carrier. Never set outside tests.
+     */
+    @Volatile
+    var testCarrier: String? = null
+
+    /**
+     * Test hook: the core.json a probe's handle is started from, made from the one the probe
+     * wrote (same inbound, another way out). Never set outside tests.
+     */
+    @Volatile
+    var testProbeConfig: ((String) -> String)? = null
+
+    /** The probe handles that run now, beside the session's (not counted yet). */
+    fun probeHandles(): Int = 0
+
     private val ffi: XrayFfi by lazy {
         Native.load("ghostlane_core", XrayFfi::class.java, mapOf(Library.OPTION_STRING_ENCODING to "UTF-8"))
     }
@@ -189,7 +207,7 @@ object RustCoreEngine : RustCoreBackend {
         // Set on every start, "off" included: the runtime is the process's and keeps a profile.
         rt.setDtlsProfile(params.dtlsProfile)
         rt.setSocksListenHost(params.socksHost)
-        rt.setProvider(params.provider)
+        rt.setProvider(testCarrier ?: params.provider)
         // Each session the engine opens (the first, every hop, every reconnect) is reported; the
         // room's name is not logged, only that it happened. The room keeper is told the room.
         rt.setSessionListener(object : SessionListener {
