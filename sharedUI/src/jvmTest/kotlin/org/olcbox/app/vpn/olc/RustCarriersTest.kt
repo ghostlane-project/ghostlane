@@ -1,6 +1,8 @@
 package org.olcbox.app.vpn.olc
 
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.model.LocationEntry
+import org.olcbox.app.net.LocationKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -79,5 +81,37 @@ class RustCarriersTest {
         assertNull(RustCarriers.refusal(LocationConfig.DEFAULT_BYPASS_PROVIDER, LocationConfig.DEFAULT_TRANSPORT))
         assertNull(OlcSession.refusal(LocationConfig(name = "n", id = "room", key = "k")))
         assertEquals(LocationConfig.DEFAULT_BYPASS_PROVIDER, LocationConfig.normalizeProvider("no such carrier"))
+    }
+
+    @Test
+    fun aCoreLineIsNeverRefusedForTheCarrierItWasStoredWith() {
+        val link = "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#x"
+        for (kind in LocationKind.values().filter { it != LocationKind.Olcrtc }) {
+            val config = LocationConfig(
+                name = "core",
+                id = "",
+                key = "",
+                bypassProvider = LocationConfig.PROVIDER_WB_STREAM,
+                kind = kind,
+                rawLink = link
+            )
+            assertNull(OlcSession.refusal(config), "$kind")
+            assertNull(RustCarriers.refusal(config), "$kind")
+        }
+    }
+
+    @Test
+    fun aStoredCoreLineWithTheOldDefaultCarrierIsNotRefused() {
+        val entry = LocationEntry(
+            storageId = "s1",
+            name = "core",
+            authProvider = "wbstream",
+            kind = LocationKind.Vless,
+            rawLink = "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#x"
+        )
+        assertNull(OlcSession.refusal(entry.location))
+        assertNull(OlcSession.refusal(entry.normalized().location))
+        val room = LocationEntry(storageId = "s2", name = "room", authProvider = "wbstream", kind = LocationKind.Olcrtc)
+        assertNotNull(OlcSession.refusal(room.location))
     }
 }
