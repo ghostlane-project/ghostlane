@@ -35,6 +35,10 @@ class LogScrubber(private val salt: Long) {
         out = ROOM_FIELD.replace(out) { match ->
             if (match.groupValues[2].startsWith("<")) match.value else match.groupValues[1] + "=<id>"
         }
+        // The supervisor's give-up error names the same label as `profile "<label>"`.
+        out = PROFILE_FIELD.replace(out) { match ->
+            if (match.groupValues[1].startsWith("<")) match.value else "profile \"<id>\""
+        }
         out = ROOM_JOINED.replace(out, "joined <id> as")
         // URLs need one pass of their own. Replacing only the hostname leaves
         // XHTTP paths and subscription identifiers visible after the host tag.
@@ -178,6 +182,7 @@ class LogScrubber(private val salt: Long) {
         )
 
         private val ROOM_FIELD = Regex("""\b(rooms?)=([^\s,;)\]]+)""")
+        private val PROFILE_FIELD = Regex("""\bprofile "([^"\n]*)"""")
         private val ROOM_JOINED = Regex("""(?<=interop-p2p: )joined \S+ as\b""")
         private val V4_MAPPED = Regex("""(?i)::ffff:(\d{1,3}(?:\.\d{1,3}){3})\b""")
 
