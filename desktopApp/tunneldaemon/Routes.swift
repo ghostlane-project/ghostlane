@@ -16,6 +16,12 @@
 // The utun takes every route through it when it goes: hev killed outright
 // leaves none behind. A stop takes them away before hev is stopped, and the
 // daemon forgets them when hev dies by itself.
+//
+// Each route is one message written to the kernel's routing socket, the one
+// route(8) writes for `route -n add -inet <prefix> -interface <utun>`, and the
+// kernel's answer is the write's. A request is answered with the daemon's lock
+// held while they are laid, and a run of route(8) for each, waited for, cost
+// some 0.12 s a route: 170 of them kept every other request waiting 21 to 23 s.
 import Foundation
 
 /// An IPv4 or IPv6 network: an address and the length of its prefix, every
@@ -77,6 +83,11 @@ struct Prefix: Equatable {
         return buffer.withUnsafeBufferPointer { String(cString: $0.baseAddress!) } + "/\(length)"
     }
 
+    /// The netmask of the prefix: its first [length] bits set.
+    var netmask: [UInt8] {
+        Prefix(family: family, bytes: [UInt8](repeating: 0xFF, count: bytes.count), length: length).bytes
+    }
+
     func bit(_ index: Int) -> Bool {
         bytes[index / 8] & (UInt8(0x80) >> UInt8(index % 8)) != 0
     }
@@ -102,13 +113,13 @@ struct Prefix: Equatable {
 }
 
 final class Routes {
-    /// The most a tun lays: an IPv6 address kept out costs some 125 routes,
-    /// each one a run of route(8), and a request is answered while they are laid.
+    /// The most a tun lays: an IPv6 address kept out costs some 125 routes.
     static let most = 1024
 
     /// The routes this daemon laid and has not taken away, lowest first.
     private(set) var laid: [Prefix] = []
     private var interface: String?
+    private var sequence: Int32 = 0
 
     /// What is left of [whole] once [holes] are taken out of it: the fewest
     /// prefixes that cover it, lowest first.
@@ -136,15 +147,19 @@ final class Routes {
     @discardableResult
     func lay(on interface: String, holes: [Prefix], ipv6: Bool) throws -> Int {
         takeAway()
+        guard let link = Self.linkAddress(of: interface) else {
+            throw DaemonError.message("there is no \(interface) to lay routes through")
+        }
+        guard let channel = Self.openChannel() else {
+            throw DaemonError.message("the routing socket did not open: \(Self.words(errno))")
+        }
+        defer { close(channel) }
         self.interface = interface
         for prefix in Self.plan(holes: holes) where ipv6 || !prefix.isV6 {
-            let said = Self.route(["-n", "add", prefix.isV6 ? "-inet6" : "-inet", prefix.text, "-interface", interface])
-            // route(8) can end with 0 having said that the kernel refused the
-            // route: what the kernel said is in its words, on the error stream.
-            guard said.status == 0, !said.output.contains("routing socket") else {
+            let refused = change(RTM_ADD, prefix, through: link, on: channel)
+            guard refused == 0 else {
                 takeAway()
-                let words = said.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw DaemonError.message("the route to \(prefix.text) through \(interface) was refused: \(words.suffix(200))")
+                throw DaemonError.message("the route to \(prefix.text) through \(interface) was refused: \(Self.words(refused))")
             }
             laid.append(prefix)
         }
@@ -159,26 +174,92 @@ final class Routes {
             self.laid = []
             self.interface = nil
         }
-        guard let name = interface, if_nametoindex(name) != 0 else { return }
+        guard let name = interface, !laid.isEmpty,
+              let link = Self.linkAddress(of: name),
+              let channel = Self.openChannel() else { return }
+        defer { close(channel) }
         for prefix in laid.reversed() {
-            _ = Self.route(["-n", "delete", prefix.isV6 ? "-inet6" : "-inet", prefix.text, "-interface", name])
+            _ = change(RTM_DELETE, prefix, through: link, on: channel)
         }
     }
 
-    private static func route(_ arguments: [String]) -> (status: Int32, output: String) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/sbin/route")
-        task.arguments = arguments
-        let output = Pipe()
-        task.standardOutput = output
-        task.standardError = output
-        do {
-            try task.run()
-        } catch {
-            return (-1, error.localizedDescription)
+    /// A routing socket to write to, or nil with errno set. Nothing is read
+    /// from it: the kernel's answer to each message is its write's.
+    private static func openChannel() -> Int32? {
+        let channel = socket(AF_ROUTE, SOCK_RAW, 0)
+        guard channel >= 0 else { return nil }
+        // As route(8) does, so that the kernel queues no message of anybody's for it.
+        _ = shutdown(channel, SHUT_RD)
+        return channel
+    }
+
+    /// One RTM_ADD or RTM_DELETE for [prefix] through the interface whose link
+    /// address is [link], as route(8) writes it with `-interface`: the
+    /// destination, that link address as the gateway, with no RTF_GATEWAY, and
+    /// the netmask, but for an IPv6 host, which it writes as a host route.
+    /// 0 when the kernel took it, else what it said (an errno).
+    private func change(_ type: Int32, _ prefix: Prefix, through link: [UInt8], on channel: Int32) -> Int32 {
+        let host = prefix.isV6 && prefix.length == prefix.width
+        var addresses = Self.padded(Self.socketAddress(prefix.family, prefix.bytes)) + Self.padded(link)
+        var present = RTA_DST | RTA_GATEWAY
+        if !host {
+            addresses += Self.padded(Self.socketAddress(prefix.family, prefix.netmask))
+            present |= RTA_NETMASK
         }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
-        return (task.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        sequence &+= 1
+        var header = rt_msghdr()
+        header.rtm_msglen = UInt16(MemoryLayout<rt_msghdr>.size + addresses.count)
+        header.rtm_version = UInt8(RTM_VERSION)
+        header.rtm_type = UInt8(type)
+        header.rtm_flags = RTF_UP | RTF_STATIC | (host ? RTF_HOST : 0)
+        header.rtm_addrs = present
+        header.rtm_seq = sequence
+        var message = withUnsafeBytes(of: &header) { [UInt8]($0) }
+        message += addresses
+        let written = message.withUnsafeBytes { write(channel, $0.baseAddress, $0.count) }
+        if written < 0 { return errno }
+        return written == message.count ? 0 : EIO
+    }
+
+    /// [bytes] as a sockaddr of [family]: its length, its family, a port of
+    /// 0, then the address (after the flow label for IPv6).
+    private static func socketAddress(_ family: Int32, _ bytes: [UInt8]) -> [UInt8] {
+        var raw: [UInt8]
+        if family == AF_INET6 {
+            raw = [UInt8](repeating: 0, count: MemoryLayout<sockaddr_in6>.size)
+            raw.replaceSubrange(8..<24, with: bytes)
+        } else {
+            raw = [UInt8](repeating: 0, count: MemoryLayout<sockaddr_in>.size)
+            raw.replaceSubrange(4..<8, with: bytes)
+        }
+        raw[0] = UInt8(raw.count)
+        raw[1] = UInt8(family)
+        return raw
+    }
+
+    /// A sockaddr in a routing message fills whole 32-bit words.
+    private static func padded(_ raw: [UInt8]) -> [UInt8] {
+        raw + [UInt8](repeating: 0, count: (4 - raw.count % 4) % 4)
+    }
+
+    /// [name]'s own link address, which route(8) names as the gateway for
+    /// `-interface <name>`; nil when there is no such interface.
+    private static func linkAddress(of name: String) -> [UInt8]? {
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&first) == 0 else { return nil }
+        defer { freeifaddrs(first) }
+        var next = first
+        while let entry = next {
+            next = entry.pointee.ifa_next
+            guard let address = entry.pointee.ifa_addr,
+                  address.pointee.sa_family == sa_family_t(AF_LINK),
+                  String(cString: entry.pointee.ifa_name) == name else { continue }
+            return [UInt8](UnsafeRawBufferPointer(start: UnsafeRawPointer(address), count: Int(address.pointee.sa_len)))
+        }
+        return nil
+    }
+
+    private static func words(_ code: Int32) -> String {
+        String(cString: strerror(code))
     }
 }
