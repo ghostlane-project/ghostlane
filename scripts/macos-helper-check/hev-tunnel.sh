@@ -228,7 +228,10 @@ expect "and IPv6 too" "$(answered -6 'http://[2001:db8::10]/')" '^stand-in saw \
 expect "the server kept out answers by itself" "$(answered -4 "http://$SERVER/")" '^a server, [1-5][0-9][0-9]$'
 expect "and was never asked of the stand-in" "$(grep -c "^connect $SERVER:" "$work/stand-in.log")" '^0$'
 expect "the stand-in was asked with the login" "$(grep -c "^connect 192\.0\.2\.10:80 as $LOGIN_USER\$" "$work/stand-in.log")" '^[1-9]'
-expect "and turned nobody away" "$(grep -c '^refused' "$work/stand-in.log")" '^0$'
+# With every route in the tun the machine's own traffic reaches the stand-in
+# too, and what of it is UDP comes as UDP ASSOCIATE, which the stand-in
+# refuses: only a refused login counts here.
+expect "and never had to refuse its login" "$(grep -cE '^refused: (no login offered|the wrong login)' "$work/stand-in.log")" '^0$'
 expect "a script asked for while it runs is refused" "$(ask "$(request tun utun236 "set:tun.pre-down-script=\"$work/up.sh\"")")" '^ok=False .*pre-down-script is refused'
 expect "and costs the tunnel nothing" "$(ask "$(request status)")" "^ok=True state=running hold=False protocol=5 tunnel=hev routes=$ROUTES "
 expect "the same hev" "$(said pid)" "^$PID\$"
@@ -288,6 +291,9 @@ expect "no utun, no route through it" "$(gone utun235) $(routes_through utun235)
 expect "the machine sends where it sent before" "$(via 192.0.2.10)" "^$IF\$"
 expect "no key" "$(key_gone)" '^0$'
 expect "and no block" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c .)" '^0$'
+
+say "what the stand-in was asked, by kind"
+sed -E 's/^(connect|listening|broken|refused: [a-z ]+).*/\1/' "$work/stand-in.log" | sort | uniq -c | sort -rn
 
 say "what the helper's error stream says"
 if [ -s "$work/helper.err" ]; then tail -5 "$work/helper.err" | cut -c1-200; else echo "(nothing)"; fi
