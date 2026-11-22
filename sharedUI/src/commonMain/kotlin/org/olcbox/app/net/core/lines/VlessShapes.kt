@@ -1,10 +1,15 @@
 package org.olcbox.app.net.core.lines
 
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.net.core.CoreLine
 import org.olcbox.app.net.core.CoreSupport
+import org.olcbox.app.net.core.putTls
+import org.olcbox.app.net.core.putTransport
+import org.olcbox.app.net.core.putVless
 
 /**
  * VLESS with no Reality key: over ordinary TLS on raw TCP (with Vision or
@@ -65,13 +70,45 @@ internal object VlessShapes : CoreLine {
         }
     }
 
-    /** Not written yet: every link of this kind is refused until its outbound is. */
-    override fun refusal(spec: OutboundSpec): String? = "the core's VLESS line of this shape is not written yet"
+    /**
+     * Refused: HTTP/2 ([HTTP2_REFUSAL]), a flow other than Vision, and
+     * Vision with no TLS ([VISION_NEEDS_TLS]). A link that waives the
+     * certificate check is carried: the waiver is the link's own, and the
+     * core honours it where the config sets it, with a warning that names
+     * the outbound.
+     */
+    override fun refusal(spec: OutboundSpec): String? {
+        spec as OutboundSpec.Vless
+        val flow = CoreSupport.flowRefusal(spec.flow)
+        return when {
+            spec.transport is TransportSpec.Http -> HTTP2_REFUSAL
+            flow != null -> flow
+            spec.plain && spec.flow != null -> VISION_NEEDS_TLS
+            else -> null
+        }
+    }
 
     override fun pinHost(spec: OutboundSpec, address: String): OutboundSpec =
         CoreSupport.pinVless(spec as OutboundSpec.Vless, address)
 
+    /**
+     * `security: none` for a link with no TLS, whatever else the link says
+     * of TLS. Otherwise ordinary TLS with the link's server name and hello,
+     * and `allowInsecure` exactly when the link asks to waive the
+     * certificate check (`allowInsecure` or `insecure`, as `1` or `true`).
+     * No ALPN: the app reads a link's only for WebSocket and HTTP upgrade,
+     * and the core offers what gRPC and XHTTP need (h2) itself.
+     */
     override fun JsonObjectBuilder.putOutbound(spec: OutboundSpec) {
-        error("the core's VLESS line of this shape is not written yet")
+        spec as OutboundSpec.Vless
+        putVless(spec)
+        putJsonObject("streamSettings") {
+            putTransport(spec.transport)
+            if (spec.plain) {
+                put("security", "none")
+            } else {
+                putTls(serverName = spec.sni, fingerprint = CoreSupport.helloName(spec.fingerprint), insecure = spec.insecure)
+            }
+        }
     }
 }
