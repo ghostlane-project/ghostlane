@@ -19,9 +19,10 @@ internal object Hysteria2 : CoreLine {
     override fun shape(spec: OutboundSpec): String? = if (spec is OutboundSpec.Hysteria2) SLUG else null
 
     /**
-     * Refused: a pin that is not a SHA-256 in hex, a link asked to skip
-     * verification with no pin to verify instead, a password the core will
-     * not send, and a Salamander password outside 4 to 4096 bytes.
+     * Refused: a pin that is not a SHA-256 in hex, a password the core will
+     * not send, and a Salamander password outside 4 to 4096 bytes. A link
+     * asked to skip verification (`insecure=1`) with no pin is carried: the
+     * core honours `allowInsecure` over QUIC.
      */
     override fun refusal(spec: OutboundSpec): String? {
         spec as OutboundSpec.Hysteria2
@@ -30,8 +31,6 @@ internal object Hysteria2 : CoreLine {
         return when {
             spec.certPinSha256 != null && CoreSupport.pin(spec.certPinSha256) == null ->
                 "the certificate pin is not a SHA-256 in hex"
-            spec.insecure && spec.certPinSha256 == null ->
-                "the link waives certificate checks with no pin, which the core does not do"
             auth.isEmpty() || auth.encodeToByteArray().size > 4096 || auth.any { it < ' ' || it == '\u007f' } ->
                 "a Hysteria2 password the core does not send"
             obfs != null && obfs.encodeToByteArray().size !in 4..4096 ->
@@ -51,7 +50,10 @@ internal object Hysteria2 : CoreLine {
      * QUIC transport with TLS. No fingerprint (the core refuses one here) and
      * no ALPN (h3 is its default). A published pin is verified: sing-box
      * cannot pin and skips verification for such a server, the core checks
-     * the certificate against the pin instead.
+     * the certificate against the pin instead, and `insecure=1` beside a pin
+     * is not written. With no pin, `insecure=1` is `allowInsecure` and
+     * nothing else: a link that does not say so is verified against the
+     * public roots.
      *
      * Under Salamander, ChromeParrot is off (`quicParams.disableChromeParrot`):
      * the parrot shapes the QUIC handshake like Chrome's and with it replaces
@@ -69,7 +71,11 @@ internal object Hysteria2 : CoreLine {
         }
         putJsonObject("streamSettings") {
             put("network", "hysteria")
-            putTls(serverName = spec.sni, pin = spec.certPinSha256?.let { requireNotNull(CoreSupport.pin(it)) })
+            putTls(
+                serverName = spec.sni,
+                pin = spec.certPinSha256?.let { requireNotNull(CoreSupport.pin(it)) },
+                insecure = spec.insecure && spec.certPinSha256 == null,
+            )
             putJsonObject("hysteriaSettings") {
                 put("version", 2)
                 put("auth", spec.password)

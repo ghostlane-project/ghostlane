@@ -1,0 +1,60 @@
+{
+  "about": "Hysteria2 whose link waives certificate checks (insecure=1) with no pin: the server's self-signed certificate is accepted",
+  "shape": "hysteria2",
+  "expect": "page",
+  "network": "udp",
+  "tls_name": "hy.example.com",
+  "link": "hysteria2://PASSWORD123@127.0.0.1:{port}?sni=hy.example.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#interop-hysteria2-insecure",
+  "mutant": {
+    "pointer": "/outbounds/0/streamSettings/hysteriaSettings/auth",
+    "value": "PASSWORD124"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "hysteria",
+      "settings": {
+        "version": 2,
+        "clients": [
+          {
+            "auth": "PASSWORD123",
+            "email": "interop@test",
+            "level": 0
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "hysteria",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "hy.example.com",
+          "alpn": [
+            "h3"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        },
+        "hysteriaSettings": {
+          "version": 2,
+          "udpIdleTimeout": 60
+        },
+        "finalmask": {
+          "udp": [
+            {
+              "type": "salamander",
+              "settings": {
+                "password": "OBFSPW"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

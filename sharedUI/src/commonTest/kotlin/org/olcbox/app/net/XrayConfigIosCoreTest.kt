@@ -541,9 +541,9 @@ class XrayConfigIosCoreTest {
         assertEquals("safari", IosCore.fingerprint("hellosafari_26_3", reality = true))
         assertEquals("randomized", IosCore.fingerprint("randomizednoalpn", reality = true))
         assertEquals("android", IosCore.fingerprint("android", reality = false))
-        // No X25519 key share: no REALITY hello in the core.
-        assertNull(IosCore.fingerprint("android", reality = true))
-        assertNull(IosCore.fingerprint("360", reality = true))
+        // No X25519 key share: no REALITY hello in the core, so Chrome's is used.
+        assertEquals("chrome", IosCore.fingerprint("android", reality = true))
+        assertEquals("chrome", IosCore.fingerprint("360", reality = true))
     }
 
     @Test fun pinsAreCompactLowerCaseHexOfThirtyTwoBytes() {
@@ -557,12 +557,10 @@ class XrayConfigIosCoreTest {
 
     /** Links the core would refuse, with a word of why each must go to Go. */
     private val refused = listOf(
-        "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#no-pin",
         "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&pinSHA256=abcd#short-pin",
         "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=abc&pinSHA256=${IosCoreFixtures.PIN}#short-obfs",
         "hysteria2://PASSWORD123@hy.example.com:443?sni=www.microsoft.com&pinSHA256=${IosCoreFixtures.PIN}#hostname",
         "vless://u@127.0.0.1:443?security=tls&sni=wt.example.com&type=ws&allowInsecure=1#insecure",
-        "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&fp=android&type=tcp#android",
         "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&type=tcp#no-sni",
         "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&flow=xtls-rprx-direct&type=tcp#old-flow",
         "vless://u@de.example.com:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&type=tcp#hostname",
