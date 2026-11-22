@@ -1,5 +1,15 @@
 package org.olcbox.app.vpn.desktop.engine.host
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
+
 /**
  * A word of the engine's contract: what a field holds, written as its literal.
  * Each set is closed: a word the app does not know makes the line unreadable,
@@ -104,13 +114,136 @@ internal sealed interface HostEvent {
     data class Unreadable(val line: String, val why: String) : HostEvent
 }
 
-/** Reads the engine's lines. Not written yet: every line is unreadable. */
+/** Reads the engine's lines. */
 internal object HostEvents {
-    val KINDS: List<String> = emptyList()
+    /** Every kind the parser reads, as `event` names it. */
+    val KINDS: List<String> = listOf(
+        "version", "check_config", "bound", "warning", "ready", "session_opened", "log",
+        "probe", "olc_check", "olc_ping", "error", "ended"
+    )
 
-    val WORDS: Map<String, List<String>> = emptyMap()
+    /** Every closed set of words, by the field that holds it, for the tests. */
+    val WORDS: Map<String, List<String>> = mapOf(
+        "source" to HostSource.entries.map { it.word },
+        "level" to HostLevel.entries.map { it.word },
+        "severity" to HostSeverity.entries.map { it.word },
+        "code" to HostFailure.entries.map { it.word },
+        "reason" to HostEndReason.entries.map { it.word },
+    )
 
-    fun parse(line: String): HostEvent = HostEvent.Unreadable(line, "the parser is not written yet")
+    private val json = Json { isLenient = false }
 
-    fun logLine(event: HostEvent): String? = null
+    /** [line] as an event. Never throws: what is not the contract's comes back [HostEvent.Unreadable]. */
+    fun parse(line: String): HostEvent {
+        val text = line.trim()
+        val obj = try {
+            json.parseToJsonElement(text) as? JsonObject
+        } catch (_: Exception) {
+            null
+        } ?: return HostEvent.Unreadable(line, "not a JSON object")
+        val kind = (obj["event"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?: return HostEvent.Unreadable(line, "no `event`")
+        return try {
+            Fields(obj).read(kind) ?: HostEvent.Unknown(kind, line)
+        } catch (e: NotTheContract) {
+            HostEvent.Unreadable(line, "`$kind`: ${e.message}")
+        }
+    }
+
+    private class NotTheContract(message: String) : Exception(message)
+
+    /** The fields of one line; each read requires the field to be there, `null` only where the contract allows it. */
+    private class Fields(private val obj: JsonObject) {
+        fun read(kind: String): HostEvent? = when (kind) {
+            "version" -> HostEvent.Version(
+                engine = string("engine"), protocol = int("protocol"), pin = string("pin"),
+                boringssl = boolean("boringssl"), rooms = boolean("rooms"), target = string("target"),
+            )
+            "check_config" -> HostEvent.CheckConfig(boolean("ok"), array("diagnostics").map { diagnostic(it) })
+            "bound" -> HostEvent.Bound(string("interface"))
+            "warning" -> HostEvent.Warning(word("source", HostSource.entries), stringOrNull("path"), string("message"))
+            "ready" -> HostEvent.Ready(array("inbounds").map { inbound(it) })
+            "session_opened" -> HostEvent.SessionOpened(string("room"), string("session_id"))
+            "log" -> HostEvent.Log(word("source", HostSource.entries), word("level", HostLevel.entries), string("line"))
+            "probe", "olc_check", "olc_ping" -> HostEvent.Answer(
+                question = HostQuestion.entries.first { it.word == kind },
+                ok = boolean("ok"), millis = longOrNull("millis"), error = stringOrNull("error"),
+            )
+            "error" -> HostEvent.Failed(word("code", HostFailure.entries), string("message"))
+            "ended" -> HostEvent.Ended(
+                word("reason", HostEndReason.entries), wordOrNull("code", HostFailure.entries), stringOrNull("message")
+            )
+            else -> null
+        }
+
+        private fun field(name: String): JsonElement = obj[name] ?: throw NotTheContract("no `$name`")
+
+        private fun primitive(name: String): JsonPrimitive? = when (val value = field(name)) {
+            is JsonNull -> null
+            is JsonPrimitive -> value
+            else -> throw NotTheContract("`$name` is not a value")
+        }
+
+        fun stringOrNull(name: String): String? = primitive(name)?.let {
+            if (!it.isString) throw NotTheContract("`$name` is not a string")
+            it.content
+        }
+
+        fun string(name: String): String = stringOrNull(name) ?: throw NotTheContract("`$name` is null")
+
+        fun boolean(name: String): Boolean {
+            val value = primitive(name) ?: throw NotTheContract("`$name` is null")
+            if (value.isString) throw NotTheContract("`$name` is not true or false")
+            return value.booleanOrNull ?: throw NotTheContract("`$name` is not true or false")
+        }
+
+        fun int(name: String): Int {
+            val value = primitive(name) ?: throw NotTheContract("`$name` is null")
+            if (value.isString) throw NotTheContract("`$name` is not a number")
+            return value.intOrNull ?: throw NotTheContract("`$name` is not a whole number")
+        }
+
+        fun longOrNull(name: String): Long? = primitive(name)?.let {
+            if (it.isString) throw NotTheContract("`$name` is not a number")
+            it.longOrNull ?: throw NotTheContract("`$name` is not a whole number")
+        }
+
+        fun <W : HostWord> wordOrNull(name: String, words: List<W>): W? = stringOrNull(name)?.let { word ->
+            words.firstOrNull { it.word == word } ?: throw NotTheContract("`$name` is `$word`, no word this app knows")
+        }
+
+        fun <W : HostWord> word(name: String, words: List<W>): W =
+            wordOrNull(name, words) ?: throw NotTheContract("`$name` is null")
+
+        fun array(name: String): List<JsonObject> {
+            val value = field(name) as? JsonArray ?: throw NotTheContract("`$name` is not a list")
+            return value.map { it as? JsonObject ?: throw NotTheContract("an item of `$name` is not an object") }
+        }
+
+        private fun diagnostic(item: JsonObject): HostEvent.Diagnostic = with(Fields(item)) {
+            HostEvent.Diagnostic(
+                word("severity", HostSeverity.entries), word("source", HostSource.entries),
+                stringOrNull("path"), string("message")
+            )
+        }
+
+        private fun inbound(item: JsonObject): HostEvent.Inbound = with(Fields(item)) {
+            HostEvent.Inbound(stringOrNull("tag"), string("address"))
+        }
+    }
+
+    /** [event] as a line of the app's log, or null for one that says nothing a person reads there. */
+    fun logLine(event: HostEvent): String? = when (event) {
+        is HostEvent.Log -> "${event.source.word}: ${event.line}"
+        is HostEvent.Warning -> "${event.source.word} warning${event.path?.let { " at $it" }.orEmpty()}: ${event.message}"
+        is HostEvent.Bound -> "the sockets leave by ${event.interfaceName}"
+        is HostEvent.Ready -> "ready: " + event.inbounds.joinToString(", ") { "${it.tag ?: "(no tag)"} on ${it.address}" }
+        is HostEvent.SessionOpened -> "a room session opened"
+        is HostEvent.Ended -> "ended (${event.reason.word})" +
+            (event.code?.let { ": ${it.word}" }.orEmpty()) + (event.message?.let { ": $it" }.orEmpty())
+        is HostEvent.Failed -> "failed: ${event.code.word}: ${event.message}"
+        is HostEvent.Unknown -> "an event this app does not read: ${event.kind}"
+        is HostEvent.Unreadable -> "a line that is not the engine's contract (${event.why})"
+        is HostEvent.Version, is HostEvent.CheckConfig, is HostEvent.Answer -> null
+    }
 }
