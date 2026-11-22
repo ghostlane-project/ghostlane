@@ -1,0 +1,2 @@
+{"verb":"version"}
+{"ok":true,"version":{"version":"dev","engine":"unknown","singbox":"unknown","xray":"unknown","crypt1":false}}

@@ -1,0 +1,2 @@
+{"verb":"add","source":"https://sub.example/sub/a/b?c=olcbox\u0026x=1"}
+{"ok":true,"message":"added","subscriptions":[{"url":"https://sub.example/sub/a/…?c=olcbox\u0026x=…","interval_hours":24}]}

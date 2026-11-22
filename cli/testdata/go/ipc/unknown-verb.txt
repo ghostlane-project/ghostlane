@@ -1,0 +1,2 @@
+{"verb":"nope"}
+{"ok":false,"error":"bad_verb","message":"unknown verb nope"}

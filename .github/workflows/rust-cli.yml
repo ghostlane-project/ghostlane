@@ -1,0 +1,153 @@
+name: Rust CLI
+
+# The Linux CLI in Rust (cli/Cargo.toml), which stands beside the Go program
+# that still ships (cli/go.mod). Two jobs:
+#
+#   - the program by itself: format, build, tests and clippy with warnings
+#     denied, on the toolchain cli/rust-toolchain.toml names and with the
+#     committed cli/Cargo.lock (--locked everywhere);
+#   - the program against the Go program built from the same commit
+#     (cli/tests/go_interop.rs): the same command lines, the same state files,
+#     and each one's client asking the other one's daemon. The Go daemon there
+#     is given no list to fetch and is never asked to connect.
+#
+# cli/Cargo.lock is committed. When it is missing or behind the manifests, the
+# first job writes the one cargo resolves, prints it in its log between two
+# marker lines, goes on with it so that the other steps still say what they
+# find, and fails at its end: the printed file is the one to commit.
+#
+# Nothing here signs, uploads, publishes or starts another workflow.
+#
+# On a push or a pull request into rust/all that touches cli/ or this file,
+# and by hand.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - cli/**
+      - .github/workflows/rust-cli.yml
+  push:
+    # branches, so that a tag (whose push no path filter reads) starts nothing
+    branches:
+      - "**"
+    paths:
+      - cli/**
+      - .github/workflows/rust-cli.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  # A push carries no PR number, and without the ref every branch would share
+  # one group and cancel the others' runs.
+  group: rust-cli-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Format, build, tests, clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+      - name: The toolchain cli/rust-toolchain.toml names
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' rust-toolchain.toml)"
+          [ -n "$toolchain" ] || { echo "::error::cli/rust-toolchain.toml names no channel"; exit 1; }
+          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --no-self-update
+          # run from cli/, cargo is that toolchain's
+          version="$(cargo --version)"
+          echo "$version"
+          case "$version" in
+            "cargo ${toolchain} "*) ;;
+            *) echo "::error::cargo is not ${toolchain} in cli/"; exit 1 ;;
+          esac
+      - name: The lock file
+        id: lock
+        run: |
+          set -euo pipefail
+          state=current
+          if [ ! -f Cargo.lock ]; then
+            state=missing
+          elif ! cargo metadata --locked --format-version 1 > /dev/null 2>&1; then
+            state=stale
+          fi
+          if [ "$state" != current ]; then
+            # written or completed here, so that the steps below still say
+            # what they find; the job fails at its end
+            cargo metadata --format-version 1 > /dev/null
+            echo "::error::cli/Cargo.lock is ${state}: commit the file printed in the log of this step"
+            echo '----- BEGIN Cargo.lock -----'
+            cat Cargo.lock
+            echo '----- END Cargo.lock -----'
+          fi
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+      - name: Format
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all --check
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: cargo build --locked --workspace
+      # every test of every crate, though an earlier one failed: one run says all
+      - name: Tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --workspace --no-fail-fast
+      - name: Clippy, warnings denied
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: The lock file is committed and current
+        if: ${{ !cancelled() && steps.lock.outputs.state != 'current' }}
+        env:
+          STATE: ${{ steps.lock.outputs.state }}
+        run: |
+          echo "::error::cli/Cargo.lock is ${STATE:-unread}: see the step 'The lock file'"
+          exit 1
+
+  interop:
+    name: Against the Go program
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: cli/go.sum
+      # cli/go.mod replaces sing-box with a tree scripts/patched-singbox.sh
+      # writes: the build target writes it first.
+      - name: The Go program of this commit
+        run: |
+          set -euo pipefail
+          make build
+          ./dist/ghostlane version
+      - name: The toolchain cli/rust-toolchain.toml names
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' rust-toolchain.toml)"
+          [ -n "$toolchain" ] || { echo "::error::cli/rust-toolchain.toml names no channel"; exit 1; }
+          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --no-self-update
+          cargo --version
+      # The other job is the one that fails for a lock file that is missing
+      # or behind; this one compares the programs all the same.
+      - name: The lock file
+        run: |
+          set -euo pipefail
+          if [ ! -f Cargo.lock ] || ! cargo metadata --locked --format-version 1 > /dev/null 2>&1; then
+            cargo metadata --format-version 1 > /dev/null
+          fi
+      - name: Both programs, side by side
+        env:
+          GHOSTLANE_GO_BIN: ${{ github.workspace }}/cli/dist/ghostlane
+          GHOSTLANE_GO_REQUIRED: "1"
+        run: cargo test --locked --test go_interop

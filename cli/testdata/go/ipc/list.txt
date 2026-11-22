@@ -1,0 +1,2 @@
+{"verb":"list"}
+{"ok":true,"message":"Partner: device refused","entries":[{"index":1,"id":"a1","label":"DE · VP8","country":"DE","kind":"olcrtc","carrier":"telemost","transport":"vp8channel"},{"index":2,"id":"b2","label":"x","kind":"vless","problem":"VLESS over ws is not supported \u0026 is listed only"}]}
