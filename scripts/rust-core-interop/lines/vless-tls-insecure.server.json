@@ -1,0 +1,39 @@
+{
+  "about": "VLESS over TLS and raw TCP whose link waives the certificate check (allowInsecure=1): the run's self-signed certificate, no pin",
+  "shape": "vless-tls",
+  "expect": "page",
+  "tls_name": "vless.interop.test",
+  "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:{port}?security=tls&encryption=none&sni=vless.interop.test&fp=chrome&allowInsecure=1&type=tcp#interop-vless-tls-insecure",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444443"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
