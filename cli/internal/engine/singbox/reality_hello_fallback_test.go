@@ -219,7 +219,7 @@ func fetchWithin(t *testing.T, p FrontParams, timeout time.Duration, keepUp bool
 	return body, took, err
 }
 
-// serversByHybridRule splits XRAY_SERVERS at Xray-core v26.9.8, the first
+// serversByHybridRule splits XRAY_SERVERS at Xray-core v26.9.9, the first
 // release whose REALITY hands a hello without an X25519MLKEM768 share to the
 // camouflage target. The fallback opens the line on the servers before it and
 // cannot on the ones from it on.
@@ -243,7 +243,7 @@ func serversByHybridRule(t *testing.T) (accepting, requiring []xrayBin) {
 			v[i] = n
 		}
 		bin := xrayBin{"xray-" + version, path}
-		if v[0] > 26 || v[0] == 26 && (v[1] > 9 || v[1] == 9 && v[2] >= 8) {
+		if v[0] > 26 || v[0] == 26 && (v[1] > 9 || v[1] == 9 && v[2] >= 9) {
 			requiring = append(requiring, bin)
 		} else {
 			accepting = append(accepting, bin)
@@ -251,7 +251,7 @@ func serversByHybridRule(t *testing.T) (accepting, requiring []xrayBin) {
 	}
 	// A skip must not read as a pass: with servers named, both kinds are.
 	if len(accepting) == 0 || len(requiring) == 0 {
-		t.Fatalf("XRAY_SERVERS %q: needs a server older than 26.9.8 and one from it on", list)
+		t.Fatalf("XRAY_SERVERS %q: needs a server older than 26.9.9 and one from it on", list)
 	}
 	return accepting, requiring
 }

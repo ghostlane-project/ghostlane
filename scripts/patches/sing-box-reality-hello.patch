@@ -7,7 +7,7 @@ A Reality line opens on current Xray servers.
 1. The hello keeps its X25519MLKEM768 key share. sing-box strips it from every
    Reality hello (since its commit dbdcce20a8, 2025, no option, no reason
    given; upstream `testing` still does on 2026-11-11). XTLS/REALITY 8cdf7bf
-   (2026-09-08, in Xray-core from v26.9.8) forwards a hello without one ahead
+   (2026-09-08, in Xray-core from v26.9.9) forwards a hello without one ahead
    of X25519 to the camouflage target, so the line never opens. Xray-core's
    own client never strips it.
 2. A fingerprint whose hello has no such share in this uTLS (firefox, safari,
@@ -36,7 +36,7 @@ random and randomized open on all three.
    The outcome is kept per server (address, port, server name) for 10
    minutes, for at most 64 servers, process-wide. Where the short hello
    opened the line, later dials send it first. Where it went unanswered too
-   or met a real certificate (a server from Xray-core v26.9.8 on hands it to
+   or met a real certificate (a server from Xray-core v26.9.9 on hands it to
    its camouflage target), later dials send the long hello alone, unwatched,
    as before. A retry that ends in a reset, a close or a failed connect is
    not kept, and a failure is not kept over a short hello that worked.
@@ -105,7 +105,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	uConfig.SessionTicketsDisabled = true
  	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
 +	// Ghostlane: the hello keeps its X25519MLKEM768 key share. REALITY servers
-+	// since XTLS/REALITY 8cdf7bf (Xray-core v26.9.8) forward a hello without
++	// since XTLS/REALITY 8cdf7bf (Xray-core v26.9.9) forward a hello without
 +	// one ahead of X25519 to their target, so the line never opens; Xray's own
 +	// client never strips it. A fingerprint whose hello has no such share in
 +	// this uTLS (firefox, safari, ios, edge, 360, qq, android; `random` four
@@ -360,7 +360,7 @@ diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 +//     alert or a handshake that then fails included.
 +//  3. The retry's outcome is remembered for the server. It opened the line:
 +//     later dials start with the short hello. It went unanswered too, or met
-+//     a real certificate (a server from Xray-core v26.9.8 on hands a hello
++//     a real certificate (a server from Xray-core v26.9.9 on hands a hello
 +//     without the hybrid share to its camouflage target): the dial fails
 +//     with the stall as its error and later dials are left alone. A retry
 +//     that ends any other way (a reset, a close, a failed connect) fails the
