@@ -555,6 +555,45 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/test-ios-room-list.sh
 
+  mac-hev:
+    # hev for the helper's checks, made as the Core build makes it
+    # (core-build.yml, its Apple job): on its image and its Xcode, by the same
+    # script, under the same cache key, so that the program the checks run is
+    # the one a release carries. A pull request into rust/all finds the one
+    # that build kept there; a branch makes it once and keeps it for its next
+    # push. Not on the newest image: the clang of its Xcode refuses the tree
+    # as it stands (-Werror, -Wuninitialized-const-pointer).
+    needs: scope
+    if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
+    name: hev for the macOS tunnel helper
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      HEV_SOURCE: androidApp/src/main/jni/hev-socks5-tunnel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Which tree of hev
+        id: hev
+        run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
+      - name: Is hev for macOS kept
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-macos
+          key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
+          lookup-only: true
+      - name: hev-socks5-tunnel for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
+      - name: Keep hev for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/hev-macos
+          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
+
   mac-helper:
     # The Mac's tunnel helper, built and asked on a Mac: the one part of the
     # app that runs as root, and until this job the one part no check compiled.
@@ -569,7 +608,7 @@ jobs:
     #   sudo bash scripts/mac-checks/<name>.sh <helper-check> <hev> <user> <stand-in-line>
     # The tunnel under sing-box, which goes when the app leaves it, on the
     # arm64 Mac alone, as before.
-    needs: scope
+    needs: [scope, mac-hev]
     if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper (${{ matrix.runner }})
     strategy:
@@ -604,29 +643,16 @@ jobs:
           go-version: ${{ steps.go.outputs.version }}
           # Nothing here has a go.sum to key a cache on.
           cache: false
-      # hev as the Core build makes it (core-build.yml, its Apple job): the
-      # same script and the same cache key, the tree's id and the script's
-      # hash. A pull request into rust/all takes the program that build kept
-      # there; a branch builds it once and keeps it for its next push. Before
-      # the helper's own steps, so that a failure of theirs skips none of these.
+      # hev as the job before this one kept it, under the Core build's key.
       - name: Which tree of hev
         id: hev
         run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
-      - name: Restore hev for macOS
-        id: hev-cache
+      - name: hev for macOS, as the Core build makes it
         uses: actions/cache/restore@v6
         with:
           path: out/hev-macos
           key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
-      - name: hev-socks5-tunnel for macOS
-        if: steps.hev-cache.outputs.cache-hit != 'true'
-        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
-      - name: Keep hev for macOS
-        if: steps.hev-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: out/hev-macos
-          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
+          fail-on-cache-miss: true
       # Every file of desktopApp/tunneldaemon, as native-macos.gradle.kts
       # builds the daemon; the helper asked over a pipe takes the check's
       # main in place of the daemon's own.
