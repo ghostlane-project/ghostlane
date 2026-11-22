@@ -129,10 +129,10 @@ internal class RustEngineSession(
         return try {
             checkNotNull(backend) { "the Rust core is not packaged in this build" }
             backend.load()
-            RustProxyMode.refusal(tun = tun, isOlc = isOlc)?.let { error(it) }
+            RustProxyMode.refusal(tun = tun, isOlc = isOlc, listenHost = socksListenHost)?.let { error(it) }
             stopRustEngines()
             go.stopCores()
-            if (isOlc) startRustOlc(backend, location, upstream, requestedGeneration, port) else startRustLine(backend, location, upstream, port)
+            if (isOlc) startRustOlc(backend, location, upstream, requestedGeneration, port) else startRustLine(backend, location, upstream, port, tun)
             coroutineContext.ensureActive()
             true
         } catch (e: CancellationException) {
@@ -157,7 +157,7 @@ internal class RustEngineSession(
     }
 
     /** A VLESS / Hysteria2 line on the xray core (XrayConfig.buildIosCore, the config iOS runs). */
-    private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int) {
+    private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int, tun: Boolean) {
         // A core binds no network of its own; see startTransport.
         unbindProcessFromNetwork()
         val login = SocksLogin.of(socksUsername, socksPassword)
@@ -182,19 +182,26 @@ internal class RustEngineSession(
             val rules = routing as? Routing.RuleBased
             namesNetworkResolver = rules != null
             check(rules?.policy != Routing.Policy.BlockedOnly) { IosCore.BLOCKED_ONLY_REFUSAL }
-            XrayConfig.buildIosCore(
-                spec,
-                login ?: error("the Rust core needs the tun's SOCKS login"),
-                routing = routing,
-                geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) },
-                socksPort = port,
-                verboseLogs = verboseDebugLogs
-            )
+            val geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
+            if (tun) {
+                XrayConfig.buildIosCore(
+                    spec,
+                    login ?: error("the Rust core needs the tun's SOCKS login"),
+                    routing = routing,
+                    geodata = geodata,
+                    socksPort = port,
+                    verboseLogs = verboseDebugLogs
+                )
+            } else {
+                // Proxy mode: the phone's other apps use the port, with the user's login when one is set.
+                RustProxyMode.config(spec, port, login, socksListenHost, routing, geodata, verboseDebugLogs)
+            }
         }
         waitForSocksPortReleased(port, socksReleaseQuickTimeoutMs)
         backend.startCore(
             json,
-            protect = { fd -> host.protect(fd) },
+            // No tun in proxy mode: nothing of the core's is looped back into it, so no socket needs protecting.
+            protect = { fd -> !tun || host.protect(fd) },
             log = { level, line -> addLog("core: $line"); if (level <= 2) Log.w("ghostlane-core", LogScrubber.default.scrub(line)) }
         )
         activeCorePort = port
