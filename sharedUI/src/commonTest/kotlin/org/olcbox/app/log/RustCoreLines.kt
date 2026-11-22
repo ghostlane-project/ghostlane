@@ -21,6 +21,13 @@ object RustCoreLines {
     const val ROOM_VIDEO_LINK = "failover cycle=2 starting room=meet.example-call.ru/<hidden>"
     const val ROOM_SALUTE_CODE = "failover cycle=1 room=kx7-pq2-mn9 ended with error: no peer in room"
     const val ROOM_NUMERIC = "failover cycle=3 starting room=84120937"
+    /** The give-up error (supervisor.rs, `profile {room:?}`), as the app logs it after a failed start. */
+    const val GIVE_UP_CODE =
+        "Rust core start failed: supervisor: max failover cycles exceeded after 1 cycle(s): " +
+            "profile \"kx7-pq2-mn9\": no peer in room"
+    const val GIVE_UP_HOST =
+        "Rust core start failed: supervisor: max failover cycles exceeded after 1 cycle(s): " +
+            "profile \"meet.example-call.ru/<hidden>\": no peer in room"
     const val ROOM_JOINED = "interop-p2p: joined 5d0c2f77aa31 as peer-4"
 
     /** The client's own lines (olc-client socks.rs, dns): a destination and a resolver. */

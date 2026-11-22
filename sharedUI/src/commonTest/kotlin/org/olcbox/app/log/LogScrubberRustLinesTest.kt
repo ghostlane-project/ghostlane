@@ -34,6 +34,17 @@ class LogScrubberRustLinesTest {
         assertEquals("interop-p2p: joined <id> as peer-4", s.scrub(RustCoreLines.ROOM_JOINED))
     }
 
+    @Test fun theRoomInTheGiveUpErrorIsMaskedInBothLabelForms() {
+        val prefix = "Rust core start failed: supervisor: max failover cycles exceeded after 1 cycle(s): "
+        val code = s.scrub(RustCoreLines.GIVE_UP_CODE)
+        assertEquals(prefix + "profile \"<id>\": no peer in room", code)
+        val host = s.scrub(RustCoreLines.GIVE_UP_HOST)
+        assertEquals(prefix + "profile \"<id>\": no peer in room", host)
+        assertFalse("example-call" in host)
+        val already = prefix + "profile \"<malformed room link>\": bad"
+        assertEquals(already, s.scrub(already))
+    }
+
     @Test fun aDestinationAndAResolverAreTagged() {
         val host = s.scrub(RustCoreLines.TUNNEL_TO_HOST)
         assertFalse(host.contains("example-site"), host)
