@@ -1,0 +1,57 @@
+{
+  "about": "the reverse case of hysteria2-insecure: the same server and a link that waives nothing and pins nothing, so the self-signed certificate must be refused",
+  "shape": "hysteria2",
+  "expect": "refused",
+  "against": "hysteria2-insecure",
+  "network": "udp",
+  "tls_name": "hy.example.com",
+  "link": "hysteria2://PASSWORD123@127.0.0.1:{port}?sni=hy.example.com&obfs=salamander&obfs-password=OBFSPW#interop-hysteria2-no-waiver",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "hysteria",
+      "settings": {
+        "version": 2,
+        "clients": [
+          {
+            "auth": "PASSWORD123",
+            "email": "interop@test",
+            "level": 0
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "hysteria",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "hy.example.com",
+          "alpn": [
+            "h3"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        },
+        "hysteriaSettings": {
+          "version": 2,
+          "udpIdleTimeout": 60
+        },
+        "finalmask": {
+          "udp": [
+            {
+              "type": "salamander",
+              "settings": {
+                "password": "OBFSPW"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
