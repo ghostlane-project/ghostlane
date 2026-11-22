@@ -518,9 +518,10 @@ class RustCoreVpnE2ETest {
         }
     }
 
+    /** The app always writes a login into its start intent; a core line stays open on loopback as the Go core line did, so other apps that send none still connect. */
     @Test
-    fun proxyModeWithALoginDemandsItOnACoreLine() {
-        val nonce = "PROXYLOGIN-${System.nanoTime()}"
+    fun proxyModeOnACoreLineStaysOpenWhateverLoginTheAppSets() {
+        val nonce = "PROXYOPEN-${System.nanoTime()}"
         val user = "u${System.nanoTime() % 100000}"
         val pass = "p${System.nanoTime() % 100000}x"
         PlainVlessServer(nonce).use { server ->
@@ -529,13 +530,27 @@ class RustCoreVpnE2ETest {
             try {
                 context.startForegroundService(proxyIntent(port, user, pass))
                 waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
-                val open = runCatching { socksGet(port, null, null) }
-                assertTrue("a client with no login is refused: ${open.getOrNull()}", open.isFailure)
-                val wrong = runCatching { socksGet(port, user, "not-the-password") }
-                assertTrue("a wrong password is refused: ${wrong.getOrNull()}", wrong.isFailure)
-                val reply = socksGet(port, user, pass)
-                assertTrue("the right login is carried: '$reply'", reply.contains(nonce))
-                say("RESULT proxy mode with a login: none and a wrong one refused, the right one carried")
+                val reply = socksGet(port, null, null)
+                assertTrue("a client with no login is carried: '$reply'", reply.contains(nonce))
+                say("RESULT proxy mode with the app's login set: a client with none is carried, as on the Go core line")
+            } finally {
+                stopAndWait()
+            }
+        }
+    }
+
+    /** "localhost" is a listen host the settings sheet takes; it means this phone, as it does on the Go cores. */
+    @Test
+    fun proxyModeAcceptsLocalhostAsTheListenHost() {
+        val nonce = "PROXYLOCAL-${System.nanoTime()}"
+        PlainVlessServer(nonce).use { server ->
+            saveProfile(plainLine(server.port))
+            val port = freePort()
+            try {
+                context.startForegroundService(proxyIntent(port, "", "").putExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST, "localhost"))
+                waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+                val reply = socksGet(port, null, null)
+                assertTrue("the answer is the far end's: '$reply'", reply.contains(nonce))
             } finally {
                 stopAndWait()
             }
