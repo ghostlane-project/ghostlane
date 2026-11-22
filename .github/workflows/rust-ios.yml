@@ -164,8 +164,8 @@ jobs:
               git rev-parse -q --verify HEAD^2 > /dev/null && git diff --name-only HEAD^1 HEAD > "$changed" && ok=1
               ;;
             push)
-              if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] &&
-                git fetch -q --depth=1 origin "$BEFORE"; then
+              # A new branch's push has no before (all zeros).
+              if [[ "$BEFORE" =~ [1-9a-f] ]] && git fetch -q --depth=1 origin "$BEFORE"; then
                 git diff --name-only "$BEFORE" HEAD > "$changed" && ok=1
               fi
               ;;

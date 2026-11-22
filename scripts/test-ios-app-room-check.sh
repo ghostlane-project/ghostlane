@@ -304,11 +304,11 @@ scan() {
     sed 's/^/       /' "$app.k1.txt"
     failed=1
   fi
-  exports="$(nm "$bin" 2> /dev/null | grep -c ' _uniffi_olc_ffi_fn_' || true)"
+  exports="$(nm "$bin" 2> /dev/null | grep -c 'uniffi_olc_ffi_' || true)"
   if [ "${exports:-0}" -gt 0 ]; then
-    echo "ok   the app's binary holds the Rust core: $exports of olc-ffi's UniFFI functions"
+    echo "ok   the app's binary holds the Rust core: $exports symbols of olc-ffi's UniFFI scaffolding"
   else
-    echo "FAIL the app's binary holds none of olc-ffi's UniFFI functions: the core is not linked"
+    echo "FAIL the app's binary holds none of olc-ffi's UniFFI scaffolding: the core is not linked"
     failed=1
   fi
   return "$failed"

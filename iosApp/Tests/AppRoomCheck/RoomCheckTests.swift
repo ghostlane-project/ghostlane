@@ -144,10 +144,12 @@ final class RoomCheckTests: XCTestCase {
         _ = timed("check with the app's writer") {
             manager.check(request: request(hub.url("app-log")))
         }
+        manager.setLogWriter(writer: nil)
+        // A line of the first check's teardown may still be on its way.
+        Thread.sleep(forTimeInterval: 0.5)
         let seen = lines.all
         XCTAssertTrue(seen.contains { $0.contains("conference end: app room check: the log") }, "\(seen)")
         XCTAssertTrue(seen.allSatisfy { $0.hasSuffix("\n") }, "\(seen)")
-        manager.setLogWriter(writer: nil)
         _ = timed("check after the writer was taken away") {
             manager.check(request: request(hub.url("app-log-after")))
         }
