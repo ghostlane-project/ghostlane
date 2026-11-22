@@ -604,6 +604,29 @@ jobs:
           go-version: ${{ steps.go.outputs.version }}
           # Nothing here has a go.sum to key a cache on.
           cache: false
+      # hev as the Core build makes it (core-build.yml, its Apple job): the
+      # same script and the same cache key, the tree's id and the script's
+      # hash. A pull request into rust/all takes the program that build kept
+      # there; a branch builds it once and keeps it for its next push. Before
+      # the helper's own steps, so that a failure of theirs skips none of these.
+      - name: Which tree of hev
+        id: hev
+        run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
+      - name: Restore hev for macOS
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-macos
+          key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
+      - name: hev-socks5-tunnel for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
+      - name: Keep hev for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/hev-macos
+          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
       # Every file of desktopApp/tunneldaemon, as native-macos.gradle.kts
       # builds the daemon; the helper asked over a pipe takes the check's
       # main in place of the daemon's own.
@@ -630,28 +653,6 @@ jobs:
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-parts" "${shared[@]}" scripts/macos-helper-check/parts/main.swift
           "$RUNNER_TEMP/helper-parts" sharedUI/src/jvmTest/resources/macos-helper/tun-request.json
-      # hev as the Core build makes it (core-build.yml, its Apple job): the
-      # same script and the same cache key, the tree's id and the script's
-      # hash. A pull request into rust/all takes the program that build kept
-      # there; a branch builds it once and keeps it for its next push.
-      - name: Which tree of hev
-        id: hev
-        run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
-      - name: Restore hev for macOS
-        id: hev-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: out/hev-macos
-          key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
-      - name: hev-socks5-tunnel for macOS
-        if: steps.hev-cache.outputs.cache-hit != 'true'
-        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
-      - name: Keep hev for macOS
-        if: steps.hev-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: out/hev-macos
-          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
       # First: the sing-box check leaves a timer that takes the block and the
       # resolver's key away three minutes after it started.
       - name: Ask the helper for a tunnel under hev
