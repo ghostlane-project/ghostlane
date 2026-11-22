@@ -18,14 +18,14 @@ final class HostHub {
     private var stopped = false
     private let done = DispatchSemaphore(value: 0)
 
-    init(endReason: String) throws {
+    init(host: String, endReason: String) throws {
         // A local descriptor until the end: no closure may capture self
         // before every property is set.
         let listener = socket(AF_INET, SOCK_STREAM, 0)
         guard listener >= 0 else { throw HostFailure("hub socket: \(String(cString: strerror(errno)))") }
         var on: Int32 = 1
         setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        var address = HostConnection.loopback(0)
+        var address = HostConnection.address(host, 0)
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))

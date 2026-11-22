@@ -2,12 +2,12 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// A blocking TCP connection to a loopback port, for the SOCKS5 talk hev
-/// has with an engine (RFC 1928, with the RFC 1929 login).
+/// A blocking TCP connection to a local port, for the SOCKS5 talk hev has
+/// with an engine (RFC 1928, with the RFC 1929 login).
 final class HostConnection {
     private let fd: Int32
 
-    init(port: Int, timeout: Double) throws {
+    init(host: String = "127.0.0.1", port: Int, timeout: Double) throws {
         fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw HostFailure("socket: \(String(cString: strerror(errno)))") }
         var on: Int32 = 1
@@ -15,7 +15,7 @@ final class HostConnection {
         var limit = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
-        var address = HostConnection.loopback(port)
+        var address = HostConnection.address(host, port)
         let connected = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
@@ -25,7 +25,7 @@ final class HostConnection {
         // whole by now. Closing it here as well could close one another
         // thread has opened under the same number since.
         guard connected == 0 else {
-            throw HostFailure("connect to 127.0.0.1:\(port): \(String(cString: strerror(errno)))")
+            throw HostFailure("connect to \(host):\(port): \(String(cString: strerror(errno)))")
         }
     }
 
@@ -38,12 +38,12 @@ final class HostConnection {
         (try? HostConnection(port: port, timeout: 1)) != nil
     }
 
-    static func loopback(_ port: Int) -> sockaddr_in {
+    static func address(_ host: String, _ port: Int) -> sockaddr_in {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(UInt16(port).bigEndian)
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        address.sin_addr = in_addr(s_addr: inet_addr(host))
         return address
     }
 

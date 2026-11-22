@@ -41,6 +41,7 @@ enum EngineHost {
            engine-host olcrtc <config.json> <carrier> <direct-rules-file|-> <budget-bytes> joins|refused
            engine-host fetch  <core.json> <config.json> <budget-bytes> <down-bytes> <up-bytes> reach|refused <label>
            engine-host x25519
+           engine-host pinned-address
 
     """
 
@@ -55,6 +56,7 @@ enum EngineHost {
             case "olcrtc": try olcrtc(rest)
             case "fetch": throw HostFailure("fetch: the engine host does not check this yet")
             case "x25519": x25519()
+            case "pinned-address": print(try pinnedAddress())
             default:
                 FileHandle.standardError.write(Data(usage.utf8))
                 exit(2)
@@ -130,7 +132,10 @@ enum EngineHost {
         let label = "olcRTC \(carrier), \(directRules.isEmpty ? "no direct rules" : "\(directRules.split(separator: "\n").count) direct rules")"
 
         let reason = "engine-host: no olcRTC server stands in this room"
-        let hub = try HostHub(endReason: reason)
+        // On the address the pin's interface holds: a loopback address is
+        // not reachable from a socket bound to it (pinnedAddress).
+        let host = try pinnedAddress()
+        let hub = try HostHub(host: host, endReason: reason)
         hub.serve()
         defer { hub.stop() }
         let room = "engine-host"
@@ -139,7 +144,7 @@ enum EngineHost {
         let fields: [String: Any] = [
             "carrierName": carrier,
             "transportName": "datachannel",
-            "roomId": "tcp://127.0.0.1:\(hub.port)/\(room)",
+            "roomId": "tcp://\(host):\(hub.port)/\(room)",
             "clientId": UUID().uuidString.lowercased(),
             "keyHex": String(repeating: "5a", count: 32),
             "socksPort": socksPort,
@@ -191,7 +196,7 @@ enum EngineHost {
             guard joined.contains(room) else {
                 throw HostFailure("\(label): never reached its room (\(joined.isEmpty ? "no JOIN" : "joined \(joined)")); the start said: \(thrown)")
             }
-            print("ok   \(label): every setting taken, the room dialed through the pin and joined, and the start ended there in \(milliseconds(seconds)) (no server in it): \(thrown); \(memory); \(describe(core))")
+            print("ok   \(label): every setting taken, the room on \(host) dialed through the pin and joined, and the start ended there in \(milliseconds(seconds)) (no server in it): \(thrown); \(memory); \(describe(core))")
         default:
             guard joined.isEmpty else { throw HostFailure("\(label): refused, but only after joining \(joined)") }
             guard thrown.contains(carrier) else {
@@ -261,6 +266,45 @@ enum EngineHost {
     static func x25519() {
         let key = Curve25519.KeyAgreement.PrivateKey()
         print("\(base64url(key.rawRepresentation)) \(base64url(key.publicKey.rawRepresentation))")
+    }
+
+    /// The IPv4 address of the interface the pin binds the engines' sockets
+    /// to (TunPlatform.pinToPhysicalInterface, read back from a socket it
+    /// pinned): where the local servers listen. A socket bound to that
+    /// interface cannot reach a loopback address (EADDRNOTAVAIL: no source
+    /// address of the interface is one for 127/8), and the engines pin every
+    /// socket they open.
+    static func pinnedAddress() throws -> String {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw HostFailure("socket: \(String(cString: strerror(errno)))") }
+        defer { close(fd) }
+        guard TunPlatform.pinToPhysicalInterface(fd) else { throw HostFailure("the pin found no physical interface") }
+        var index: UInt32 = 0
+        var length = socklen_t(MemoryLayout<UInt32>.size)
+        // IP_BOUND_IF, as TunPlatform sets it.
+        guard getsockopt(fd, IPPROTO_IP, 25, &index, &length) == 0, index != 0 else {
+            throw HostFailure("the pinned socket names no interface")
+        }
+        var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+        guard if_indextoname(index, &name) != nil else { throw HostFailure("no name for interface \(index)") }
+        let interface = String(cString: name)
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { throw HostFailure("getifaddrs failed") }
+        defer { freeifaddrs(list) }
+        var entry: UnsafeMutablePointer<ifaddrs>? = first
+        while let current = entry {
+            let item = current.pointee
+            if String(cString: item.ifa_name) == interface, let raw = item.ifa_addr, raw.pointee.sa_family == sa_family_t(AF_INET) {
+                var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                let address = raw.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+                var copy = address
+                if inet_ntop(AF_INET, &copy, &text, socklen_t(text.count)) != nil {
+                    return String(cString: text)
+                }
+            }
+            entry = item.ifa_next
+        }
+        throw HostFailure("\(interface), the pin's interface, has no IPv4 address")
     }
 
     // MARK: - the provider's start of a core line

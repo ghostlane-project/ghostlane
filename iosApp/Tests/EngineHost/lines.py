@@ -1,10 +1,12 @@
 """The local servers' configs and the lines that reach them, from the app's
 reference configs (sharedUI/src/jvmTest/resources/reference-configs).
 
-  lines.py line <name> <reference-dir> <out-dir> <socks-port> <server-port>
-                <target-port> <page-port> <cert.pem> <key.pem> <private-key>
-                <public-key> <wrong-public-key>
-      writes <out-dir>/<name>.server.json (an Xray server for the line),
+  lines.py line <name> <reference-dir> <out-dir> <server-host> <socks-port>
+                <server-port> <target-port> <page-port> <cert.pem> <key.pem>
+                <private-key> <public-key> <wrong-public-key>
+      writes <out-dir>/<name>.server.json (an Xray server for the line, on
+      <server-host>: the address of the interface the engine's sockets are
+      pinned to, which cannot reach loopback),
       <name>.client.json (ios-core-<name>.json pointed at it) and
       <name>.wrong.json (the same line with a key or a certificate pin the
       server does not answer to), and prints the transport the server
@@ -67,18 +69,18 @@ def outbound(config):
     raise SystemExit("the reference line has no outbound tagged out")
 
 
-def point(out, port):
-    """The client's server address and port, on loopback."""
+def point(out, host, port):
+    """The client's server address and port."""
     settings = out["settings"]
     if "vnext" in settings:
-        settings["vnext"][0]["address"] = "127.0.0.1"
+        settings["vnext"][0]["address"] = host
         settings["vnext"][0]["port"] = port
     else:
-        settings["address"] = "127.0.0.1"
+        settings["address"] = host
         settings["port"] = port
 
 
-def server_for(name, out, port, target_port, page_port, cert, key, private_key):
+def server_for(name, out, host, port, target_port, page_port, cert, key, private_key):
     stream = out["streamSettings"]
     network = stream["network"]
     certificates = [{"certificateFile": cert, "keyFile": key}]
@@ -86,7 +88,7 @@ def server_for(name, out, port, target_port, page_port, cert, key, private_key):
         hy = stream["hysteriaSettings"]
         inbound = {
             "tag": "in",
-            "listen": "127.0.0.1",
+            "listen": host,
             "port": port,
             "protocol": "hysteria",
             "settings": {"version": hy["version"], "auth": hy["auth"]},
@@ -127,7 +129,7 @@ def server_for(name, out, port, target_port, page_port, cert, key, private_key):
             server_stream["tlsSettings"] = {"certificates": certificates, "alpn": ["http/1.1"]}
         inbound = {
             "tag": "in",
-            "listen": "127.0.0.1",
+            "listen": host,
             "port": port,
             "protocol": "vless",
             "settings": {"clients": [client], "decryption": "none"},
@@ -158,17 +160,17 @@ def move_socks(config, port):
 
 
 def line(args):
-    if len(args) != 12:
+    if len(args) != 13:
         raise SystemExit(__doc__)
-    name, ref_dir, out_dir = args[0], args[1], args[2]
-    socks, port, target_port, page_port = (int(a) for a in args[3:7])
-    cert, key, private_key, public_key, wrong_public_key = args[7:12]
+    name, ref_dir, out_dir, host = args[0], args[1], args[2], args[3]
+    socks, port, target_port, page_port = (int(a) for a in args[4:8])
+    cert, key, private_key, public_key, wrong_public_key = args[8:13]
     if name not in LINES:
         raise SystemExit(f"no line {name}; the lines are {', '.join(LINES)}")
     client = load(os.path.join(ref_dir, f"ios-core-{name}.json"))
     move_socks(client, socks)
     out = outbound(client)
-    point(out, port)
+    point(out, host, port)
     stream = out["streamSettings"]
     the_pin = pin(cert)
     wrong = copy.deepcopy(client)
@@ -183,7 +185,7 @@ def line(args):
         stream["tlsSettings"]["pinnedPeerCertSha256"] = the_pin
         wrong_stream["tlsSettings"]["pinnedPeerCertSha256"] = hashlib.sha256(the_pin.encode()).hexdigest()
         what = "a certificate pin the server does not match"
-    server = server_for(name, out, port, target_port, page_port, cert, key, private_key)
+    server = server_for(name, out, host, port, target_port, page_port, cert, key, private_key)
     for suffix, body in (("server", server), ("client", client), ("wrong", wrong)):
         save(os.path.join(out_dir, f"{name}.{suffix}.json"), body)
     print("udp" if name == "hysteria2" else "tcp", what)

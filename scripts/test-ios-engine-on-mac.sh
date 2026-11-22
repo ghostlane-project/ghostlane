@@ -48,6 +48,12 @@
 #   the server sends to loopback, the body's sha256 checked both ways. The
 #   same line with a key or a pin the server does not answer to must not
 #   reach the page.
+# The engines pin every socket they open to the physical interface
+#   (TunPlatform), and a pinned socket cannot reach a loopback address on
+#   Darwin (EADDRNOTAVAIL): the hub and the Xray servers listen on that
+#   interface's own address, which the harness reads back from a socket the
+#   pin bound. What only the servers dial (the page, the Reality target)
+#   stays on loopback.
 # Both: the byte budget B is the phone's (setByteBudget(3,000,000), the memory
 #   class formula on a phone), the core's own payload bytes stay within it, and
 #   the process's footprint (phys_footprint and the kernel's peak of it, the
@@ -273,8 +279,8 @@ wait_file() {
   return 1
 }
 
-# xray_up <log> <pid> <transport> <port>: a TCP server once its port takes a
-# connection; a UDP one once it says it started, or has run for 3 s.
+# xray_up <log> <pid> <transport> <host> <port>: a TCP server once its port
+# takes a connection; a UDP one once it says it started, or has run for 3 s.
 xray_up() {
   local i
   for i in $(seq 1 100); do
@@ -284,7 +290,7 @@ xray_up() {
         sleep 0.3
         return 0
       fi
-    elif (: < "/dev/tcp/127.0.0.1/$4") 2> /dev/null; then
+    elif (: < "/dev/tcp/$4/$5") 2> /dev/null; then
       return 0
     fi
     sleep 0.1
@@ -304,7 +310,7 @@ stop_servers() {
 # fetch <host> <work> <limit-bytes> <xray-dir>
 fetch() {
   local host="$1" work="$2" limit="$3" xray="$4" failed=0 page target private public wrong_public
-  local version line dir transport what socks port pid ok
+  local version line dir transport what socks port pid ok address
   mkdir -p "$work/certs" "$work/lines"
   "$PY" -I -c 'import ssl, sys; print("python", sys.version.split()[0], ssl.OPENSSL_VERSION); sys.exit(0 if ssl.HAS_TLSv1_3 else 1)' ||
     die "$PY has no TLS 1.3 for the Reality target: set PYTHON to one that has"
@@ -331,6 +337,9 @@ CNF
   wait_file "$work/target.port" "$!" || die "the Reality target did not listen: $(cat "$work/target.log")"
   page="$(cat "$work/page.port")"
   target="$(cat "$work/target.port")"
+  # The servers listen where the engine's pinned sockets can reach them.
+  address="$("$host" pinned-address)"
+  echo "     the local servers listen on $address, the address of the pin's interface"
   read -r private public < <("$host" x25519)
   read -r _ wrong_public < <("$host" x25519)
   for version in $(xray_versions); do
@@ -341,7 +350,7 @@ CNF
       socks="$(free_port)"
       port="$(free_port)"
       transport=""
-      read -r transport what < <("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$dir" "$socks" "$port" "$target" "$page" \
+      read -r transport what < <("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$dir" "$address" "$socks" "$port" "$target" "$page" \
         "$work/certs/cert.pem" "$work/certs/key.pem" "$private" "$public" "$wrong_public")
       if [ -z "$transport" ]; then
         echo "FAIL $line against Xray $version: no configs for it"
@@ -352,8 +361,8 @@ CNF
       pid=$!
       PIDS="$PIDS $pid"
       ok=1
-      if ! xray_up "$dir/$line.xray.log" "$pid" "$transport" "$port"; then
-        echo "FAIL $line against Xray $version: the server did not listen on $transport $port"
+      if ! xray_up "$dir/$line.xray.log" "$pid" "$transport" "$address" "$port"; then
+        echo "FAIL $line against Xray $version: the server did not listen on $transport $address:$port"
         ok=0
       else
         "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
@@ -436,7 +445,7 @@ selftest() {
   private="mOc5Wn4V5Fj9kqy2W1wKkOq2uhxn8A3x6f1k7Q0qJ0o"
   public="jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"
   for line in $LINES; do
-    out="$("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$work" 20001 20002 20003 20004 \
+    out="$("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$work" 192.0.2.7 20001 20002 20003 20004 \
       "$work/cert.pem" "$work/key.pem" "$private" "$public" "wrong-public-key")"
     "$PY" -I - "$work" "$line" "$("$PY" -I "$HOST/lines.py" pin "$work/cert.pem")" << 'PY' || die "the $line line"
 import json, sys
@@ -448,10 +457,11 @@ out = next(o for o in client["outbounds"] if o["tag"] == "out")
 bad = next(o for o in wrong["outbounds"] if o["tag"] == "out")
 assert client["inbounds"][0]["port"] == 20001 == wrong["inbounds"][0]["port"]
 inbound = server["inbounds"][0]
-assert inbound["port"] == 20002 and inbound["listen"] == "127.0.0.1"
+assert inbound["port"] == 20002 and inbound["listen"] == "192.0.2.7"
 assert server["outbounds"][0]["settings"]["redirect"] == "127.0.0.1:20004"
 s = out["settings"]
-assert (s["vnext"][0] if "vnext" in s else s)["port"] == 20002
+target = s["vnext"][0] if "vnext" in s else s
+assert target["port"] == 20002 and target["address"] == "192.0.2.7"
 stream, bad_stream = out["streamSettings"], bad["streamSettings"]
 if stream["security"] == "reality":
     assert inbound["streamSettings"]["realitySettings"]["dest"] == "127.0.0.1:20003"
