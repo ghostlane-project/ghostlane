@@ -99,7 +99,11 @@ def server_for(name, out, host, port, target_port, page_port, cert, key, private
                 "security": "tls",
                 "hysteriaSettings": {"version": hy["version"], "auth": hy["auth"]},
                 "finalmask": {"udp": copy.deepcopy(stream["finalmask"]["udp"])},
-                "tlsSettings": {"certificates": certificates},
+                # h3, as a deployed hysteria2 inbound sets it: up to 26.4 the
+                # server offers TLS's default h2 and http/1.1 otherwise, and a
+                # Hysteria2 client that asks for h3 meets no protocol (26.7
+                # and later add h3 themselves).
+                "tlsSettings": {"certificates": certificates, "alpn": ["h3"]},
             },
         }
     else:

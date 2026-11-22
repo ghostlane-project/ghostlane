@@ -85,7 +85,7 @@ LINES="reality grpc-reality webtunnel-ws webtunnel-httpupgrade hysteria2 xhttp"
 # leaves this list once it passes every time.
 known_failure() {
   case "$1" in
-    grpc-reality) echo "gRPC over REALITY: the server receives the request only when the client gives up (30 s later), on every Xray version here; the diagnosis line beside it runs the same with the darwin slice's own byte budget" ;;
+    grpc-reality) echo "gRPC over REALITY under the phone's byte budget, in the memory class the darwin target picks (Standard; the extension names no runtime profile, and a phone's target picks Constrained): most fetches stall until the client gives up, and only then does the server receive the request, on every Xray version here; the diagnosis beside a stalled one runs the same fetch under the darwin slice's own byte budget" ;;
     *) echo "" ;;
   esac
 }
@@ -150,6 +150,7 @@ plan() {
   done
   mib="$(limit_mib)"
   echo "The limit: a footprint under $mib MiB ($((mib * 1048576)) bytes), as MemoryRelief.swift states it."
+  echo "B: the phone's 3000000 bytes (setByteBudget, as MemoryRelief.swift says a phone's formula gives), in the memory class the darwin target picks, Standard: the extension names no runtime profile, so the target decides, and a phone's picks Constrained."
 }
 
 # The versions in scripts/xray-servers.txt, one per line.
