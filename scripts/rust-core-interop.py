@@ -65,6 +65,11 @@ loopback), {cert_file} and {key_file}. A string that is a placeholder alone,
 like "{port}", becomes the number. Anything else in braces is refused, and so
 is a server's own secret in a link.
 
+A VMess link is base64 of a JSON object, where no placeholder can stand. A
+line's file writes it as vmess:// and the object itself, placeholders in
+its strings ("port": "{port}"); prepare fills them and then encodes the
+object, so the builder is handed the link as it is shared.
+
 A cell gets three tries over the same pair of processes when it must reach
 the page (a REALITY server may spend its first connection on the target),
 one when it must not. Every cell is named: one that cannot run (no dump, a
@@ -76,6 +81,7 @@ $GITHUB_STEP_SUMMARY, prints both ends' configs and logs of every failed
 cell, and exits 1 when anything failed. Needs python3, curl and openssl.
 """
 import argparse
+import base64
 import copy
 import hashlib
 import http.server
@@ -101,6 +107,7 @@ LINK_VALUES = ("port", "public_key", "other_public_key", "pin", "pin_colons", "o
 SERVER_VALUES = LINK_VALUES + ("private_key", "target", "cert_file", "key_file")
 KEYS = {"about", "shape", "link", "expect", "against", "mutant", "network", "tls_name", "trust", "inbounds"}
 LINE_OUTBOUND = "out"  # CoreConfig.LINE: the tag of the line's outbound in a dump
+VMESS = "vmess://"
 THROUGH = "http://203.0.113.10"
 DOWN_BYTES = 2 * 1024 * 1024
 UP_BYTES = 1024 * 1024
@@ -184,6 +191,13 @@ def check_line(name, line):
     if not isinstance(line["link"], str):
         raise Refused("%s: `link` is a string" % where)
     placeholders(where + " link", line["link"], LINK_VALUES)
+    if line["link"].startswith(VMESS + "{"):
+        try:
+            body = json.loads(line["link"][len(VMESS):])
+        except ValueError as e:
+            raise Refused("%s: a VMess link is written as vmess:// and its JSON object: %s" % (where, e))
+        if not isinstance(body, dict):
+            raise Refused("%s: a VMess link is written as vmess:// and its JSON object" % where)
     placeholders(where + " inbounds", line["inbounds"], SERVER_VALUES)
 
 
@@ -218,6 +232,13 @@ def fill(value, values):
     if isinstance(value, dict):
         return {k: fill(v, values) for k, v in value.items()}
     return value
+
+
+def shared(link):
+    """<link>, filled, as it is shared: a VMess line's JSON object base64-encoded, any other link as it is."""
+    if link.startswith(VMESS + "{"):
+        return VMESS + base64.b64encode(link[len(VMESS):].encode()).decode()
+    return link
 
 
 # ---------------------------------------------------------------- dumps
@@ -353,7 +374,7 @@ def prepare(work, xray, lines_dir):
                   "other_public_key": other_public, "pin": pin, "pin_colons": colons(pin),
                   "other_pin_colons": colons(other_pin), "private_key": private, "cert_file": cert, "key_file": key}
         socks = free_port(used, "tcp")
-        link = fill(line["link"], values)
+        link = shared(fill(line["link"], values))
         links.append({"name": name, "link": link, "socksPort": socks})
         plan.append({"name": name, "line": line, "values": values, "socks": socks, "link": link})
     with open(os.path.join(work, "links.json"), "w") as f:
@@ -879,6 +900,12 @@ def selftest():
     refused("a name that is no file name", lambda: check_line("L/1", good))
     check("a placeholder alone becomes the value, in text it is written in",
           fill({"port": "{port}", "dest": "127.0.0.1:{port}"}, {"port": 7}) == {"port": 7, "dest": "127.0.0.1:7"})
+    vmess = shared(fill('vmess://{"add":"127.0.0.1","port":"{port}","id":"id-1"}', {"port": 7}))
+    check("a VMess line's JSON object is filled, then shared as base64",
+          vmess.startswith(VMESS) and "{" not in vmess
+          and json.loads(base64.b64decode(vmess[len(VMESS):])) == {"add": "127.0.0.1", "port": "7", "id": "id-1"})
+    check("any other link is shared as it is written", shared("vless://id-1@127.0.0.1:7?k=v") == "vless://id-1@127.0.0.1:7?k=v")
+    refused("a VMess line whose JSON is not an object", lambda: check_line("l", dict(good, link='vmess://{"port":"{port}"')))
 
     dump = {"inbounds": [{"protocol": "socks", "listen": "127.0.0.1", "port": 5, "settings": {
         "auth": "password", "accounts": [{"user": "u", "pass": "p"}]}}],

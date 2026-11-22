@@ -1,0 +1,26 @@
+{
+  "about": "the VMess raw line with an id the server does not hold: a pass would prove the id is never checked",
+  "shape": "vmess-raw",
+  "expect": "refused",
+  "against": "vmess-raw",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-wrong-id\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444445\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"tcp\",\"type\":\"none\",\"tls\":\"\"}",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw"
+      }
+    }
+  ]
+}

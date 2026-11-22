@@ -1,0 +1,46 @@
+{
+  "about": "VMess AEAD (aes-128-gcm) over WebSocket with TLS, hello chrome; the core verifies the certificate, so the run's self-signed one is pinned",
+  "shape": "vmess-ws-tls",
+  "expect": "page",
+  "tls_name": "vm.example.com",
+  "trust": "pin",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-ws-tls\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"aes-128-gcm\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"vm.example.com\",\"path\":\"/vm\",\"tls\":\"tls\",\"sni\":\"vm.example.com\",\"fp\":\"chrome\",\"alpn\":\"h2,http/1.1\"}",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444445"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vm"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

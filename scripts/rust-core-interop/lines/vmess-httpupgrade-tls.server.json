@@ -1,0 +1,46 @@
+{
+  "about": "VMess AEAD (auto) over HTTP upgrade with TLS, hello firefox; the core verifies the certificate, so the run's self-signed one is pinned",
+  "shape": "vmess-httpupgrade-tls",
+  "expect": "page",
+  "tls_name": "vm.example.com",
+  "trust": "pin",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-httpupgrade-tls\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"httpupgrade\",\"type\":\"none\",\"host\":\"vm.example.com\",\"path\":\"/vu\",\"tls\":\"tls\",\"sni\":\"vm.example.com\",\"fp\":\"firefox\"}",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444445"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/vu"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
