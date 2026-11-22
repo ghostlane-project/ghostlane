@@ -115,11 +115,11 @@ internal object CoreInbound {
 
     /** The tun's login must be one: a loopback port is open to every app on the device, and without a login any of them rides the line. */
     fun requireLogin(login: SocksLogin) {
-        require(login.username.isNotBlank() && login.password.isNotBlank()) { LOGIN_REFUSAL }
+        loginRefusal(login, LOGIN_REFUSAL)?.let { throw IllegalArgumentException(it) }
     }
 
     /** Why the core would refuse to listen as [plan] says, or null when it takes it. */
-    fun refusal(plan: Plan): String? = TODO("S4: the plans are not written yet")
+    fun refusal(plan: Plan): String? = ownRefusal(plan.own) ?: plan.lan?.let { lanRefusal(it, plan.own.port) }
 
     /**
      * core.json for [spec] listening as [plan] says: what [CoreConfig.build]
@@ -138,8 +138,55 @@ internal object CoreInbound {
         routing: Routing = Routing.Global,
         geodata: XrayGeodata.Lists? = null,
         verboseLogs: Boolean = false,
-    ): String = TODO("S4: the plans are not written yet")
+    ): String {
+        refusal(plan)?.let { throw IllegalArgumentException("the Rust core cannot listen so: $it") }
+        val written = CoreConfig.build(spec, WRITTEN_OVER, routing, geodata, verboseLogs, socksPort = plan.own.port)
+        val config = Json.parseToJsonElement(written).jsonObject
+        return JsonObject(config + ("inbounds" to buildJsonArray { addInbounds(plan) })).toString()
+    }
 
+    /** The login [build] hands [CoreConfig.build] for the inbound it writes over: never in a config [build] returns. */
+    private val WRITTEN_OVER = SocksLogin("written-over-user", "written-over-password")
+
+    /** [listen] as the core is to be given it when it is a loopback address (127/8 or ::1, brackets taken off), else null. */
+    fun loopbackAddress(listen: String): String? {
+        val bare = listen.trim().removeSurrounding("[", "]")
+        return bare.takeIf { it == "::1" || ipv4(it)?.first() == 127 }
+    }
+
+    /** Whether [address] is an IPv4 address in 10/8, 172.16/12 or 192.168/16, the ranges the Go cores share on. */
+    fun isPrivateIpv4(address: String): Boolean {
+        val (first, second) = ipv4(address) ?: return false
+        return first == 10 || (first == 172 && second in 16..31) || (first == 192 && second == 168)
+    }
+
+    private fun ownRefusal(own: Own): String? = when (own) {
+        is Tunnel -> portRefusal(own.port) ?: loginRefusal(own.login, LOGIN_REFUSAL)
+        is Proxy -> portRefusal(own.port)
+            ?: PROXY_LISTEN_REFUSAL.takeIf { loopbackAddress(own.listen) == null }
+            ?: own.login?.let { loginRefusal(it, HALF_LOGIN_REFUSAL) }
+    }
+
+    private fun lanRefusal(lan: Lan, ownPort: Int): String? = when {
+        !isPrivateIpv4(lan.address) -> LAN_ADDRESS_REFUSAL
+        lan.port !in LAN_PORTS || lan.port == ownPort -> LAN_PORT_REFUSAL
+        else -> loginRefusal(lan.login, LAN_LOGIN_REFUSAL)
+    }
+
+    private fun portRefusal(port: Int): String? = PORT_REFUSAL.takeIf { port !in 1..65535 }
+
+    private fun loginRefusal(login: SocksLogin, blank: String): String? = when {
+        login.username.isBlank() || login.password.isBlank() -> blank
+        login.username.encodeToByteArray().size > MAX_CREDENTIAL_BYTES ||
+            login.password.encodeToByteArray().size > MAX_CREDENTIAL_BYTES -> LONG_LOGIN_REFUSAL
+        else -> null
+    }
+
+    /** Four decimal octets as the core's parser reads an IPv4 address: no leading zeros, none above 255. */
+    private val IPV4 = Regex("(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})")
+
+    private fun ipv4(text: String): List<Int>? =
+        IPV4.matchEntire(text)?.groupValues?.drop(1)?.map { it.toInt() }?.takeIf { octets -> octets.all { it <= 255 } }
 }
 
 /**
@@ -151,11 +198,19 @@ internal object CoreInbound {
  *
  * Throws IllegalArgumentException for a plan [CoreInbound.refusal] has a word for.
  */
-internal fun JsonArrayBuilder.addInbounds(plan: CoreInbound.Plan): Unit = TODO("S4: the plans are not written yet")
+internal fun JsonArrayBuilder.addInbounds(plan: CoreInbound.Plan) {
+    CoreInbound.refusal(plan)?.let { throw IllegalArgumentException(it) }
+    when (val own = plan.own) {
+        is CoreInbound.Tunnel -> addSocks(CoreInbound.TAG, CoreInbound.LOOPBACK, own.port, own.login, lan = false)
+        is CoreInbound.Proxy ->
+            addSocks(CoreInbound.TAG, requireNotNull(CoreInbound.loopbackAddress(own.listen)), own.port, own.login, lan = false)
+    }
+    plan.lan?.let { addSocks(CoreInbound.LAN_TAG, it.address, it.port, it.login, lan = true) }
+}
 
 /** The tun's inbound alone: SOCKS5 on 127.0.0.1:[port] with the login hev is given. */
 internal fun JsonArrayBuilder.addSocksInbound(port: Int, login: SocksLogin) {
-    addSocks(CoreInbound.TAG, CoreInbound.LOOPBACK, port, login, lan = false)
+    addInbounds(CoreInbound.Plan(CoreInbound.Tunnel(port, login)))
 }
 
 private fun JsonArrayBuilder.addSocks(tag: String, listen: String, port: Int, login: SocksLogin?, lan: Boolean) {

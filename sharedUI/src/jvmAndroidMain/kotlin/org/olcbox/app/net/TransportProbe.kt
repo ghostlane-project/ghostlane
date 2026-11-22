@@ -10,6 +10,8 @@ import org.olcbox.app.data.datasource.withProxyAuthentication
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.net.core.CoreConfig
+import org.olcbox.app.net.core.CoreLines
+import org.olcbox.app.net.core.CoreRefusal
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -160,7 +162,12 @@ internal object TransportProbe {
         val login = SocksLogin(token(), token())
         var core: Core? = null
         try {
-            val started = starter.start(spec, coreConfig(spec, port, login, serverResolver, autoDetectInterface, bindInterface))
+            val started = if (starter is RustStarter) {
+                val line = rustLine(spec, starter) ?: return@withContext false
+                starter.start(line, rustConfig(line, port, login), bindInterface)
+            } else {
+                starter.start(spec, coreConfig(spec, port, login, serverResolver, autoDetectInterface, bindInterface))
+            }
             core = started
             if (!waitForPort(port, started)) return@withContext false
             ask(SubscriptionFetchProxy(LOOPBACK, port, login.username, login.password))
@@ -171,6 +178,18 @@ internal object TransportProbe {
         } finally {
             withContext(NonCancellable) { runCatching { core?.stop() } }
         }
+    }
+
+    /** [spec] as the Rust core is to be started with it, its server pinned to an address; null when the core would refuse it. */
+    private suspend fun rustLine(spec: OutboundSpec, starter: RustStarter): OutboundSpec? {
+        val line = if (XrayConfig.isIpLiteral(spec.host)) {
+            spec
+        } else {
+            starter.serverAddress(spec.host)?.let { CoreLines.pinHost(spec, it) } ?: spec
+        }
+        val why = CoreRefusal.of(line) ?: return line
+        starter.refused(spec, why)
+        return null
     }
 
     private suspend fun throughTransportCheck(proxy: SubscriptionFetchProxy): Boolean {
