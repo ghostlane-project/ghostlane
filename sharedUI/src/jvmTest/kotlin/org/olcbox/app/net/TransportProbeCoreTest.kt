@@ -55,7 +55,9 @@ class TransportProbeCoreTest {
         val started = mutableListOf<Started>()
         val refusals = mutableListOf<String>()
         val stops = AtomicInteger()
-        val asked = mutableListOf<String>()
+
+        /** Each name the probe asked of the starter, with the resolver it was to be asked of. */
+        val asked = mutableListOf<Pair<String, DirectDns?>>()
 
         override suspend fun start(spec: OutboundSpec, config: String, bindInterface: String?): TransportProbe.Core {
             started += Started(spec, config, bindInterface)
@@ -80,8 +82,8 @@ class TransportProbeCoreTest {
             }
         }
 
-        override suspend fun serverAddress(host: String): String? {
-            asked += host
+        override suspend fun serverAddress(host: String, resolver: DirectDns?): String? {
+            asked += host to resolver
             return address
         }
 
@@ -144,16 +146,20 @@ class TransportProbeCoreTest {
         }
     }
 
+    /** The resolver a probe is handed unless a test says otherwise: a network's own, as Android's and the desktop's failovers hand theirs. */
+    private val underneath = DirectDns.Servers(listOf("192.168.1.1"))
+
     private fun probe(
         starter: TransportProbe.Starter,
         link: String = realityLink,
         bindInterface: String? = null,
+        resolver: DirectDns? = underneath,
         ask: suspend (SubscriptionFetchProxy) -> Boolean = loginTaken,
     ): Boolean = runBlocking {
         withTimeout(20_000) {
             TransportProbe.passesWith(
                 location(link),
-                serverResolver = DirectDns.Servers(listOf("192.168.1.1")),
+                serverResolver = resolver,
                 autoDetectInterface = bindInterface != null,
                 bindInterface = bindInterface,
                 starter = starter,
@@ -216,7 +222,7 @@ class TransportProbeCoreTest {
     @Test fun aServerNamedByAHostnameIsPinnedToTheAddressTheStarterGives() {
         val core = FakeRustCore(address = "203.0.113.7")
         assertTrue(probe(core, link = namedRealityLink))
-        assertEquals(listOf("vpn.example.com"), core.asked)
+        assertEquals(listOf("vpn.example.com" to underneath), core.asked)
         val start = core.started.single()
         val pinned = CoreLines.pinHost(LinkParser.parse(namedRealityLink)!!, "203.0.113.7")
         val (port, login) = listener(start.config)
@@ -224,6 +230,50 @@ class TransportProbeCoreTest {
         assertEquals("203.0.113.7", start.spec.host)
         assertFalse("vpn.example.com" in start.config)
         assertTrue("www.microsoft.com" in start.config)
+    }
+
+    // The name is asked of the resolver the caller handed the probe, the
+    // network's underneath, which the starter cannot find for itself: it is
+    // the engine's, and the resolvers are a session's or a failover's. The
+    // system's is behind the tun by then. A probe handed none asks with none.
+    @Test fun aServersNameIsAskedOfTheResolverTheProbeWasHanded() {
+        val wifi = DirectDns.Servers(listOf("10.0.0.1", "fe80::1%wlan0"))
+        val core = FakeRustCore(address = "203.0.113.7")
+        assertTrue(probe(core, link = namedRealityLink, resolver = wifi))
+        assertTrue(probe(core, link = namedRealityLink, resolver = DirectDns.System))
+        assertTrue(probe(core, link = namedRealityLink, resolver = null))
+        assertEquals(
+            listOf("vpn.example.com" to wifi, "vpn.example.com" to DirectDns.System, "vpn.example.com" to null),
+            core.asked,
+        )
+        // An address is not a name: nothing is asked for it, whatever the resolver.
+        assertTrue(probe(core, resolver = wifi))
+        assertEquals(3, core.asked.size)
+    }
+
+    // The probe's two public doors hand the resolver on as passesWith does:
+    // Android's failover calls the first, the desktop's the second. A core
+    // that never opens its port keeps the question to the internet away.
+    @Test fun bothPublicProbesHandTheResolverToTheStarter() = runBlocking {
+        val wifi = DirectDns.Servers(listOf("10.0.0.1"))
+        val android = FakeRustCore(serves = false, address = "203.0.113.7")
+        assertFalse(withTimeout(20_000) { TransportProbe.passes(location(namedRealityLink), wifi, android) })
+        assertEquals(listOf("vpn.example.com" to wifi), android.asked)
+        assertEquals(1, android.stops.get())
+        val desktop = FakeRustCore(serves = false, address = "203.0.113.7")
+        val passed = withTimeout(20_000) {
+            TransportProbe.passes(
+                location(namedRealityLink),
+                serverResolver = wifi,
+                autoDetectInterface = true,
+                bindInterface = "eth0",
+                starter = desktop,
+            )
+        }
+        assertFalse(passed)
+        assertEquals(listOf("vpn.example.com" to wifi), desktop.asked)
+        assertEquals("eth0", desktop.started.single().bindInterface)
+        assertEquals(1, desktop.stops.get())
     }
 
     // A line the core would refuse is never started: the starter is told why
@@ -293,7 +343,7 @@ class TransportProbeCoreTest {
         val user = goInbound["users"]!!.jsonArray.single().jsonObject
         val login = SocksLogin(user["username"]!!.jsonPrimitive.content, user["password"]!!.jsonPrimitive.content)
         assertEquals(
-            TransportProbe.coreConfig(LinkParser.parse(realityLink)!!, port, login, DirectDns.Servers(listOf("192.168.1.1"))),
+            TransportProbe.coreConfig(LinkParser.parse(realityLink)!!, port, login, underneath),
             config,
         )
     }
