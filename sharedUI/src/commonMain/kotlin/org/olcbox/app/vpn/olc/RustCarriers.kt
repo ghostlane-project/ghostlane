@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn.olc
 
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.LocationKind
 
 /**
  * Which olcRTC carriers and lanes the Rust core can carry, asked before any
@@ -38,6 +39,11 @@ object RustCarriers {
         return null
     }
 
-    /** The same question for a location. */
-    fun refusal(config: LocationConfig): String? = refusal(config.bypassProvider, config.transport)
+    /**
+     * The same question for a location. Only an olcRTC room has a carrier: a
+     * core line (VLESS, Hysteria 2, Trojan, Shadowsocks, VMess) is stored with
+     * the default carrier as a filler, and is never refused for it.
+     */
+    fun refusal(config: LocationConfig): String? =
+        if (config.kind != LocationKind.Olcrtc) null else refusal(config.bypassProvider, config.transport)
 }
