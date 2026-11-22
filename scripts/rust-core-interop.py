@@ -166,6 +166,8 @@ def check_line(name, line):
         if not (isinstance(mutant, dict) and set(mutant) == {"pointer", "value"} and isinstance(mutant["pointer"], str)
                 and mutant["pointer"].startswith("/")):
             raise Refused("%s: a line that reaches the page names its mutant, {\"pointer\": \"/...\", \"value\": ...}" % where)
+        if isinstance(mutant["value"], str) and mutant["value"] in line.get("link", ""):
+            raise Refused("%s: the mutant's value %r is in the line's own link: a mutant is another value" % (where, mutant["value"]))
         if "against" in line:
             raise Refused("%s: `against` is for a line that must not reach the page" % where)
     else:
@@ -404,9 +406,19 @@ class Page(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class PageServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # A refused cell's client is cut while the page answers: that is the
+        # cell's verdict, read from curl, not a fault of the page.
+        if not isinstance(sys.exc_info()[1], ConnectionError):
+            super().handle_error(request, client_address)
+
+
 def start_page():
     Page.down = pattern(DOWN_BYTES, b"down")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    server = PageServer(("127.0.0.1", 0), Page)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -447,6 +459,22 @@ def start_reality_target(work):
 
     threading.Thread(target=accept, daemon=True).start()
     return "127.0.0.1:%d" % listener.getsockname()[1]
+
+
+def warm(target, page_port):
+    """One TLS handshake with the target and one request of the page before
+    any cell, so that no cell is the first use of either."""
+    host, port = target.rsplit(":", 1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+    with socket.create_connection((host, int(port)), timeout=10) as raw:
+        with context.wrap_socket(raw, server_hostname="target.interop.test") as tls:
+            if tls.version() != "TLSv1.3":
+                raise Refused("the REALITY target answers %s, not TLS 1.3" % tls.version())
+    with socket.create_connection(("127.0.0.1", page_port), timeout=10) as raw:
+        raw.sendall(b"GET / HTTP/1.0\r\n\r\n")
+        if not raw.recv(64).startswith(b"HTTP/1."):
+            raise Refused("the page does not answer")
 
 
 def wait_tcp(port, process, seconds):
@@ -565,6 +593,15 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
                 time.sleep(1)
         if client_process.poll() is not None:
             cell.reached, cell.why = None, "the client exited during the cell (code %s)" % client_process.returncode
+        elif cell.expect == "page" and not cell.reached:
+            # Still a failure. Whether a new client process gets through says
+            # whether the first one's connection was stuck or the line is.
+            stop(client_process)
+            with open(os.path.join(cell.dir, "client-again.log"), "w") as log:
+                client_process = subprocess.Popen([client, "run", "-config", os.path.join(cell.dir, "client.json")],
+                                                  stdout=log, stderr=log)
+            again = through(socks, upload, TRY_SECONDS) if wait_tcp(socks[0], client_process, 15) else "it did not listen"
+            cell.why += "; then a new client process " + ("reached the page" if again is None else "failed too: " + again)
     finally:
         cell.seconds = time.monotonic() - start
         stop(client_process)
@@ -583,6 +620,7 @@ def run(work, dumps, client, servers, out=sys.stdout):
             manifest = json.load(f)
     page = start_page()
     target = start_reality_target(work)
+    warm(target, page.server_address[1])
     upload = os.path.join(work, "upload.bin")
     with open(upload, "wb") as f:
         f.write(pattern(UP_BYTES, b"up"))
@@ -692,7 +730,9 @@ def run(work, dumps, client, servers, out=sys.stdout):
         if not cell.dir:
             continue
         say("::group::%s %s: configs and logs" % (version, row))
-        for name in ("server.json", "client.json", "server.log", "client.log"):
+        for name in ("server.json", "client.json", "server.log", "client.log", "client-again.log"):
+            if name == "client-again.log" and not os.path.exists(os.path.join(cell.dir, name)):
+                continue
             say("--- %s%s" % (name, " (end)" if name.endswith(".log") else ""))
             say(tail(os.path.join(cell.dir, name), 40 if name.endswith(".log") else 400))
         say("::endgroup::")
@@ -829,6 +869,8 @@ def selftest():
     good = {"shape": "s", "link": "x://{port}", "expect": "page", "inbounds": [{"port": "{port}"}],
             "mutant": {"pointer": "/a", "value": 1}}
     refused("a line with outbounds of its own", lambda: check_line("l", dict(good, outbounds=[])))
+    refused("a mutant that is the line's own value", lambda: check_line(
+        "l", dict(good, link="x://id-1@h:{port}", mutant={"pointer": "/a", "value": "id-1"})))
     refused("a page line with no mutant", lambda: check_line("l", {k: v for k, v in good.items() if k != "mutant"}))
     refused("a refused line with no `against`", lambda: check_line("l", dict(good, expect="refused", mutant=None)))
     refused("a server's private key in a link", lambda: check_line("l", dict(good, link="x://{port}?k={private_key}")))
