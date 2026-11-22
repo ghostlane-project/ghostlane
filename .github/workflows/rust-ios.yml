@@ -70,7 +70,7 @@ concurrency:
 env:
   PIN: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
   # What the Mac job runs: starts, fetch or all.
-  STAGE: starts
+  STAGE: all
 
 jobs:
   harness:
