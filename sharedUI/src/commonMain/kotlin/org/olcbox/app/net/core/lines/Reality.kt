@@ -50,10 +50,12 @@ internal object Reality : CoreLine {
 
     /**
      * The sentence for the caller's log when [spec]'s hello was swapped for
-     * Chrome's ([hello]), or null when it was kept. Never a secret: it names
+     * Chrome's ([hello]), or null when it was kept or the line is not a Reality line (any
+     * caller may ask it about every line). Never a secret: it names
      * the hello and nothing of the link.
      */
     fun helloNote(spec: OutboundSpec): String? {
+        if (shape(spec) == null) return null
         spec as OutboundSpec.Vless
         val asked = CoreSupport.helloName(spec.fingerprint)
         return if (asked in NO_REALITY_HELLO) {
