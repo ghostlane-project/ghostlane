@@ -54,7 +54,7 @@ enum EngineHost {
             case "start": try start(rest)
             case "refuse": try refuse(rest)
             case "olcrtc": try olcrtc(rest)
-            case "fetch": throw HostFailure("fetch: the engine host does not check this yet")
+            case "fetch": try fetch(rest)
             case "x25519": x25519()
             case "pinned-address": print(try pinnedAddress())
             default:
