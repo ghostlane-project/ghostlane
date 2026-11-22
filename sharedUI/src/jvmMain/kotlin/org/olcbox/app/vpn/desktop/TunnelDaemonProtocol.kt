@@ -80,6 +80,12 @@ internal data class DaemonTun(
     val ipv6: String? = IPV6,
     /** hev answers the names asked of it with addresses of its own and asks the SOCKS port by name. */
     val mapDns: DaemonMapDns? = DaemonMapDns(),
+    /**
+     * Addresses and networks the tun keeps out of itself, each an address or
+     * `address/length`: the daemon lays the tun's routes around them, and
+     * they leave the way the machine sends them (a server the engine dials).
+     */
+    val exclude: List<String> = emptyList(),
     /** The address the system is to ask for names while the tunnel runs; null leaves it asking whom it asks. */
     val names: String? = null,
     val hold: DaemonHold? = null
@@ -171,7 +177,8 @@ internal object TunnelDaemonProtocol {
 
     /**
      * `tun`: hev in place of sing-box, its config written by the daemon from
-     * the request's fields ([tunRequest]). The sing-box verbs stay beside it.
+     * the request's fields ([tunRequest]), and its routes laid by the daemon
+     * around what it keeps out. The sing-box verbs stay beside it.
      */
     const val PROTOCOL_HEV = 5
 
@@ -202,6 +209,9 @@ internal object TunnelDaemonProtocol {
                         put("netmask", tun.mapDns.netmask)
                         put("cacheSize", tun.mapDns.cacheSize)
                     }
+                }
+                if (tun.exclude.isNotEmpty()) {
+                    putJsonArray("exclude") { tun.exclude.forEach { add(it) } }
                 }
                 if (tun.names != null) put("names", tun.names)
                 if (tun.hold != null) {

@@ -3,8 +3,10 @@
 //
 // The tunnel's process is sing-box with a config of the app's (`start`), or,
 // from the fifth protocol on, hev with a config written here from the fields
-// of a `tun` request. The sing-box verbs stay beside it until the app has
-// moved to hev. One tunnel at a time: either verb ends the other's.
+// of a `tun` request. sing-box lays its own routes; hev's are laid here
+// (Routes.swift), and taken away by every stop and when hev dies. The
+// sing-box verbs stay beside it until the app has moved to hev. One tunnel at
+// a time: either verb ends the other's.
 //
 // Kept apart from the socket it is asked over (main.swift) so that it can be
 // driven without one, on a Mac that has no signed app to do the asking.
@@ -37,13 +39,16 @@ final class Daemon {
     // Bumped when a request gains a field the app depends on: 2 = rule files on
     // `start`; 3 = `names` and `hold` on `start`, `hold` on `stop`, `release`,
     // and `hold` in every reply; 4 = `line` and `line-stop`, and `line` in
-    // every reply; 5 = `tun` (hev, from fields), and `tunnel` in every reply
-    // while one runs. The app reads it back to tell this daemon from an older
-    // one that would silently drop the field.
+    // every reply; 5 = `tun` (hev, from fields, and the routes it takes),
+    // `routes` in every reply and `tunnel` while one runs. The app reads it
+    // back to tell this daemon from an older one that would silently drop the
+    // field.
     static let protocolVersion = 5
 
     private let child: TunnelChild
     private let line: LineChild
+    /// hev's routes; sing-box keeps its own.
+    private let routes = Routes()
     private let hold: TrafficHold
     private let launchedAs = BinaryIdentity.onDisk()
 
@@ -247,6 +252,9 @@ final class Daemon {
             guard child.isRunning else {
                 return failure("hev exited at once", logTail: child.logTail)
             }
+            // Into the tun, all but what it keeps out; before the names, which
+            // are asked of an address only the tun answers.
+            try routes.lay(on: request.name, holes: request.exclude, ipv6: request.ipv6 != nil)
             if let names, !SystemNames.ask(names) {
                 let tail = child.logTail
                 stopTunnel()
@@ -277,6 +285,8 @@ final class Daemon {
 
     /// The tunnel's process and what stands only while it runs.
     private func stopTunnel() {
+        // The routes first: through a tun that is going they lead nowhere.
+        routes.takeAway()
         child.stop()
         SystemNames.restore()
     }
@@ -287,8 +297,12 @@ final class Daemon {
     private func tunnelDied() {
         lock.lock()
         defer { lock.unlock() }
-        // Not when another tunnel has been started since: the key is that one's.
-        if !child.isRunning { SystemNames.restore() }
+        // Not when another tunnel has been started since: the key and the
+        // routes are that one's. Its own routes went with its utun.
+        if !child.isRunning {
+            routes.takeAway()
+            SystemNames.restore()
+        }
     }
 
     private func keepsHold(_ object: [String: Any]) -> Bool {
@@ -314,6 +328,7 @@ final class Daemon {
         object["hold"] = child.isRunning ? hold.stands : hold.look()
         object["line"] = Int(line.pid ?? 0)
         if let kind = child.kind { object["tunnel"] = kind.rawValue }
+        object["routes"] = routes.laid.count
         let data = (try? JSONSerialization.data(withJSONObject: object))
             ?? Data("{\"ok\":false,\"error\":\"the daemon could not encode its own reply\"}".utf8)
         return data + Data("\n".utf8)

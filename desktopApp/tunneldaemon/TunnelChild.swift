@@ -44,10 +44,12 @@ struct HevRequest {
     let socksPort: Int
     let login: (username: String, password: String)?
     let mapdns: MapDns?
+    /// What the tun keeps out of itself: the daemon lays its routes around these (Routes).
+    let exclude: [Prefix]
 
     /// The fields a `tun` request may carry, by the object they stand in.
     static let fields: [String: Set<String>] = [
-        "": ["verb", "tun", "socks", "mapdns", "names", "hold"],
+        "": ["verb", "tun", "socks", "mapdns", "exclude", "names", "hold"],
         "tun": ["name", "mtu", "ipv4", "ipv6"],
         "socks": ["address", "port", "username", "password"],
         "mapdns": ["address", "port", "network", "netmask", "cacheSize"],
@@ -121,9 +123,35 @@ struct HevRequest {
             mapdns = MapDns(address: address, port: port, network: network, netmask: netmask, cacheSize: cacheSize)
         }
 
+        // Addresses and networks, each as the system writes one, and no more
+        // of them than the routes laid around them can be laid while the
+        // request waits.
+        var exclude: [Prefix] = []
+        if let value = request["exclude"] {
+            guard let list = value as? [String] else {
+                throw DaemonError.message("a tun keeps out addresses and networks, a list of them")
+            }
+            guard list.count <= 64 else {
+                throw DaemonError.message("a tun keeps out at most 64 addresses and networks")
+            }
+            for text in list {
+                guard let prefix = Prefix(text) else {
+                    throw DaemonError.message("a tun keeps out addresses and networks, and \(text) is neither")
+                }
+                exclude.append(prefix)
+            }
+            let routes = Routes.plan(holes: exclude).count
+            guard routes <= Routes.most else {
+                throw DaemonError.message(
+                    "the routes around what a tun keeps out are at most \(Routes.most), and these are \(routes)"
+                )
+            }
+        }
+
         return HevRequest(
             name: name, mtu: mtu, ipv4: ipv4, ipv6: ipv6,
-            socksAddress: socksAddress, socksPort: socksPort, login: login, mapdns: mapdns
+            socksAddress: socksAddress, socksPort: socksPort, login: login, mapdns: mapdns,
+            exclude: exclude
         )
     }
 
@@ -379,7 +407,7 @@ final class TunnelChild {
     }
 
     /// hev, with the config [request] reads as. It opens the utun the request
-    /// names and gives it its addresses; the routes are the daemon's.
+    /// names and gives it its addresses; the routes are the daemon's (Routes).
     func startHev(_ request: HevRequest, group: gid_t? = nil) throws {
         stop()
 
