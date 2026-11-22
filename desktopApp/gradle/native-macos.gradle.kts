@@ -206,12 +206,12 @@ if (hostDesktopOs == "macos") {
             mkdir -p "${'$'}stage"
 
             # SystemConfiguration is for the system's resolver (SystemNames.swift).
+            # Every file of the directory, as the PR check builds it (pr-checks.yml,
+            # mac-helper): a file added there is in the daemon without a list to edit.
             swiftc -O -target "${'$'}(uname -m)-apple-macos13.0" \
                 -framework Foundation -framework Security -framework SystemConfiguration \
                 -o "${'$'}stage/ProofKitTunnelDaemon" \
-                "${'$'}src/PeerAuthority.swift" "${'$'}src/GroupExec.swift" "${'$'}src/TunnelChild.swift" \
-                "${'$'}src/TrafficHold.swift" "${'$'}src/SystemNames.swift" "${'$'}src/LineChild.swift" "${'$'}src/Daemon.swift" \
-                "${'$'}src/main.swift"
+                "${'$'}src"/*.swift
 
             # The core the daemon execs has to be a loose file in the bundle. It is
             # otherwise only inside the jar, where a root daemon cannot reach it and

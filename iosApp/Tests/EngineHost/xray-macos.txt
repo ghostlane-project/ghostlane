@@ -1,0 +1,8 @@
+# Official Xray-core macOS builds the engine host's fetch dials
+# (scripts/test-ios-engine-on-mac.sh xray): <version> <sha256 of
+# Xray-macos-arm64-v8a.zip, as the release's .dgst gives it>. Every version
+# in scripts/xray-servers.txt has its line here; the versions are chosen
+# there, for the behaviour of the servers out there.
+26.4.25 b9d5df9f37e482f17289b105341218aaa614363a29ebb2b6054805e5396d50fe
+26.7.11 61f8f74d099098af710fa43613d9934d97b901dee909801d34f496cd463956d1
+26.11.9 233f0c66681cd0726f81a6b2b6ed6a5710869e312047b522e46ed53035bebd26
