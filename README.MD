@@ -146,6 +146,23 @@ and Globvent Inc. neither receives nor controls it: see [FUNDING.md](FUNDING.md)
 > финансирование, через [Open Collective](https://opencollective.com/ghostlane), и
 > тратит его открыто: см. [FUNDING.md](FUNDING.md).
 
+## Testing partners
+
+Thanks to these VPN providers, who help test Ghostlane.
+
+<!-- Testing partners: the badges are docs/badges/partners/, drawn for this page;
+     their text is outlines, so they look the same everywhere. Widths, not
+     heights, as for the store badges at the top: 138 px and 159 px show both
+     40 px tall. Images, not links, on purpose: this page is the App Store
+     listing's Marketing URL and the Play listing's OPEN SOURCE line, and the
+     listing never links to the marketplace (docs/app-store-listing.md, URLs).
+     Neither badge links out: change that rule there first. -->
+<p align="center">
+  <img src="docs/badges/partners/proofkit-testing-partner.svg" alt="Testing partner: proofkit.org" width="138" align="middle">
+  &nbsp;
+  <img src="docs/badges/partners/xrayreality-testing-partner.svg" alt="Testing partner: xrayreality.org" width="159" align="middle">
+</p>
+
 ## Legal
 
 ### Legal Notice
