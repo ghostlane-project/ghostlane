@@ -33,7 +33,9 @@ for f in "$tool" "$step"; do
   [ -x "$f" ] || bad "$f is not executable"
   bash -n "$f" || bad "$f does not parse"
 done
-grep -q '^a8e95224f099 [0-9]*$' "$root/scripts/pin-move.d/ios-size.record" || bad "the size record holds no line for the first pin"
+headpin="$(sed -n 's/^GHOSTLANE_CORE_COMMIT=\([0-9a-f]\{40\}\)$/\1/p' "$root/scripts/ghostlane-core-pin.sh" | head -n 1)"
+[ -n "$headpin" ] || bad "no pin in scripts/ghostlane-core-pin.sh"
+grep -q "^${headpin:0:12} [0-9][0-9]*\$" "$root/scripts/pin-move.d/ios-size.record" || bad "the size record holds no line for the pin at HEAD (${headpin:0:12})"
 
 # ---- a made-up core repository -------------------------------------------------
 repo="$tmp/core"
@@ -178,6 +180,9 @@ chg_edit "a crate of the iOS target table" bash -c 'echo "pub fn f() -> u32 { 7 
 chg_edit "a build dependency" bash -c 'echo "pub fn f() -> u32 { 8 }" > crates/build-f/src/lib.rs'
 chg_edit "a registry crate's checksum" sed -i 's/^checksum = "1111/checksum = "2222/' Cargo.lock
 chg_edit "the release profile" sed -i 's/lto = "thin"/lto = "fat"/' Cargo.toml
+chg_edit "a workspace dependency's features" bash -c 'printf "[workspace.dependencies]\next-x = { version = \"1\", features = [\"pure\"] }\n" >> Cargo.toml'
+chg_edit "a workspace dependency's features, one fewer" sed -i 's/features = \["pure"\]/features = []/' Cargo.toml
+chg_edit "the workspace edition" sed -i 's/^version = "1.0.0"$/version = "1.0.0"\nedition = "2021"/' Cargo.toml
 chg_edit "a pinned toolchain" bash -c 'printf "[toolchain]\nchannel = \"1.96.0\"\n" > rust-toolchain.toml'
 chg_edit "a cargo config" bash -c 'mkdir -p .cargo && printf "[build]\nrustflags = [\"-Cdebuginfo=0\"]\n" > .cargo/config.toml'
 # the root crate stops reaching a crate: the features that turn it on go
@@ -218,6 +223,17 @@ grep -q 'IOS_LIB_BYTES' "$tmp/out" || bad "the step did not say how to give the 
 printf 'build\nSIZE aarch64-apple-ios-sim: libghostlane_core.a 1 bytes\nSIZE aarch64-apple-ios: libghostlane_core.a %s bytes\n' $((base + 4096)) > "$tmp/report.txt"
 run_step "$c0" "$prev" IOS_CORE_REPORT="$tmp/report.txt" || { bad "the step failed on a growth of 4 KiB from a report"; cat "$tmp/out"; }
 [ "$(tail -n 1 "$rec")" = "${prev:0:12} $((base + 4096))" ] || bad "the step did not append its line: $(tail -n 1 "$rec")"
+# the baseline is the line of the pin the move leaves, not the record's last line
+printf '%s %s\n' "${c0:0:12}" "$base" > "$rec"
+printf '%s %s\n' "ffffffffffff" "$((base + 50 * 1024 * 1024))" >> "$rec"
+run_step "$c0" "$prev" IOS_LIB_BYTES=$((base + 4096)) || { bad "the step used a line that is not the old pin's"; cat "$tmp/out"; }
+printf '%s %s\n' "ffffffffffff" "$base" > "$rec"
+rc=0
+run_step "$c0" "$prev" IOS_LIB_BYTES=$((base + 4096)) || rc=$?
+[ "$rc" -ne 0 ] || bad "the step passed with no line for the pin it leaves"
+grep -q 'no size for the pin' "$tmp/out" || bad "the step did not say the old pin has no line"
+printf '%s %s\n' "${c0:0:12}" "$base" > "$rec"
+printf '%s %s\n' "${prev:0:12}" "$((base + 4096))" >> "$rec"
 run_step "$prev" "$prev" IOS_LIB_BYTES=$((base + 4096)) || bad "a pin that does not move failed"
 grep -q '^class: same$' "$tmp/out" || bad "a pin that does not move is not 'same'"
 [ "$(grep -c "^${prev:0:12} " "$rec")" = 1 ] || bad "the record holds a commit twice"
