@@ -10,9 +10,9 @@
 #     download and an upload, byte for byte; a stop ends the engine with 0 and
 #     leaves no session file;
 #   - a login the session names is demanded;
-#   - a plain HTTP GET for a URL on the port: what it gets is written into
-#     the job's summary (the core's `socks` inbound carries CONNECT, not a
-#     forwarded request);
+#   - a plain HTTP GET for a URL on the port, as an app set to use it as an
+#     HTTP proxy sends one, is forwarded over the line and the page comes
+#     back whole;
 #   - a server named by a hostname no resolver knows: only the app's answer
 #     reaches the engine, as the address the line is written with;
 #   - LAN sharing's inbound on a private address of this machine refuses a

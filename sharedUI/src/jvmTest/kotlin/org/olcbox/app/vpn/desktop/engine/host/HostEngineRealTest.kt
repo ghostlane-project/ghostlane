@@ -25,7 +25,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
-import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -179,28 +178,22 @@ class HostEngineRealTest {
     }
 
     /**
-     * The engine's inbound carries SOCKS5 and HTTP CONNECT on one port, not a
-     * plain HTTP request for a URL (the core's `http` inbound would). The
-     * system's proxy setting is SOCKS on every desktop, so nothing the app
-     * sets up sends one; an app the user points at the port as an HTTP proxy
-     * does. Held here so that the day the engine forwards it, this test says so.
+     * A plain HTTP request for a URL on the proxy port, as an app pointed at
+     * the port as an HTTP proxy sends it (the system's proxy setting is SOCKS
+     * on every desktop), is forwarded over the line: the core's `socks`
+     * inbound answers it as well, and the page comes back whole.
      */
     @Test
-    fun aPlainHttpGetOnTheProxyPortIsNotForwarded(): Unit = runBlocking {
+    fun aPlainHttpGetOnTheProxyPortIsForwarded(): Unit = runBlocking {
         val port = freePort("127.0.0.1")
         val engine = engine()
         val started = engine.line.start(request(check.link, port))
         try {
             assertTrue(waitForPort(port, started.alive), "the engine's port did not open\n${logTail()}")
-            eventually { socks5("127.0.0.1", port, null).use { get(it, "/down") } }
-            val outcome = plainGet(port)
-            check.outcomes.appendText("A plain HTTP GET for a URL on the proxy port: $outcome\n")
-            assertFalse(
-                outcome.startsWith("answered") && " 200" in outcome,
-                "the engine forwards a plain GET now ($outcome): turn this test around"
-            )
-            val after = socks5("127.0.0.1", port, null).use { get(it, "/down") }
-            assertEquals(check.downSha256, sha256(after), "the line after the plain GET")
+            val page = eventually { plainGet(port) }
+            assertEquals(check.downBytes, page.size, "the download by a plain GET")
+            assertEquals(check.downSha256, sha256(page), "the download by a plain GET")
+            check.outcomes.appendText("A plain HTTP GET for a URL on the proxy port: forwarded over the line, the page whole\n")
             assertTrue(started.alive(), "the engine ended over a plain GET\n${logTail()}")
         } finally {
             engine.line.stopNow()
@@ -357,23 +350,15 @@ class HostEngineRealTest {
         return socket
     }
 
-    /** What the engine's port answers a plain HTTP GET for a URL with, in words. */
-    private fun plainGet(port: Int): String = try {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress("127.0.0.1", port), 5_000)
-            socket.soTimeout = 10_000
-            socket.getOutputStream().apply {
-                write("GET http://${check.target}/down HTTP/1.1\r\nHost: ${check.target}\r\nConnection: close\r\n\r\n".toByteArray())
-                flush()
-            }
-            val first = ByteArray(256)
-            val n = socket.getInputStream().read(first)
-            if (n <= 0) "closed with no answer" else "answered ${String(first, 0, n, Charsets.ISO_8859_1).lineSequence().first()}"
+    /** The page by a plain HTTP GET for its URL, sent to the engine's port as to an HTTP proxy. */
+    private fun plainGet(port: Int): ByteArray = Socket().use { socket ->
+        socket.connect(InetSocketAddress("127.0.0.1", port), 5_000)
+        socket.soTimeout = 30_000
+        socket.getOutputStream().apply {
+            write("GET http://${check.target}/down HTTP/1.1\r\nHost: ${check.target}\r\nConnection: close\r\n\r\n".toByteArray())
+            flush()
         }
-    } catch (_: SocketTimeoutException) {
-        "no answer in 10 s"
-    } catch (e: IOException) {
-        "cut: ${e.message}"
+        readBody(socket.getInputStream())
     }
 
     private fun get(socket: Socket, path: String): ByteArray {
