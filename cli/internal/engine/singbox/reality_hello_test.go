@@ -38,7 +38,7 @@ const (
 // off the wire, for every fingerprint a link may name, and holds it to what
 // Xray servers check before they answer:
 //   - an X25519MLKEM768 key share ahead of any X25519 one (XTLS/REALITY
-//     8cdf7bf, Xray-core >= v26.9.8; without it the hello is handed to the
+//     8cdf7bf, Xray-core >= v26.9.9; without it the hello is handed to the
 //     camouflage target);
 //   - a sealed session id that opens with the server's key and announces a
 //     version >= 26.3.27 (the minClientVer Xray-core v26.7.x applies when the
@@ -77,7 +77,7 @@ func TestRealityHelloOpensOnCurrentXray(t *testing.T) {
 			order := shareGroups(shares)
 			hybrid, classic := indexOf(order, groupX25519MLKEM768), indexOf(order, groupX25519)
 			if hybrid < 0 || (classic >= 0 && classic < hybrid) {
-				t.Fatalf("key shares %x: Xray >= v26.9.8 needs an X25519MLKEM768 share ahead of X25519", order)
+				t.Fatalf("key shares %x: Xray >= v26.9.9 needs an X25519MLKEM768 share ahead of X25519", order)
 			}
 			plain := openSessionID(t, hello, serverKey, shares)
 			version := [3]byte(plain[0:3])
