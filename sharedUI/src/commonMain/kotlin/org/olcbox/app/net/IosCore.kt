@@ -1,5 +1,6 @@
 package org.olcbox.app.net
 
+import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.core.CoreConfig
 import org.olcbox.app.net.core.CoreDns
 import org.olcbox.app.net.core.CoreInbound
@@ -52,6 +53,21 @@ enum class IosCoreLine(val slug: String, val transport: IosTransport) {
  * after all, the [reason] (never a secret: words about the link's shape).
  */
 data class IosEngineChoice(val engine: IosEngine, val line: IosCoreLine?, val reason: String? = null)
+
+/**
+ * What the iPhone starts for a location, decided in the app before the
+ * extension is asked ([IosCore.start]).
+ */
+sealed interface IosStart {
+    /** A line of the core: core.json from [spec], as [line]; [notes] are for the app's log. */
+    data class Core(val spec: OutboundSpec, val line: IosCoreLine, val notes: List<String>) : IosStart
+
+    /** An olcRTC room: olcrtc.json. */
+    data object Room : IosStart
+
+    /** Nothing is written and the extension is not asked; [sentence] says why. */
+    data class Refused(val sentence: String) : IosStart
+}
 
 /**
  * What the Rust core runs on the iPhone, and the `core.json` it runs it from.
@@ -115,6 +131,19 @@ object IosCore {
         if (engines[line.transport] != IosEngine.RUST) return IosEngineChoice(IosEngine.GO, line)
         refusal(spec)?.let { return IosEngineChoice(IosEngine.GO, line, it) }
         return IosEngineChoice(IosEngine.RUST, line)
+    }
+
+    /** [choose] under [ENGINES]. */
+    fun choose(spec: OutboundSpec): IosEngineChoice = choose(spec, ENGINES)
+
+    /** What the iPhone starts for [location] ([IosStart]). */
+    fun start(location: LocationConfig): IosStart {
+        if (location.kind == LocationKind.Olcrtc) return IosStart.Room
+        val spec = location.rawLink?.let { LinkParser.parse(it) } ?: return IosStart.Refused("the link cannot be read")
+        val choice = choose(spec)
+        val line = choice.line
+        if (choice.engine != IosEngine.RUST || line == null) return IosStart.Refused(choice.reason ?: CoreRefusal.noLine(spec))
+        return IosStart.Core(spec, line, emptyList())
     }
 
     /**
