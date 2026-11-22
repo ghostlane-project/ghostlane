@@ -7,6 +7,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.OutboundSpec
@@ -15,6 +16,7 @@ import org.olcbox.app.vpn.service.OlcboxVpnState
 import org.olcbox.app.vpn.service.RustCore
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.util.concurrent.atomic.AtomicReference
 
 /** A core handle of ghostlane-core started for one probe, beside the session's, and freed by that probe. */
 interface RustProbeCore {
@@ -100,13 +102,18 @@ internal object RustProbe {
         private val log: (String) -> Unit
     ) : TransportProbe.RustStarter {
         override suspend fun start(spec: OutboundSpec, config: String, bindInterface: String?): TransportProbe.Core {
+            // The handle the native start made, kept here as well: when the caller is
+            // cancelled while that start runs, the start ends all the same and withContext
+            // throws in place of returning the handle, which nobody else could free.
+            val made = AtomicReference<RustProbeCore?>()
             val core = try {
                 withContext(Dispatchers.IO) {
                     backend.startProbeCore(config, protect) { level, line ->
                         if (level <= RustProbe.MAX_LOGGED_LEVEL) log("probe core: $line")
-                    }
+                    }.also { made.set(it) }
                 }
             } catch (e: CancellationException) {
+                made.get()?.let { orphan -> withContext(NonCancellable + Dispatchers.IO) { orphan.stop() } }
                 throw e
             } catch (e: Exception) {
                 log("The Rust core did not start a probe: ${e.message ?: e}")
