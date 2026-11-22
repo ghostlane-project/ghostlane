@@ -1,0 +1,20 @@
+{
+  "about": "the 2022 line with a well-formed key the server does not hold: a pass would prove the key is never checked",
+  "shape": "shadowsocks-2022",
+  "expect": "refused",
+  "against": "shadowsocks-2022-aes-256-gcm",
+  "link": "ss://2022-blake3-aes-256-gcm:AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA%3D@127.0.0.1:{port}#interop-shadowsocks-2022-wrong-key",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "2022-blake3-aes-256-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}
