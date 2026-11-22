@@ -61,39 +61,45 @@ env:
 
 jobs:
   client:
-    name: olc-client at the commit
+    # plain: the client as the fake's memory scenario (S7) is calibrated on.
+    # app: as the apps build it (BoringSSL's DTLS, the shaped TLS) plus the
+    # test-only pin the https pass needs.
+    name: olc-client at the commit, ${{ matrix.variant }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    outputs:
-      commit: ${{ steps.pin.outputs.commit }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: plain
+            features: ""
+          - variant: app
+            features: "--features boring,shaped-tls,tls-test-pin"
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Which commit of the core
-        id: pin
-        run: |
-          set -euo pipefail
-          resolved="$(bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE")"
-          echo "$resolved" >> "$GITHUB_ENV"
-          echo "commit=$(sed -n 's/^GHOSTLANE_CORE_COMMIT=//p' <<< "$resolved")" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
 
       - name: Restore the client
         id: cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/rust-jitsi-client
-          key: rust-jitsi-client-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v2
+          key: rust-jitsi-client-${{ matrix.variant }}-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
 
       - name: Build olc-client at the commit
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           set -euo pipefail
           src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
           rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal --no-self-update
-          (cd "$src" && cargo "+$GHOSTLANE_CORE_TOOLCHAIN" build --locked --release -p olc-client \
-            --features boring,shaped-tls,tls-test-pin)
+          # shellcheck disable=SC2086
+          (cd "$src" && cargo "+$GHOSTLANE_CORE_TOOLCHAIN" build --locked --release -p olc-client $FEATURES)
           install -D -m 0755 "$src/target/release/olc-client" ~/.cache/rust-jitsi-client/olc-client
 
       - name: Save the client
@@ -105,7 +111,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: olc-client
+          name: olc-client-${{ matrix.variant }}
           path: ~/.cache/rust-jitsi-client/olc-client
           retention-days: 1
 
@@ -119,10 +125,13 @@ jobs:
       matrix:
         include:
           - pass: websocket
+            client: plain
             flags: ""
           - pass: tls
+            client: app
             flags: "-olcrtc.gate-jitsi-tls"
           - pass: bosh
+            client: plain
             flags: "-olcrtc.gate-jitsi-bosh"
     steps:
       - uses: actions/checkout@v7
@@ -143,7 +152,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: olc-client
+          name: olc-client-${{ matrix.client }}
           path: ${{ runner.temp }}/bin
 
       - name: The overlay and the engine, vetted
