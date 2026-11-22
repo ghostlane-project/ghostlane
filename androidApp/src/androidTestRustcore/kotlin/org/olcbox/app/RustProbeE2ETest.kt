@@ -13,10 +13,15 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -49,6 +54,8 @@ import org.olcbox.app.vpn.service.RustCore
  *  - A session failover from a dead room: the room's start fails, and once the
  *    outage is long enough the service probes another line of the same country
  *    on a second handle and moves the session to it.
+ *  - A probe cancelled while its handle is being made: the native start ends
+ *    all the same, and the handle it made is freed, not left running.
  *
  * No server of ours and no carrier: the session's core.json is a test's
  * (RustCore.testConfig, a redirect to a loopback server, as RustCoreVpnE2ETest),
@@ -354,6 +361,40 @@ class RustProbeE2ETest {
             stopAndWait()
             RustCore.testConfig = null
             web.close()
+        }
+    }
+
+    @Test
+    fun aProbeCancelledWhileItsHandleIsMadeFreesIt() {
+        // The probe's handle is held in the making (inside startProbeCore, counted already)
+        // until the probe has been cancelled: the native start then finishes all the same.
+        val making = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        RustCoreEngine.testProbeConfig = { config ->
+            making.countDown()
+            release.await(30, TimeUnit.SECONDS)
+            config
+        }
+        // Smart connect's probe before any session, on the Rust core by the switch.
+        devSwitch(true)
+        try {
+            val manager = AndroidVpnManager(context)
+            runBlocking {
+                val probing = launch(Dispatchers.IO) { manager.probeTransport(realityLine("cancelled", "192.0.2.9", 443)) }
+                val held = withContext(Dispatchers.IO) { making.await(30, TimeUnit.SECONDS) }
+                assertTrue("the probe's handle is being made", held)
+                assertEquals("the handle in the making is counted", 1, RustCoreEngine.probeHandles())
+                probing.cancel()
+                release.countDown()
+                probing.join()
+            }
+            val left = RustCoreEngine.probeHandles()
+            say("RESULT a probe cancelled while its handle was made: probe handles left $left")
+            assertEquals("a probe cancelled while its handle was made leaves no handle running", 0, left)
+        } finally {
+            release.countDown()
+            RustCoreEngine.testProbeConfig = null
+            devSwitch(null)
         }
     }
 
