@@ -23,7 +23,9 @@ internal object Reality : CoreLine {
     /**
      * The names a link's `fp` is read as ([CoreSupport.helloName]) that
      * xray-rust has no REALITY hello for: android and 360 offer no X25519
-     * key share, and the core refuses them under `realitySettings`.
+     * key share, and the core refuses them under `realitySettings`. The line
+     * is carried with the Chrome hello instead ([hello]), and [helloNote]
+     * says so.
      */
     private val NO_REALITY_HELLO = setOf("android", "360")
 
@@ -39,20 +41,38 @@ internal object Reality : CoreLine {
         }
     }
 
-    /** A link's `fp` as `realitySettings` takes it; null for a name with no REALITY hello in the core. */
-    fun hello(fp: String?): String? = CoreSupport.helloName(fp).takeUnless { it in NO_REALITY_HELLO }
+    /**
+     * A link's `fp` as `realitySettings` takes it: [CoreSupport.helloName],
+     * with the names the core has no REALITY hello for (android, 360) given
+     * the Chrome hello. Nothing else is made to look like another client.
+     */
+    fun hello(fp: String?): String = CoreSupport.helloName(fp).let { if (it in NO_REALITY_HELLO) "chrome" else it }
+
+    /**
+     * The sentence for the caller's log when [spec]'s hello was swapped for
+     * Chrome's ([hello]), or null when it was kept. Never a secret: it names
+     * the hello and nothing of the link.
+     */
+    fun helloNote(spec: OutboundSpec): String? {
+        spec as OutboundSpec.Vless
+        val asked = CoreSupport.helloName(spec.fingerprint)
+        return if (asked in NO_REALITY_HELLO) {
+            "the link asks for the $asked hello, which the core has no REALITY form of: the Chrome hello is used instead"
+        } else {
+            null
+        }
+    }
 
     /**
      * Refused: a link that waives certificate checks, a flow other than
-     * Vision, a fingerprint with no REALITY hello in the core
-     * ([NO_REALITY_HELLO]), and Reality with no server name.
+     * Vision, and Reality with no server name. A fingerprint with no REALITY
+     * hello in the core is carried with the Chrome hello ([hello]).
      */
     override fun refusal(spec: OutboundSpec): String? {
         spec as OutboundSpec.Vless
         return when {
             spec.insecure -> CoreRefusal.WAIVED_CHECKS
             CoreSupport.flowRefusal(spec.flow) != null -> CoreSupport.flowRefusal(spec.flow)
-            hello(spec.fingerprint) == null -> "the core has no REALITY hello for this fingerprint"
             spec.sni.isBlank() -> "a Reality line with no server name"
             else -> null
         }
@@ -68,7 +88,7 @@ internal object Reality : CoreLine {
             putTransport(spec.transport)
             putReality(
                 serverName = spec.sni,
-                fingerprint = requireNotNull(hello(spec.fingerprint)),
+                fingerprint = hello(spec.fingerprint),
                 publicKey = spec.publicKey,
                 shortId = spec.shortId,
             )
