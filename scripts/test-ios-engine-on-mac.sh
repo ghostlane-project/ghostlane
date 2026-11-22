@@ -93,7 +93,10 @@ LINES="reality grpc-reality webtunnel-ws webtunnel-httpupgrade hysteria2 xhttp"
 # passes every time.
 known_failure() {
   case "$1" in
-    grpc-reality) echo "gRPC over REALITY under the phone's byte budget, in the memory class the darwin target picks (Standard; the extension names no runtime profile, and a phone's target picks Constrained): most fetches stall until the client gives up, and only then does the server receive the request, on every Xray version here; under the darwin slice's own byte budget fewer do, not none; a stalled one passes only when the same fetch under the darwin slice's own byte budget reaches the page" ;;
+    # gRPC over REALITY was listed here until the pin a46c8ed0: under the
+    # phone's byte budget most fetches stalled until the client gave up, and
+    # only then did the server receive the request. The core claimed a held
+    # first payload written while the carrier was still Pending (fork task FG).
     *) echo "" ;;
   esac
 }
