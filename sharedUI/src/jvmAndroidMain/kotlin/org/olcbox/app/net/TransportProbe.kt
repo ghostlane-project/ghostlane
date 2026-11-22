@@ -58,8 +58,17 @@ internal object TransportProbe {
     interface RustStarter : Starter {
         suspend fun start(spec: OutboundSpec, config: String, bindInterface: String?): Core
 
-        /** [host]'s address on the network underneath, or null when there is none to give. */
-        suspend fun serverAddress(host: String): String? = null
+        /**
+         * [host]'s address on the network underneath, or null when there is
+         * none to give. [resolver] is the resolver of that network, the one
+         * the probe was handed ([passes]' serverResolver) and the Go probe
+         * is written with: a failover works it out per call, from the
+         * session or from the network it fails over on, and a starter is the
+         * engine's and cannot. It is asked in place of the system's resolver,
+         * which behind a tun is the tun's. Null when the caller named none,
+         * where the system's resolver is the network's, as for the Go probe.
+         */
+        suspend fun serverAddress(host: String, resolver: DirectDns?): String? = null
 
         /** [spec] was not started: the core would refuse it, [why] says why. */
         fun refused(spec: OutboundSpec, why: String) {}
@@ -163,7 +172,7 @@ internal object TransportProbe {
         var core: Core? = null
         try {
             val started = if (starter is RustStarter) {
-                val line = rustLine(spec, starter) ?: return@withContext false
+                val line = rustLine(spec, serverResolver, starter) ?: return@withContext false
                 starter.start(line, rustConfig(line, port, login), bindInterface)
             } else {
                 starter.start(spec, coreConfig(spec, port, login, serverResolver, autoDetectInterface, bindInterface))
@@ -180,12 +189,16 @@ internal object TransportProbe {
         }
     }
 
-    /** [spec] as the Rust core is to be started with it, its server pinned to an address; null when the core would refuse it. */
-    private suspend fun rustLine(spec: OutboundSpec, starter: RustStarter): OutboundSpec? {
+    /**
+     * [spec] as the Rust core is to be started with it, its server pinned to
+     * the address [starter] gives on [serverResolver]; null when the core
+     * would refuse it.
+     */
+    private suspend fun rustLine(spec: OutboundSpec, serverResolver: DirectDns?, starter: RustStarter): OutboundSpec? {
         val line = if (XrayConfig.isIpLiteral(spec.host)) {
             spec
         } else {
-            starter.serverAddress(spec.host)?.let { CoreLines.pinHost(spec, it) } ?: spec
+            starter.serverAddress(spec.host, serverResolver)?.let { CoreLines.pinHost(spec, it) } ?: spec
         }
         val why = CoreRefusal.of(line) ?: return line
         starter.refused(spec, why)
