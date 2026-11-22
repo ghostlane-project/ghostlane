@@ -12,6 +12,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import org.olcbox.app.net.SocksLogin
 
 /**
  * What the app and the root daemon say to each other: one JSON object per line,
@@ -58,6 +59,57 @@ internal sealed interface DaemonReply {
  * tunnel, which are the ones the tun keeps out of itself.
  */
 internal data class DaemonHold(val interfaceName: String, val passes: List<String> = emptyList())
+
+/**
+ * hev's tun as the fifth daemon runs it (`tun`): fields, never a config. hev's
+ * own config can name programs it runs as its tun goes up and down, and the
+ * daemon runs hev as root, so the daemon writes that config itself from these
+ * and refuses a request with a field it does not know, a script's above all.
+ */
+internal data class DaemonTun(
+    /** The utun hev opens: the name the kill switch's block is written for. */
+    val interfaceName: String,
+    /** The SOCKS5 port on the loopback hev hands what it takes to. */
+    val socksPort: Int,
+    /** The login that port asks for; null for one that asks for none. */
+    val login: SocksLogin? = null,
+    val socksAddress: String = LOOPBACK,
+    val mtu: Int = MTU,
+    val ipv4: String = IPV4,
+    /** Claimed so that no IPv6 leaves beside the tunnel (docs/macos-tunnel-daemon.md, IPv6). */
+    val ipv6: String? = IPV6,
+    /** hev answers the names asked of it with addresses of its own and asks the SOCKS port by name. */
+    val mapDns: DaemonMapDns? = DaemonMapDns(),
+    /**
+     * Addresses and networks the tun keeps out of itself, each an address or
+     * `address/length`: the daemon lays the tun's routes around them, and
+     * they leave the way the machine sends them (a server the engine dials).
+     */
+    val exclude: List<String> = emptyList(),
+    /** The address the system is to ask for names while the tunnel runs; null leaves it asking whom it asks. */
+    val names: String? = null,
+    val hold: DaemonHold? = null
+) {
+    companion object {
+        const val LOOPBACK = "127.0.0.1"
+        const val MTU = 1500
+        const val IPV4 = "172.19.0.1"
+        const val IPV6 = "fdfe:dcba:9876::1"
+    }
+}
+
+/** hev's own resolver: where it answers, and the network whose addresses it hands out, one a name. */
+internal data class DaemonMapDns(
+    val address: String = ADDRESS,
+    val port: Int = 53,
+    val network: String = "198.18.0.0",
+    val netmask: String = "255.254.0.0",
+    val cacheSize: Int = 10_000
+) {
+    companion object {
+        const val ADDRESS = "172.19.0.2"
+    }
+}
 
 internal object TunnelDaemonProtocol {
     private val json = Json { ignoreUnknownKeys = true }
@@ -108,7 +160,7 @@ internal object TunnelDaemonProtocol {
     /**
      * Mirror of the daemon's `protocolVersion` history: 1 said nothing, 2 takes
      * rule files, 3 points the system's resolver at the tun and holds the kill
-     * switch's block, 4 runs a line's own program for the app.
+     * switch's block, 4 runs a line's own program for the app, 5 runs hev.
      */
     const val PROTOCOL_FIRST = 1
     const val PROTOCOL_FILES = 2
@@ -122,6 +174,54 @@ internal object TunnelDaemonProtocol {
      * tunnel, in the engine's own name, where the block refuses it.
      */
     const val PROTOCOL_LINE = 4
+
+    /**
+     * `tun`: hev in place of sing-box, its config written by the daemon from
+     * the request's fields ([tunRequest]), and its routes laid by the daemon
+     * around what it keeps out. The sing-box verbs stay beside it.
+     */
+    const val PROTOCOL_HEV = 5
+
+    /** hev's tunnel. One line, as every request; the daemon reads only the fields named here. */
+    fun tunRequest(tun: DaemonTun): String =
+        line(
+            buildJsonObject {
+                put("verb", "tun")
+                putJsonObject("tun") {
+                    put("name", tun.interfaceName)
+                    put("mtu", tun.mtu)
+                    put("ipv4", tun.ipv4)
+                    if (tun.ipv6 != null) put("ipv6", tun.ipv6)
+                }
+                putJsonObject("socks") {
+                    put("address", tun.socksAddress)
+                    put("port", tun.socksPort)
+                    if (tun.login != null) {
+                        put("username", tun.login.username)
+                        put("password", tun.login.password)
+                    }
+                }
+                if (tun.mapDns != null) {
+                    putJsonObject("mapdns") {
+                        put("address", tun.mapDns.address)
+                        put("port", tun.mapDns.port)
+                        put("network", tun.mapDns.network)
+                        put("netmask", tun.mapDns.netmask)
+                        put("cacheSize", tun.mapDns.cacheSize)
+                    }
+                }
+                if (tun.exclude.isNotEmpty()) {
+                    putJsonArray("exclude") { tun.exclude.forEach { add(it) } }
+                }
+                if (tun.names != null) put("names", tun.names)
+                if (tun.hold != null) {
+                    putJsonObject("hold") {
+                        put("interface", tun.hold.interfaceName)
+                        putJsonArray("pass") { tun.hold.passes.forEach { add(it) } }
+                    }
+                }
+            }
+        )
 
     /** Where the daemon keeps its copy of a line's program: the path a tun names it by. */
     const val LINES_DIR = "/Library/Application Support/org.olcbox.app.lines"
