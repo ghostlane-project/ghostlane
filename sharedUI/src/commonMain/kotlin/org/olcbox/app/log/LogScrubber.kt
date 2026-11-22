@@ -28,6 +28,14 @@ class LogScrubber(private val salt: Long) {
         // the narrower rules below.
         out = CRYPT_LINK.replace(out, "<link>")
         out = UUID.replace(out, "<id>")
+        // A room is named in a line by a label the core chose: a SaluteJazz code, a
+        // Telemost id, or the host of a MTS Link or VK Calls link followed by
+        // "/<hidden>". Only a UUID was masked, so these stayed. What follows the
+        // key is the room whole; a value that opens with "<" is already a mask.
+        out = ROOM_FIELD.replace(out) { match ->
+            if (match.groupValues[2].startsWith("<")) match.value else match.groupValues[1] + "=<id>"
+        }
+        out = ROOM_JOINED.replace(out, "joined <id> as")
         // URLs need one pass of their own. Replacing only the hostname leaves
         // XHTTP paths and subscription identifiers visible after the host tag.
         out = URL.replace(out) { match ->
@@ -59,6 +67,9 @@ class LogScrubber(private val salt: Long) {
         out = HOSTNAME.replace(out) { match ->
             if (isDiagnosticHostname(out, match)) tag(match.value.lowercase()) else match.value
         }
+        // An IPv4 address a dual-stack socket wrote in IPv6 form: taken whole, or the
+        // IPv6 rule below would tag "::ffff:203" and leave ".0.113.9" behind.
+        out = V4_MAPPED.replace(out) { tagIfPublicV4(it.groupValues[1]) }
         out = IPV6.replace(out) { tagIfPublicV6(it.value) }
         out = IPV4.replace(out) { tagIfPublicV4(it.value) }
         return out
@@ -100,6 +111,10 @@ class LogScrubber(private val salt: Long) {
         // is a path, and `proxy.pac` after a local endpoint is a file name.
         val urlHost = "://" in token && (before == '@' ||
             match.range.first >= 3 && source.startsWith("://", match.range.first - 3))
+        // The core names where a remark is about by a JSON path, as in
+        // "$.outbounds[0].streamSettings.tlsSettings.allowInsecure: ...". It is
+        // domain-shaped, and tagging it destroys the line's one useful word.
+        if (token.startsWith("$.")) return false
         return '(' !in token && ')' !in token &&
             (urlHost || '/' !in token && '\\' !in token)
     }
@@ -162,6 +177,10 @@ class LogScrubber(private val salt: Long) {
                 """[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"""
         )
 
+        private val ROOM_FIELD = Regex("""\b(rooms?)=([^\s,;)\]]+)""")
+        private val ROOM_JOINED = Regex("""(?<=interop-p2p: )joined \S+ as\b""")
+        private val V4_MAPPED = Regex("""(?i)::ffff:(\d{1,3}(?:\.\d{1,3}){3})\b""")
+
         private val OUR_HOST = Regex("""\b(?:[a-zA-Z0-9-]+\.)*proofkit\.org\b""")
 
         private val URL = Regex(
@@ -191,7 +210,19 @@ class LogScrubber(private val salt: Long) {
     }
 }
 
+/**
+ * The first lines of an exported log. It names the core the session ran on, so a
+ * report from a Rust build says which commit of the core it came from; a build that
+ * runs no Rust core passes null and says nothing about one.
+ */
 object LogHead {
-    fun lines(entries: Int, corePin: String?): List<String> =
-        listOf("Ghostlane application logs", "Entries: $entries")
+    /** A full commit is cut to twelve characters; anything but hex is not a pin and is left out. */
+    fun lines(entries: Int, corePin: String?): List<String> = buildList {
+        add("Ghostlane application logs")
+        val pin = corePin?.trim()?.lowercase()?.takeIf { PIN.matches(it) }
+        if (pin != null) add("Core: ghostlane-core ${pin.take(12)}")
+        add("Entries: $entries")
+    }
+
+    private val PIN = Regex("[0-9a-f]{7,40}")
 }
