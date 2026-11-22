@@ -63,6 +63,32 @@ object XrayGeodata {
         sha256 = "419111c68a2cbbf94236126bc4cd2fd30ac43274b6b65a640e0d2a6f0e05f014"
     )
 
+    /**
+     * Re:filter's list of what is blocked in Russia, for "only blocked sites"
+     * on the Rust core: unlike the lists above, a v2fly geodata file the core
+     * reads from its geodata directory, named by a rule as
+     * `ext:refilter.dat:domains` (81,000 names, each with every name under it)
+     * and `ext:refilter.dat:ips` (25,000 IPv4 prefixes). Not inline: each rule
+     * that held the names would carry all 81,000 of them, megabytes of JSON
+     * written and parsed at every start. Read from the file, each rule that
+     * names it still counts its names against the core's matcher budget
+     * (250,000 a config), so the builder names it twice at most.
+     * Made by `tools/xray-geodata/refilter.py` from the Re:filter release that
+     * `scripts/rule-sets.lock` names, the one the Go cores' `.srs` come from,
+     * so both carry one list; the lock pins its downloads and this file.
+     * Not in [bundled], which holds the text lists: [REFILTER_CODES] says
+     * what it holds.
+     */
+    val REFILTER = File(
+        name = "refilter.dat",
+        sha256 = "a59aa735553b77dca28f12397343e004aceef11cc5e2579064e321b9101bb138"
+    )
+
+    /** The codes [REFILTER] holds: its names (a GeoSite) and its addresses (a GeoIP), as a rule names them. */
+    const val REFILTER_NAMES = "domains"
+    const val REFILTER_ADDRESSES = "ips"
+    val REFILTER_CODES: List<String> = listOf(REFILTER_NAMES, REFILTER_ADDRESSES)
+
     /** Everything the Russian route rules match on. */
     val all: List<File> = listOf(GEOSITE_RU, GEOSITE_TLD_RU, GEOIP_RU)
 
