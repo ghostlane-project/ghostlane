@@ -1,0 +1,4 @@
+# The aarch64-apple-ios libghostlane_core.a at each pin: the first twelve characters of the commit and its bytes.
+# Read and extended by scripts/pin-move.d/ios-size. The bytes come from the Core build's Apple job at that commit.
+a8e95224f099 229838024
+fac14597e340 235454704
