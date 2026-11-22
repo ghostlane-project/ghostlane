@@ -1,0 +1,319 @@
+name: Rust desktop
+# The desktop's engine on the Rust core: ghostlane-engine, the Core build's
+# program at the pin, run as the app's own child (vpn/desktop/engine/host/).
+#
+#   events    the engine's events fixture at the pin is the app's copy byte
+#             for byte, and its hash the one beside it (the pin move's step
+#             scripts/pin-move.d/events-hash keeps both; HostEventsTest reads
+#             the copy in PR Checks).
+#   desktop   one leg per desktop: Linux x86_64 (ubuntu), macOS arm64 and
+#             Windows x86_64. Each runs every script of scripts/desktop-checks/
+#             whose line `# desktop-check-os: <os>...` names its OS, with
+#               GHOSTLANE_ENGINE       the program (absolute path)
+#               GHOSTLANE_CORE_COMMIT  the commit it was built from
+#               DESKTOP_CHECK_OS       linux, macos or windows
+#               DESKTOP_CHECK_WORK     an empty directory of the script's own
+#             a .sh by bash and a .ps1 by pwsh. A script that names no OS
+#             fails every leg, and a leg no script names fails; the summary
+#             lists what ran, what passed and what is not for that OS.
+#
+# The program comes from the Core build's cache of the commit (core-build.yml,
+# the same keys), else from this workflow's own cache of it, else it is built
+# here with the Core build's script for the one target the leg needs, and
+# kept under this workflow's key; never built where a cache holds it. The
+# Windows leg is allowed to fail: the fork does not compile for Windows yet,
+# the Core build keeps no program for it, and the leg is red with a sentence
+# saying so, never quietly green.
+#
+# Nothing here signs, publishes or joins a carrier room; there is no secret.
+# The servers the checks dial are on loopback and the machine's own address.
+on:
+  push:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-desktop.yml
+      - scripts/desktop-checks/**
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-host.sh
+      - scripts/build-hev-linux.sh
+      - scripts/pin-move.d/events-hash
+      - scripts/xray-servers.txt
+      - sharedUI/build.gradle.kts
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
+      - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-desktop.yml
+      - scripts/desktop-checks/**
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-host.sh
+      - scripts/build-hev-linux.sh
+      - scripts/pin-move.d/events-hash
+      - scripts/xray-servers.txt
+      - sharedUI/build.gradle.kts
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
+      - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Check this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: rust-desktop-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  cancel-in-progress: true
+env:
+  # A dispatch's pin=<sha>; empty is the pin (scripts/ghostlane-core-resolve.sh).
+  GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+jobs:
+  events:
+    name: The engine's events at the pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The copy is the fixture at the pin
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh "$GHOSTLANE_CORE_PIN_OVERRIDE" > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          bash scripts/pin-move.d/events-hash --check "$GHOSTLANE_CORE_COMMIT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  desktop:
+    name: Desktop checks (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.minutes }}
+    continue-on-error: ${{ matrix.os == 'windows' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            out: out/linux
+            minutes: 60
+          - os: macos
+            runner: macos-15
+            target: aarch64-apple-darwin
+            out: out/apple
+            minutes: 80
+          - os: windows
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            out: out/windows
+            minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The commit of the core
+        id: pin
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh "$GHOSTLANE_CORE_PIN_OVERRIDE" > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+
+      # The Core build's keys, as core-build.yml writes them; then this
+      # workflow's own key of the one target, which a restore key matches only
+      # as a whole.
+      - name: The Core build's program for Linux
+        if: matrix.os == 'linux'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.out }}
+          key: core-build-${{ matrix.target }}-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}
+          restore-keys: rust-desktop-engine-${{ matrix.target }}-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}
+
+      - name: The Core build's program for macOS
+        if: matrix.os == 'macos'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.out }}
+          key: core-build-apple-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+          restore-keys: rust-desktop-engine-${{ matrix.target }}-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+
+      - name: The Core build's program for Windows
+        if: matrix.os == 'windows'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.out }}
+          key: core-build-windows-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+
+      - name: Is the program there
+        id: engine
+        env:
+          OUT: ${{ matrix.out }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          exe=ghostlane-engine
+          [ "$TARGET" != x86_64-pc-windows-msvc ] || exe=ghostlane-engine.exe
+          echo "path=$OUT/bin/$TARGET/$exe" >> "$GITHUB_OUTPUT"
+          if [ -s "$OUT/bin/$TARGET/$exe" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "ghostlane-engine for $TARGET at ${GHOSTLANE_CORE_COMMIT:0:12}: restored from a cache" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "ghostlane-engine for $TARGET at ${GHOSTLANE_CORE_COMMIT:0:12}: no cache holds it" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: No program for Windows
+        if: matrix.os == 'windows' && steps.engine.outputs.found != 'true'
+        run: |
+          msg="no ghostlane-engine for Windows at ${GHOSTLANE_CORE_COMMIT:0:12}: the fork does not compile for x86_64-pc-windows-msvc yet, so the Core build keeps none and this leg checks nothing"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::$msg"
+          exit 1
+
+      - name: cmake, clang and lld (BoringSSL's build, and the musl cross compiler)
+        if: matrix.os == 'linux' && steps.engine.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang lld llvm libclang-dev
+
+      # The Core build's script, for the one target this leg runs.
+      - name: Build the program, which no cache held
+        id: build
+        if: matrix.os != 'windows' && steps.engine.outputs.found != 'true'
+        env:
+          GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
+          OUT: ${{ matrix.out }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set +e -uo pipefail
+          bash scripts/build-ghostlane-core-host.sh "$OUT" "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          rc=${PIPESTATUS[0]}
+          {
+            echo "Built here for $TARGET:"
+            echo '```'
+            cat "$OUT/report.txt" 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" -eq 0 ] || { tail -80 "$RUNNER_TEMP/build.log"; exit "$rc"; }
+          [ -s "${{ steps.engine.outputs.path }}" ] || { echo "::error::the build wrote no ghostlane-engine"; exit 1; }
+
+      - name: Keep the program of this commit
+        if: steps.build.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ matrix.out }}
+          key: ${{ matrix.os == 'linux' && format('rust-desktop-engine-{0}-{1}-rust-{2}-{3}', matrix.target, steps.pin.outputs.commit, steps.pin.outputs.toolchain, hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh')) || format('rust-desktop-engine-{0}-{1}-rust-{2}-{3}', matrix.target, steps.pin.outputs.commit, steps.pin.outputs.toolchain, hashFiles('scripts/build-ghostlane-core-host.sh')) }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # The legacy tools package is no longer in Google's repository and
+          # sdkmanager fails the whole step over it. The Gradle build
+          # configures the Android targets, and the next step installs what
+          # that reads.
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Every desktop check for this OS
+        env:
+          ENGINE: ${{ steps.engine.outputs.path }}
+          CHECK_OS: ${{ matrix.os }}
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          export GHOSTLANE_ENGINE="$PWD/$ENGINE"
+          export DESKTOP_CHECK_OS="$CHECK_OS"
+          rows=()
+          ran=0
+          failed=0
+          echo "### Desktop checks on $CHECK_OS, ghostlane-engine at ${GHOSTLANE_CORE_COMMIT:0:12}" >> "$GITHUB_STEP_SUMMARY"
+          for script in scripts/desktop-checks/*; do
+            name="$(basename "$script")"
+            oses="$(sed -n 's/^# desktop-check-os:[[:space:]]*//p' "$script" | head -n 1)"
+            if [ -z "$oses" ]; then
+              echo "::error::$name has no '# desktop-check-os:' line naming the OSes it runs on"
+              rows+=("| $name | **names no OS**: not run anywhere |")
+              failed=1
+              continue
+            fi
+            case " $oses " in
+              *" $CHECK_OS "*) ;;
+              *) rows+=("| $name | not for $CHECK_OS (it names $oses) |"); continue ;;
+            esac
+            case "$name" in
+              *.sh) run=(bash "$script") ;;
+              *.ps1) run=(pwsh -NoProfile -NonInteractive -File "$script") ;;
+              *)
+                echo "::error::$name is neither a .sh nor a .ps1"
+                rows+=("| $name | **neither .sh nor .ps1** |")
+                failed=1
+                continue
+                ;;
+            esac
+            export DESKTOP_CHECK_WORK="$RUNNER_TEMP/desktop-checks/${name%.*}"
+            mkdir -p "$DESKTOP_CHECK_WORK"
+            echo "::group::$name"
+            start=$SECONDS
+            if "${run[@]}"; then
+              rows+=("| $name | passed in $((SECONDS - start)) s |")
+            else
+              echo "::error::$name failed on $CHECK_OS"
+              rows+=("| $name | **failed** after $((SECONDS - start)) s |")
+              failed=1
+            fi
+            echo "::endgroup::"
+            ran=$((ran + 1))
+          done
+          if [ "$ran" -eq 0 ]; then
+            echo "::error::no script of scripts/desktop-checks/ runs on $CHECK_OS"
+            failed=1
+          fi
+          {
+            echo
+            echo "| script | on $CHECK_OS |"
+            echo "|---|---|"
+            printf '%s\n' "${rows[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$failed"
+
+      # The servers' logs and the tests' results, not the run's keys.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: desktop-checks-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/desktop-checks/*/*.log
+            ${{ runner.temp }}/desktop-checks/*/*.out
+            ${{ runner.temp }}/desktop-checks/*/outcomes.txt
+            sharedUI/build/test-results/jvmTest/*.xml
+            sharedUI/build/reports/tests/jvmTest/
+          if-no-files-found: ignore
+          retention-days: 7
