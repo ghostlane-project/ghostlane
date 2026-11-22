@@ -173,11 +173,16 @@ func (h seenHello) short() bool { return !h.hybrid && h.size <= firstSegment }
 // realityLineAt is a VLESS + Reality + Vision line to 127.0.0.1:port with
 // chrome's hello, the app's default and one that carries the hybrid share.
 func realityLineAt(port int, pub string) FrontParams {
+	return realityLineWith(port, pub, "chrome")
+}
+
+// realityLineWith is the same line with the fingerprint a link names.
+func realityLineWith(port int, pub, fp string) FrontParams {
 	proxyPort, _ := olcrtc.FreePort()
 	p := base(ModeProxy)
 	p.ProxyPort, p.ProbeListen = proxyPort, ""
 	p.Upstream = Upstream{Vless: &links.VlessLine{UUID: e2eUUID, Host: "127.0.0.1", Port: port, SNI: realitySNI, PublicKey: pub, ShortID: "0123",
-		Fingerprint: "chrome", Flow: "xtls-rprx-vision", Transport: links.Transport{Kind: "tcp"}}}
+		Fingerprint: fp, Flow: "xtls-rprx-vision", Transport: links.Transport{Kind: "tcp"}}}
 	return p
 }
 
@@ -334,6 +339,26 @@ func TestRealityHelloFallbackEndToEnd(t *testing.T) {
 					t.Fatalf("opened after %v: the dial waited though the short hello is known to work here", took)
 				}
 			})
+			// A fingerprint whose own hello has no hybrid share is sent as
+			// Chrome's (firefox), and android's own has no key share at all:
+			// their retry is the hello that stalled without its hybrid share,
+			// not their own. Each has a relay, so a server, of its own.
+			for _, fp := range []string{"firefox", "android"} {
+				t.Run("unanswered-hello-is-retried-short-"+fp, func(t *testing.T) {
+					relay := newCuttingRelay(t, addr, firstSegment)
+					got, took, err := fetchWithin(t, realityLineWith(relay.port(), pub, fp), 20*time.Second, false)
+					seen := relay.seen(t)
+					if got != want {
+						t.Fatalf("%q, %v after %v, hellos %+v\nserver log:\n%s", got, err, took, seen, logs.String())
+					}
+					if len(seen) != 2 || !seen[0].long() || !seen[1].short() {
+						t.Fatalf("hellos %+v: want the long one, then the short one", seen)
+					}
+					if got := rememberedAt(relay.port()); got != sbtls.RealityShortHelloWorks {
+						t.Fatalf("remembered %q, want %q", got, sbtls.RealityShortHelloWorks)
+					}
+				})
+			}
 		})
 	}
 
