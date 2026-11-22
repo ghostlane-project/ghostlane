@@ -11,8 +11,8 @@
 # Linux interface binding (F4a, F4b, F4h), allowInsecure only when the link sets
 # it (F8), the first payload never claimed written while held, which stalled
 # gRPC and XHTTP over h2 until the stream ended (FG), `ext:` lists (F7), the
-# musl fixes, url
-# 2.5.9 (RUSTSEC-2026-0592) and the testing partners in the README.
+# musl fixes, url 2.5.9 (RUSTSEC-2026-0592) and the testing partners in the
+# README.
 # Before it: fac14597 (ghostlane): a8e95224 + a REALITY hello nobody answers in
 # 4 s is retried once with the short hello (issue 166) + the olcRTC client joins
 # Jitsi rooms over WebSocket and BOSH (issue 182) + the README.
