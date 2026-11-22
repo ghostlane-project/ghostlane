@@ -1,0 +1,57 @@
+{
+  "about": "the Hysteria2 line pinning a certificate the server does not have: the pin must be checked",
+  "shape": "hysteria2",
+  "expect": "refused",
+  "against": "hysteria2",
+  "network": "udp",
+  "tls_name": "hy.example.com",
+  "link": "hysteria2://PASSWORD123@127.0.0.1:{port}?sni=hy.example.com&obfs=salamander&obfs-password=OBFSPW&pinSHA256={other_pin_colons}#interop-hysteria2-wrong-pin",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "hysteria",
+      "settings": {
+        "version": 2,
+        "clients": [
+          {
+            "auth": "PASSWORD123",
+            "email": "interop@test",
+            "level": 0
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "hysteria",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "hy.example.com",
+          "alpn": [
+            "h3"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        },
+        "hysteriaSettings": {
+          "version": 2,
+          "udpIdleTimeout": 60
+        },
+        "finalmask": {
+          "udp": [
+            {
+              "type": "salamander",
+              "settings": {
+                "password": "OBFSPW"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
