@@ -168,7 +168,9 @@ xray_fetch() {
 
 # bindings <core-dir>
 bindings() {
-  local core="$1" lib commit out src gen inc f
+  local core lib commit out src gen inc f
+  # Absolute: uniffi-bindgen runs in the core's checkout.
+  core="$(cd "$1" && pwd)"
   lib="$core/lib/$DARWIN/libghostlane_core.a"
   [ -s "$lib" ] || die "no $lib: build it with scripts/build-ghostlane-core-host.sh $core $DARWIN"
   commit="$(awk 'NR == 1 { print $1 }' "$core/stamps/$DARWIN")"
