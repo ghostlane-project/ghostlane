@@ -8,8 +8,9 @@
 # (sharedUI/src/jvmTest/resources/macos-helper/tun-request.json), with this
 # Mac's port, names and exclusions put in. What it asks: the utun hev brings
 # up, the routes of both families the helper lays through it and around what
-# it is told to keep out, and that nothing of either is left when hev is
-# killed outright or the helper is stopped as launchd stops it.
+# it is told to keep out, that the helper answers in a moment however many
+# of them it lays or takes away, and that nothing of either is left when hev
+# is killed outright or the helper is stopped as launchd stops it.
 #
 # Run as root, on a machine that can lose its network for a moment: it takes
 # the Mac's routes into a tun that answers itself, points the system's
@@ -173,11 +174,23 @@ mkfifo "$work/ask"
 "$HELPER" /nonexistent/sing-box "$WHO_UID" "$HEV" <"$work/ask" >"$work/said" 2>"$work/helper.err" &
 DAEMON=$!
 exec 3>"$work/ask"
-# ask <a request's line>: sends it and prints the reply's facts on one line
+now_ms() { python3 -I -c 'import time; print(int(time.time() * 1000))'; }
+# ask <a request's line>: sends it and prints the reply's facts on one line. It
+# waits for the reply by the clock, a minute at most, and keeps how long the
+# reply took in milliseconds for [quick].
 ask() {
-  local before; before=$(wc -l <"$work/said")
+  local before start end
+  before=$(wc -l <"$work/said")
+  start=$(now_ms)
+  end=$(( $(date +%s) + 60 ))
   printf '%s\n' "$1" >&3
-  for _ in $(seq 1 150); do [ "$(wc -l <"$work/said")" -gt "$before" ] && break; sleep 0.1; done
+  while [ "$(wc -l <"$work/said")" -le "$before" ] && [ "$(date +%s)" -lt "$end" ]; do sleep 0.05; done
+  if [ "$(wc -l <"$work/said")" -le "$before" ]; then
+    echo none > "$work/took"
+    echo "no reply in a minute"
+    return
+  fi
+  echo $(( $(now_ms) - start )) > "$work/took"
   tail -1 "$work/said" | python3 -c '
 import json,sys
 try: r=json.loads(sys.stdin.readline())
@@ -185,6 +198,16 @@ except Exception as e: print("no reply"); sys.exit(0)
 print("ok=%s state=%s hold=%s protocol=%s tunnel=%s routes=%s error=%s" % (r.get("ok"), r.get("state"), r.get("hold"), r.get("protocol"), r.get("tunnel", "none"), r.get("routes", "none"), r.get("error")))'
 }
 said() { tail -1 "$work/said" | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline()).get(sys.argv[1], ""))' "$1"; }
+# How long the last reply took against [ms]: the helper answers with its lock
+# held, and every other request waits behind it.
+QUICK=3000
+quick() {
+  local took; took=$(cat "$work/took" 2>/dev/null)
+  case "$took" in
+    ''|none) echo "no reply" ;;
+    *) if [ "$took" -le "$QUICK" ]; then echo "within $QUICK ms"; else echo "$took ms"; fi ;;
+  esac
+}
 
 say "at rest"
 expect "the helper speaks the fifth protocol and runs no tunnel" "$(ask "$(request status)")" '^ok=True state=idle hold=False protocol=5 tunnel=none routes=0 '
@@ -210,6 +233,7 @@ expect "nor a route laid" "$(via 192.0.2.10)" "^$IF\$"
 say "a tunnel under hev, around a server of each family"
 ROUTES=$(plan_count "$SERVER/32" 2001:db8::7/128)
 expect "it runs, through the routes laid around them" "$(ask "$(request tun utun235 "exclude:$SERVER/32,2001:db8::7/128")")" "^ok=True state=running hold=False protocol=5 tunnel=hev routes=$ROUTES "
+expect "and says so in a moment, however many routes it laid" "$(quick)" '^within '
 PID=$(said pid)
 expect "the helper's own copy of hev is the process" "$(ps -o command= -p "$PID" 2>&1)" "^$STATE/bin/hev-socks5-tunnel $STATE/hev\.yml\$"
 expect "as root, in root's group" "$(ps -o uid=,gid= -p "$PID" | tr -s ' ' | sed 's/^ //')" '^0 0$'
@@ -238,6 +262,7 @@ expect "the same hev" "$(said pid)" "^$PID\$"
 
 say "another tunnel in its place, which the system asks for names"
 expect "it runs, keeping nothing out" "$(ask "$(request tun utun236 names)")" "^ok=True state=running hold=False protocol=5 tunnel=hev routes=$(plan_count) "
+expect "in a moment, the first one's routes taken away and its own laid" "$(quick)" '^within '
 expect "in place of the first one, and none of its routes is left" "$(gone utun235) $(alive "$PID") $(routes_through utun235)" '^gone gone 0$'
 PID=$(said pid)
 expect "up as it was asked" "$(up_holding utun236)" '^up=yes ipv4=yes ipv6=yes mtu=1500$'
@@ -246,6 +271,7 @@ expect "the system asks it for names" "$(scutil --dns | awk '/nameserver\[0\]/{p
 expect "hev answers a name with an address of its own" "$(as_user dig +short +time=2 +tries=2 "$NAME" A @172.19.0.2 2>&1 | head -1)" '^198\.1[89]\.[0-9]+\.[0-9]+$'
 expect "and hands the name to the SOCKS port" "$(answered -4 "http://$NAME/")" "^stand-in saw $NAME:80\$"
 expect "stopped" "$(ask "$(request stop)")" '^ok=True state=idle hold=False protocol=5 tunnel=none routes=0 '
+expect "in a moment" "$(quick)" '^within '
 expect "hev is gone" "$(alive "$PID") $(hev_running)" '^gone none$'
 expect "and its utun, with every route through it" "$(gone utun236) $(routes_through utun236)" '^gone 0$'
 expect "the machine sends where it sent before" "$(via 192.0.2.10)" "^$IF\$"
@@ -253,6 +279,7 @@ expect "the key is gone" "$(key_gone)" '^0$'
 
 say "hev killed outright"
 expect "a tunnel runs, which the system asks for names" "$(ask "$(request tun utun235 names "exclude:$SERVER/32")")" "^ok=True state=running hold=False protocol=5 tunnel=hev routes=$(plan_count "$SERVER/32") "
+expect "up in a moment" "$(quick)" '^within '
 PID=$(said pid)
 kill -9 "$PID"
 for _ in $(seq 1 30); do [ "$(alive "$PID")" = gone ] && ! ifconfig utun235 >/dev/null 2>&1 && break; sleep 0.1; done
