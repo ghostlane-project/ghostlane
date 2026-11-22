@@ -1,0 +1,46 @@
+{
+  "about": "WebTunnel: VLESS over WebSocket with TLS, offering h2 and http/1.1, to a server that ends TLS with http/1.1 as nginx does",
+  "shape": "webtunnel-ws",
+  "expect": "page",
+  "tls_name": "wt.example.com",
+  "trust": "pin",
+  "link": "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:{port}?security=tls&encryption=none&sni=wt.example.com&fp=chrome&type=ws&path=%2Fv&host=wt.example.com&alpn=h2%2Chttp%2F1.1#interop-webtunnel-ws",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "33333333-3333-3333-3333-333333333332"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "33333333-3333-3333-3333-333333333333"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/v"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

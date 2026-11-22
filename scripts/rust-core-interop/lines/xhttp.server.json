@@ -1,0 +1,45 @@
+{
+  "about": "VLESS over REALITY over XHTTP in packet-up, the server in auto mode as ProofKit's exits run it",
+  "shape": "xhttp",
+  "expect": "page",
+  "link": "vless://22222222-2222-2222-2222-222222222222@127.0.0.1:{port}?type=xhttp&security=reality&encryption=none&pbk={public_key}&sid=cd34&fp=chrome&sni=reality.interop.test&path=%2Fdownload&host=reality.interop.test&mode=packet-up#interop-xhttp",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "22222222-2222-2222-2222-222222222222"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "22222222-2222-2222-2222-222222222222"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "{target}",
+          "serverNames": [
+            "reality.interop.test"
+          ],
+          "privateKey": "{private_key}",
+          "shortIds": [
+            "cd34"
+          ]
+        },
+        "xhttpSettings": {
+          "host": "reality.interop.test",
+          "path": "/download",
+          "mode": "auto"
+        }
+      }
+    }
+  ]
+}

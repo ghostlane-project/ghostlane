@@ -1,0 +1,42 @@
+{
+  "about": "the WebTunnel line with the run's self-signed certificate and no pin: the core must refuse a certificate no public root signed",
+  "shape": "webtunnel-ws",
+  "expect": "refused",
+  "against": "webtunnel-ws",
+  "tls_name": "wt.example.com",
+  "link": "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:{port}?security=tls&encryption=none&sni=wt.example.com&fp=chrome&type=ws&path=%2Fv&host=wt.example.com&alpn=h2%2Chttp%2F1.1#interop-webtunnel-ws-self-signed",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "33333333-3333-3333-3333-333333333333"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/v"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
