@@ -190,3 +190,8 @@ class LogScrubber(private val salt: Long) {
         private val IPV6 = Regex("""[0-9a-fA-F]{0,4}(?::[0-9a-fA-F]{0,4}){2,7}""")
     }
 }
+
+object LogHead {
+    fun lines(entries: Int, corePin: String?): List<String> =
+        listOf("Ghostlane application logs", "Entries: $entries")
+}
