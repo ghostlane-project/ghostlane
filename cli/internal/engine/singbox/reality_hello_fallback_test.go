@@ -27,8 +27,8 @@ import (
 // segments. Some networks deliver the first and never the second, so the
 // server waits for the end of the hello and the client for an answer. The
 // patched sing-box watches such a hello for helloStallWindow and then opens
-// one new connection with the hello upstream sing-box sends, which has no
-// such share and fits one segment (scripts/patches/sing-box-reality-hello.patch).
+// one new connection with the short hello: the same hello without that
+// share, which fits one segment (scripts/patches/sing-box-reality-hello.patch).
 //
 // These tests put that network in front of real Xray servers: a relay that
 // lets through the first firstSegment bytes of a connection's first flight

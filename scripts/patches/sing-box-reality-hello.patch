@@ -28,10 +28,11 @@ random and randomized open on all three.
    timeout. The TLS dialer (common/tls/client.go, which already dials again
    for ECH) watches a Reality hello for 4 s from the start of the handshake.
    With not one byte of answer it closes that connection and opens one more
-   with the hello sing-box sends without this patch: the fingerprint's own
-   with the X25519MLKEM768 group and share taken out, which fits one
-   segment. Any byte ends the watch: a server that answered is never
-   retried.
+   with the short hello: the hello that stalled (the fingerprint's own, or
+   Chrome's by point 2) with the X25519MLKEM768 group and share taken out,
+   as sing-box takes them out of every Reality hello without this patch. It
+   fits one segment. Any byte ends the watch: a server that answered is
+   never retried.
    The outcome is kept per server (address, port, server name) for 10
    minutes, for at most 64 servers, process-wide. Where the short hello
    opened the line, later dials send it first. Where it went unanswered too
@@ -41,10 +42,16 @@ random and randomized open on all three.
    not kept, and a failure is not kept over a short hello that worked.
    NetworkManager.ResetNetwork (route/network.go) empties the memory. Two
    debug lines: the retry, and the outcome kept. No option.
-   What the retry gives up: its connection is keyed by X25519 alone, as every
-   Reality connection of an unpatched sing-box is; REALITY's authentication
-   is the same for both hellos. Not covered: a handshake on a connection the
-   TLS dialer did not make (the gRPC transport of a `with_grpc` build).
+   What the retry gives up, and to whom. Whoever can drop packets on the
+   path can force the retry by dropping the long hello's second segment, and
+   renew it every 10 minutes. While "works" is kept, every dial to that
+   server sends the short hello and is keyed by X25519 alone, so a recorded
+   session is not protected against a later quantum computer. The short
+   hello is the one upstream sing-box sends, which a current Chrome does
+   not, so that party also sees the client switch to it 4 s after the long
+   one. REALITY's authentication is the same for both hellos.
+   Not covered: a handshake on a connection the TLS dialer did not make (the
+   gRPC transport of a `with_grpc` build).
 
 diff -ruN a/common/tls/client.go b/common/tls/client.go
 --- a/common/tls/client.go
@@ -93,7 +100,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	if options.KernelRx || options.KernelTx {
  		if !C.IsLinux {
  			return nil, E.New("kTLS is only supported on Linux")
-@@ -124,27 +128,34 @@
+@@ -124,27 +128,35 @@
  	uConfig.InsecureSkipVerify = true
  	uConfig.SessionTicketsDisabled = true
  	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
@@ -103,9 +110,9 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 +	// client never strips it. A fingerprint whose hello has no such share in
 +	// this uTLS (firefox, safari, ios, edge, 360, qq, android; `random` four
 +	// times in five) is sent as Chrome's, the one that has it.
-+	// The hello fallback's retry asks for the short hello instead: the
-+	// fingerprint's own with that share and its group taken out, which is
-+	// what sing-box sends without this patch.
++	// The hello fallback's retry asks for the short hello: this same hello,
++	// chosen the same way, with that share and its group taken out as
++	// sing-box takes them out of every Reality hello without this patch.
  	uConn := utls.UClient(conn, uConfig, e.uClient.id)
  	verifier.UConn = uConn
  	err := uConn.BuildHandshakeState()
@@ -122,27 +129,27 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 -			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
 -				return share.Group != utls.X25519MLKEM768
 -			})
-+	if e.helloAttempt != nil && e.helloAttempt.short {
-+		realityHelloStripHybrid(uConn)
-+		err = uConn.BuildHandshakeState()
-+		if err != nil {
-+			return nil, err
-+		}
-+	} else if !realityHelloOffersHybridFirst(uConn) {
++	if !realityHelloOffersHybridFirst(uConn) {
 +		uConn = utls.UClient(conn, uConfig, utls.HelloChrome_Auto)
 +		verifier.UConn = uConn
 +		err = uConn.BuildHandshakeState()
 +		if err != nil {
 +			return nil, err
  		}
--	}
+ 	}
 -	err = uConn.BuildHandshakeState()
 -	if err != nil {
 -		return nil, err
++	if e.helloAttempt != nil && e.helloAttempt.short {
++		realityHelloStripHybrid(uConn)
++		err = uConn.BuildHandshakeState()
++		if err != nil {
++			return nil, err
++		}
  	}
  
  	if len(uConfig.NextProtos) > 0 {
-@@ -168,9 +179,12 @@
+@@ -168,9 +180,12 @@
  	}
  	binary.BigEndian.PutUint64(hello.SessionId, uint64(nowTime.Unix()))
  
@@ -158,7 +165,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	binary.BigEndian.PutUint32(hello.SessionId[4:], uint32(time.Now().Unix()))
  	copy(hello.SessionId[8:], e.shortID[:])
  	if debug.Enabled {
-@@ -210,6 +224,9 @@
+@@ -210,6 +225,9 @@
  	}
  
  	err = uConn.HandshakeContext(ctx)
@@ -168,7 +175,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	if err != nil {
  		return nil, err
  	}
-@@ -256,6 +273,8 @@
+@@ -256,6 +274,8 @@
  		e.uClient.Clone().(*UTLSClientConfig),
  		e.publicKey,
  		e.shortID,
@@ -177,7 +184,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  	}
  }
  
-@@ -264,6 +283,10 @@
+@@ -264,6 +284,10 @@
  	serverName string
  	authKey    []byte
  	verified   bool
@@ -188,7 +195,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
  }
  
  func (c *realityVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-@@ -277,6 +300,7 @@
+@@ -277,6 +301,7 @@
  			return nil
  		}
  	}
@@ -199,7 +206,7 @@ diff -ruN a/common/tls/reality_client.go b/common/tls/reality_client.go
 diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 --- a/common/tls/reality_ghostlane.go
 +++ b/common/tls/reality_ghostlane.go
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,245 @@
 +//go:build with_utls
 +
 +package tls
@@ -249,7 +256,9 @@ diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 +
 +// realityHelloStripHybrid takes the X25519MLKEM768 group and key share out
 +// of a built hello, exactly as sing-box does for every Reality hello without
-+// this patch: the short hello is that one, not a new one.
++// this patch. The short hello is the hello that stalled, less that share: a
++// fingerprint sent as Chrome's is retried as Chrome's, so the retry always
++// has the X25519 share the session id is sealed with.
 +func realityHelloStripHybrid(uConn *utls.UConn) {
 +	for _, extension := range uConn.Extensions {
 +		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
@@ -358,11 +367,14 @@ diff -ruN a/common/tls/reality_ghostlane.go b/common/tls/reality_ghostlane.go
 +//     dial with the stall and is not remembered: it says nothing about the
 +//     hello.
 +//
-+// What the retry gives up: the connection it opens is keyed by X25519 alone,
-+// as every Reality connection of an unpatched sing-box is. REALITY's own
-+// authentication is the same for both hellos. Whoever can drop the second
-+// segment of a hello can force the retry, and can as well drop the whole
-+// connection.
++// What the retry gives up, and to whom. Whoever can drop packets on the path
++// can force the retry by dropping the long hello's second segment, and renew
++// it every RealityHelloMemoryTTL. While "works" is kept, every dial to that
++// server sends the short hello and is keyed by X25519 alone, so a recorded
++// session is not protected against a later quantum computer. The short hello
++// is the one upstream sing-box sends, which a current Chrome does not, so
++// that party also sees the client switch to it RealityHelloStallWindow after
++// the long one. REALITY's own authentication is the same for both hellos.
 +//
 +// Not covered: a handshake on a connection somebody else dialed
 +// (RealityClientConfig.Client and ClientHandshake, which the gRPC transport
@@ -462,7 +474,7 @@ diff -ruN a/common/tls/reality_ghostlane_stub.go b/common/tls/reality_ghostlane_
 diff -ruN a/common/tls/reality_hello_ghostlane.go b/common/tls/reality_hello_ghostlane.go
 --- a/common/tls/reality_hello_ghostlane.go
 +++ b/common/tls/reality_hello_ghostlane.go
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,180 @@
 +package tls
 +
 +import (
@@ -477,8 +489,9 @@ diff -ruN a/common/tls/reality_hello_ghostlane.go b/common/tls/reality_hello_gho
 +// A Reality hello with the X25519MLKEM768 key share is about 1.8 KB and
 +// leaves in two TCP segments. Some networks deliver the first and never the
 +// second, retransmissions included: the server waits for the end of the
-+// hello and the client for an answer. The short hello, the one sing-box
-+// sends without the patch, has no such share and fits one segment.
++// hello and the client for an answer. The short hello, the same hello with
++// that share taken out as sing-box takes it out without the patch, fits one
++// segment.
 +const (
 +	// RealityHelloStallWindow is how long a watched hello may go without one
 +	// byte of answer, from the start of the TLS handshake on a connected
