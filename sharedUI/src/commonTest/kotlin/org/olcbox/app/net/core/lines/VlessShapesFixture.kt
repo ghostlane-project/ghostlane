@@ -13,6 +13,7 @@ import org.olcbox.app.net.core.CoreLineFixture
 object VlessShapesFixture : CoreLineFixture {
     private const val TLS = "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443" +
         "?security=tls&encryption=none&sni=vless.example.com&fp=chrome"
+    // A loopback server: the core sends VLESS with no TLS only to a private, loopback or link-local one.
     private const val NONE = "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none"
 
     override val line: CoreLine = VlessShapes
