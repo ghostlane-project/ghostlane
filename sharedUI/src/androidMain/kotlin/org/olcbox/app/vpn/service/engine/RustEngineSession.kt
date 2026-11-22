@@ -160,7 +160,8 @@ internal class RustEngineSession(
     private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int, tun: Boolean) {
         // A core binds no network of its own; see startTransport.
         unbindProcessFromNetwork()
-        val login = SocksLogin.of(socksUsername, socksPassword)
+        // The tun's session demands the app's login; proxy mode runs open, as the Go core line does (activeCoreLogin stays null).
+        val login = if (tun) SocksLogin.of(socksUsername, socksPassword) else null
         // Whether core.json names this network's resolver (the Bypass's direct side): such a
         // line is restarted on a network change rather than reset (resetRustCoreForNetwork).
         var namesNetworkResolver = false
@@ -193,8 +194,8 @@ internal class RustEngineSession(
                     verboseLogs = verboseDebugLogs
                 )
             } else {
-                // Proxy mode: the phone's other apps use the port, with the user's login when one is set.
-                RustProxyMode.config(spec, port, login, socksListenHost, routing, geodata, verboseDebugLogs)
+                // Proxy mode: the phone's other apps use the port, open as on the Go core line (no login).
+                RustProxyMode.config(spec, port, socksListenHost, routing, geodata, verboseDebugLogs)
             }
         }
         waitForSocksPortReleased(port, socksReleaseQuickTimeoutMs)

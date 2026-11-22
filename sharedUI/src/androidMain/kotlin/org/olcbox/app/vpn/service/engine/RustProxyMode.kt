@@ -2,7 +2,6 @@ package org.olcbox.app.vpn.service.engine
 
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
-import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.vpn.AndroidSocksProxySettings
@@ -11,8 +10,9 @@ import org.olcbox.app.vpn.AndroidSocksProxySettings
  * Proxy mode (a SOCKS port for the other apps on the phone) on the Rust core.
  *
  * A core line listens as the Go cores did: on a loopback address, at the port
- * the settings name (the endpoint the app tells other apps to use), demanding
- * the user's login when one is set and open to the phone's apps when not. The
+ * the settings name (the endpoint the app tells other apps to use), open to the
+ * phone's apps: the Go core line ran with no login, and the Rust core with a login
+ * refuses UDP ASSOCIATE with port 0, SOCKS4 and clients that send none. The
  * inbound is [CoreInbound.Proxy]; the tun's own ([CoreInbound.Tunnel]) is the
  * session's business. An olcRTC room needs only its own port and login, so it
  * runs as it did. The Rust session asks here before it starts anything.
@@ -39,14 +39,16 @@ internal object RustProxyMode {
      * addresses mean "this phone" to the app's own clients ([AndroidSocksProxySettings.connectHost]),
      * and bind loopback as they did on the Go cores.
      */
-    fun listenAddress(listenHost: String): String? =
-        CoreInbound.loopbackAddress(AndroidSocksProxySettings.connectHost(listenHost))
+    fun listenAddress(listenHost: String): String? {
+        val host = AndroidSocksProxySettings.connectHost(listenHost)
+        // "localhost" is free text the settings sheet takes; the Go cores bound 127.0.0.1 for it.
+        return CoreInbound.loopbackAddress(if (host.equals("localhost", ignoreCase = true)) "127.0.0.1" else host)
+    }
 
     /** core.json for [spec] in proxy mode: the config the tun's session writes, with proxy mode's inbound in the tun's place. */
     fun config(
         spec: OutboundSpec,
         port: Int,
-        login: SocksLogin?,
         listenHost: String,
         routing: Routing,
         geodata: XrayGeodata.Lists?,
@@ -55,7 +57,7 @@ internal object RustProxyMode {
         val listen = requireNotNull(listenAddress(listenHost)) { NOT_LOOPBACK_REFUSAL }
         return CoreInbound.build(
             spec,
-            CoreInbound.Plan(CoreInbound.Proxy(port, login, listen)),
+            CoreInbound.Plan(CoreInbound.Proxy(port, listen = listen)),
             routing = routing,
             geodata = geodata,
             verboseLogs = verboseLogs
