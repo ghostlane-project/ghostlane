@@ -143,6 +143,16 @@ class RustCheckE2ETest {
     @Test
     fun a4_aCarrierTheCoreDoesNotCarryIsRefusedBeforeAnyRoom() {
         hub.reset(PipeHub.Room.Ends("app room check: unused"))
+        // Guard: on the Go runtime these two carriers would dial their real API hosts.
+        // Prove the Rust core is the one answering, with the carrier none on loopback,
+        // before any other carrier is named.
+        val guard = runBlocking { OlcRtcConnectionChecker.checkRoom(request("guard"), context) }
+        assertEquals(
+            "the Rust core must answer before a carrier is named (else Go would dial its API)",
+            OlcRtcConnectionChecker.ENGINE_RUST,
+            guard.engine
+        )
+        hub.reset(PipeHub.Room.Ends("app room check: unused"))
         for (carrier in listOf("telemost", "wbstream")) {
             val (r, _) = timed("check on $carrier") {
                 runBlocking { OlcRtcConnectionChecker.checkRoom(request("unused-$carrier", provider = carrier), context) }
