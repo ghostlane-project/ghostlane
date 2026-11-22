@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		C0DE00000000000000000011 /* OlcFfi.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000021 /* OlcFfi.swift */; };
 		C0DE00000000000000000012 /* OlcrtcError+Localized.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000022 /* OlcrtcError+Localized.swift */; };
+		C0DE00000000000000000013 /* OlcFfi.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000021 /* OlcFfi.swift */; };
+		C0DE00000000000000000014 /* OlcrtcError+Localized.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000022 /* OlcrtcError+Localized.swift */; };
 		9A0000010000000000000001 /* OlcboxIosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000011 /* OlcboxIosApp.swift */; };
 		9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000012 /* SwiftPlatformBridge.swift */; };
 		9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000013 /* SwiftOlcRtcManager.swift */; };
@@ -286,6 +288,8 @@
 				9A0000010000000000000001 /* OlcboxIosApp.swift in Sources */,
 				9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */,
 				9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */,
+				C0DE00000000000000000013 /* OlcFfi.swift in Sources */,
+				C0DE00000000000000000014 /* OlcrtcError+Localized.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -377,12 +381,10 @@
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64",
 					"$(SRCROOT)/../sharedUI/build/bin/iosArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",
 				);
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64_x86_64-simulator",
 					"$(SRCROOT)/../sharedUI/build/bin/iosSimulatorArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
@@ -392,19 +394,40 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
+				);
 				MARKETING_VERSION = 1.0.273;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-framework",
 					SharedUI,
+					"-lghostlane_core",
+					"-lresolv",
+					"-lc++",
 					"-framework",
-					OlcRtcMobile,
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.proofkit.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
+				);
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -423,12 +446,10 @@
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64",
 					"$(SRCROOT)/../sharedUI/build/bin/iosArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",
 				);
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64_x86_64-simulator",
 					"$(SRCROOT)/../sharedUI/build/bin/iosSimulatorArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
@@ -438,19 +459,40 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator",
+				);
 				MARKETING_VERSION = 1.0.273;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 					"-framework",
 					SharedUI,
+					"-lghostlane_core",
+					"-lresolv",
+					"-lc++",
 					"-framework",
-					OlcRtcMobile,
+					Security,
+					"-framework",
+					SystemConfiguration,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = org.proofkit.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64/Headers/OlcFfiFFI",
+				);
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/Headers/OlcFfiFFI",
+				);
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};

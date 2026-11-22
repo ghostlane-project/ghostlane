@@ -74,12 +74,27 @@ interface IosMessageCallback {
     fun onError(message: String)
 }
 
+/**
+ * olcRTC in the app's own process: the room check and the probe, each one
+ * room joined through the Rust core and left before the call returns
+ * (SwiftOlcRtcManager). The tunnel's engine runs in the packet tunnel
+ * extension ([IosPacketTunnelBridge]), never here, so there is nothing to
+ * start and nothing that keeps running between calls.
+ */
 interface IosOlcRtcBridge {
+    /** Where the engine's lines go, each with its newline; null takes the writer away. */
     fun setLogWriter(writer: IosLogWriter?)
-    fun start(request: IosOlcRtcStartRequest): IosBridgeResult
+
+    /** Ends nothing that outlives a call; kept for the manager's teardown. */
     fun stop()
-    fun isRunning(): Boolean
+
+    /**
+     * The room joined, then the best of the HTTP requests to
+     * [IosOlcRtcCheckRequest.pingUrl] through it, in ms.
+     */
     fun ping(request: IosOlcRtcCheckRequest): IosLongResult
+
+    /** The room joined and its SOCKS port up, in ms. */
     fun check(request: IosOlcRtcCheckRequest): IosLongResult
 }
 

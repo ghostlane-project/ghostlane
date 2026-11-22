@@ -21,9 +21,17 @@ name: Rust core for iOS
 # keeps what it built and the UniFFI bindings per commit. A dispatch with
 # `pin` runs the same against another commit of the core.
 #
+# The app job builds the app itself for an iPhone simulator, with Gradle's
+# Go tasks switched off, and runs XCTest there: the app's own room check and
+# probe (iosApp/iosApp/SwiftOlcRtcManager.swift) through the same core, the
+# simulator slice, against a stand-in room of the carrier `none`
+# (iosApp/Tests/AppRoomCheck), and then reads every Mach-O file of the app
+# for Go. scripts/test-ios-app-room-check.sh says what it compiles and checks.
+#
 # A Mac and no device: nothing signs, uploads, publishes or joins a carrier
-# room; there is no secret. A macOS minute costs ten of Linux's, so the Mac
-# job waits for the cheap checks and runs only when what it reads changed.
+# room; there is no secret. A macOS minute costs ten of Linux's, so each Mac
+# job waits for the cheap checks and runs only when what it reads changed
+# (the scope job; the workflow's paths are the union of both jobs').
 on:
   push:
     branches:
@@ -39,6 +47,12 @@ on:
       - 'sharedUI/src/jvmTest/resources/reference-configs/*core-*.json'
       - sharedUI/src/jvmTest/resources/reference-configs/ios-tun-socks-lossy.json
       - scripts/xray-servers.txt
+      - scripts/test-ios-app-room-check.sh
+      - 'iosApp/Tests/AppRoomCheck/**'
+      - 'iosApp/iosApp/**'
+      - iosApp/iosApp.xcodeproj/project.pbxproj
+      - sharedUI/src/iosMain/kotlin/org/olcbox/app/ios/IosBridge.kt
+      - scripts/build-ghostlane-core-ios.sh
   pull_request:
     branches:
       - rust/all
@@ -53,6 +67,12 @@ on:
       - 'sharedUI/src/jvmTest/resources/reference-configs/*core-*.json'
       - sharedUI/src/jvmTest/resources/reference-configs/ios-tun-socks-lossy.json
       - scripts/xray-servers.txt
+      - scripts/test-ios-app-room-check.sh
+      - 'iosApp/Tests/AppRoomCheck/**'
+      - 'iosApp/iosApp/**'
+      - iosApp/iosApp.xcodeproj/project.pbxproj
+      - sharedUI/src/iosMain/kotlin/org/olcbox/app/ios/IosBridge.kt
+      - scripts/build-ghostlane-core-ios.sh
   workflow_dispatch:
     inputs:
       pin:
@@ -86,8 +106,8 @@ jobs:
         run: |
           set -euo pipefail
           shellcheck --version | sed -n 2p
-          bash -n scripts/test-ios-engine-on-mac.sh
-          shellcheck -x scripts/test-ios-engine-on-mac.sh
+          bash -n scripts/test-ios-engine-on-mac.sh scripts/test-ios-app-room-check.sh
+          shellcheck -x scripts/test-ios-engine-on-mac.sh scripts/test-ios-app-room-check.sh
           python3 -I -m py_compile iosApp/Tests/EngineHost/lines.py iosApp/Tests/EngineHost/local_servers.py
 
       - name: The plan, the lines, the direct rules, the Xray list
@@ -101,9 +121,71 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: The app's room check, its packages, the scope
+        run: |
+          set -euo pipefail
+          bash scripts/test-ios-app-room-check.sh selftest
+          {
+            echo "### What the app's room check compiles"
+            echo '```'
+            bash scripts/test-ios-app-room-check.sh plan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Which Mac job a change reaches: a pull request by what it changes
+  # against its base, a push by what it moved; whatever cannot be read,
+  # both. A dispatch with `pin` is for the engines: the app is built only at
+  # the pin in scripts/ghostlane-core-pin.sh.
+  scope:
+    name: What the Mac jobs read, changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      engines: ${{ steps.scope.outputs.engines }}
+      app: ${{ steps.scope.outputs.app }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: The changed files
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set +e -uo pipefail
+          changed="$RUNNER_TEMP/changed.txt"
+          ok=0
+          case "$EVENT" in
+            pull_request)
+              # The merge commit: its first parent is the base.
+              git rev-parse -q --verify HEAD^2 > /dev/null && git diff --name-only HEAD^1 HEAD > "$changed" && ok=1
+              ;;
+            push)
+              # A new branch's push has no before (all zeros).
+              if [[ "$BEFORE" =~ [1-9a-f] ]] && git fetch -q --depth=1 origin "$BEFORE"; then
+                git diff --name-only "$BEFORE" HEAD > "$changed" && ok=1
+              fi
+              ;;
+          esac
+          if [ "$EVENT" = workflow_dispatch ]; then
+            out="engines=true"$'\n'"app=$([ -z "$PIN" ] && echo true || echo false)"
+          elif [ "$ok" = 1 ]; then
+            echo "changed:"; sed 's/^/  /' "$changed"
+            out="$(bash scripts/test-ios-app-room-check.sh scope "$changed")" || out=$'engines=true\napp=true'
+          else
+            echo "the change could not be read: both Mac jobs run"
+            out=$'engines=true\napp=true'
+          fi
+          echo "$out"
+          echo "$out" >> "$GITHUB_OUTPUT"
+
   mac:
     name: The extension's engines on a Mac
-    needs: harness
+    needs: [harness, scope]
+    if: needs.scope.outputs.engines == 'true'
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -192,3 +274,120 @@ jobs:
       - name: The extension's log, on a failure
         if: failure()
         run: log show --last 20m --style compact --info --debug --predicate 'subsystem == "org.proofkit.app"' | tail -n 300
+
+  app:
+    name: The app's room check in an iPhone simulator
+    needs: [harness, scope]
+    if: needs.scope.outputs.app == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The release's Xcode, as the job above.
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+
+      # The extension's ghostlane-core at the pin, both slices and the UniFFI
+      # bindings, under PR Checks' key for it; built here only when that is
+      # not there (about 20 minutes).
+      - name: Restore ghostlane-core
+        uses: actions/cache@v6
+        with:
+          path: sharedUI/build/generated/rust-core/ios
+          key: ghostlane-core-ios-${{ hashFiles('scripts/ghostlane-core-pin.sh', 'scripts/build-ghostlane-core-ios.sh') }}
+
+      - name: ghostlane-core (kept when it came from the cache)
+        run: |
+          set -euo pipefail
+          bash scripts/build-ghostlane-core-ios.sh "$PWD/sharedUI/build/generated/rust-core/ios" > out-core.log 2>&1 ||
+            { tail -n 80 out-core.log; exit 1; }
+          grep -E '^(ghostlane-core|BUILD|SYMBOLS) ' out-core.log || true
+          ls -l sharedUI/build/generated/rust-core/ios/GhostlaneCore.xcframework/ios-arm64-simulator/libghostlane_core.a
+
+      # As PR Checks' Apple Kotlin compilation sets Gradle up.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The app is to build with no Go: the Gradle tasks that fetch and build
+      # the Go frameworks are switched off for every Gradle run of this job,
+      # the one in the app's own first build phase included.
+      - name: No Go tasks in this job's Gradle
+        run: |
+          set -euo pipefail
+          dir="${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          mkdir -p "$dir"
+          cat > "$dir/rust-ios-no-go.gradle" << 'GRADLE'
+          allprojects {
+              tasks.matching { it.name in ['fetchCoresIosXcframework', 'buildOlcrtcIosXcframework'] }.configureEach {
+                  enabled = false
+              }
+          }
+          GRADLE
+          cat "$dir/rust-ios-no-go.gradle"
+
+      - name: The app's Kotlin for the simulator
+        run: ./gradlew :sharedUI:linkDebugFrameworkIosSimulatorArm64 --no-configuration-cache --stacktrace
+
+      - name: The room check in an iPhone simulator
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          bash scripts/test-ios-app-room-check.sh run sharedUI/build/generated/rust-core/ios \
+            sharedUI/build/bin/iosSimulatorArm64/debugFramework "$RUNNER_TEMP/app-room-check" 2>&1 | tee out-room-check.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### The app's room check in an iPhone simulator"
+            echo '```'
+            grep -E '^(core|xcode|simulator): |^(ok  |FAIL) |^     ' out-room-check.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      # The app target, unsigned, as a developer's simulator build: Debug,
+      # with the app's code in its own binary rather than a debug dylib. Its
+      # first phase runs Gradle (the Go tasks above off); the extension it
+      # embeds is built first, with its own phase.
+      - name: Build the app for the simulator, with no Go
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          xcodebuild -project iosApp/iosApp.xcodeproj -target iosApp -sdk iphonesimulator -configuration Debug \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES ENABLE_DEBUG_DYLIB=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > out-app-build.log 2>&1
+          rc=$?
+          grep -E '(error|fatal error): |\*\* BUILD (SUCCEEDED|FAILED) \*\*' out-app-build.log | head -n 40
+          [ "$rc" -eq 0 ] || { tail -n 60 out-app-build.log; exit "$rc"; }
+          for d in olcrtc cores; do
+            if [ -e "sharedUI/build/generated/$d" ]; then
+              echo "::error::sharedUI/build/generated/$d is there: a Go task ran"
+              exit 1
+            fi
+          done
+
+      # PR Checks reads the extension for Go; this reads the whole app:
+      # every Mach-O file of the bundle, the app's own binary first.
+      - name: The app carries no Go
+        if: ${{ !cancelled() }}
+        run: |
+          set +e -uo pipefail
+          bash scripts/test-ios-app-room-check.sh scan iosApp/build/Debug-iphonesimulator/iosApp.app 2>&1 | tee out-scan.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### The app carries no Go"
+            echo '```'
+            grep -E '^(ok  |FAIL) |^       ' out-scan.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
