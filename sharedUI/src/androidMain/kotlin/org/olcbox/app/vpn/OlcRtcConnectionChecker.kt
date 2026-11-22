@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,6 +9,7 @@ import mobile.Mobile
 import mobile.Runtime as OlcrtcRuntime
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.OlcrtcDtls
+import org.olcbox.app.vpn.service.RustCore
 
 /**
  * What a room check and a probe need of the Rust core's olcRTC client. The
@@ -122,9 +124,14 @@ object OlcRtcConnectionChecker {
      * service's own rule, [RustCore.resolve], with no intent); else null, the
      * Go runtime. Without a [context] only the build's default is known.
      */
-    /** Not on the Rust core yet: every call is the Go runtime's. */
-    @Suppress("UNUSED_PARAMETER")
-    private fun rustBackend(context: Context?): RoomCheckBackend? = null
+    private fun rustBackend(context: Context?): RoomCheckBackend? {
+        val core = RustCore.backend ?: return null
+        val on = if (context != null) RustCore.resolve(Intent(), context) else core.defaultOn
+        if (!on) return null
+        return runCatching {
+            Class.forName(ROOM_CHECK_CLASS).getField("INSTANCE").get(null) as RoomCheckBackend
+        }.getOrNull()
+    }
 
     private fun engineName(backend: RoomCheckBackend?) = if (backend != null) ENGINE_RUST else ENGINE_GO
 
@@ -171,6 +178,7 @@ object OlcRtcConnectionChecker {
     private fun allocateLocalPort(): Int = java.net.ServerSocket(0).use { it.localPort }
 
     private const val TAG = "OlcRtcConnectionChecker"
+    private const val ROOM_CHECK_CLASS = "org.olcbox.app.rustcore.RustRoomCheck"
 
     private const val CONNECTION_CHECK_ATTEMPTS = 2
     private const val CONNECTION_CHECK_TIMEOUT_MS = 8_000L
