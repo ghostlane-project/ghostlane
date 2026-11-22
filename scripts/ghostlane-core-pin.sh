@@ -5,7 +5,10 @@
 # build-ghostlane-core-ios.sh. Moving the core is a change of this one line
 # (the UniFFI Swift is generated from the library at each build).
 #
-# Now: ghostlane-project/xray-rust a46c8ed0 (p6/integ, pin move PM1): fac14597 +
+# Now: ghostlane-project/xray-rust add3245c (p6/integ, pin move PM2): a46c8ed0 +
+# the engine's front, a core before the room in one process (F4c), and bound
+# sockets on macOS (F5); the iPhone's closure is the same.
+# Before it: a46c8ed0 (p6/integ, pin move PM1): fac14597 +
 # the runtime and the counting allocator shared by one process (F2), two core
 # handles in one process (F3), ghostlane-engine with rooms, one-shots and the
 # Linux interface binding (F4a, F4b, F4h), allowInsecure only when the link sets
@@ -22,5 +25,5 @@
 # end logged at info + ghostlane-core's `boring` feature (1.0.476: VK Calls'
 # SFU refused str0m's own DTLS hello with handshake_failure) + the VK, MTS and DTLS diagnostics at info (1.0.477: VK's hello unanswered; 1.0.478: no data channel opened, audio only; 1.0.479: none still) + sctp-proto vendored, reading the INIT ACK's Unrecognized Parameter VK's SFU sends (the channels open) + a VK signalling socket silent for 30 s is ended and the call rejoined; the debugging diagnostics back at debug (store build).
 GHOSTLANE_CORE_REPO="${GHOSTLANE_CORE_REPO:-ghostlane-project/xray-rust}"
-GHOSTLANE_CORE_COMMIT=a46c8ed0177081003bde22bc77b213d3c6ba0841
+GHOSTLANE_CORE_COMMIT=add3245c407f4749812fec63eb799fd4e4907fa1
 GHOSTLANE_CORE_TOOLCHAIN="${GHOSTLANE_CORE_TOOLCHAIN:-1.96.0}"
