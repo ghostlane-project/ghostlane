@@ -13,9 +13,13 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -44,7 +48,9 @@ import org.olcbox.app.vpn.service.RustCore
  * engine's handle, which the engine keeps. The listener closes, nothing is
  * carried, and the watchdog must see it at its next look and bring the line
  * back behind the same tun. The second asks what the log says about the core
- * when a tunnel came up and carried nothing.
+ * when a tunnel came up and carried nothing. The third puts a port that is full,
+ * not dead, in front of the core (it accepts and closes, as the room client's
+ * accept loop does at its connection cap): the watchdog must keep that line.
  *
  * No server of ours is needed, as in RustCoreVpnE2ETest: the core.json is the
  * test's (RustCore.testConfig), the fetch is the shell's through the tun, and a
@@ -170,6 +176,68 @@ class RustRecoveryE2ETest {
     }
 
     /**
+     * A listener on the session's port in front of the core, which listens on [corePort]. While
+     * [full] it closes every connection it accepts at once, with no reply, as the room client's
+     * accept loop does once it holds its cap of SOCKS connections, and [dropped] counts them.
+     * Otherwise it carries the bytes to the core, each direction closed on its own.
+     */
+    private class CapFront(val port: Int, private val corePort: Int) : AutoCloseable {
+        @Volatile var full = false
+        val dropped = AtomicInteger()
+        private val socket = ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 50)
+        }
+
+        init {
+            Thread {
+                while (!socket.isClosed) {
+                    val client = runCatching { socket.accept() }.getOrNull() ?: continue
+                    if (full) {
+                        dropped.incrementAndGet()
+                        runCatching { client.close() }
+                    } else {
+                        Thread { carry(client) }.also { it.isDaemon = true }.start()
+                    }
+                }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        /** The core may still be binding its port when the first connection comes. */
+        private fun dialCore(): Socket? {
+            val deadline = SystemClock.elapsedRealtime() + 5_000
+            while (true) {
+                try {
+                    return Socket(InetAddress.getByName("127.0.0.1"), corePort)
+                } catch (_: IOException) {
+                    if (SystemClock.elapsedRealtime() > deadline) return null
+                    Thread.sleep(100)
+                }
+            }
+        }
+
+        private fun carry(client: Socket) {
+            val core = dialCore() ?: run {
+                runCatching { client.close() }
+                return
+            }
+            val ends = AtomicInteger()
+            fun pump(from: Socket, to: Socket) = Thread {
+                runCatching { from.getInputStream().copyTo(to.getOutputStream()) }
+                runCatching { to.shutdownOutput() }
+                if (ends.incrementAndGet() == 2) {
+                    runCatching { from.close() }
+                    runCatching { to.close() }
+                }
+            }.also { it.isDaemon = true }.start()
+            pump(client, core)
+            pump(core, client)
+        }
+
+        override fun close() = socket.close()
+    }
+
+    /**
      * Stops the running core the way one that died behind its handle is left: xray-ffi's own
      * xray_core_stop on the handle RustCoreEngine holds, under the engine's lock. The core's
      * listeners close; the engine still holds the handle (isCoreRunning stays true) and stops
@@ -279,6 +347,78 @@ class RustRecoveryE2ETest {
         } finally {
             RustCore.testConfig = null
             stopAndWait()
+        }
+    }
+
+    @Test
+    fun aPortAtItsConnectionCapIsNotTakenForAStoppedEngine() {
+        consent()
+        val server = NonceServer("E2E-${System.nanoTime()}")
+        val user = "u${System.nanoTime() % 100000}"
+        val pass = "p${System.nanoTime() % 100000}x"
+        val corePort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val front = AtomicReference<CapFront?>()
+        // The core listens on a port of the test's; the session's port is the front's. A restart is
+        // handed the session's same port, and the front stays.
+        RustCore.testConfig = { port, _ ->
+            if (front.get()?.port != port) {
+                front.getAndSet(CapFront(port, corePort))?.close()
+            }
+            """{"log":{"loglevel":"warning","access":"none"},
+              "inbounds":[{"tag":"in","protocol":"socks","listen":"127.0.0.1","port":$corePort,
+                "settings":{"auth":"password","accounts":[{"user":"$user","pass":"$pass"}],"udp":false}}],
+              "outbounds":[{"tag":"direct","protocol":"freedom"},
+                {"tag":"loop","protocol":"freedom","settings":{"redirect":"127.0.0.1:${server.port}"}}],
+              "routing":{"domainStrategy":"AsIs","rules":[{"type":"field","ip":["192.0.2.1"],"outboundTag":"loop"}]}}"""
+        }
+        saveProfile()
+        val interval = watchdogIntervalMs()
+        val held = "closed it without a reply"
+        try {
+            context.startForegroundService(startIntent(user, pass))
+            waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+            val cap = checkNotNull(front.get()) { "the session never asked for its core config" }
+            val first = shellFetch("192.0.2.1", 80, "GET /before HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
+            assertTrue("the line carries through the front before it is full: '$first'", first.contains(server.nonce))
+
+            val readyBefore = logCount("Rust core ready on")
+            val seenBefore = logCount("Watchdog: core transport stopped")
+            val silentBefore = logCount("Rust core: its SOCKS port did not answer")
+            val heldBefore = logCount(held)
+            cap.full = true
+            // Each look of the watchdog greets the port at least once: two dropped greetings are two
+            // looks now, one look of two tries before the fix.
+            waitFor("the watchdog's greetings to meet the full port twice", 2 * interval + 5_000) { cap.dropped.get() >= 2 }
+            // What the look that met it decided is logged at once.
+            Thread.sleep(1_000)
+            val dropped = cap.dropped.get()
+            val seen = logCount("Watchdog: core transport stopped") - seenBefore
+            val silent = logCount("Rust core: its SOCKS port did not answer") - silentBefore
+            val restarted = logCount("Rust core ready on") - readyBefore
+            val said = logCount(held) - heldBefore
+            val connected = OlcboxVpnState.status.value is VpnStatus.Connected
+            val tail = OlcboxVpnState.logs.value.takeLast(20).joinToString("\n")
+            cap.full = false
+
+            assertEquals("the watchdog took a full port for a stopped engine ($dropped greeting(s) dropped); log tail:\n$tail", 0, seen)
+            assertEquals("a port that accepts and closes was said not to answer; log tail:\n$tail", 0, silent)
+            assertEquals("a new core was started; log tail:\n$tail", 0, restarted)
+            assertTrue("still connected; log tail:\n$tail", connected)
+            assertEquals("the log said once that the port closed a greeting unanswered; log tail:\n$tail", 1, said)
+
+            val hitsBefore = server.hits.get()
+            val again = shellFetch("192.0.2.1", 80, "GET /after HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
+            assertTrue("the same line carries once the port has room again: '$again'", again.contains(server.nonce))
+            assertEquals("the server saw the request", hitsBefore + 1, server.hits.get())
+            say("RESULT a port at its connection cap: $dropped greeting(s) dropped, the line kept (interval $interval ms)")
+        } finally {
+            RustCore.testConfig = null
+            try {
+                stopAndWait()
+            } finally {
+                front.get()?.close()
+                server.close()
+            }
         }
     }
 }
