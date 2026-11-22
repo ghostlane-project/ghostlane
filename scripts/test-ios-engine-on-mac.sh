@@ -45,9 +45,13 @@
 # fetch: each iPhone line (ios-core-<line>.json) against a local Xray server
 #   of every version the CLI's end-to-ends use: 2 MiB down and 1 MiB up
 #   through the core's SOCKS port, the page reached at a TEST-NET-3 address
-#   the server sends to loopback, the body's sha256 checked both ways. The
-#   same line with a key or a pin the server does not answer to must not
-#   reach the page.
+#   the server sends to loopback, the body's sha256 checked both ways. A
+#   line known to fail (known_failure) is excused only for the stall it is
+#   listed for: it passes when the same fetch under the darwin slice's own B
+#   reaches the page, and fails when neither does. Once the line reached the
+#   page against a server under either B, the same line with a key or a pin
+#   that server does not answer to must not reach it (asked where nothing
+#   got through, a refusal would prove nothing).
 # The engines pin every socket they open to the physical interface
 #   (TunPlatform), and a pinned socket cannot reach a loopback address on
 #   Darwin (EADDRNOTAVAIL): the hub and the Xray servers listen on that
@@ -78,14 +82,15 @@ TUN_CONFIG="$REFS/ios-tun-socks-lossy.json"
 # The files of the extension this program does not compile (why_left_out).
 LEFT_OUT="PacketTunnelProvider.swift HevTunnel.swift MemoryWatch.swift MemoryPressure.swift"
 LINES="reality grpc-reality webtunnel-ws webtunnel-httpupgrade hysteria2 xhttp"
-# known_failure <line>: why a line is known not to reach the page, or
-# nothing. Such a line is still run against every server and its failure
-# printed as known; one that reaches the page says so in a note (it does
-# not fail the run: a stall that depends on timing may pass once), and
-# leaves this list once it passes every time.
+# known_failure <line>: why a line is known not to reach the page under the
+# phone's B, or nothing. Such a line is still run against every server; a
+# stall is printed as known, and the same fetch under the darwin slice's own
+# B is then its check (line_reached). One that reaches the page under the
+# phone's B says so in a note (a stall that depends on timing may pass
+# once), and leaves this list once it passes every time.
 known_failure() {
   case "$1" in
-    grpc-reality) echo "gRPC over REALITY under the phone's byte budget, in the memory class the darwin target picks (Standard; the extension names no runtime profile, and a phone's target picks Constrained): most fetches stall until the client gives up, and only then does the server receive the request, on every Xray version here; the diagnosis beside a stalled one runs the same fetch under the darwin slice's own byte budget" ;;
+    grpc-reality) echo "gRPC over REALITY under the phone's byte budget, in the memory class the darwin target picks (Standard; the extension names no runtime profile, and a phone's target picks Constrained): most fetches stall until the client gives up, and only then does the server receive the request, on every Xray version here; a stalled one passes only when the same fetch under the darwin slice's own byte budget reaches the page" ;;
     *) echo "" ;;
   esac
 }
@@ -93,9 +98,11 @@ known_failure() {
 # reached the page against a server, else 0. <known> is known_failure's
 # reason (empty for none), <reached> 1 when the fetch under the phone's B
 # reached it, <diagnosed> 1 when the same fetch under the darwin slice's own
-# B did (0 when that did not run).
+# B did (0 when that did not run). A line not known to fail must reach it
+# under the phone's B; a known one is excused only for a stall that the
+# darwin slice's B clears, and one that reaches it under neither is broken.
 line_reached() {
-  if [ "$2" = 1 ] || [ -n "$1" ]; then echo 1; else echo 0; fi
+  if [ "$2" = 1 ] || { [ -n "$1" ] && [ "$3" = 1 ]; }; then echo 1; else echo 0; fi
 }
 DOWN_BYTES=2097152
 UP_BYTES=1048576
@@ -330,7 +337,7 @@ stop_servers() {
 # fetch <host> <work> <limit-bytes> <xray-dir>
 fetch() {
   local host="$1" work="$2" limit="$3" xray="$4" failed=0 page target private public wrong_public
-  local version line dir transport what socks port pid ok address known reached show
+  local version line dir transport what socks port pid ok address known reached diagnosed show
   mkdir -p "$work/certs" "$work/lines"
   "$PY" -I -c 'import ssl, sys; print("python", sys.version.split()[0], ssl.OPENSSL_VERSION); sys.exit(0 if ssl.HAS_TLSv1_3 else 1)' ||
     die "$PY has no TLS 1.3 for the Reality target: set PYTHON to one that has"
@@ -390,7 +397,6 @@ CNF
         reached=1
         "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
           "$line against Xray $version" > "$dir/$line.reach.txt" 2>&1 || reached=0
-        [ "$(line_reached "$known" "$reached" 0)" -eq 1 ] || ok=0
         if [ -z "$known" ]; then
           cat "$dir/$line.reach.txt"
         elif [ "$reached" -eq 1 ]; then
@@ -401,15 +407,31 @@ CNF
           echo "     known: $known"
           show=1
         fi
+        diagnosed=0
         if [ "$reached" -eq 0 ]; then
           # Whether the phone's byte budget is what stops it: the same
-          # fetch with the darwin slice's own B. Printed, never judged.
+          # fetch with the darwin slice's own B. The check of a line known
+          # to fail (line_reached); for any other line, a diagnosis.
+          diagnosed=1
           ENGINE_HOST_BYTE_BUDGET=0 "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" \
-            reach "$line against Xray $version with the darwin slice's own byte budget" 2>&1 |
-            sed -E 's/^(ok   |FAIL )/     diagnosis, not a check: /' || true
+            reach "$line against Xray $version with the darwin slice's own byte budget" > "$dir/$line.diagnosis.txt" 2>&1 ||
+            diagnosed=0
+          if [ -n "$known" ]; then
+            cat "$dir/$line.diagnosis.txt"
+            [ "$diagnosed" -eq 1 ] ||
+              echo "     broken, not the known stall: it reached the page under neither the phone's B nor the darwin slice's own"
+          else
+            sed -E 's/^(ok   |FAIL )/     diagnosis, not a check: /' "$dir/$line.diagnosis.txt"
+          fi
         fi
-        "$host" fetch "$dir/$line.wrong.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" refused \
-          "$line against Xray $version, with $what" || ok=0
+        [ "$(line_reached "$known" "$reached" "$diagnosed")" -eq 1 ] || ok=0
+        # A refusal proves something only where the line got through.
+        if [ "$reached" -eq 1 ] || [ "$diagnosed" -eq 1 ]; then
+          "$host" fetch "$dir/$line.wrong.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" refused \
+            "$line against Xray $version, with $what" || ok=0
+        else
+          echo "     not asked: $line against Xray $version with $what, since nothing reached the page against this server"
+        fi
       fi
       kill "$pid" 2> /dev/null || true
       wait "$pid" 2> /dev/null || true
