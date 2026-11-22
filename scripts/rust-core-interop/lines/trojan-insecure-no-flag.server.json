@@ -1,0 +1,36 @@
+{
+  "about": "the insecure Trojan line's link without allowInsecure, to the same kind of server: the core must refuse a certificate no public root signed",
+  "shape": "trojan",
+  "expect": "refused",
+  "against": "trojan-insecure",
+  "tls_name": "trojan.interop.test",
+  "link": "trojan://trojan-interop-password@127.0.0.1:{port}?security=tls&sni=trojan.interop.test&fp=chrome&type=tcp#interop-trojan-insecure-no-flag",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "trojan-interop-password",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
