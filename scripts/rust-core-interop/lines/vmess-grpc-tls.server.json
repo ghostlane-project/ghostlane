@@ -1,0 +1,46 @@
+{
+  "about": "VMess AEAD (chacha20-poly1305) over gRPC with TLS, hello chrome; the core verifies the certificate, so the run's self-signed one is pinned",
+  "shape": "vmess-grpc-tls",
+  "expect": "page",
+  "tls_name": "vm.example.com",
+  "trust": "pin",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-grpc-tls\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"chacha20-poly1305\",\"net\":\"grpc\",\"type\":\"none\",\"path\":\"vm-grpc\",\"tls\":\"tls\",\"sni\":\"vm.example.com\",\"fp\":\"chrome\",\"alpn\":\"h2\"}",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444445"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "vm-grpc"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "h2"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

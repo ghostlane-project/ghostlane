@@ -1,0 +1,32 @@
+{
+  "about": "VMess AEAD (chacha20-poly1305) over gRPC with no TLS",
+  "shape": "vmess-grpc",
+  "expect": "page",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-grpc\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"chacha20-poly1305\",\"net\":\"grpc\",\"type\":\"none\",\"path\":\"vm-grpc\",\"tls\":\"\"}",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444445"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "vm-grpc"
+        }
+      }
+    }
+  ]
+}
