@@ -91,7 +91,9 @@ def server_for(name, out, host, port, target_port, page_port, cert, key, private
             "listen": host,
             "port": port,
             "protocol": "hysteria",
-            "settings": {"version": hy["version"], "auth": hy["auth"]},
+            # The user by `clients`, the key every version here reads (26.4
+            # knows no other), as a server of the platform lists it.
+            "settings": {"version": hy["version"], "clients": [{"auth": hy["auth"]}]},
             "streamSettings": {
                 "network": "hysteria",
                 "security": "tls",

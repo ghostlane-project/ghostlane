@@ -35,6 +35,16 @@ enum EngineHost {
     /// is a desktop's.
     static let phoneByteBudget: UInt64 = 3_000_000
 
+    /// B for this process: the phone's, unless ENGINE_HOST_BYTE_BUDGET says
+    /// otherwise (0: the darwin slice's own formula), which only the
+    /// script's diagnosis of a failed fetch does.
+    static let byteBudget: UInt64 = {
+        if let text = ProcessInfo.processInfo.environment["ENGINE_HOST_BYTE_BUDGET"], let value = UInt64(text) {
+            return value
+        }
+        return phoneByteBudget
+    }()
+
     static let usage = """
     usage: engine-host start  <core.json> <config.json> <budget-bytes>
            engine-host refuse <core.json> <config.json> <word>
@@ -169,7 +179,7 @@ enum EngineHost {
             throw HostFailure("\(label): the arrangement is \(arrangement.engineLabel), not olcRTC behind hev with UDP")
         }
 
-        setByteBudget(phoneByteBudget)
+        setByteBudget(byteBudget)
         let resolvers = ResolverSnapshot.servers()
         let began = Date()
         var thrown: String?
@@ -330,7 +340,7 @@ enum EngineHost {
         guard !ready.contains("\"\(DirectResolver.placeholder)\"") else {
             throw HostFailure("the direct resolver's placeholder is still in core.json")
         }
-        setByteBudget(phoneByteBudget)
+        setByteBudget(byteBudget)
         do {
             try CoreEngine.start(configJSON: ready)
         } catch {
@@ -396,10 +406,10 @@ enum EngineHost {
         return CoreBytes(cap: cap, held: held, peak: peak)
     }
 
-    /// B is the phone's, and the core never took more of it.
+    /// B is the one set (the phone's), and the core never took more of it.
     static func within(_ label: String, _ core: CoreBytes) throws {
-        guard core.cap == phoneByteBudget else {
-            throw HostFailure("\(label): the byte budget is \(core.cap), not the phone's \(phoneByteBudget)")
+        guard byteBudget == 0 || core.cap == byteBudget else {
+            throw HostFailure("\(label): the byte budget is \(core.cap), not the \(byteBudget) set")
         }
         guard core.peak <= core.cap else {
             throw HostFailure("\(label): the core held \(core.peak) payload bytes, over the phone's byte budget of \(core.cap)")
@@ -407,7 +417,9 @@ enum EngineHost {
     }
 
     static func describe(_ core: CoreBytes) -> String {
-        "core payload bytes peak \(core.peak) of the phone's \(core.cap)"
+        core.cap == phoneByteBudget
+            ? "core payload bytes peak \(core.peak) of the phone's \(core.cap)"
+            : "core payload bytes peak \(core.peak) of a B of \(core.cap)"
     }
 
     // MARK: - small things

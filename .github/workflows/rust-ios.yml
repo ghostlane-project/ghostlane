@@ -184,7 +184,7 @@ jobs:
             echo "### The extension's engines on a Mac ($STAGE)"
             echo '```'
             grep -E '^(core|limit): ' out-engine.log
-            grep -E '^(ok  |FAIL|skip) ' out-engine.log
+            grep -E '^(ok  |FAIL|known|note) |^     (known|diagnosis)' out-engine.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
