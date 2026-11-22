@@ -66,10 +66,18 @@ object RustE2eDevice {
         return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
     }
 
-    /** [ShellNet] as a process of the shell's: the test APK for the class, the app's APK for the Kotlin library. */
+    /** Whether this instrumentation's shell is root (an image whose adbd runs as root, API 23's). */
+    private val shellIsRoot: Boolean by lazy { shell("id").startsWith("uid=0(") }
+
+    /**
+     * [ShellNet] as a process of the shell's (uid 2000, the package the app lists name): the
+     * test APK for the class, the app's APK for the Kotlin library. Under a root shell it is
+     * started by `su 2000`, root being in no app list.
+     */
     fun shellNet(vararg args: String): String {
         val classPath = instrumentation.context.packageCodePath + ":" + context.packageCodePath
-        return shell("app_process -Djava.class.path=$classPath /system/bin ${ShellNet::class.java.name} ${args.joinToString(" ")}")
+        val command = "app_process -Djava.class.path=$classPath /system/bin ${ShellNet::class.java.name} ${args.joinToString(" ")}"
+        return shell(if (shellIsRoot) "su 2000 $command" else command)
     }
 
     /** A GET made by the shell's uid; true when an answer held [needle]. */

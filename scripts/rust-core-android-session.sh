@@ -47,7 +47,16 @@ finish() {
     say "$session_name ok"
   else
     say "$session_name failed"
-    grep -E ' (E|F)/(AndroidRuntime|DEBUG|libc|ActivityManager|ghostlane-core)' "$out/logcat.txt" | tail -40
+    # What a red run is read by, in the job's log: the artifact is a download away.
+    echo "--- the host's line: $(hits) GET(s) served by the page"
+    tail -n 5 "$out/host.log" 2> /dev/null
+    tail -n 40 "$out/host/xray.log" 2> /dev/null | cut -c1-300
+    echo "--- the install"
+    tail -n 10 "$out/install.txt" 2> /dev/null
+    echo "--- the service's log"
+    grep -E '/OlcboxVpnService' "$out/logcat.txt" | tail -n 40 | cut -c1-300
+    echo "--- errors and aborts"
+    grep -E ' (E|F|A)/(AndroidRuntime|DEBUG|libc|art|ActivityManager|PackageManager|ghostlane-core)' "$out/logcat.txt" | tail -n 40 | cut -c1-300
   fi
   exit "$1"
 }
@@ -73,9 +82,11 @@ tun_up() { dev cat /proc/net/dev | grep -q 'tun0:'; }
 log_count() { adb logcat -d -s OlcboxVpnService:D 2> /dev/null | grep -c "$1"; }
 service_listed() { dev dumpsys activity services "$pkg" | grep -q "$service"; }
 
-# ShellNet (the test APK's) as a process of the shell's, the app's APK for the Kotlin
-# library. Quoted for the device's shell: Android 11's paths hold `~~` and `==`.
-shellnet() { dev app_process "'-Djava.class.path=$shellnet_cp'" /system/bin org.olcbox.app.ShellNet "$@"; }
+# ShellNet (the test APK's) as a process of the shell's (uid 2000: the package the app
+# lists name), the app's APK for the Kotlin library; by `su 2000` where adbd is root.
+# Quoted for the device's shell: Android 11's paths hold `~~` and `==`.
+shell_as=
+shellnet() { dev $shell_as app_process "'-Djava.class.path=$shellnet_cp'" /system/bin org.olcbox.app.ShellNet "$@"; }
 
 # A GET of 192.0.2.1 by the shell, three tries: through the tun, the line and the page, or nowhere.
 shell_fetch() {
@@ -127,7 +138,7 @@ session_open() {
   link=$(cat "$out/host/link")
   nonce=$(cat "$out/host/nonce")
 
-  echo "device: API $(dev getprop ro.build.version.sdk), $(dev getprop ro.product.cpu.abi)" | tee "$out/device.txt"
+  echo "device: API $(dev getprop ro.build.version.sdk), $(dev getprop ro.product.cpu.abi), $(dev getprop ro.build.type), the shell as $(dev id | cut -d" " -f1)" | tee "$out/device.txt"
   app=$(find "$apks" -name '*.apk' ! -name '*androidTest*' | head -1)
   test_apk=$(find "$apks" -name '*androidTest*.apk' | head -1)
   [ -f "$app" ] && [ -f "$test_apk" ] || fail "no APKs under $apks"
@@ -140,6 +151,7 @@ session_open() {
   done
   installed "$pkg" && installed "$pkg.test" || fail "the app or its test APK is not installed"
   shellnet_cp="$(code_path "$pkg.test"):$(code_path "$pkg")"
+  case "$(dev id)" in 'uid=0('*) shell_as="su 2000" ;; esac
 
   adb logcat -G 16M > /dev/null 2>&1 || true
   adb shell "am instrument -w -r -e class org.olcbox.app.RustKillE2ETest#armTheSessionForTheShell -e rustKill arm -e rustKillLink '$link' $runner" > "$out/arm.txt" 2>&1

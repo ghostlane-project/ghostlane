@@ -6,7 +6,8 @@
       name for the host's loopback): an official Xray server on loopback with
       the run's own keys (`xray x25519`), a TLS 1.3 site on loopback for it to
       mirror, and a page. The server sends 192.0.2.1 (TEST-NET-1, reachable
-      nowhere) to the page and everything else straight out, so the app's
+      nowhere) to the page, through a SOCKS relay that takes that address
+      alone, and everything else straight out, so the app's
       tunnel check reaches the internet and an answer from 192.0.2.1 can only
       have come through the line. The page answers GET /bytes/<n>/<any> with
       <n> bytes that begin with the run's nonce and counts what it served.
@@ -87,6 +88,89 @@ class PageServer(http.server.ThreadingHTTPServer):
     def handle_error(self, request, client_address):
         if not isinstance(sys.exc_info()[1], ConnectionError):
             super().handle_error(request, client_address)
+
+
+def read_exact(conn, n):
+    data = b""
+    while len(data) < n:
+        chunk = conn.recv(n - len(data))
+        if not chunk:
+            raise ConnectionError("closed after %d of %d bytes" % (len(data), n))
+        data += chunk
+    return data
+
+
+def socks_relay(page_port):
+    """A SOCKS5 server on loopback that takes CONNECT 192.0.2.1:80 alone, to the page.
+
+    The Xray server reaches the page through it with its `socks` outbound: Xray's
+    freedom refuses private and reserved destinations for what came in over VLESS
+    (since v26.4.15, and how to allow one changed after), and the page is both.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+
+    def pipe(src, dst):
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    def serve(conn):
+        page = None
+        try:
+            conn.settimeout(30)
+            _, methods = read_exact(conn, 2)
+            read_exact(conn, methods)
+            conn.sendall(b"\x05\x00")
+            _, cmd, _, atyp = read_exact(conn, 4)
+            if atyp == 1:
+                host = socket.inet_ntoa(read_exact(conn, 4))
+            elif atyp == 3:
+                host = read_exact(conn, read_exact(conn, 1)[0]).decode("ascii", "replace")
+            elif atyp == 4:
+                host = socket.inet_ntop(socket.AF_INET6, read_exact(conn, 16))
+            else:
+                return
+            port = int.from_bytes(read_exact(conn, 2), "big")
+            if cmd != 1 or (host, port) != (PAGE_IP, 80):
+                conn.sendall(b"\x05\x02\x00\x01" + bytes(6))
+                return
+            page = socket.create_connection(("127.0.0.1", page_port), timeout=10)
+            page.settimeout(None)
+            conn.settimeout(None)
+            conn.sendall(b"\x05\x00\x00\x01" + bytes(6))
+            back = threading.Thread(target=pipe, args=(page, conn), daemon=True)
+            back.start()
+            pipe(conn, page)
+            back.join(60)
+        except (OSError, ValueError, IndexError):
+            pass
+        finally:
+            for c in (conn, page):
+                if c is not None:
+                    c.close()
+
+    def accept():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=serve, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    return listener.getsockname()[1]
 
 
 def reality_target(work):
@@ -192,8 +276,9 @@ def serve(args):
     client = str(uuid.uuid4())
     short_id = secrets.token_hex(4)
     port = free_port()
+    relay = socks_relay(page.server_address[1])
     config = {
-        "log": {"loglevel": "warning"},
+        "log": {"loglevel": "info"},
         "inbounds": [{
             "tag": "in", "listen": "127.0.0.1", "port": port, "protocol": "vless",
             "settings": {"clients": [{"id": client, "flow": "xtls-rprx-vision"}], "decryption": "none"},
@@ -204,7 +289,7 @@ def serve(args):
         }],
         "outbounds": [
             {"tag": "direct", "protocol": "freedom"},
-            {"tag": "page", "protocol": "freedom", "settings": {"redirect": "127.0.0.1:%d" % page.server_address[1]}},
+            {"tag": "page", "protocol": "socks", "settings": {"servers": [{"address": "127.0.0.1", "port": relay}]}},
         ],
         "routing": {"domainStrategy": "AsIs", "rules": [{"type": "field", "ip": [PAGE_IP], "outboundTag": "page"}]},
     }
@@ -241,7 +326,7 @@ def serve(args):
     write(os.path.join(work, "link"), link + "\n")
     write(os.path.join(work, "nonce"), Page.nonce.decode() + "\n")
     write(os.path.join(work, "ready"), "%d\n" % port)
-    print("ready: Xray %s on 127.0.0.1:%d, the page on %d" % (args.xray, port, page.server_address[1]), flush=True)
+    print("ready: Xray %s on 127.0.0.1:%d, the page on %d behind the relay on %d" % (args.xray, port, page.server_address[1], relay), flush=True)
     while True:
         time.sleep(1)
         if xray.poll() is not None:

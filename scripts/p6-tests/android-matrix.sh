@@ -12,7 +12,9 @@
 #     startForegroundService (Android 8) anywhere but behind
 #     RustE2eDevice.startVpn's version check;
 #   - rust-core-android-host.py's `serve` (here against a stand-in xray) does
-#     not write a REALITY link to 10.0.2.2 with the run's public key, its page
+#     not write a REALITY link to 10.0.2.2 with the run's public key, its
+#     server does not reach the page through a SOCKS relay that takes
+#     192.0.2.1:80 alone (Xray's freedom refuses reserved addresses), its page
 #     does not answer /bytes/<n>/ with <n> bytes that begin with the nonce, it
 #     does not count what it served, or the run's keys and link outlive it;
 #   - its `meminfo` misreads Android 6's or Android 15's dumpsys, or its
@@ -36,7 +38,8 @@ pkg="$root/androidApp/src/androidTestRustcore/kotlin/org/olcbox/app"
 for leg in '{ api: 23, target: google_apis, pages: 4k }' '{ api: 24, target: google_apis, pages: 4k }' \
   '{ api: 29, target: google_apis, pages: 4k }' '{ api: 34, target: google_apis, pages: 4k }' \
   '{ api: 35, target: google_apis, pages: 4k }' '{ api: 35, target: google_apis_ps16k, pages: 16k }'; do
-  grep -qF -- "- $leg" "$wf" && ok "leg $leg" || bad "rust-core-android.yml has no K3 leg $leg"
+  prefix="- ${leg%\}}"
+  grep -qF -- "${prefix% }," "$wf" && ok "leg $leg" || bad "rust-core-android.yml has no K3 leg $leg"
 done
 python3 - "$wf" << 'EOF' || fail=1
 import re, sys
@@ -48,6 +51,10 @@ e2e, soak, k3 = job("e2e"), job("soak"), job("k3")
 problems = []
 if "arch: x86_64" not in e2e or "target: ${{ matrix.leg.target }}" not in e2e or "api-level: ${{ matrix.leg.api }}" not in e2e:
     problems.append("the e2e job does not run each leg's own image on x86_64")
+if "ram-size: ${{ matrix.leg.ram }}" not in e2e or "disk-size: ${{ matrix.leg.disk }}" not in e2e:
+    problems.append("the e2e job does not boot each leg with its own RAM and data partition")
+if len(re.findall(r"^\s+- \{ api: \d+, target: \w+, pages: \d+k, ram: \d+M, disk: (?:\d+M|'')\s*\}$", e2e, re.M)) != 6:
+    problems.append("a K3 leg does not name its api, target, pages, ram and disk")
 script = re.search(r"^\s+script: (.*)$", e2e, re.M)
 if not script or "rust-core-android-e2e.sh" not in script.group(1) or "rust-core-android-kill.sh" not in script.group(1):
     problems.append("a leg does not run both rust-core-android-e2e.sh and rust-core-android-kill.sh")
@@ -130,34 +137,68 @@ import json, socket, sys
 work, nonce = sys.argv[1], sys.argv[2].encode()
 config = json.load(open(work + "/server.json"))
 rules = config["routing"]["rules"]
-page = [o for o in config["outbounds"] if o["tag"] == "page"][0]["settings"]["redirect"]
+page_out = [o for o in config["outbounds"] if o["tag"] == "page"][0]
 problems = []
+# Xray's freedom refuses private and reserved destinations over VLESS: the page is reached
+# through a SOCKS relay on loopback instead, which takes 192.0.2.1:80 and nothing else.
+servers = page_out.get("settings", {}).get("servers", [])
+if page_out["protocol"] != "socks" or len(servers) != 1 or servers[0].get("address") != "127.0.0.1":
+    problems.append("the page is not one SOCKS relay on loopback: %r" % page_out)
+    relay = None
+else:
+    relay = int(servers[0]["port"])
+if any(o["protocol"] == "freedom" and o.get("settings") for o in config["outbounds"]):
+    problems.append("a freedom outbound of the server is set to reach more than its default")
 if config["outbounds"][0]["tag"] != "direct" or rules != [{"type": "field", "ip": ["192.0.2.1"], "outboundTag": "page"}]:
     problems.append("the server does not send 192.0.2.1 alone to the page and the rest straight out")
 if config["inbounds"][0]["streamSettings"]["realitySettings"]["privateKey"] != "private-key-of-the-test":
     problems.append("the server does not hold the run's private key")
-host, port = page.rsplit(":", 1)
-def get(path):
-    with socket.create_connection((host, int(port)), timeout=5) as s:
-        s.sendall(b"GET " + path + b" HTTP/1.0\r\n\r\n")
-        data = b""
-        while True:
-            chunk = s.recv(65536)
+def read_all(s):
+    data = b""
+    while True:
+        chunk = s.recv(65536)
+        if not chunk:
+            return data
+        data += chunk
+def through_relay(dest, port, path):
+    """What the relay gives for a CONNECT to dest:port and a GET of path: (reply code, answer)."""
+    with socket.create_connection(("127.0.0.1", relay), timeout=5) as s:
+        s.sendall(b"\x05\x01\x00")
+        if s.recv(2) != b"\x05\x00":
+            return None, b""
+        s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(dest) + port.to_bytes(2, "big"))
+        reply = b""
+        while len(reply) < 10:
+            chunk = s.recv(10 - len(reply))
             if not chunk:
-                return data
-            data += chunk
+                break
+            reply += chunk
+        if len(reply) < 2 or reply[1] != 0:
+            return (reply[1] if len(reply) > 1 else None), b""
+        s.sendall(b"GET " + path + b" HTTP/1.0\r\n\r\n")
+        return 0, read_all(s)
+def get(path):
+    code, data = through_relay("192.0.2.1", 80, path)
+    if code != 0:
+        problems.append("the relay refused CONNECT 192.0.2.1:80 (%r)" % code)
+    return data
 before = int(open(work + "/hits").read())
-body = get(b"/bytes/100000/x").split(b"\r\n\r\n", 1)[1]
+body = get(b"/bytes/100000/x").split(b"\r\n\r\n", 1)[-1] if relay else b""
 if len(body) != 100000 or not body.startswith(nonce + b"\n"):
     problems.append("the page's /bytes/100000/ answer is %d bytes, nonce first: %s" % (len(body), body.startswith(nonce)))
-get(b"/plain")
+if relay:
+    get(b"/plain")
+    for dest, port in (("192.0.2.2", 80), ("192.0.2.1", 443), ("127.0.0.1", 80)):
+        code, _ = through_relay(dest, port, b"/x")
+        if code == 0:
+            problems.append("the relay took CONNECT %s:%d: it takes 192.0.2.1:80 alone" % (dest, port))
 after = int(open(work + "/hits").read())
 if after != before + 2:
     problems.append("the page counted %d requests, not 2" % (after - before))
 for p in problems:
     print("FAIL " + p)
 if not problems:
-    print("ok   serve's server and page: 192.0.2.1 to the page, the nonce first, every request counted")
+    print("ok   serve's server and page: 192.0.2.1:80 alone to the page through the relay, the nonce first, every request counted")
 sys.exit(1 if problems else 0)
 EOF
   kill "$serve_pid"

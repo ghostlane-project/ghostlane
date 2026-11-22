@@ -461,18 +461,20 @@ jobs:
     name: "K3: API ${{ matrix.leg.api }}, ${{ matrix.leg.pages }} pages (x86_64)"
     needs: app
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         # K3's legs. A leg is one emulator: every class of the e2e package, then the kill.
+        # API 23 and 24 boot with the image's own RAM and data partition: with 4 GiB and
+        # a 4 GiB partition their app_process commands (am, pm, input) aborted or hung.
         leg:
-          - { api: 23, target: google_apis, pages: 4k }
-          - { api: 24, target: google_apis, pages: 4k }
-          - { api: 29, target: google_apis, pages: 4k }
-          - { api: 34, target: google_apis, pages: 4k }
-          - { api: 35, target: google_apis, pages: 4k }
-          - { api: 35, target: google_apis_ps16k, pages: 16k }
+          - { api: 23, target: google_apis, pages: 4k, ram: 2048M, disk: '' }
+          - { api: 24, target: google_apis, pages: 4k, ram: 2048M, disk: '' }
+          - { api: 29, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 34, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 35, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 35, target: google_apis_ps16k, pages: 16k, ram: 4096M, disk: 4096M }
     steps:
       - uses: actions/checkout@v7
 
@@ -517,9 +519,11 @@ jobs:
           target: ${{ matrix.leg.target }}
           disable-animations: true
           emulator-boot-timeout: 900
-          ram-size: 4096M
-          disk-size: 4096M
-          script: bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
+          ram-size: ${{ matrix.leg.ram }}
+          disk-size: ${{ matrix.leg.disk }}
+          # adbd as the shell (uid 2000) where the image starts it as root (API 23): the
+          # app lists name the shell's package, and root is in none of them.
+          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
 
       - name: Summary
         if: always()
