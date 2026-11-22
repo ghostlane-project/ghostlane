@@ -71,7 +71,7 @@ object CoreConfig {
         val line = requireNotNull(CoreLines.of(spec))
         val rules = CoreRouting.effective(routing) as? Routing.RuleBased
         val blockedOnly = rules?.policy == Routing.Policy.BlockedOnly
-        require(!blockedOnly) { BLOCKED_ONLY_REFUSAL }
+        require(!blockedOnly || refilterDat) { BLOCKED_ONLY_REFUSAL }
         require(rules == null || rules.policy !is Routing.Policy.Bypass || geodata != null) {
             "Bypass Russia on the Rust core carries its lists inline: pass XrayGeodata.lists()"
         }
@@ -96,9 +96,13 @@ object CoreConfig {
                 // No settings: a name handed here is resolved through
                 // `dns.servers`, which under the rules is dns-direct alone.
                 if (plan != null) addJsonObject { put("tag", "direct"); put("protocol", "freedom") }
-                addDnsOutbound(directResolver, plan)
+                if (blockedOnly) {
+                    addBlockedOnlyDnsOutbound(requireNotNull(directResolver), requireNotNull(plan))
+                } else {
+                    addDnsOutbound(directResolver, plan)
+                }
             }
-            putRouting(plan)
+            if (blockedOnly) putBlockedOnlyRouting(requireNotNull(plan)) else putRouting(plan)
         }.toString()
     }
 }

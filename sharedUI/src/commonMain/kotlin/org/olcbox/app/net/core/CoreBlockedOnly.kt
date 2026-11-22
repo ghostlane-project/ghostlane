@@ -1,12 +1,25 @@
 package org.olcbox.app.net.core
 
+import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import org.olcbox.app.net.Routing
 import org.olcbox.app.net.XrayGeodata
 
 /**
  * "Only blocked sites" on the Rust core: what Re:filter lists as blocked in
  * Russia goes by the line, everything else straight out, the user's own
- * direct and tunnel rules first. The Go cores' mode (SingBoxConfig's
- * BlockedOnly), from the same Re:filter release.
+ * direct and tunnel rules first. The mode as the Go cores route it, from
+ * the same Re:filter release.
  *
  * The list is one file, [FILE], read by the core from its geodata directory
  * and named by [NAMES] and [ADDRESSES]. The host puts the file there and says
@@ -54,4 +67,62 @@ object CoreBlockedOnly {
 
     /** The routing's strategy in this mode: a name no rule claims is resolved and its address asked. */
     internal const val DOMAIN_STRATEGY = "IPIfNonMatch"
+}
+
+/**
+ * The routing of the blocked-only mode: [putRouting]'s for [plan] (whose
+ * policy is BlockedOnly, so it carries no region's lists), then the list's
+ * rules and the last one.
+ */
+internal fun JsonObjectBuilder.putBlockedOnlyRouting(plan: RulePlan) {
+    require(plan.policy == Routing.Policy.BlockedOnly && plan.lists == null) { "not a blocked-only plan" }
+    val shared = buildJsonObject { putRouting(plan) }.getValue("routing").jsonObject
+    val rules = buildJsonArray {
+        shared.getValue("rules").jsonArray.forEach { add(it) }
+        routeTo("domain", CoreBlockedOnly.NAMES, CoreConfig.LINE)
+        routeTo("ip", CoreBlockedOnly.ADDRESSES, CoreConfig.LINE)
+        addJsonObject {
+            put("type", "field")
+            putJsonArray("ip") { CoreBlockedOnly.EVERY_ADDRESS.forEach { add(it) } }
+            put("outboundTag", "direct")
+        }
+    }
+    put("routing", JsonObject(shared + ("domainStrategy" to JsonPrimitive(CoreBlockedOnly.DOMAIN_STRATEGY)) + ("rules" to rules)))
+}
+
+/**
+ * The `dns` outbound of the blocked-only mode: [addDnsOutbound]'s for [plan]
+ * up to the rules every config ends with (what it writes with no plan at
+ * all), which here would send every other name through the line; then the
+ * listed names, faked, and every other name asked of the network.
+ */
+internal fun JsonArrayBuilder.addBlockedOnlyDnsOutbound(directResolver: String, plan: RulePlan) {
+    require(plan.policy == Routing.Policy.BlockedOnly && plan.lists == null) { "not a blocked-only plan" }
+    val shared = buildJsonArray { addDnsOutbound(directResolver, plan) }.single().jsonObject
+    val settings = shared.getValue("settings").jsonObject
+    val all = settings.getValue("rules").jsonArray
+    val tail = buildJsonArray { addDnsOutbound(directResolver, null) }.single().jsonObject
+        .getValue("settings").jsonObject.getValue("rules").jsonArray
+    check(all.size >= tail.size && all.takeLast(tail.size) == tail) {
+        "the dns outbound no longer ends with the rules it writes with no plan: write the blocked-only rules anew"
+    }
+    val rules = buildJsonArray {
+        all.dropLast(tail.size).forEach { add(it) }
+        addJsonObject {
+            put("action", "hijack")
+            putJsonArray("domain") { add(CoreBlockedOnly.NAMES) }
+            put("rCode", CoreDns.RCODE_REFUSED)
+        }
+        // No condition: every name and every type the rules above left.
+        addJsonObject { put("action", "direct") }
+    }
+    add(JsonObject(shared + ("settings" to JsonObject(settings + ("rules" to rules)))))
+}
+
+private fun JsonArrayBuilder.routeTo(field: String, value: String, outbound: String) {
+    addJsonObject {
+        put("type", "field")
+        putJsonArray(field) { add(value) }
+        put("outboundTag", outbound)
+    }
 }
