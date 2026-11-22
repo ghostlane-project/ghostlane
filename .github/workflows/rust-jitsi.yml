@@ -84,7 +84,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/rust-jitsi-client
-          key: rust-jitsi-client-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
+          key: rust-jitsi-client-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v2
 
       - name: Build olc-client at the commit
         if: steps.cache.outputs.cache-hit != 'true'
@@ -93,7 +93,7 @@ jobs:
           src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
           rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal --no-self-update
           (cd "$src" && cargo "+$GHOSTLANE_CORE_TOOLCHAIN" build --locked --release -p olc-client \
-            --features heap-stats,boring,shaped-tls,tls-test-pin)
+            --features boring,shaped-tls,tls-test-pin)
           install -D -m 0755 "$src/target/release/olc-client" ~/.cache/rust-jitsi-client/olc-client
 
       - name: Save the client
