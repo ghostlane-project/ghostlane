@@ -1,0 +1,23 @@
+{
+  "about": "Shadowsocks 2022, 2022-blake3-aes-128-gcm with a 16-byte key",
+  "shape": "shadowsocks-2022",
+  "expect": "page",
+  "link": "ss://2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw%3D%3D@127.0.0.1:{port}#interop-shadowsocks-2022-aes-128-gcm",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/password",
+    "value": "AQIDBAUGBwgJCgsMDQ4PEA=="
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw==",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}

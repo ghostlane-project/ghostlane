@@ -1,0 +1,23 @@
+{
+  "about": "Shadowsocks AEAD, aes-128-gcm over raw TCP, no TLS",
+  "shape": "shadowsocks",
+  "expect": "page",
+  "link": "ss://aes-128-gcm:pw-aes-128@127.0.0.1:{port}#interop-shadowsocks-aes-128-gcm",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/password",
+    "value": "pw-aes-129"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "aes-128-gcm",
+        "password": "pw-aes-128",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}
