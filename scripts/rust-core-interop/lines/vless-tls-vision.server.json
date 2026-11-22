@@ -1,0 +1,41 @@
+{
+  "about": "VLESS over TLS on raw TCP with Vision, the run's certificate pinned for the test",
+  "shape": "vless-tls",
+  "expect": "page",
+  "tls_name": "vless.interop.test",
+  "trust": "pin",
+  "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:{port}?security=tls&encryption=none&sni=vless.interop.test&fp=chrome&flow=xtls-rprx-vision&type=tcp#interop-vless-tls-vision",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444443"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
