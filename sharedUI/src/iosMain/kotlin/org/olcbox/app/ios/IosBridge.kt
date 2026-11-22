@@ -104,34 +104,22 @@ interface IosBridgeCallback {
 }
 
 /**
- * Everything the extension needs to bring one location up.
+ * Everything the extension needs to bring one location up: one file, which
+ * decides the start (TunArrangement.decide). [coreConfig] is `core.json`, the
+ * Rust core's config for a line of the core
+ * ([org.olcbox.app.net.XrayConfig.buildIosCore]), and [olcrtc] the parameters
+ * of an olcRTC room (`olcrtc.json`). Exactly one is set: what the app starts
+ * is decided before the request is made ([org.olcbox.app.net.IosCore.start]),
+ * and a line it can write neither for is refused in the app, naming the line,
+ * with no request at all. Either engine listens on a loopback SOCKS port with
+ * a login, and hev-socks5-tunnel owns the tun and forwards to it.
  *
- * [config] is a complete sing-box config, and its inbound tells the extension
- * what owns the tun (TunArrangement.decide). For sing-box's own transports
- * (Reality, Hysteria2, WebTunnel) it is a loopback SOCKS inbound with a login,
- * and hev-socks5-tunnel owns the tun and forwards to it; a tun inbound instead
- * gives sing-box the tun, the way back. At most one of the other two is ever
- * set, and for sing-box's own transports neither is.
- *
- * [xrayConfig] is an Xray config for xhttp, and [olcrtc] the parameters for our
- * own engine. In both cases that engine listens on a loopback SOCKS port, hev
- * owns the tun and reaches it there, and [config] is written but not run.
- *
- * [ruleSets] are the rule-set files [config] refers to under Bypass Russia,
- * file name to base64 of the bytes, and empty when it refers to none.
+ * The bridge writes the one file and removes the other, so a file from a
+ * previous connection cannot start a second engine.
  */
 data class IosPacketTunnelStartRequest(
-    val config: String,
-    val xrayConfig: String?,
+    val coreConfig: String?,
     val olcrtc: IosOlcRtcStartRequest?,
-    /**
-     * The bridge writes these where libbox resolves `rules/<name>` — its
-     * working directory in the App Group — and removes the directory when
-     * there is nothing to write, so a stale list cannot outlive the routing
-     * choice that put it there. Base64 because a Kotlin ByteArray crosses to
-     * Swift as an object with a getter per byte.
-     */
-    val ruleSets: Map<String, String> = emptyMap(),
     /**
      * RoutingSettings.killSwitch as it stands at this start. The bridge writes
      * it into the VPN profile before it starts the tunnel (`includeAllNetworks`
@@ -149,17 +137,14 @@ data class IosPacketTunnelStartRequest(
      * run, and replaces what is running.
      */
     val onlyIfDown: Boolean = false,
-    /**
-     * `core.json`: the Rust core's config ([org.olcbox.app.net.XrayConfig.buildIosCore])
-     * when the per-transport choice gives this line to it, else null; it
-     * gives none yet (`IosVpnManager.IOS_ENGINES`). The bridge writes it or
-     * removes it, like [xrayConfig]. The extension that reads it comes in a
-     * later branch, and is to look for olcrtc.json, xray.json, core.json,
-     * then config.json, so with it set the other two engine files are absent
-     * and [config] is written but not run.
-     */
-    val coreConfig: String? = null
-)
+) {
+    init {
+        require((coreConfig != null) != (olcrtc != null)) {
+            "A packet tunnel start names one line: core.json or an olcRTC room"
+        }
+        require(coreConfig == null || coreConfig.isNotEmpty()) { "An empty core.json is no line" }
+    }
+}
 
 /**
  * The room list of the running olcRTC location as the app knows it now, handed

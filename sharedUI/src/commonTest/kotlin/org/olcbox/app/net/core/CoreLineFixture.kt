@@ -20,10 +20,12 @@ class CoreCase(
     /** The link, with a loopback address and made-up keys. */
     val link: String,
     /**
-     * The reference config's name without `.json`: `core-<name>` unless said
-     * otherwise. The iPhone's lines say otherwise ([shipped]).
+     * The reference config's name without `.json`: `ios-core-<name>` for the
+     * case named after a shape, which is that line of the iPhone's
+     * ([IosCoreLine]: every shape of every kind), and whose name the
+     * iPhone's tests and the Mac host read; `core-<name>` for every other.
      */
-    val reference: String = "core-$name",
+    val reference: String = if (IosCoreLine.of(name) != null) "ios-core-$name" else "core-$name",
 ) {
     /** The name of the reference under Bypass Russia. */
     val bypassReference: String get() = "bypass-$reference"

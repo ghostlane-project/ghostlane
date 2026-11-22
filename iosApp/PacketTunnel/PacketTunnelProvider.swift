@@ -7,15 +7,18 @@ import os
 /// one engine of ghostlane-core on a loopback SOCKS port (`TunArrangement`,
 /// decided once per start from the files the app wrote):
 ///
-///   * core.json: xray-rust's core (`CoreEngine`) runs Reality, Reality
-///     gRPC, WebTunnel, Hysteria2 and XHTTP, answers the tun's DNS through
-///     its own `dns` outbound and applies the Bypass Russia rules;
+///   * core.json: xray-rust's core (`CoreEngine`) runs every kind of line
+///     the app's builder writes (Reality, WebTunnel, Hysteria2, Trojan,
+///     Shadowsocks, VMess, VLESS over TLS and the rest), answers the tun's
+///     DNS through its own `dns` outbound and applies the Bypass Russia
+///     rules;
 ///   * olcrtc.json: the Rust olcRTC client (`OlcrtcEngine`).
 ///
 /// No Go since step C of ghostlane-rust-core: no sing-box, no Xray, no Go
 /// olcRTC, one Rust library with one runtime (one worker on iOS), one
-/// allocator and one byte budget. A start whose files only Go could run is
-/// refused with the reason in stage.txt.
+/// allocator and one byte budget. The app refuses a line it writes neither
+/// file for before it asks for the tunnel; a start with neither file is
+/// refused here, with the reason in stage.txt.
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let log = Logger(subsystem: "org.proofkit.app", category: "tunnel")
@@ -107,19 +110,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         MemoryWatch.start(container: container)
         MemoryPressure.start()
 
-        let configURL = container.appendingPathComponent("config.json")
-        guard let config = try? String(contentsOf: configURL, encoding: .utf8), !config.isEmpty else {
-            completionHandler(Self.failure("no config in the shared container"))
-            return
-        }
-
-        // Each is present only for the one transport that needs it, and the app
-        // deletes the other, so a stale file cannot start a second core behind a
-        // tunnel that does not use one. xray.json is Go's Xray's: read only to
-        // say why such a start is refused.
+        // The two files a start is decided by. Each is present only for the
+        // line that needs it, and the app deletes the other, so a stale file
+        // cannot start a second engine behind a tunnel that does not use it.
         let coreConfig = try? String(contentsOf: container.appendingPathComponent("core.json"), encoding: .utf8)
-        let xrayURL = container.appendingPathComponent("xray.json")
-        let xrayConfig = try? String(contentsOf: xrayURL, encoding: .utf8)
 
         let olcrtcURL = container.appendingPathComponent("olcrtc.json")
         let olcrtc = (try? Data(contentsOf: olcrtcURL))
@@ -140,12 +134,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             coreConfig: coreConfig,
             olcrtcSocks: olcrtc.map {
                 LoopbackSocks(port: $0.socksPort, username: $0.socksUser, password: $0.socksPass)
-            },
-            xrayConfig: xrayConfig,
-            config: config
+            }
         )
         NetworkDiagnostics.record("arrangement: \(arrangement.engineLabel)")
-        if case .needsGo(let reason) = arrangement {
+        if case .refused(let reason) = arrangement {
             mark("failed: \(reason)")
             completionHandler(Self.failure(reason))
             return
@@ -202,7 +194,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 mark("olcrtc")
                 try OlcrtcEngine.start(olcrtc, resolvers: resolvers)
                 try startHev(socks: socks, arrangement: arrangement)
-            case .needsGo(let reason):
+            case .refused(let reason):
                 throw Self.failure(reason)
             }
             NetworkDiagnostics.record("core memory at ready: \(memoryStats())")
