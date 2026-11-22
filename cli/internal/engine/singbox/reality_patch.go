@@ -11,3 +11,8 @@ import sbtls "github.com/sagernet/sing-box/common/tls"
 // build against an unpatched sing-box stops here rather than shipping a
 // client those servers refuse.
 var _ = sbtls.RealityAnnouncedVersion
+
+// The same tree retries a Reality hello nobody answers once with the short
+// hello (issue #166) and forgets what it learnt when the network changes; a
+// tree patched before that has no such name either.
+var _ = sbtls.RealityHelloNetworkReset
