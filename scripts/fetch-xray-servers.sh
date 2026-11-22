@@ -28,7 +28,9 @@ while read -r version sum; do
     rm -f "${out}/Xray-linux-64.zip"
     chmod +x "${out}/xray"
   fi
-  "${out}/xray" version | head -n 1 >&2
+  # sed reads the whole output: head would leave xray a closed pipe, and
+  # pipefail turns its SIGPIPE into a failed run
+  "${out}/xray" version | sed -n 1p >&2
   servers="${servers:+${servers} }${version}=${out}/xray"
 done < "${here}/xray-servers.txt"
 echo "${servers}"

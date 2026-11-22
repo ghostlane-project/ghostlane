@@ -30,8 +30,8 @@ need no ceremony: send the pull request.
 
 ## Getting it to build
 
-`README.MD` has the platform matrix and the build instructions, including what
-each platform needs installed. The short version:
+[docs/building.md](docs/building.md) has the platform matrix and the build
+instructions, including what each platform needs installed. The short version:
 
 ```bash
 ./gradlew :sharedUI:jvmTest          # the shared tests, no device needed

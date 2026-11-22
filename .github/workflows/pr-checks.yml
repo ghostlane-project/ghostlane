@@ -443,6 +443,18 @@ jobs:
               required="$required TestRealityTCPEndToEnd/$server/$fp"
             done
           done
+          # the Reality hello fallback (the sing-box patch, point 4): servers before
+          # Xray-core v26.9.9 take the short hello, the ones from it on refuse it
+          for v in $(sed -n 's/^\([0-9][0-9.]*\) .*/\1/p' ../scripts/xray-servers.txt); do
+            if [ "$(printf '%s\n' 26.9.9 "$v" | sort -V | head -n 1)" = 26.9.9 ]; then
+              cells="retry-is-refused next-dial-is-not-watched"
+            else
+              cells="whole-hello-is-not-retried unanswered-hello-is-retried-short next-dial-starts-short unanswered-hello-is-retried-short-firefox unanswered-hello-is-retried-short-android"
+            fi
+            for c in $cells; do
+              required="$required TestRealityHelloFallbackEndToEnd/xray-$v/$c"
+            done
+          done
           for t in $required; do
             grep -q -- "--- PASS: $t " e2e.log || { echo "::error::$t did not pass (skipped or failed)"; exit 1; }
           done
