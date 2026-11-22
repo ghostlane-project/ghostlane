@@ -367,8 +367,10 @@ def closure(repo, commit):
                 stack.append((q, want, dflt))
 
     # what shapes every crate
-    prof = json.dumps(root_toml.get("profile", {}), sort_keys=True)
-    members["profile release"] = hashlib.sha256(prof.encode()).hexdigest()
+    # the whole root manifest: workspace dependency features, the edition,
+    # the resolver, patches and the profile reach the build without touching
+    # Cargo.lock; any change there is "changed" (the safe direction)
+    members["file Cargo.toml"] = tree.files["Cargo.toml"]
     for f in (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain"):
         if f in tree.files:
             members["file " + f] = tree.files[f]

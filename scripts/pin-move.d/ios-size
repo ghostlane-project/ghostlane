@@ -14,7 +14,7 @@
 # log and in report.txt of its core-apple artifact). Give it as
 #   IOS_LIB_BYTES=<bytes>            or
 #   IOS_CORE_REPORT=<path of that report.txt>
-# The one before it is the last line of scripts/pin-move.d/ios-size.record
+# The one before it is the line of scripts/pin-move.d/ios-size.record for the pin the move leaves
 # (the first twelve characters of a commit and the bytes at it). A growth over
 # IOS_SIZE_MAX_GROWTH (default 131072 bytes) fails the step; the person moving
 # the pin may raise the limit for one move by naming it, and says why in the
@@ -56,10 +56,16 @@ if ! [[ "$bytes" =~ ^[0-9]+$ ]]; then
 fi
 
 last=""
-[ ! -f "$record" ] || last="$(grep -E '^[0-9a-f]{12} [0-9]+$' "$record" | tail -n 1 || true)"
+if [ -n "$old" ]; then
+  [ ! -f "$record" ] || last="$(grep -E "^${old:0:12} [0-9]+\$" "$record" | tail -n 1 || true)"
+  if [ -z "$last" ]; then
+    echo "ios size: the record holds no size for the pin this move leaves (${old:0:12}); add its line from the Core build's Apple job at that commit to $record" >&2
+    exit 1
+  fi
+fi
 short="${new:0:12}"
 if [ -n "$last" ]; then
-  echo "ios size: the record's last line is ${last% *} at ${last##* } bytes"
+  echo "ios size: the record's line for the pin left is ${last% *} at ${last##* } bytes"
   bash "$scripts/ios-closure.sh" size-delta "${last##* }" "$bytes"
 else
   echo "ios size: no size recorded before; $bytes bytes at $short"
