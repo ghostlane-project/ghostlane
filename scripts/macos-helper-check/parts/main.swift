@@ -84,6 +84,49 @@ expect("a network off its mask", reading(with(request, "mapdns.network", "198.19
 expect("more names than the network holds", reading(with(request, "mapdns.cacheSize", 200_000)), "^refused: mapdns's cache size ")
 expect("no tun", reading(with(request, "tun", nil)), "^refused: a tun request names its tun$")
 
+print("\n== what a tun keeps out of itself")
+/// What the daemon reads [request]'s exclusions as, or the refusal.
+func keptOut(_ request: [String: Any]) -> String {
+    do {
+        return try HevRequest.parse(request).exclude.map(\.text).joined(separator: " ")
+    } catch {
+        return "refused: " + ((error as? DaemonError)?.text ?? "\(error)")
+    }
+}
+expect("what the app names", keptOut(request), "^203\\.0\\.113\\.7/32 2001:db8::7/128$")
+expect("an address alone is that one address, and a prefix drops the bits past it",
+       keptOut(with(request, "exclude", ["198.51.100.9", "10.1.2.3/8", "2001:DB8:0:0::1/64"])),
+       "^198\\.51\\.100\\.9/32 10\\.0\\.0\\.0/8 2001:db8::/64$")
+expect("nothing, when it names none", keptOut(with(request, "exclude", nil)), "^$")
+expect("a name is refused", keptOut(with(request, "exclude", ["example.com"])), "^refused: a tun keeps out addresses and networks")
+expect("a prefix longer than its address", keptOut(with(request, "exclude", ["10.0.0.0/33"])), "^refused: a tun keeps out addresses and networks")
+expect("a prefix written another way", keptOut(with(request, "exclude", ["10.0.0.0/08"])), "^refused: a tun keeps out addresses and networks")
+expect("one address that is not in a list", keptOut(with(request, "exclude", "203.0.113.7")), "^refused: a tun keeps out addresses and networks")
+expect("more than 64 of them", keptOut(with(request, "exclude", Array(repeating: "203.0.113.7", count: 65))), "^refused: a tun keeps out at most 64 ")
+let spread = ["2001:db8::1", "2400:cb00::1", "2606:4700::1", "2a00:1450::1", "2c0f:f248::1", "3000::1", "4000::1", "6000::1", "8000::1"]
+expect("eight IPv6 addresses far apart, 996 routes around them", keptOut(with(request, "exclude", Array(spread.prefix(8)))), "^2001:db8::1/128 .* 6000::1/128$")
+expect("nine, 1122 routes, too many", keptOut(with(request, "exclude", spread)), "^refused: the routes around what a tun keeps out are at most 1024, and these are 1122$")
+
+print("\n== the routes a tun takes")
+let whole = Routes.plan(holes: [])
+expect("all of each family but its first /8, in the fewest prefixes",
+       whole.map(\.text).joined(separator: " "),
+       "^1\\.0\\.0\\.0/8 2\\.0\\.0\\.0/7 4\\.0\\.0\\.0/6 8\\.0\\.0\\.0/5 16\\.0\\.0\\.0/4 32\\.0\\.0\\.0/3 64\\.0\\.0\\.0/2 128\\.0\\.0\\.0/1 "
+           + "100::/8 200::/7 400::/6 800::/5 1000::/4 2000::/3 4000::/2 8000::/1$")
+let server = Prefix("64.176.32.7")!
+let server6 = Prefix("2001:db8::7")!
+let around = Routes.plan(holes: [server, server6])
+expect("around a server of each family, as many as sing-box laid",
+       "\(around.filter { !$0.isV6 }.count) \(around.filter { $0.isV6 }.count)", "^37 132$")
+expect("split exactly around it, lowest first",
+       around.prefix(10).map(\.text).joined(separator: " "),
+       "^1\\.0\\.0\\.0/8 2\\.0\\.0\\.0/7 4\\.0\\.0\\.0/6 8\\.0\\.0\\.0/5 16\\.0\\.0\\.0/4 32\\.0\\.0\\.0/3 64\\.0\\.0\\.0/9 64\\.128\\.0\\.0/11 64\\.160\\.0\\.0/12 64\\.176\\.0\\.0/19$")
+let kept = [server, server6, Prefix("0.0.0.0/8")!, Prefix("::/8")!]
+expect("none of them holds what is kept out", "\(around.contains { route in kept.contains { route.overlaps($0) } })", "^false$")
+let held = around.filter { !$0.isV6 }.reduce(UInt64(0)) { $0 + (UInt64(1) << UInt64(32 - $1.length)) }
+expect("and together they hold every other IPv4 address", "\(held)", "^\((UInt64(1) << 32) - (UInt64(1) << 24) - 1)$")
+expect("an address in a first /8 costs no route", "\(Routes.plan(holes: [Prefix("0.1.2.3")!, Prefix("::1")!]).count)", "^16$")
+
 print()
 print(failed == 0 ? "the helper's parts do what the document says" : "the helper's parts do not do what the document says")
 exit(Int32(failed))

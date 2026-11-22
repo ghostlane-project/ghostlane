@@ -23,6 +23,7 @@ class TunnelDaemonTunRequestTest {
         interfaceName = "utun225",
         socksPort = 18821,
         login = SocksLogin("ghostlane", "p4ss w'rd"),
+        exclude = listOf("203.0.113.7/32", "2001:db8::7/128"),
         names = DaemonMapDns.ADDRESS,
         hold = DaemonHold(interfaceName = "utun225", passes = listOf("203.0.113.7"))
     )
@@ -57,7 +58,7 @@ class TunnelDaemonTunRequestTest {
         ).jsonObject
         val socks = request["socks"] as JsonObject
         assertEquals(setOf("address", "port"), socks.keys)
-        // Neither names nor a block unless asked for.
+        // Neither names nor a block unless asked for, and nothing kept out of the tun.
         assertEquals(setOf("verb", "tun", "socks", "mapdns"), request.keys)
     }
 
@@ -68,6 +69,18 @@ class TunnelDaemonTunRequestTest {
         ).jsonObject
         assertEquals(setOf("name", "mtu", "ipv4"), (request["tun"] as JsonObject).keys)
         assertFalse("mapdns" in request.keys)
+    }
+
+    // What the daemon lays its routes around: the addresses the app names,
+    // as it names them, in its order.
+    @Test
+    fun whatIsKeptOutIsSentAsWritten() {
+        val request = Json.parseToJsonElement(
+            TunnelDaemonProtocol.tunRequest(
+                DaemonTun(interfaceName = "utun226", socksPort = 18822, exclude = listOf("198.51.100.9", "2001:db8::/64"))
+            )
+        ).jsonObject
+        assertEquals("""["198.51.100.9","2001:db8::/64"]""", request["exclude"].toString())
     }
 
     @Test
