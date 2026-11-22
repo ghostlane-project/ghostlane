@@ -60,4 +60,17 @@ class RealityHelloTest {
         }
         assertEquals("firefox", fingerprint(spec("firefox")))
     }
+
+    @Test fun aLineThatIsNotRealityNeverGetsASwapNote() {
+        val hy = LinkParser.parse(
+            "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&fp=android#t",
+        ) as OutboundSpec
+        assertNull(Reality.helloNote(hy))
+        val tlsVless = LinkParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443" +
+                "?security=tls&encryption=none&fp=android&sni=www.microsoft.com&type=tcp#t",
+        ) as OutboundSpec
+        assertNull(Reality.shape(tlsVless))
+        assertNull(Reality.helloNote(tlsVless))
+    }
 }
