@@ -89,6 +89,14 @@ known_failure() {
     *) echo "" ;;
   esac
 }
+# line_reached <known> <reached> <diagnosed>: 1 when a line counts as having
+# reached the page against a server, else 0. <known> is known_failure's
+# reason (empty for none), <reached> 1 when the fetch under the phone's B
+# reached it, <diagnosed> 1 when the same fetch under the darwin slice's own
+# B did (0 when that did not run).
+line_reached() {
+  if [ "$2" = 1 ] || [ -n "$1" ]; then echo 1; else echo 0; fi
+}
 DOWN_BYTES=2097152
 UP_BYTES=1048576
 PY="${PYTHON:-python3}"
@@ -382,9 +390,9 @@ CNF
         reached=1
         "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
           "$line against Xray $version" > "$dir/$line.reach.txt" 2>&1 || reached=0
+        [ "$(line_reached "$known" "$reached" 0)" -eq 1 ] || ok=0
         if [ -z "$known" ]; then
           cat "$dir/$line.reach.txt"
-          [ "$reached" -eq 1 ] || ok=0
         elif [ "$reached" -eq 1 ]; then
           sed -E 's/^ok   /note /' "$dir/$line.reach.txt"
           echo "     known: listed as known to fail, and it reached the page this time: $known"
@@ -444,7 +452,7 @@ run() {
 }
 
 selftest() {
-  local work f line n private public out
+  local work f line n private public out known reached diagnosed want got
   work="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$work'" EXIT
@@ -512,6 +520,26 @@ PY
   "$PY" -I "$HOST/lines.py" socks "$REFS/ios-core-reality.json" "$work/socks.json" 20006
   "$PY" -I -c 'import json, sys; c = json.load(open(sys.argv[1])); assert c["inbounds"][0]["port"] == 20006' "$work/socks.json"
   echo "ok   the copies on another SOCKS port, and the one with a field no core.json has"
+
+  # A line known to fail is excused only for what it is listed for, a stall
+  # under the phone's B that the darwin slice's own B clears: one that
+  # reaches the page under neither is broken. One not known to fail must
+  # reach it under the phone's B. Columns: known (- for none), reached,
+  # reached under the darwin slice's B, the verdict.
+  while read -r known reached diagnosed want; do
+    [ "$known" != - ] || known=""
+    got="$(line_reached "$known" "$reached" "$diagnosed")"
+    [ "$got" = "$want" ] ||
+      die "line_reached: known '$known', reached $reached, under the darwin slice's B $diagnosed: $got, not $want"
+  done << 'CASES'
+- 1 0 1
+- 0 1 0
+- 0 0 0
+a-stall 1 0 1
+a-stall 0 1 1
+a-stall 0 0 0
+CASES
+  echo "ok   the judgment of a fetch: a line known to fail passes only when the darwin slice's own B reaches the page"
 }
 
 [ $# -ge 1 ] || usage
