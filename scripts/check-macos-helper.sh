@@ -1,17 +1,19 @@
 #!/bin/bash
-# Asks the Mac's tunnel helper what it does, on a Mac: its own code
-# (desktopApp/tunneldaemon), built with a main that takes requests on standard
-# input (scripts/macos-helper-check), handed the config the app's builder
-# writes for a tunnel under the kill switch and a stand-in for a line, and
-# held to what docs/macos-tunnel-daemon.md says of it.
+# Asks the Mac's tunnel helper what it does with a tunnel under sing-box, on a
+# Mac: its own code (desktopApp/tunneldaemon), built with a main that takes
+# requests on standard input (scripts/macos-helper-check), handed the config
+# the app's builder writes for a tunnel under the kill switch and a stand-in
+# for a line, and held to what docs/macos-tunnel-daemon.md says of it. Its
+# tunnel under hev, the fifth protocol's, is asked by
+# scripts/macos-helper-check/hev-tunnel.sh.
 #
 # Run as root, on a machine that can lose its network for a moment: it loads a
 # block into the packet filter, brings a tun up over the default route, points
 # the system's resolver at it, and kills it. A CI runner, or a Mac of your own
 # with nothing else going on. Whatever happens, the block and the resolver's
-# key are taken away again three minutes in.
+# key are taken away again three minutes in, or when it ends.
 #
-#   swiftc … -o helper-check desktopApp/tunneldaemon/{PeerAuthority,GroupExec,TunnelChild,TrafficHold,SystemNames,LineChild,Daemon}.swift \
+#   swiftc … -o helper-check $(ls desktopApp/tunneldaemon/*.swift | grep -v /main.swift) \
 #       scripts/macos-helper-check/main.swift
 #   cc -O2 -o stand-in-line scripts/macos-helper-check/stand-in-line.c
 #   sudo scripts/check-macos-helper.sh ./helper-check /path/to/sing-box "$USER" ./stand-in-line
@@ -33,6 +35,8 @@ work="$(cd /tmp && pwd -P)/ghostlane-helper-check.$$"
 mkdir -p "$work/line"
 chmod 755 "$work"
 ( sleep 180; pfctl -a "$ANCHOR" -F all; printf 'remove %s\n' "$KEY" | scutil ) >/dev/null 2>&1 &
+# Ended with the check, so that it takes nothing away from what is asked after it.
+SAFETY=$!
 
 failed=0
 say() { printf '\n== %s\n' "$*"; }
@@ -187,7 +191,7 @@ tunnel_pid() { tail -1 "$work/said" | python3 -c 'import json,sys; print(json.lo
 the_app_asks() { ( cd "$root/scripts/macos-helper-check" && as_user "$JAVA" AskTheTun.java "$PROBE" 2>&1 | tail -1 ); }
 
 say "at rest"
-expect "the helper speaks the fourth protocol, holds nothing and runs no line" "$(ask "$(request status)")" '^ok=True state=idle hold=False protocol=4 line=no '
+expect "the helper speaks the fifth protocol, holds nothing and runs no line" "$(ask "$(request status)")" '^ok=True state=idle hold=False protocol=5 line=no '
 expect "no rule stands" "$(rules_standing)" '^0$'
 
 say "a line that came before the block"
@@ -196,15 +200,15 @@ say "a line that came before the block"
 # that follows puts the block in place over it.
 HELD="$work/line/held"
 : > "$HELD"; chown "$WHO" "$HELD"; chmod 600 "$HELD"
-expect "the helper runs a line with no tunnel and no block" "$(ask "$(request line "$STAND_IN" "$HELD" "$MINE" "$STUN_IP" "$STUN_PORT" held "$ELSEWHERE" 80 one.one.one.one)")" '^ok=True state=idle hold=False protocol=4 line=yes '
+expect "the helper runs a line with no tunnel and no block" "$(ask "$(request line "$STAND_IN" "$HELD" "$MINE" "$STUN_IP" "$STUN_PORT" held "$ELSEWHERE" 80 one.one.one.one)")" '^ok=True state=idle hold=False protocol=5 line=yes '
 expect "it holds one connection open and is answered over it, time after time" "$(count_of '^held answered' "$HELD" 3) answers, $(grep -c '^held broken' "$HELD") broken" '^[3-9] answers, 0 broken$'
-expect "a tunnel is started after it, behind a block" "$(ask "$(request start utun225 names hold "$SERVER")")" '^ok=True state=running hold=True protocol=4 line=yes '
+expect "a tunnel is started after it, behind a block" "$(ask "$(request start utun225 names hold "$SERVER")")" '^ok=True state=running hold=True protocol=5 line=yes '
 : > "$HELD"
 expect "the connection that is older than the block is answered still" "$(wait_for '^held' "$HELD")" '^held answered$'
 expect "and goes on being answered" "$(count_of '^held answered' "$HELD" 4) answers, $(grep -c '^held broken' "$HELD") broken" '^[4-9] answers, 0 broken$'
 expect "what it binds to the way out is answered under the block" "$(wait_for '^bound' "$HELD")" '^bound answered$'
 expect "stopped, and the block with it" "$(ask "$(request stop)")" '^ok=True state=idle hold=False '
-expect "the line stopped by the helper" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=False protocol=4 line=no '
+expect "the line stopped by the helper" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=False protocol=5 line=no '
 expect "no rule stands" "$(rules_standing)" '^0$'
 
 say "a start behind the block, with names"
@@ -237,14 +241,14 @@ say "a line's program behind the block"
 SAID="$work/line/said"
 : > "$SAID"; chown "$WHO" "$SAID"; chmod 600 "$SAID"
 expect "started by its user, what it binds to the way out is refused" "$(as_user "$STAND_IN" "$MINE" "$STUN_IP" "$STUN_PORT" once | tail -1)" '^bound no answer$'
-expect "the helper runs it" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=running hold=True protocol=4 line=yes '
+expect "the helper runs it" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=running hold=True protocol=5 line=yes '
 LPID=$(line_pid)
 expect "as the user who asked, in the group the block lets out" "$(ps -o uid=,gid= -p "$LPID" | tr -s ' ' | sed 's/^ //')" "^$WHO_UID $GROUP\$"
 expect "from a copy that is root's and nobody else's to change" "$(stat -f '%Su %Sp' "$LINES/stand-in-line" 2>&1)" '^root -rwxr-xr-x$'
 expect "which is the program that runs" "$(ps -o command= -p "$LPID" | cut -c1-70)" "^$LINES/stand-in-line "
 expect "it says who it is where the app reads" "$(wait_for '^runs as' "$SAID")" "^runs as uid=$WHO_UID gid=$GROUP\$"
 expect "and what it binds to the way out is answered" "$(wait_for '^bound answered' "$SAID")" '^bound answered$'
-expect "the helper says a line runs" "$(ask "$(request status)")" '^ok=True state=running hold=True protocol=4 line=yes '
+expect "the helper says a line runs" "$(ask "$(request status)")" '^ok=True state=running hold=True protocol=5 line=yes '
 
 say "the tunnel's process killed"
 kill -9 "$PID"; sleep 1.5
@@ -258,11 +262,11 @@ expect "the server the block lets out still answers" "$(code_of "http://$SERVER/
 : > "$SAID"
 expect "the line outlives its tunnel, and is answered still" "$(wait_for '^bound answered' "$SAID")" '^bound answered$'
 expect "ended by its user, as any process of theirs" "$(as_user kill "$LPID" 2>&1; sleep 0.6; kill -0 "$LPID" 2>/dev/null && echo there || echo gone)" '^gone$'
-expect "and the helper says none runs" "$(ask "$(request status)")" '^ok=True state=idle hold=True protocol=4 line=no '
-expect "a line can be started under a block with no tunnel" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=idle hold=True protocol=4 line=yes '
+expect "and the helper says none runs" "$(ask "$(request status)")" '^ok=True state=idle hold=True protocol=5 line=no '
+expect "a line can be started under a block with no tunnel" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=idle hold=True protocol=5 line=yes '
 LPID=$(line_pid)
 expect "and is answered" "$(wait_for '^bound answered' "$SAID")" '^bound answered$'
-expect "stopped by the helper when asked" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=True protocol=4 line=no '
+expect "stopped by the helper when asked" "$(ask "$(request line-stop)")" '^ok=True state=idle hold=True protocol=5 line=no '
 expect "it is gone" "$(kill -0 "$LPID" 2>/dev/null && echo there || echo gone)" '^gone$'
 
 say "a start under the block that stands"
@@ -305,7 +309,7 @@ say "the helper told to end with a tunnel up behind the block"
 expect "the tunnel is running and the block stands" "$(ask "$(request start utun227 names hold)")" '^ok=True state=running hold=True '
 PID=$(tunnel_pid)
 : > "$SAID"
-expect "and a line with it" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=running hold=True protocol=4 line=yes '
+expect "and a line with it" "$(ask "$(request line "$STAND_IN" "$SAID" "$MINE" "$STUN_IP" "$STUN_PORT")")" '^ok=True state=running hold=True protocol=5 line=yes '
 LPID=$(line_pid)
 kill -TERM "$DAEMON"
 for _ in $(seq 1 40); do kill -0 "$DAEMON" 2>/dev/null || break; sleep 0.25; done
@@ -319,6 +323,7 @@ expect "a request elsewhere goes out directly" "$(code_of "http://$ELSEWHERE/" 3
 
 exec 3>&-
 kill "$LINE" 2>/dev/null
+kill "$SAFETY" 2>/dev/null
 pfctl -a "$ANCHOR" -F all >/dev/null 2>&1
 printf 'remove %s\n' "$KEY" | scutil >/dev/null 2>&1
 if [ -s "$work/helper.err" ]; then echo "--- the helper said on its error stream"; tail -5 "$work/helper.err" | cut -c1-200; fi

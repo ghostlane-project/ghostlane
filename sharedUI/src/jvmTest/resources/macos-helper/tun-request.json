@@ -1,0 +1,1 @@
+{"verb":"tun","tun":{"name":"utun225","mtu":1500,"ipv4":"172.19.0.1","ipv6":"fdfe:dcba:9876::1"},"socks":{"address":"127.0.0.1","port":18821,"username":"ghostlane","password":"p4ss w'rd"},"mapdns":{"address":"172.19.0.2","port":53,"network":"198.18.0.0","netmask":"255.254.0.0","cacheSize":10000},"names":"172.19.0.2","hold":{"interface":"utun225","pass":["203.0.113.7"]}}
