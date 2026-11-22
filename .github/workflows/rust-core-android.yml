@@ -348,8 +348,17 @@ jobs:
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
-            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -120
+          # The whole log in a file: a stack trace alone would fill any tail, and the
+          # compiler's own lines (e: and w:) are what a red build is read by.
+          log="$RUNNER_TEMP/gradle-app.log"
+          if ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
+            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace > "$log" 2>&1; then
+            tail -60 "$log"
+          else
+            grep -E '^(e|w): |What went wrong|^> ' "$log" | head -120 || true
+            grep -v -E '^\s+at |^\s+\.\.\. [0-9]+ more' "$log" | tail -60
+            exit 1
+          fi
 
       # The Rust path's parts that need no device, on the JVM: the olcRTC room keeper (list,
       # refusal, fetch, timing, memory), the core's config with the user's own rules, hev's.
