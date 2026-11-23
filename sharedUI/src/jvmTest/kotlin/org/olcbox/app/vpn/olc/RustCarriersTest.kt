@@ -49,8 +49,42 @@ class RustCarriersTest {
     }
 
     @Test
-    fun jitsiIsLeftAlone() {
-        assertNull(RustCarriers.refusal(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_DATACHANNEL))
+    fun jitsiIsCarried() {
+        assertTrue(LocationConfig.PROVIDER_JITSI in RustCarriers.carriedProviders)
+        for (name in listOf("jitsi", "Jitsi", "jitsi-meet", "jitsi_meet", "meet")) {
+            assertNull(RustCarriers.refusal(name, LocationConfig.TRANSPORT_DATACHANNEL), name)
+        }
+        val room = LocationConfig("Jitsi", "https://meet.example/room", "a".repeat(64), LocationConfig.PROVIDER_JITSI)
+        assertNull(OlcSession.refusal(room))
+    }
+
+    /** A link may ask vp8channel of a Jitsi room; the app runs the room over datachannel and says so. */
+    @Test
+    fun aJitsiRoomThatAskedForVp8channelIsRunOverDatachannelNotRefused() {
+        assertNull(RustCarriers.refusal(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_VP8CHANNEL))
+        val room = LocationConfig(
+            "Jitsi", "https://meet.example/room", "a".repeat(64), LocationConfig.PROVIDER_JITSI,
+            transport = LocationConfig.TRANSPORT_VP8CHANNEL
+        ).normalized()
+        assertEquals(LocationConfig.TRANSPORT_DATACHANNEL, room.transport)
+    }
+
+    @Test
+    fun theSeiLaneIsRefusedOnJitsiToo() {
+        assertNotNull(RustCarriers.refusal(LocationConfig.PROVIDER_JITSI, LocationConfig.TRANSPORT_SEICHANNEL))
+    }
+
+    /** A carrier the app knows is carried or retired, never neither: a new one needs a decision here. */
+    @Test
+    fun everyCarrierTheAppKnowsIsCarriedOrRetired() {
+        val known = LocationConfig.supportedBypassProviders.toSet() +
+            LocationConfig.PROVIDER_TELEMOST + LocationConfig.PROVIDER_WB_STREAM
+        for (provider in known) {
+            val carried = provider in RustCarriers.carriedProviders
+            val retired = provider in RustCarriers.retiredProviders
+            assertTrue(carried != retired, "$provider: carried=$carried retired=$retired")
+        }
+        assertEquals(emptySet(), RustCarriers.carriedProviders.intersect(RustCarriers.retiredProviders))
     }
 
     @Test

@@ -10,9 +10,19 @@ import org.olcbox.app.net.LocationKind
  * Telemost and WB Stream have no path in the Rust client, and neither has the
  * SEI lane. A room on one of them used to fail late, when the engine was told
  * its provider. Here it is refused up front, with a sentence the caller can
- * show. Jitsi is not refused here.
+ * show. Jitsi is carried (WebSocket and BOSH, over datachannel): it is named in
+ * [carriedProviders] and is never in [retiredProviders]. A carrier the app
+ * knows is in exactly one of the two, which a test holds.
  */
 object RustCarriers {
+    /** Carriers (canonical names) the Rust core carries. */
+    val carriedProviders: Set<String> = setOf(
+        LocationConfig.PROVIDER_SALUTEJAZZ,
+        LocationConfig.PROVIDER_VKCALLS,
+        LocationConfig.PROVIDER_MTSLINK,
+        LocationConfig.PROVIDER_JITSI
+    )
+
     /** Carriers (canonical names) the Rust core does not carry. */
     val retiredProviders: Set<String> = setOf(
         LocationConfig.PROVIDER_TELEMOST,
