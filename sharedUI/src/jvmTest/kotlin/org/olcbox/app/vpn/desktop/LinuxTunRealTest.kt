@@ -406,12 +406,16 @@ class LinuxTunRealTest {
         }
         val controller = LinuxTunController(addLog = { line -> say(line) })
         tun = controller
+        // In front of ghostlane-engine hev hands the datagrams over on its
+        // FWD UDP lane: the engine's inbound with a login refuses hev's UDP
+        // ASSOCIATE, which names no port.
         val process = controller.start(
             Path.of(check.hev),
             port,
             killSwitch = killSwitch,
             username = login.username,
-            password = login.password
+            password = login.password,
+            udp = LinuxTunController.Udp.InTcp
         )
         tunProcess = process
         return process
