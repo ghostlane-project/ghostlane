@@ -44,6 +44,12 @@ import kotlin.test.fail
  * builder reads in each link, or why it refused it, and every shape the
  * builder writes, so that the driver fails a shape no line carries.
  *
+ * links.json also names the run's routing modes, each on a line, with the
+ * resolver names bound straight out are asked of: `<line>.<mode>.core.json`
+ * is the same link under that mode ([modeConfig]), and the manifest's
+ * "modes" names it, or why the builder refused it. The driver fetches pages
+ * by name through it, with the mode's list beside it.
+ *
  * Where no driver wrote links (every other Gradle run) there is nothing to
  * dump, and only the writer of the dumps is tested, against the kinds'
  * fixtures.
@@ -54,6 +60,9 @@ import kotlin.test.fail
 class InteropDumpTest {
     /** One line of a run: its name, the link the driver wrote, and the SOCKS port the core is to listen on. */
     data class RunLine(val name: String, val link: String, val socksPort: Int)
+
+    /** A routing mode of a run: its name, the line it rides, and where names bound straight out are asked. */
+    data class RunMode(val mode: String, val line: String, val directDns: String)
 
     companion object {
         /** Where the driver's `prepare` writes the links and the dumps go, from the module's directory. */
@@ -80,11 +89,40 @@ class InteropDumpTest {
             return lines
         }
 
+        /** The routing modes the builder writes a line under, by the names the driver gives them. */
+        val MODES: Map<String, Routing.Policy> = mapOf("blocked-only" to Routing.Policy.BlockedOnly)
+
+        /**
+         * The modes of the driver's links.json:
+         * `{"modes": [{"mode", "line", "directDns"}]}`, none when it names none.
+         * A mode the builder does not know is read, and refused in the
+         * manifest, where the driver names it.
+         */
+        fun readModes(text: String, lines: List<RunLine>): List<RunMode> {
+            val modes = Json.parseToJsonElement(text).jsonObject["modes"]?.jsonArray.orEmpty().map { element ->
+                val mode = element.jsonObject
+                RunMode(
+                    mode = mode.getValue("mode").jsonPrimitive.content,
+                    line = mode.getValue("line").jsonPrimitive.content,
+                    directDns = mode.getValue("directDns").jsonPrimitive.content,
+                )
+            }
+            val names = lines.map { it.name }.toSet()
+            for (mode in modes) {
+                require(NAME.matches(mode.mode)) { "the mode name '${mode.mode}' is no file name" }
+                require(mode.line in names) { "the mode ${mode.mode} rides ${mode.line}, which is no line of the run" }
+                require(mode.directDns.isNotBlank()) { "the mode ${mode.mode} names no resolver" }
+            }
+            require(modes.map { it.mode }.toSet().size == modes.size) { "a mode is named twice" }
+            return modes
+        }
+
         /**
          * Writes `<line>.core.json` into [out] for every line whose link the
-         * builder takes, and `manifest.json`; returns the manifest.
+         * builder takes, `<line>.<mode>.core.json` for every mode it writes
+         * the link under, and `manifest.json`; returns the manifest.
          */
-        fun dump(lines: List<RunLine>, login: SocksLogin, out: File): JsonObject {
+        fun dump(lines: List<RunLine>, login: SocksLogin, out: File, modes: List<RunMode> = emptyList()): JsonObject {
             out.mkdirs()
             val manifest = buildJsonObject {
                 putJsonArray("shapes") { CoreLines.all.flatMap { it.shapes }.sorted().forEach { add(it) } }
@@ -112,6 +150,37 @@ class InteropDumpTest {
                             }
                             File(out, "${line.name}.core.json").writeText(config.getOrThrow())
                             put("config", "${line.name}.core.json")
+                        }
+                    }
+                }
+                putJsonObject("modes") {
+                    for (mode in modes) {
+                        putJsonObject(mode.mode) {
+                            put("line", mode.line)
+                            val line = lines.first { it.name == mode.line }
+                            val policy = MODES[mode.mode]
+                            if (policy == null) {
+                                put("refusal", "the builder knows no mode ${mode.mode}")
+                                return@putJsonObject
+                            }
+                            val spec = LinkParser.parse(line.link)
+                            if (spec == null) {
+                                put("refusal", "the app reads no link in it")
+                                return@putJsonObject
+                            }
+                            val refusal = CoreRefusal.of(spec)
+                            if (refusal != null) {
+                                put("refusal", refusal)
+                                return@putJsonObject
+                            }
+                            val config = runCatching { modeConfig(spec, login, policy, mode.directDns, line.socksPort) }
+                            config.exceptionOrNull()?.let {
+                                put("refusal", "the builder threw: ${it.message}")
+                                return@putJsonObject
+                            }
+                            val name = "${mode.line}.${mode.mode}.core.json"
+                            File(out, name).writeText(config.getOrThrow())
+                            put("config", name)
                         }
                     }
                 }
@@ -203,14 +272,24 @@ class InteropDumpTest {
         }
         val out = File(RUN, "dumps")
         assertTrue(!out.exists() || out.list().orEmpty().isEmpty(), "${out.path} is not empty: a run's dumps go into a directory of their own")
-        val lines = readLinks(links.readText())
-        val named = dump(lines, login(), out).getValue("lines").jsonObject
+        val text = links.readText()
+        val lines = readLinks(text)
+        val modes = readModes(text, lines)
+        val manifest = dump(lines, login(), out, modes)
+        val named = manifest.getValue("lines").jsonObject
         assertEquals(lines.map { it.name }.toSet(), named.keys)
         for (line in lines) {
             val said = named.getValue(line.name).jsonObject
             println("${line.name}: " + (said["refusal"]?.jsonPrimitive?.content?.let { "refused, $it" } ?: "${said["shape"]?.jsonPrimitive?.content}, ${line.name}.core.json"))
         }
-        val written = lines.filter { "refusal" !in named.getValue(it.name).jsonObject }.map { "${it.name}.core.json" }
+        val moded = manifest.getValue("modes").jsonObject
+        assertEquals(modes.map { it.mode }.toSet(), moded.keys)
+        for (mode in modes) {
+            val said = moded.getValue(mode.mode).jsonObject
+            println("${mode.line} under ${mode.mode}: " + (said["refusal"]?.jsonPrimitive?.content?.let { "refused, $it" } ?: said.getValue("config").jsonPrimitive.content))
+        }
+        val written = lines.filter { "refusal" !in named.getValue(it.name).jsonObject }.map { "${it.name}.core.json" } +
+            moded.values.mapNotNull { it.jsonObject["config"]?.jsonPrimitive?.content }
         assertEquals((written + "manifest.json").sorted(), out.list().orEmpty().sorted())
     }
 
@@ -255,6 +334,61 @@ class InteropDumpTest {
             .getValue("shapes").jsonArray.map { it.jsonPrimitive.content }
         assertEquals(CoreLines.all.flatMap { it.shapes }.sorted(), shapes)
         for (line in IosCoreLine.entries) assertTrue(line.slug in shapes, line.slug)
+    }
+
+    /**
+     * A line under a mode is written as [modeConfig] writes it, with the line's
+     * SOCKS port and the run's resolver; a mode the builder does not know, and
+     * a link it refuses, are named in the manifest and not written.
+     */
+    @Test fun aLineUnderAModeIsWrittenAsTheBuilderWritesIt() {
+        val out = temp()
+        val login = SocksLogin("interop-user", "interop-password")
+        val reality = IosCoreFixtures.link(IosCoreLine.RealityVision)
+        val byName = reality.replace("@127.0.0.1:", "@server.interop.test:")
+        val lines = listOf(RunLine("reality", reality, 21000), RunLine("by-name", byName, 21001))
+        val modes = listOf(
+            RunMode("blocked-only", "reality", "10.1.2.3"),
+            RunMode("no-such-mode", "reality", "10.1.2.3"),
+            RunMode("blocked-only-by-name", "by-name", "10.1.2.3"),
+        )
+        val moded = dump(lines, login, out, modes).getValue("modes").jsonObject
+        val said = moded.getValue("blocked-only").jsonObject
+        assertEquals("reality", said.getValue("line").jsonPrimitive.content)
+        assertEquals("reality.blocked-only.core.json", said.getValue("config").jsonPrimitive.content)
+        val written = File(out, "reality.blocked-only.core.json").readText()
+        val spec = assertNotNull(LinkParser.parse(reality))
+        assertEquals(modeConfig(spec, login, Routing.Policy.BlockedOnly, "10.1.2.3", 21000), written)
+        assertTrue("\"port\":21000," in written, "the line's SOCKS port")
+        val dns = Json.parseToJsonElement(written).jsonObject.getValue("dns").jsonObject.getValue("servers").jsonArray
+        assertEquals("10.1.2.3", dns.single().jsonObject.getValue("address").jsonPrimitive.content, "the run's resolver")
+        assertTrue("\"ext:refilter.dat:domains\"" in written, "the list the driver puts beside it")
+        assertEquals(
+            "the builder knows no mode no-such-mode",
+            moded.getValue("no-such-mode").jsonObject.getValue("refusal").jsonPrimitive.content,
+        )
+        assertEquals(
+            CoreRefusal.of(assertNotNull(LinkParser.parse(byName))),
+            moded.getValue("blocked-only-by-name").jsonObject.getValue("refusal").jsonPrimitive.content,
+        )
+        assertEquals(
+            listOf("manifest.json", "reality.blocked-only.core.json", "reality.core.json"),
+            out.list().orEmpty().sorted(),
+        )
+    }
+
+    /** A run's modes are read as the driver writes them; none is none, and a mode on no line, or twice, is refused. */
+    @Test fun theRunsModesAreReadAsTheDriverWritesThem() {
+        val lines = listOf(RunLine("reality", "vless://a@127.0.0.1:20001?x=1", 20002))
+        val text = """{"lines": [], "modes": [{"mode": "blocked-only", "line": "reality", "directDns": "10.1.2.3"}]}"""
+        assertEquals(listOf(RunMode("blocked-only", "reality", "10.1.2.3")), readModes(text, lines))
+        assertEquals(emptyList<RunMode>(), readModes("""{"lines": []}""", lines))
+        assertFailsWith<IllegalArgumentException> { readModes(text.replace("\"line\": \"reality\"", "\"line\": \"other\""), lines) }
+        assertFailsWith<IllegalArgumentException> { readModes(text.replace("\"blocked-only\"", "\"../blocked-only\""), lines) }
+        assertFailsWith<IllegalArgumentException> { readModes(text.replace("10.1.2.3", " "), lines) }
+        val twice = """{"modes": [{"mode": "m", "line": "reality", "directDns": "10.1.2.3"}, {"mode": "m", "line": "reality", "directDns": "10.1.2.4"}]}"""
+        assertFailsWith<IllegalArgumentException> { readModes(twice, lines) }
+        assertTrue("blocked-only" in MODES, "the driver's mode is one the builder writes")
     }
 
     /** The links file is read as the driver writes it, and a name that is no file name, or a name twice, is refused. */
