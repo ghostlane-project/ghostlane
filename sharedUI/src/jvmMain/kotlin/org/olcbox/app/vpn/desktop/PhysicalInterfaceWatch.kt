@@ -92,12 +92,33 @@ internal class PhysicalInterfaceWatch(
      * before every start of the session's line, the first and every one after.
      */
     fun bound(name: String?) {
-        // The shape only: what the line is bound to is not kept yet.
+        val way = name?.let { WayOut(it, indexOf(it)) }
+        synchronized(lock) {
+            expected = way
+            candidate = null
+            seen = 0
+        }
     }
 
     /** The session is up: the reads begin. A second call changes nothing. */
     fun start() {
-        // The shape only: nothing is read yet.
+        synchronized(lock) {
+            up = true
+            if (job?.isActive == true) return
+            job = scope.launch {
+                while (isActive) {
+                    delay(intervalMs)
+                    try {
+                        // A question that hangs is cut by [stop].
+                        runInterruptible { tick() }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // A read that failed is a read missed; the next one asks again.
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -105,12 +126,39 @@ internal class PhysicalInterfaceWatch(
      * is forgotten. It may come more than once, and before any [start].
      */
     fun stop() {
-        // The shape only.
+        val running = synchronized(lock) {
+            up = false
+            expected = null
+            candidate = null
+            seen = 0
+            job.also { job = null }
+        }
+        running?.cancel()
     }
 
     /** One read: the system is asked, and a move it has held is told. */
     internal fun tick() {
-        // The shape only: no move is seen yet.
+        val from = synchronized(lock) { if (up) expected else null } ?: return
+        val now = read()?.let { WayOut(it, indexOf(it)) }
+        val moved = synchronized(lock) {
+            // A line started while the system was asked, or the session ended:
+            // the answer is to a question nobody asks any more.
+            if (!up || expected != from) return
+            if (now == null || now.sameAs(from)) {
+                candidate = null
+                seen = 0
+                return
+            }
+            seen = if (candidate?.sameAs(now) == true) seen + 1 else 1
+            candidate = now
+            if (seen < SETTLE_READS) return
+            // Told once. The start that follows says what it was bound to.
+            expected = now
+            candidate = null
+            seen = 0
+            now
+        }
+        onMove(moved.name)
     }
 
     companion object {
@@ -177,7 +225,15 @@ private class WatchedLine(
     private val watch: PhysicalInterfaceWatch,
     private val read: () -> String?,
 ) : LineEngine by inner {
-    override suspend fun start(request: LineRequest): LineStarted = inner.start(request)
+    override suspend fun start(request: LineRequest): LineStarted {
+        val way = withContext(Dispatchers.IO) {
+            val name = request.bindInterface ?: if (request.autoDetectInterface) read() else null
+            watch.bound(name)
+            name
+        }
+        val asked = if (way != null && request.bindInterface == null) request.boundTo(way) else request
+        return inner.start(asked)
+    }
 }
 
 /** [this] with its sockets bound to [name]. */
