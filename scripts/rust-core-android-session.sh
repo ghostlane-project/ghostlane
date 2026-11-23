@@ -138,7 +138,7 @@ session_open() {
   link=$(cat "$out/host/link")
   nonce=$(cat "$out/host/nonce")
 
-  echo "device: API $(dev getprop ro.build.version.sdk), $(dev getprop ro.product.cpu.abi), $(dev getprop ro.build.type), the shell as $(dev id | cut -d" " -f1)" | tee "$out/device.txt"
+  echo "device: API $(dev getprop ro.build.version.sdk), $(dev getprop ro.product.cpu.abi), $(dev getprop ro.build.type), kernel $(dev uname -r), entropy $(dev cat /proc/sys/kernel/random/entropy_avail), the shell as $(dev id | cut -d" " -f1)" | tee "$out/device.txt"
   app=$(find "$apks" -name '*.apk' ! -name '*androidTest*' | head -1)
   test_apk=$(find "$apks" -name '*androidTest*.apk' | head -1)
   [ -f "$app" ] && [ -f "$test_apk" ] || fail "no APKs under $apks"

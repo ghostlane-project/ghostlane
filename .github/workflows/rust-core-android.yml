@@ -614,7 +614,9 @@ jobs:
               kill = os.path.join(d, "kill", "results.txt")
               text = open(kill, errors="replace").read() if os.path.exists(kill) else ""
               if "RESULT KILL ok" in text:
-                  cells[("kill -9 and restart", leg)] = "pass"
+                  # Who brought the session back: Android, or the next start when Android did not.
+                  how = "by Android" if "RESULT restart: by Android" in text else "by the next start"
+                  cells[("kill -9 and restart", leg)] = "pass, restarted " + how
               else:
                   fails = [l[len("RESULT FAIL "):] for l in text.splitlines() if l.startswith("RESULT FAIL ")]
                   cells[("kill -9 and restart", leg)] = ("FAIL: " + fails[0][:60]) if fails else "no result"
