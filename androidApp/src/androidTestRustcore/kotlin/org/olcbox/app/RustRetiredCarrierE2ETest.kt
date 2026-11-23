@@ -93,7 +93,9 @@ class RustRetiredCarrierE2ETest {
         socksPort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort },
         socksUser = e2e.user,
         socksPass = e2e.pass,
-        dns = "",
+        // A resolver the runtime takes (an empty one it refuses first): with no refusal ahead of it,
+        // the provider is what fails. Never asked: nothing starts.
+        dns = "192.0.2.53:53",
         directRules = "",
         vp8Fps = 25L,
         vp8Batch = 1L,
