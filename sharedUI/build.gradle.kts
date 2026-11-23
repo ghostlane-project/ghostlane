@@ -1,10 +1,12 @@
 import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -203,6 +205,44 @@ val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
     outputDir.set(generatedAppInfoDir)
 }
 
+// The core pin at run time. scripts/ghostlane-core-pin.sh names the one commit of
+// the Rust core; the log's head and the exported core section say it, so every
+// platform's build needs it as a constant. Made here from that file at each
+// build, never a hand-kept copy: moving the pin moves this with no other step.
+abstract class GenerateCorePinTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val pinFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val commit = pinFile.get().asFile.readLines()
+            .firstOrNull { it.startsWith("GHOSTLANE_CORE_COMMIT=") }
+            ?.substringAfter('=')?.trim()?.trim('"')
+        if (commit == null || !Regex("[0-9a-f]{40}").matches(commit)) {
+            throw GradleException("${pinFile.get().asFile.path} must hold one 40-hex GHOSTLANE_CORE_COMMIT=, found: $commit")
+        }
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        val dir = out.resolve("org/olcbox/app/log")
+        dir.mkdirs()
+        dir.resolve("CorePin.kt").writeText(
+            "// Made by the build from scripts/ghostlane-core-pin.sh. Not kept in git and not edited.\n" +
+                "package org.olcbox.app.log\n\n" +
+                "/** The commit of the Rust core this build was made against. */\n" +
+                "object CorePin {\n    const val COMMIT: String = \"$commit\"\n}\n"
+        )
+    }
+}
+
+val generateCorePin by tasks.registering(GenerateCorePinTask::class) {
+    pinFile.set(rootProject.layout.projectDirectory.file("scripts/ghostlane-core-pin.sh"))
+    outputDir.set(layout.buildDirectory.dir("generated/source/corePin/commonMain"))
+}
+
 // The Rust core's config writer (net/core) has one file per kind of line under
 // net/core/lines, and beside the tests a fixture and a surface fragment per
 // kind. Something has to name them all: which kind a link belongs to is asked
@@ -393,6 +433,7 @@ kotlin {
         commonMain {
             kotlin.srcDir(generateAppInfo)
             kotlin.srcDir(generateCoreLineIndex)
+            kotlin.srcDir(generateCorePin)
         }
         commonTest {
             kotlin.srcDir(generateCoreTestIndex)

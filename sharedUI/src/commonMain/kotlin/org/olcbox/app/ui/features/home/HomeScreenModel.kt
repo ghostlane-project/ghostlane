@@ -60,7 +60,8 @@ import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingSettings
-import org.olcbox.app.log.LogScrubber
+import org.olcbox.app.log.CorePin
+import org.olcbox.app.log.LogsExport
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.util.nowMillis
 import org.olcbox.app.data.repository.LocationsRepository
@@ -996,29 +997,8 @@ class HomeScreenViewModel(
         }
     }
 
-    private suspend fun buildLogsExport(logs: List<String>): String {
-        return buildString {
-            appendLine("Ghostlane application logs")
-            appendLine("Entries: ${logs.size}")
-            appendLine()
-            logs.forEachIndexed { index, line ->
-                appendLine("${index + 1}. $line")
-            }
-            // The tunnel component's own files, where there is one. Scrubbed
-            // like every other line: a debug build's sing-box log names every
-            // destination, and a hashed name still shows which rule it hit.
-            val diagnostics = vpnManager.diagnosticsLog()
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .toList()
-            if (diagnostics.isNotEmpty()) {
-                appendLine()
-                appendLine("--- tunnel diagnostics ---")
-                diagnostics.forEach { appendLine(LogScrubber.default.scrub(it)) }
-            }
-        }
-    }
+    private suspend fun buildLogsExport(logs: List<String>): String =
+        LogsExport.build(logs, vpnManager.diagnosticsLog().lines(), CorePin.COMMIT)
 }
 
 data class HomeScreenState(
