@@ -1,0 +1,351 @@
+name: Rust core
+
+# The Rust core (ghostlane-project/xray-rust) at the commit the app pins, and
+# the lines the app writes for it, against the servers they meet:
+#
+#   - Lines against Xray servers (check K5): for every line under
+#     scripts/rust-core-interop/lines/, the driver (scripts/rust-core-interop.py)
+#     writes the line's share link with the run's own port, keys and pins; the
+#     app's builder, run by jvmTest InteropDumpTest, writes the core.json the
+#     app would start the core from for that link; and the core's CLI, built
+#     at the commit, runs that dump as the client against the official Xray
+#     releases of scripts/xray-servers.txt (26.4.25, 26.7.11, 26.11.9) as the
+#     servers, each line's server written from its file. Through each, a 2 MiB
+#     download and a 1 MiB upload must arrive whole; a dump with one value
+#     mutated, and a line marked to fail (a wrong key, a certificate nobody
+#     pinned, a pin of another certificate), must not reach the page. Every
+#     cell is named and one that cannot run fails.
+#   - The fork's CI at the commit: the fork runs none of its own on its
+#     branches (its ci.yml triggers on upstream's main, tags and pull requests
+#     only), so the jobs upstream runs on a pull request that check the core
+#     (rust: fmt, clippy, the whole workspace's tests, the fuzz corpora, docs;
+#     go-oracles: interop against pinned Xray-core; supply-chain; secrets) run
+#     here, read from the commit's own ci.yml by
+#     scripts/rust-core-upstream-ci.py, with the steps left out named in
+#     scripts/rust-core-upstream-skips.txt; and the fork's own guards (the
+#     job memory-guards of its ghostlane-guards.yml) by the same driver.
+#
+# The commit is the pin in scripts/ghostlane-core-pin.sh, read through
+# scripts/ghostlane-core-resolve.sh, or a dispatch's pin=<sha>: that is how a
+# commit of the fork is held to all of this before the pin moves to it.
+#
+# When: on rust/all and on pull requests into it when the pin, the builder,
+# the lines or these scripts changed, and by hand; never on every push to a
+# task branch. The fork's CI and guards run only when what they read changed
+# (the pin, the checkout, their driver, this file) or by hand; the lines run
+# every time. Nothing here signs, publishes or joins a carrier room, and there
+# is no secret: the keys and certificates are made by the run and die with it.
+on:
+  push:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-core.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/rust-core-checkout.sh
+      - scripts/test-rust-core-checkout.sh
+      - scripts/rust-core-upstream-ci.py
+      - scripts/rust-core-upstream-skips.txt
+      - scripts/rust-core-interop.py
+      - 'scripts/rust-core-interop/**'
+      - scripts/xray-servers.txt
+      - scripts/fetch-xray-servers.sh
+      - 'sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**'
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/InteropDumpTest.kt
+      - sharedUI/build.gradle.kts
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-core.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/rust-core-checkout.sh
+      - scripts/test-rust-core-checkout.sh
+      - scripts/rust-core-upstream-ci.py
+      - scripts/rust-core-upstream-skips.txt
+      - scripts/rust-core-interop.py
+      - 'scripts/rust-core-interop/**'
+      - scripts/xray-servers.txt
+      - scripts/fetch-xray-servers.sh
+      - 'sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**'
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/InteropDumpTest.kt
+      - sharedUI/build.gradle.kts
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Hold this commit of the core (40 hex) to the lines and the fork's CI, instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a pull request supersedes its run; a run by hand is
+  # never cancelled, and two with different pins do not wait on each other.
+  group: rust-core-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+env:
+  # A dispatch's pin=<sha>; empty is the pin. scripts/ghostlane-core-resolve.sh
+  # checks it wherever it is read.
+  PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+
+jobs:
+  scope:
+    name: Which commit, and what runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      upstream: ${{ steps.what.outputs.upstream }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: The commit
+        run: |
+          set -euo pipefail
+          commit="$(bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | sed -n 's/^GHOSTLANE_CORE_COMMIT=//p')"
+          if [ -n "$PIN_OVERRIDE" ]; then said="the dispatch's pin"; else said="the pin in scripts/ghostlane-core-pin.sh"; fi
+          echo "Rust core at \`$commit\`, $said." >> "$GITHUB_STEP_SUMMARY"
+
+      # A pull request is compared with its base, a push with the tip the
+      # branch had before it; anything else (a dispatch, a base the clone does
+      # not have) runs everything.
+      - name: What changed
+        id: what
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "upstream=true" >> "$GITHUB_OUTPUT"
+            echo "The fork's CI and guards run: nothing to compare with." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" HEAD)"
+          if grep -qxE '\.github/workflows/rust-core\.yml|scripts/ghostlane-core-(pin|resolve)\.sh|scripts/(test-)?rust-core-checkout\.sh|scripts/rust-core-upstream-(ci\.py|skips\.txt)' <<< "$changed"; then
+            echo "upstream=true" >> "$GITHUB_OUTPUT"
+            echo "The fork's CI and guards run: what they read changed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "upstream=false" >> "$GITHUB_OUTPUT"
+            echo "The fork's CI and guards do not run: neither the commit nor what reads it changed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  scripts:
+    name: The scripts, offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The runner's own shellcheck; the log says which.
+      - name: shellcheck, bash -n and the Python scripts
+        run: |
+          set -euo pipefail
+          shellcheck --version | sed -n 2p
+          files=(scripts/rust-core-checkout.sh scripts/test-rust-core-checkout.sh)
+          shellcheck -x "${files[@]}"
+          for f in "${files[@]}"; do bash -n "$f"; done
+          python3 -m py_compile scripts/rust-core-upstream-ci.py scripts/rust-core-interop.py
+
+      - name: What rust-core-checkout.sh refuses
+        run: bash scripts/test-rust-core-checkout.sh
+
+      - name: What the upstream-CI driver runs and refuses
+        run: python3 scripts/rust-core-upstream-ci.py selftest
+
+      # The lines' files, the dumps' checks, and whole runs on stand-ins for
+      # both ends: a skipped cell, a missing dump, a refused link, a shape no
+      # line carries and a dump the builder got wrong all fail.
+      - name: What the interop driver passes and fails
+        run: python3 scripts/rust-core-interop.py selftest
+
+  upstream:
+    needs: scope
+    if: needs.scope.outputs.upstream == 'true'
+    name: Upstream CI at the commit, ${{ matrix.job }}
+    runs-on: ubuntu-24.04
+    # Upstream gives each of these 45 minutes (secrets 15); this adds the
+    # checkout and a toolchain.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [rust, go-oracles, supply-chain, secrets]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: xray-rust at the commit, and the Go its job asks for
+        id: fork
+        env:
+          JOB: ${{ matrix.job }}
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
+          echo "dir=$src" >> "$GITHUB_OUTPUT"
+          echo "go=$(python3 scripts/rust-core-upstream-ci.py go-version "$src/.github/workflows/ci.yml" "$JOB")" >> "$GITHUB_OUTPUT"
+
+      # Upstream's oracles are Go programs; Go is the harness here, never in
+      # what the app ships.
+      - name: Go, as the job's setup-go step names it
+        if: steps.fork.outputs.go != ''
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.fork.outputs.go }}
+          cache: false
+
+      - name: Upstream's steps
+        env:
+          JOB: ${{ matrix.job }}
+          SRC: ${{ steps.fork.outputs.dir }}
+        run: python3 scripts/rust-core-upstream-ci.py run "$SRC/.github/workflows/ci.yml" "$JOB" --workspace "$SRC" --skips scripts/rust-core-upstream-skips.txt
+
+  fork-guards:
+    needs: scope
+    if: needs.scope.outputs.upstream == 'true'
+    name: Fork guards at the commit
+    runs-on: ubuntu-24.04
+    # The file's job gives itself 45 minutes; this adds the checkout.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: xray-rust at the commit
+        id: fork
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
+          echo "dir=$src" >> "$GITHUB_OUTPUT"
+
+      # Nothing is skipped: no --skips.
+      - name: The fork's guard steps
+        env:
+          SRC: ${{ steps.fork.outputs.dir }}
+        run: python3 scripts/rust-core-upstream-ci.py run "$SRC/.github/workflows/ghostlane-guards.yml" memory-guards --workspace "$SRC"
+
+  lines:
+    name: "Lines against Xray servers: the builder's dumps through xray-rust"
+    runs-on: ubuntu-24.04
+    # The CLI's build when no cache holds it (about 15 minutes), the Gradle
+    # dump (about 10), and the cells (under 10).
+    timeout-minutes: 60
+    env:
+      RUN_DIR: sharedUI/build/rust-core-interop
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Which commit of the core
+        run: bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
+
+      # The key and the path are PR Checks' (its job "Rust core: the app's
+      # core.json"), which builds the same binary the same way, the
+      # project's own `cargo build --locked --release -p xray-cli` at exactly
+      # the commit: one build per commit serves both. Restored and saved as
+      # two steps, so a CLI built once is kept even when a cell fails.
+      - name: Restore the CLI
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
+
+      - name: Build xray-rust's CLI at the commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_INCREMENTAL: "0"
+          CARGO_NET_RETRY: "5"
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
+          rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal --no-self-update
+          (cd "$src" && cargo "+$GHOSTLANE_CORE_TOOLCHAIN" build --locked --release -p xray-cli)
+          install -D -m 0755 "$src/target/release/xray-rust" ~/.cache/rust-core-cli/xray-rust
+
+      - name: Save the CLI
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/rust-core-cli
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: The CLI runs, accepts its own example and refuses an unknown protocol by name
+        id: cli
+        run: |
+          set -euo pipefail
+          cli=~/.cache/rust-core-cli/xray-rust
+          "$cli" config example socks-direct > "$RUNNER_TEMP/example.json"
+          "$cli" config check -config "$RUNNER_TEMP/example.json"
+          echo '{"inbounds": [{"protocol": "no-such-protocol", "port": 1080}]}' > "$RUNNER_TEMP/bad.json"
+          if out="$("$cli" config check -config "$RUNNER_TEMP/bad.json" 2>&1)"; then
+            echo "::error::the CLI accepted a config with an unknown protocol"
+            exit 1
+          fi
+          echo "$out"
+          grep -q 'no-such-protocol' <<< "$out" || {
+            echo "::error::the CLI refused the bad config without naming no-such-protocol: a crash, not a verdict"
+            exit 1
+          }
+
+      - name: The Xray servers, by hash
+        run: |
+          set -euo pipefail
+          servers="$(bash scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          echo "XRAY_SERVERS=$servers" >> "$GITHUB_ENV"
+
+      # The run's keys, certificates and ports, and a link per line with them
+      # written in, for the builder.
+      - name: A link per line
+        id: prepare
+        run: |
+          set -euo pipefail
+          first="${XRAY_SERVERS%% *}"
+          python3 scripts/rust-core-interop.py prepare --work "$RUN_DIR" --xray "${first#*=}"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # The action's default is 'tools platform-tools'; the legacy tools
+          # package is no longer in Google's repository and sdkmanager fails
+          # the whole step over it. The Gradle build configures the Android
+          # targets, and the next step installs what that reads.
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # --rerun: the links are no input Gradle knows of, and a test taken
+      # from the build cache would write no dump.
+      - name: The builder's dump of each link
+        run: ./gradlew :sharedUI:jvmTest --rerun --tests 'org.olcbox.app.net.InteropDumpTest' --stacktrace
+
+      # Run whatever the dump step did: with no dumps every cell is named,
+      # and failed.
+      - name: Every line through every server
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' && steps.prepare.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/rust-core-interop.py run --work "$RUN_DIR" --dumps "$RUN_DIR/dumps" \
+            --client ~/.cache/rust-core-cli/xray-rust --servers "$XRAY_SERVERS"

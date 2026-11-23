@@ -1,0 +1,1 @@
+ios | proven | scripts/test-ios-interface-selection.sh, iosApp/Tests/PhysicalInterfaceSelectionTests.swift | The extension's own code, held without the core

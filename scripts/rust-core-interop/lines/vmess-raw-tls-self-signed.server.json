@@ -1,0 +1,36 @@
+{
+  "about": "the VMess TLS line with the run's self-signed certificate and no pin: the link waives no check, so the core must refuse a certificate no public root signed",
+  "shape": "vmess-raw-tls",
+  "expect": "refused",
+  "against": "vmess-raw-tls",
+  "tls_name": "vm.example.com",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-raw-tls-self-signed\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"tcp\",\"type\":\"none\",\"tls\":\"tls\",\"sni\":\"vm.example.com\"}",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

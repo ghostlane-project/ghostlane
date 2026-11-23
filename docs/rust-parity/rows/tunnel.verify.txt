@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/TunnelVerifierTest.kt::TunnelVerifierTest | The verdict logic is held; a request through a Rust core's tunnel is not run

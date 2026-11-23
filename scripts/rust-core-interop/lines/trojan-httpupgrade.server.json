@@ -1,0 +1,46 @@
+{
+  "about": "Trojan over HTTP upgrade with TLS, the server ending TLS with http/1.1",
+  "shape": "trojan-httpupgrade",
+  "expect": "page",
+  "tls_name": "trojan.interop.test",
+  "trust": "pin",
+  "link": "trojan://trojan-interop-password@127.0.0.1:{port}?security=tls&sni=trojan.interop.test&fp=chrome&type=httpupgrade&path=%2Fup&host=trojan.interop.test#interop-trojan-httpupgrade",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/servers/0/password",
+    "value": "trojan-interop-passwore"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "trojan-interop-password",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/up"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

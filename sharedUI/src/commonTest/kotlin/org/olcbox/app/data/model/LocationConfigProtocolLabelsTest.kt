@@ -68,7 +68,7 @@ class LocationConfigProtocolLabelsTest {
     @Test
     fun olcrtcStillReportsItsCarrier() {
         val cfg = LocationConfig(name = "room", id = "room-id", key = "key")
-        assertEquals(listOf("WB Stream", "VP8"), cfg.protocolLabels())
+        assertEquals(listOf("SaluteJazz", "VP8"), cfg.protocolLabels())
     }
 
     @Test

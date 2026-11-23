@@ -1,0 +1,6 @@
+android | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+ios | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+macos | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+linux | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+windows | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/log/LogScrubberTest.kt::LogScrubberTest | shared Kotlin, no engine on its path
+cli | not-proven | - | -

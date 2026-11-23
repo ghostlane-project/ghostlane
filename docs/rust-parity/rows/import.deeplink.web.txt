@@ -1,0 +1,2 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theWebLinkKeepsTheListInTheFragmentSoNoServerSeesIt | The link's parse is held; handing the link from the operating system to the app is not exercised
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theWebLinkKeepsTheListInTheFragmentSoNoServerSeesIt | The link's parse is held; handing the link from the operating system to the app is not exercised

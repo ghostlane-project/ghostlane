@@ -1,0 +1,45 @@
+name: Parity ledger
+
+# docs/rust-parity/ lists every feature of today's builds, by platform, and the
+# test that proves each on the Rust core. scripts/parity-ledger.py holds the
+# ledger to the tree: a feature with no row, a row for a feature a platform does
+# not have, a test id that does not exist, a proven row with no test, and a
+# link scheme, routing mode, carrier, transport, setting, CLI command, flag or
+# environment variable the tree has and the inventory leaves out. It then plants
+# each of those faults in a copy and expects to be told.
+#
+# Nothing here builds, signs or reaches a network. On a pull request into
+# rust/all, on a push to a rust/ branch that touches what the check reads, and
+# by hand (the integrator runs it at each wave gate and pin move).
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - rust/all
+  push:
+    branches:
+      - 'rust/**'
+    paths:
+      - docs/rust-parity/**
+      - scripts/parity-ledger.py
+      - .github/workflows/parity.yml
+      - README.MD
+      - docs/*.md
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/**
+      - cli/cmd/ghostlane/**
+
+permissions:
+  contents: read
+
+jobs:
+  ledger:
+    name: The ledger holds
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the ledger against the tree
+        run: python3 scripts/parity-ledger.py
+      - name: The check catches what it is for
+        run: python3 scripts/parity-ledger.py --self-test

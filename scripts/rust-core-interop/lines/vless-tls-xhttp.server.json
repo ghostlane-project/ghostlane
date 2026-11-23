@@ -1,0 +1,44 @@
+{
+  "about": "VLESS over TLS and XHTTP (HTTP/2, mode auto, the server name as Host), the run's certificate pinned for the test",
+  "shape": "vless-tls-xhttp",
+  "expect": "page",
+  "tls_name": "vless.interop.test",
+  "trust": "pin",
+  "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:{port}?security=tls&encryption=none&sni=vless.interop.test&fp=chrome&type=xhttp&path=%2Fx#interop-vless-tls-xhttp",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444443"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "/x",
+          "mode": "auto"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

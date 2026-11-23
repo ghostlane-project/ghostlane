@@ -1,0 +1,5 @@
+android | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+macos | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+linux | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+windows | retired | - | Carrier retired by the maintainers; not ported to the Rust core
+cli | retired | - | Carrier retired by the maintainers; not ported to the Rust core

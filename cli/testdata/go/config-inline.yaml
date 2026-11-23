@@ -1,0 +1,11 @@
+subscriptions:
+    - url: inline:olcrtc://telemost?vp8channel@room#abababababababababababababababababababababababababababababababab$DE · olcRTC
+      interval_hours: 0
+      added_at: 0001-01-01T00:00:00Z
+selection:
+    subscription: inline:olcrtc://telemost?vp8channel@room#abababababababababababababababababababababababababababababababab$DE · olcRTC
+    selector: "1"
+    mode: tun
+proxy:
+    listen: 127.0.0.1
+    port: 1080

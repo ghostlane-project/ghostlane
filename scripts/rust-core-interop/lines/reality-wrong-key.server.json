@@ -1,0 +1,38 @@
+{
+  "about": "the REALITY line with a public key whose private key no server holds: a pass would prove the key is never checked",
+  "shape": "reality",
+  "expect": "refused",
+  "against": "reality",
+  "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{port}?security=reality&encryption=none&pbk={other_public_key}&sid=ab12cd34&fp=chrome&sni=reality.interop.test&flow=xtls-rprx-vision&type=tcp#interop-reality-wrong-key",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "{target}",
+          "serverNames": [
+            "reality.interop.test"
+          ],
+          "privateKey": "{private_key}",
+          "shortIds": [
+            "ab12cd34"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+{"verb":"status","selector":"DE"}
+{"ok":true,"status":{"state":"up","selector":"DE"}}

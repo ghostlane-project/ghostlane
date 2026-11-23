@@ -24,6 +24,15 @@ val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
     .map { it.toInt() }
     .orElse(1)
+// The Rust core (phase 2 of the Android move; scripts/build-ghostlane-core-android.sh):
+// -PghostlaneCoreDir=<its output dir> packs libghostlane_core.so for each ABI and
+// compiles the UniFFI bindings and RustCoreEngine into the app. Without it the app is
+// what it was: no class, no library, and the developer switch has nothing to select.
+// -Polcbox.rustCoreDefault=true would turn the switch on by default; it is off.
+val ghostlaneCoreDir: File? = providers.gradleProperty("ghostlaneCoreDir").orNull
+    ?.let { file(it) }
+    ?.takeIf { it.resolve("jniLibs").isDirectory && it.resolve("kotlin").isDirectory }
+val rustCoreDefault = providers.gradleProperty("olcbox.rustCoreDefault").map { it.toBoolean() }.getOrElse(false)
 val defaultAndroidAbiFilters = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
     .map { value ->
@@ -77,6 +86,7 @@ android {
         versionCode = olcboxVersionCode.get()
         versionName = olcboxVersion.get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "RUST_CORE_DEFAULT", "$rustCoreDefault")
 
         ndk {
             abiFilters += androidAbiFilters
@@ -135,6 +145,12 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // -Polcbox.labSuffix=.rustlab: a lab build that installs next to the store app
+            // (its own applicationId), for a phone test of the Rust core. Never on a release.
+            providers.gradleProperty("olcbox.labSuffix").orNull?.let {
+                applicationIdSuffix = it
+                versionNameSuffix = "-" + it.trimStart('.')
+            }
 
             isMinifyEnabled = false
             isShrinkResources = false
@@ -155,14 +171,25 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs", "jniLibs")
+            if (ghostlaneCoreDir != null) {
+                jniLibs.srcDir(ghostlaneCoreDir.resolve("jniLibs"))
+                // AGP 9's built-in Kotlin compiles .kt only from the kotlin directories.
+                kotlin.srcDir(ghostlaneCoreDir.resolve("kotlin"))
+                kotlin.srcDir("src/rustcore/kotlin")
+            }
         }
         // Stated explicitly rather than relying on the plugin default, so the
         // instrumented sources cannot silently stop being compiled.
         getByName("androidTest") {
             java.srcDirs("src/androidTest/kotlin")
+            if (ghostlaneCoreDir != null) kotlin.srcDir("src/androidTestRustcore/kotlin")
         }
     }
 
@@ -195,6 +222,13 @@ dependencies {
     implementation(project(":sharedUI"))
     implementation(libs.androidx.activityCompose)
     implementation(libs.androidx.datastore.preferences)
+    // The Rust core's JNA (UniFFI bindings and the xray-ffi calls): the AAR carries
+    // libjnidispatch.so for each ABI.
+    if (ghostlaneCoreDir != null) {
+        implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
+        // The end-to-end test (src/androidTestRustcore) saves a profile with runBlocking.
+        androidTestImplementation(libs.kotlinx.coroutines.android)
+    }
 
     // Instrumented tests: the only way to exercise the packaged core binary the way
     // the app does — extracted into nativeLibraryDir and exec'd on a real Android.

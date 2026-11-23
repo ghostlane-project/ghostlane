@@ -1,0 +1,29 @@
+{
+  "about": "VMess AEAD (auto) over raw TCP with no TLS",
+  "shape": "vmess-raw",
+  "expect": "page",
+  "link": "vmess://{\"v\":\"2\",\"ps\":\"interop-vmess-raw\",\"add\":\"127.0.0.1\",\"port\":\"{port}\",\"id\":\"44444444-4444-4444-4444-444444444444\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"tcp\",\"type\":\"none\",\"tls\":\"\"}",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "44444444-4444-4444-4444-444444444445"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw"
+      }
+    }
+  ]
+}

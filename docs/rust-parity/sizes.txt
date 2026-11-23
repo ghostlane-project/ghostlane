@@ -1,0 +1,3 @@
+# The size of each shipped artefact beside today's Go build, in bytes, filled in as the Rust builds appear.
+# A dash is not measured yet.
+artefact | go build (bytes) | rust build (bytes) | note

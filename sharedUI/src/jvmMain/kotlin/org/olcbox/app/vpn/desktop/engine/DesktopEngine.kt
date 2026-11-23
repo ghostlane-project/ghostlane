@@ -1,0 +1,251 @@
+package org.olcbox.app.vpn.desktop.engine
+
+import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.DirectDns
+import org.olcbox.app.net.OutboundSpec
+import org.olcbox.app.net.Routing
+import org.olcbox.app.net.SocksLogin
+import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.vpn.DesktopMode
+import java.nio.file.Path
+
+/**
+ * What carries the lines of a desktop session.
+ *
+ * The manager decides what a session is: its mode, its endpoint, what it
+ * holds (a tun or the system's proxy setting), when a line is restarted and
+ * what the user is told. Everything a line runs to be that endpoint is asked
+ * of an engine, so another engine is another implementation of this file and
+ * not another manager.
+ *
+ * One engine belongs to one manager and lives as long as it does. Whatever it
+ * started is stopped by the manager's own stop paths, through the same calls.
+ */
+internal interface DesktopEngine {
+    /** The line of the session: a core line, or the front before a room. */
+    val line: LineEngine
+
+    /** The core that owns the Windows tun, apart from the session's line. */
+    val windowsTun: TunCore
+
+    /** A room: what is run for it. The manager runs it. */
+    val room: RoomEngine
+
+    /** Cores that try a line beside the session's and are thrown away. */
+    val probes: ProbeEngine
+
+    /**
+     * The session's first line passed its check: the session is Connected in
+     * [mode]. An engine that watches something for a session, the interface
+     * the machine leaves by for one, begins here and reports through
+     * [SessionHooks].
+     */
+    fun sessionUp(mode: DesktopMode) {}
+
+    /**
+     * The session is being stopped. It may come more than once, and with no
+     * session up.
+     */
+    fun sessionDown() {}
+}
+
+/**
+ * What an engine may ask of the session it carries. The answer to both is the
+ * restart behind the tun: what the session holds, the tun or in proxy mode
+ * the system's proxy setting, is not touched, and the line is started again
+ * behind it for as long as the session lasts.
+ *
+ * May be called from any thread and at any time; a call with no session up,
+ * or for a session that has ended since, does nothing.
+ */
+internal interface SessionHooks {
+    /**
+     * The engine learned by itself that the session's line is gone: its
+     * program said so, or ended. [what] is the log's line. The manager also
+     * asks [LineEngine.alive] on its own clock, so an engine that only
+     * answers that question never needs this.
+     */
+    fun lineDied(what: String)
+
+    /**
+     * The interface the machine leaves by changed ([interfaceName], or null
+     * when there is none now). Whatever of the line runs is stopped and
+     * started again, bound to what is there now.
+     */
+    fun wayOutChanged(interfaceName: String?)
+}
+
+/** What an engine is given by the manager it serves. */
+internal class DesktopEngineHost(
+    /** The app's log; what a line's processes print goes there. */
+    val log: (String) -> Unit,
+    /** Where the Windows tun's core is read: the manager looks for what the system refused. */
+    val windowsTunOutput: (String) -> Unit,
+    val session: SessionHooks
+)
+
+/** Which engine a manager gets. One place, so that changing it touches no manager. */
+internal object DesktopEngines {
+    @Volatile
+    var factory: (DesktopEngineHost) -> DesktopEngine = { host -> GoEngines(host) }
+
+    fun create(host: DesktopEngineHost): DesktopEngine = factory(host)
+}
+
+/**
+ * A core line as the session's endpoint: what listens on [port] and demands
+ * [login], and how it leaves the machine.
+ */
+internal class LineRequest(
+    val spec: OutboundSpec,
+    /** How the location names its kind, for the log. */
+    val kind: String,
+    val port: Int,
+    val routing: Routing,
+    val verboseLogs: Boolean,
+    val login: SocksLogin?,
+    val serverResolver: DirectDns?,
+    val autoDetectInterface: Boolean,
+    val bindInterface: String?,
+    /**
+     * A free loopback port that is not the one given. Asked only by an engine
+     * whose line is more than one listener, and only when it is.
+     */
+    val anotherPort: (Int) -> Int
+)
+
+/** The front before a room: it listens on [port], demands [login] and hands on to the room's own port. */
+internal class FrontRequest(
+    val enginePort: Int,
+    val engineUsername: String,
+    val enginePassword: String,
+    val port: Int,
+    val routing: Routing.Rules,
+    val verboseLogs: Boolean,
+    val login: SocksLogin?
+)
+
+/** A line that was started. Started is not ready: the manager waits for the port and then asks [alive]. */
+internal class LineStarted(
+    /** What the log says of the start. */
+    val said: String,
+    /** Whether everything this start began still runs. */
+    val alive: () -> Boolean,
+    /** How the part that owns the port ended, or null while it runs. */
+    val exitCode: () -> Int?
+)
+
+internal interface LineEngine {
+    /** Starts the line; whatever of an earlier one runs is stopped by the caller first ([stopNow]). */
+    suspend fun start(request: LineRequest): LineStarted
+
+    /** Starts the front before a room that is already running. */
+    suspend fun startFront(request: FrontRequest)
+
+    /**
+     * Whether everything runs that a line of this shape is made of. Asked for
+     * a line that is not started yet, and kept by the session's watcher.
+     */
+    fun alive(spec: OutboundSpec, routing: Routing): () -> Boolean
+
+    /** Whether the front before a room runs. */
+    val frontAlive: () -> Boolean
+
+    /** How the front ended, or null while it runs. */
+    fun frontExitCode(): Int?
+
+    /** Whether anything of a core line runs. */
+    fun anyRunning(): Boolean
+
+    /** How a dead part of the line ended, or null. */
+    fun exitCodeOrNull(): Int?
+
+    /** The line's own processes, for a tun that lets them out by their paths. */
+    fun runningProcesses(): List<Process>
+
+    /** The programs a line may run, for the same tun when a process does not say its path. */
+    fun binaries(): List<Path>
+
+    /** Stops the line and the front, and returns when they are gone. Not a coroutine: stop paths are not. */
+    fun stopNow()
+}
+
+/** The core of the Windows tun. */
+internal interface TunCore {
+    suspend fun start(config: String)
+    fun isRunning(): Boolean
+    fun runningProcess(): Process?
+    fun stopNow()
+}
+
+/**
+ * A room as the session's endpoint: the SOCKS listener it opens, with its
+ * login, and what it is told about the machine.
+ */
+internal class RoomRequest(
+    val location: LocationConfig,
+    val socksHost: String,
+    val socksPort: Int,
+    val socksUser: String,
+    val socksPass: String,
+    val dnsServer: String,
+    /** A file of the destinations the room's program dials itself, or null for none. */
+    val directRulesFile: Path?,
+    val dtlsProfile: String
+)
+
+/**
+ * What is run for a room. The manager writes [config] into a file only the
+ * user reads, runs [args] (itself, as root, or through the Mac's helper),
+ * reads what the program prints and watches it; nothing secret is in [args].
+ */
+internal interface RoomLaunch {
+    /** How the program names the carrier, for the log. */
+    val provider: String
+
+    /** The text of the file the program reads. */
+    fun config(): String
+
+    /** The command line: the program, then what it is given, with the file's path in it. */
+    fun args(configPath: Path): List<String>
+
+    /** [line], printed by the program, says the room's listener is open. */
+    fun saysReady(line: String): Boolean
+
+    /** [line] says this start has failed for good. */
+    fun saysFailed(line: String): Boolean
+}
+
+internal interface RoomEngine {
+    /** The programs that can carry a room, the preferred one first; the next is tried when one does not start. */
+    fun binaries(): List<Path>
+
+    fun launch(binary: Path, request: RoomRequest): RoomLaunch
+
+    /**
+     * Whether a room's program has to be root in the Linux tunnel, where only
+     * root's traffic keeps the main table. False for one that binds its
+     * sockets to the physical interface instead.
+     */
+    val rootBesideLinuxTun: Boolean
+}
+
+internal interface ProbeEngine {
+    /** A core of its own for every probe, started for it and stopped by it. */
+    val fresh: TransportProbe.Starter
+
+    /**
+     * The core of a line a session probes while it looks for another one: a
+     * candidate's own, beside the session's, which is not touched.
+     *
+     * Kept, where [fresh] makes one for every probe. A look tries one line at
+     * a time, so one is enough, and a session that is stopped can then stop a
+     * probe that is running with everything else it stops ([stopKept]). Left
+     * to the probe's own coroutine, the core is stopped when that coroutine
+     * next runs, and after Quit it never does: the process would outlive the
+     * app.
+     */
+    val kept: TransportProbe.Starter
+
+    fun stopKept()
+}

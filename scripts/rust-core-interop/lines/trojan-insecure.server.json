@@ -1,0 +1,39 @@
+{
+  "about": "the Trojan line whose link waives certificate checks (allowInsecure=1), to a server with the run's self-signed certificate and no pin: carried, as the link asks",
+  "shape": "trojan",
+  "expect": "page",
+  "tls_name": "trojan.interop.test",
+  "link": "trojan://trojan-interop-password@127.0.0.1:{port}?security=tls&sni=trojan.interop.test&fp=chrome&allowInsecure=1&type=tcp#interop-trojan-insecure",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/servers/0/password",
+    "value": "trojan-interop-passwore"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "trojan-interop-password",
+            "email": "interop@test"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

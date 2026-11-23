@@ -1,0 +1,4 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; what it switches is the smart-connect rows
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; what it switches is the smart-connect rows
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; what it switches is the smart-connect rows
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/data/model/SubscriptionSettingsTest.kt::SubscriptionSettingsTest | The setting's model is held; what it switches is the smart-connect rows

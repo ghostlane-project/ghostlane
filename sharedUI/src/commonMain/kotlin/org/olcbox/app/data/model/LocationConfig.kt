@@ -157,7 +157,12 @@ data class LocationConfig(
          * `vp8channel`, and the engine dresses the frames itself.
          */
         const val PROVIDER_MTSLINK = "mtslink"
-        const val DEFAULT_BYPASS_PROVIDER = PROVIDER_WB_STREAM
+        /**
+         * The carrier a room with no (or an unknown) carrier lands on. A live
+         * one: Telemost and WB Stream are refused by the Rust core
+         * (vpn/olc/RustCarriers).
+         */
+        const val DEFAULT_BYPASS_PROVIDER = PROVIDER_SALUTEJAZZ
 
         const val TRANSPORT_DATACHANNEL = "datachannel"
         const val TRANSPORT_VP8CHANNEL = "vp8channel"
@@ -167,9 +172,11 @@ data class LocationConfig(
         const val DEFAULT_VP8_FPS = 60
         const val DEFAULT_VP8_BATCH = 64
 
+        /**
+         * What the carrier picker offers. Telemost and WB Stream are not here:
+         * they are still read (an old list names them), and refused at connect.
+         */
         val supportedBypassProviders = listOf(
-            PROVIDER_TELEMOST,
-            PROVIDER_WB_STREAM,
             PROVIDER_JITSI,
             PROVIDER_SALUTEJAZZ,
             PROVIDER_VKCALLS,
@@ -224,8 +231,10 @@ data class LocationConfig(
          * The transport the room will run over: what [value] names when the
          * provider carries it, else the provider's own. A link that asked for
          * the former is remembered by the import as [LocationMetadata.requestedTransport].
+         * With no provider named the question is the lane a link asked for, which no
+         * carrier narrows: not the default carrier's lanes.
          */
-        fun normalizeTransport(value: String, provider: String = DEFAULT_BYPASS_PROVIDER): String {
+        fun normalizeTransport(value: String, provider: String = PROVIDER_WB_STREAM): String {
             val normalized = transportOrNull(value) ?: DEFAULT_TRANSPORT
             val supported = supportedTransportsForProvider(provider)
             return normalized.takeIf { it in supported }
@@ -241,7 +250,7 @@ data class LocationConfig(
                 PROVIDER_SALUTEJAZZ -> "SaluteJazz"
                 PROVIDER_VKCALLS -> "VK Calls"
                 PROVIDER_MTSLINK -> "MTS Link"
-                else -> "WB Stream"
+                else -> providerDisplayName(DEFAULT_BYPASS_PROVIDER)
             }
         }
 

@@ -1,8 +1,8 @@
 package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.vpn.DesktopMode
-import org.olcbox.app.vpn.DesktopRulesHome
-import org.olcbox.app.vpn.desktopRulesHome
+import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
+import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
 import org.olcbox.app.vpn.macOsModeFor
 import kotlin.test.Test
 import kotlin.test.assertEquals

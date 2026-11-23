@@ -1,0 +1,3 @@
+android | not-proven | - | -
+macos | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/DesktopProxyModeTest.kt::DesktopProxyModeTest | The mode's logic is held; the listener is not the Rust core yet
+windows | partial | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/DesktopProxyModeTest.kt::DesktopProxyModeTest | The mode's logic is held; the listener is not the Rust core yet

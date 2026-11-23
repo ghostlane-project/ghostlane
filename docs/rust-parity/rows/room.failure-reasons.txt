@@ -1,0 +1,5 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | The matching of failure texts is tested on literal strings; the Rust engine's own failure texts reaching it are not proven
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | The matching of failure texts is tested on literal strings; the Rust engine's own failure texts reaching it are not proven
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | The matching of failure texts is tested on literal strings; the Rust engine's own failure texts reaching it are not proven
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | The matching of failure texts is tested on literal strings; the Rust engine's own failure texts reaching it are not proven
+windows | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/vpn/OlcrtcFailureTest.kt::OlcrtcFailureTest | The matching of failure texts is tested on literal strings; the Rust engine's own failure texts reaching it are not proven

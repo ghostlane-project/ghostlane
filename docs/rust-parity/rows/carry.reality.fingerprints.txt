@@ -1,0 +1,6 @@
+android | not-proven | - | -
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/XrayConfigIosCoreTest.kt::fingerprintsAreSingBoxsNamesTheCoreKnows | The names map to hellos the core knows; the handshake against a server is not run yet
+macos | not-proven | - | -
+linux | not-proven | - | -
+windows | not-proven | - | -
+cli | not-proven | - | -

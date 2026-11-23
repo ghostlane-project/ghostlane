@@ -1,0 +1,1 @@
+android | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/data/importer/PhoneImportServerTest.kt::PhoneImportServerTest | shared Kotlin, no engine on its path

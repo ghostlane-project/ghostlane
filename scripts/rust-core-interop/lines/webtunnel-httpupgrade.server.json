@@ -1,0 +1,46 @@
+{
+  "about": "WebTunnel over HTTP upgrade, as ProofKit's subscription writes the link",
+  "shape": "webtunnel-httpupgrade",
+  "expect": "page",
+  "tls_name": "wt.example.com",
+  "trust": "pin",
+  "link": "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:{port}?encryption=none&security=tls&sni=wt.example.com&host=wt.example.com&type=httpupgrade&path=%2Fu&fp=chrome&alpn=h2%2Chttp%2F1.1#interop-webtunnel-httpupgrade",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "33333333-3333-3333-3333-333333333332"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "33333333-3333-3333-3333-333333333333"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "httpupgradeSettings": {
+          "path": "/u"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

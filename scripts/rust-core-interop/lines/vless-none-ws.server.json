@@ -1,0 +1,33 @@
+{
+  "about": "VLESS with no TLS (security=none) over WebSocket",
+  "shape": "vless-none-ws",
+  "expect": "page",
+  "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:{port}?security=none&encryption=none&type=ws&path=%2Fp&host=none.interop.test#interop-vless-none-ws",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "55555555-5555-5555-5555-555555555553"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "55555555-5555-5555-5555-555555555555"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/p"
+        },
+        "security": "none"
+      }
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+android | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theSchemeLinkCarriesTheListInTheQuery | The link's parse is held; handing the link from the operating system to the app is not exercised
+ios | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theSchemeLinkCarriesTheListInTheQuery | The link's parse is held; handing the link from the operating system to the app is not exercised
+macos | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theSchemeLinkCarriesTheListInTheQuery | The link's parse is held; handing the link from the operating system to the app is not exercised
+linux | partial | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/ImportLinkTest.kt::theSchemeLinkCarriesTheListInTheQuery | The link's parse is held; handing the link from the operating system to the app is not exercised

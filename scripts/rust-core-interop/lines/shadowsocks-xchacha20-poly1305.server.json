@@ -1,0 +1,23 @@
+{
+  "about": "Shadowsocks AEAD, xchacha20-ietf-poly1305",
+  "shape": "shadowsocks",
+  "expect": "page",
+  "link": "ss://xchacha20-ietf-poly1305:pw-xchacha@127.0.0.1:{port}#interop-shadowsocks-xchacha20-poly1305",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/password",
+    "value": "pw-xchach4"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "xchacha20-ietf-poly1305",
+        "password": "pw-xchacha",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}

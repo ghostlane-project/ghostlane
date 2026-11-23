@@ -1,0 +1,23 @@
+{
+  "about": "Shadowsocks 2022, 2022-blake3-chacha20-poly1305 with a 32-byte key",
+  "shape": "shadowsocks-2022",
+  "expect": "page",
+  "link": "ss://2022-blake3-chacha20-poly1305:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8%3D@127.0.0.1:{port}#interop-shadowsocks-2022-chacha20-poly1305",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/password",
+    "value": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "2022-blake3-chacha20-poly1305",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}

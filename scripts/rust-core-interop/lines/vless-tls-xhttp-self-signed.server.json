@@ -1,0 +1,40 @@
+{
+  "about": "the same XHTTP link without allowInsecure: the core must refuse a certificate no public root signed",
+  "shape": "vless-tls-xhttp",
+  "expect": "refused",
+  "against": "vless-tls-xhttp-insecure",
+  "tls_name": "vless.interop.test",
+  "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:{port}?security=tls&encryption=none&sni=vless.interop.test&fp=chrome&type=xhttp&path=%2Fx#interop-vless-tls-xhttp-self-signed",
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "44444444-4444-4444-4444-444444444444"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "/x",
+          "mode": "auto"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "{cert_file}",
+              "keyFile": "{key_file}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -21,9 +21,14 @@ on:
         description: Build the iPhone tunnel extension unsigned and run its Swift tests
         type: boolean
         default: false
+      pin:
+        description: Build the Rust core CLI at this commit (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh, and check the reference configs with it
+        type: string
+        default: ''
   pull_request:
     branches:
       - main
+      - rust/all
   push:
 
 permissions:
@@ -111,7 +116,7 @@ jobs:
           fi
           echo "Compared with ${base}." >> "$GITHUB_STEP_SUMMARY"
           changed=$(git diff --name-only "$base" HEAD || true)
-          if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$'; then
+          if printf '%s\n' "$changed" | grep -qE '^sharedUI/src/(commonMain|iosMain|appleMain)/|^sharedUI/build\.gradle\.kts$|^gradle/libs\.versions\.toml$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'shared_kotlin=true' >> "$GITHUB_OUTPUT"
             echo 'Apple compilation runs: this change touches the shared Kotlin.' >> "$GITHUB_STEP_SUMMARY"
           else
@@ -122,7 +127,7 @@ jobs:
           # workflow, the engine pin it must match, or the sing-box tree it
           # compiles (the patch, the script that applies it, the Xray servers its
           # Reality end-to-end dials) changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$'; then
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -132,9 +137,11 @@ jobs:
           # signing identity. Built and asked on a Mac when it, what asks it, or
           # the config it is handed changed, or the tags of the sing-box it runs:
           # a resolver of the Mac's tun is one of them (with_dhcp), and only a
-          # Mac can tell it is gone. Not on a change to this file alone: a Mac's
-          # minutes are billed tenfold.
-          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^scripts/singbox-tags\.sh$'; then
+          # Mac can tell it is gone. So too for hev, which it runs from its
+          # fifth protocol on: its tree, the script that builds it, and the
+          # request the app's test holds the app to. Not on a change to this
+          # file alone: a Mac's minutes are billed tenfold.
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^scripts/mac-checks/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^sharedUI/src/jvmTest/resources/macos-helper/|^androidApp/src/main/jni/hev-socks5-tunnel/|^scripts/build-hev-macos\.sh$|^scripts/singbox-tags\.sh$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -159,7 +166,7 @@ jobs:
           # service calls. A step of the Gradle job runs it on the runner, on a
           # change to it, to its test, to the number the service reads from
           # it, or to this file.
-          if grep -qE '^androidApp/src/main/jni/|^scripts/test-android-hev-restart\.sh$|^scripts/android-hev-restart/|^sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun\.kt$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^androidApp/src/main/jni/|^scripts/test-android-hev-restart\.sh$|^scripts/android-hev-restart/|^sharedUI/src/jvmAndroidMain/kotlin/org/olcbox/app/vpn/NativeTunnelRun\.kt$|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'android_tun2socks=true' >> "$GITHUB_OUTPUT"
           else
             echo 'android_tun2socks=false' >> "$GITHUB_OUTPUT"
@@ -167,16 +174,17 @@ jobs:
           # What the sing-box tag lists save is sized by three more builds of
           # it, minutes of the Gradle job, so only when the lists, the tree
           # they compile or this file changed.
-          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^scripts/(singbox-tags|build-singbox|patched-singbox|cores-pins)\.sh$|^scripts/patches/sing-box-|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'singbox_size=true' >> "$GITHUB_OUTPUT"
           else
             echo 'singbox_size=false' >> "$GITHUB_OUTPUT"
           fi
-          # The Rust core reads and starts the core.json references: when they,
+          # The Rust core reads and starts the core.json references (every
+          # *core-*.json there, whatever kind of line it is for): when they,
           # the script that asks it, or this file (which pins the core) changed.
           # The references change with every change to what the app writes
           # for the core, which the Gradle job's dump test enforces.
-          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/(bypass-)?ios-core-|^scripts/check-rust-core-configs\.sh$|^\.github/workflows/pr-checks\.yml$' <<< "$changed"; then
+          if grep -qE '^sharedUI/src/jvmTest/resources/reference-configs/[^/]*core-[^/]*\.json$|^scripts/check-rust-core-configs\.sh$|^scripts/ghostlane-core-resolve\.sh$|^\.github/workflows/pr-checks\.yml$|^scripts/ghostlane-core-pin\.sh$' <<< "$changed"; then
             echo 'rust_core=true' >> "$GITHUB_OUTPUT"
           else
             echo 'rust_core=false' >> "$GITHUB_OUTPUT"
@@ -501,6 +509,20 @@ jobs:
       - name: Offline tests
         run: python3 scripts/test_gate_scripts.py
 
+      # The program's own checks: every script in scripts/p6-tests/ runs, each
+      # one a plain bash test that exits non-zero on a failure.
+      - name: Script tests (scripts/p6-tests)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          failed=0
+          for t in scripts/p6-tests/*.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
       # The runner's own shellcheck: Ubuntu 24.04's 0.9.0, older than a pip or
       # brew install and stricter in places (SC2015 on `a && b || c`), so check
       # the scripts locally with 0.9.0 as well. The log says which one ran.
@@ -545,54 +567,163 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/test-ios-room-list.sh
 
+  mac-hev:
+    # hev for the helper's checks, made as the Core build makes it
+    # (core-build.yml, its Apple job): on its image and its Xcode, by the same
+    # script, under the same cache key, so that the program the checks run is
+    # the one a release carries. A pull request into rust/all finds the one
+    # that build kept there; a branch makes it once and keeps it for its next
+    # push. Not on the newest image: the clang of its Xcode refuses the tree
+    # as it stands (-Werror, -Wuninitialized-const-pointer).
+    needs: scope
+    if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
+    name: hev for the macOS tunnel helper
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      HEV_SOURCE: androidApp/src/main/jni/hev-socks5-tunnel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Which tree of hev
+        id: hev
+        run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
+      - name: Is hev for macOS kept
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-macos
+          key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
+          lookup-only: true
+      - name: hev-socks5-tunnel for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-hev-macos.sh "$HEV_SOURCE" out/hev-macos
+      - name: Keep hev for macOS
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/hev-macos
+          key: ${{ steps.hev-cache.outputs.cache-primary-key }}
+
   mac-helper:
     # The Mac's tunnel helper, built and asked on a Mac: the one part of the
     # app that runs as root, and until this job the one part no check compiled.
     # It loads a block into the packet filter, points the system's resolver at
     # a tun and kills the tun, which a hosted runner is the right place for.
-    needs: scope
+    #
+    # On both kinds of Mac a release is built for: the helper's parts that
+    # need no root, its tunnel under hev with the routes it lays, and every
+    # script in scripts/mac-checks/, each run as root with the helper as it
+    # is asked over a pipe, hev, the user who asks and the stand-in for a
+    # line's program:
+    #   sudo bash scripts/mac-checks/<name>.sh <helper-check> <hev> <user> <stand-in-line>
+    # The tunnel under sing-box, which goes when the app leaves it, on the
+    # arm64 Mac alone, as before.
+    needs: [scope, mac-hev]
     if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
-    name: macOS tunnel helper
-    runs-on: macos-latest
+    name: macOS tunnel helper (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            singbox: true
+          - runner: macos-15-intel
+            singbox: false
+    runs-on: ${{ matrix.runner }}
     # 15 until sing-box was built here rather than downloaded: a few minutes more.
-    timeout-minutes: 25
+    timeout-minutes: 30
+    env:
+      # The app's own tree of hev-socks5-tunnel, as core-build.yml builds it.
+      HEV_SOURCE: androidApp/src/main/jni/hev-socks5-tunnel
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
+        if: matrix.singbox
         with:
           distribution: temurin
           java-version: '21'
       # The toolchain the releases build sing-box with (scripts/cores-pins.sh).
       - name: The pinned Go
+        if: matrix.singbox
         id: go
         run: echo "version=$(bash -c 'unset GO_VERSION; . scripts/cores-pins.sh; echo "$GO_VERSION"')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v7
+        if: matrix.singbox
         with:
           go-version: ${{ steps.go.outputs.version }}
           # Nothing here has a go.sum to key a cache on.
           cache: false
+      # hev as the job before this one kept it, under the Core build's key.
+      - name: Which tree of hev
+        id: hev
+        run: echo "tree=$(git rev-parse "HEAD:$HEV_SOURCE")" >> "$GITHUB_OUTPUT"
+      - name: hev for macOS, as the Core build makes it
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-macos
+          key: core-build-hev-macos-${{ steps.hev.outputs.tree }}-${{ hashFiles('scripts/build-hev-macos.sh') }}
+          fail-on-cache-miss: true
+      # Every file of desktopApp/tunneldaemon, as native-macos.gradle.kts
+      # builds the daemon; the helper asked over a pipe takes the check's
+      # main in place of the daemon's own.
       - name: Build the helper as the app's build does, and once to be asked over a pipe
+        id: build
         run: |
+          set -euo pipefail
           src=desktopApp/tunneldaemon
-          shared=("$src/PeerAuthority.swift" "$src/GroupExec.swift" "$src/TunnelChild.swift" \
-                  "$src/TrafficHold.swift" "$src/SystemNames.swift" "$src/LineChild.swift" "$src/Daemon.swift")
-          swiftc -O -target "$(uname -m)-apple-macos13.0" \
-            -framework Foundation -framework Security -framework SystemConfiguration \
-            -o "$RUNNER_TEMP/ProofKitTunnelDaemon" "${shared[@]}" "$src/main.swift"
-          swiftc -O -target "$(uname -m)-apple-macos13.0" \
-            -framework Foundation -framework Security -framework SystemConfiguration \
-            -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
+          shared=()
+          for f in "$src"/*.swift; do [ "$(basename "$f")" = main.swift ] || shared+=("$f"); done
+          echo "the helper's files: ${shared[*]##*/} and main.swift"
+          flags=(-O -target "$(uname -m)-apple-macos13.0" -framework Foundation -framework Security -framework SystemConfiguration)
+          swiftc "${flags[@]}" -o "$RUNNER_TEMP/ProofKitTunnelDaemon" "$src"/*.swift
+          swiftc "${flags[@]}" -o "$RUNNER_TEMP/helper-check" "${shared[@]}" scripts/macos-helper-check/main.swift
           cc -O2 -o "$RUNNER_TEMP/stand-in-line" scripts/macos-helper-check/stand-in-line.c
+      - name: The helper's parts that need no root
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          src=desktopApp/tunneldaemon
+          shared=()
+          for f in "$src"/*.swift; do [ "$(basename "$f")" = main.swift ] || shared+=("$f"); done
+          swiftc -O -target "$(uname -m)-apple-macos13.0" \
+            -framework Foundation -framework Security -framework SystemConfiguration \
+            -o "$RUNNER_TEMP/helper-parts" "${shared[@]}" scripts/macos-helper-check/parts/main.swift
+          "$RUNNER_TEMP/helper-parts" sharedUI/src/jvmTest/resources/macos-helper/tun-request.json
+      # First: the sing-box check leaves a timer that takes the block and the
+      # resolver's key away three minutes after it started.
+      - name: Ask the helper for a tunnel under hev
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: sudo bash scripts/macos-helper-check/hev-tunnel.sh "$RUNNER_TEMP/helper-check" "$GITHUB_WORKSPACE/out/hev-macos/hev-socks5-tunnel" "$USER"
       # The sing-box the app ships, not SagerNet's release: the patched tree
       # with the desktops' tags (scripts/build-singbox.sh). The Mac's tun finds
       # the network's own resolver through one of those tags (with_dhcp,
       # scripts/singbox-tags.sh), and the release has it whether ours does or not.
       - name: sing-box as the app ships it, for this Mac
+        if: ${{ matrix.singbox && !cancelled() && steps.build.outcome == 'success' }}
         run: |
           bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box" desktop
           "$RUNNER_TEMP/sing-box" version | sed -n 1p
-      - name: Ask the helper what it does
+      - name: Ask the helper what it does with a tunnel under sing-box
+        if: ${{ matrix.singbox && !cancelled() && steps.build.outcome == 'success' }}
         run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"
+      - name: Every check in scripts/mac-checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          failed=0
+          ran=0
+          for check in scripts/mac-checks/*.sh; do
+            ran=$((ran + 1))
+            echo "::group::$check"
+            sudo bash "$check" "$RUNNER_TEMP/helper-check" "$GITHUB_WORKSPACE/out/hev-macos/hev-socks5-tunnel" \
+              "$USER" "$RUNNER_TEMP/stand-in-line" || { echo "::error::$check failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          echo "$ran check(s) in scripts/mac-checks"
+          exit "$failed"
 
   ios-extension:
     # The iPhone's packet tunnel extension, which nothing else compiles before
@@ -686,43 +817,36 @@ jobs:
   # The Rust core's own verdict on the core.json the app writes for it: the
   # parser of ghostlane-project/xray-rust at the pinned commit reads every
   # reference config (sharedUI/src/jvmTest/resources/reference-configs/
-  # ios-core-*.json and bypass-ios-core-*.json, which the Gradle job's dump
-  # test holds XrayConfig.buildIosCore to), and the core is started from each
+  # *core-*.json, which the Gradle job's dump test holds the writer in
+  # net/core to, byte for byte), and the core is started from each
   # until it binds its SOCKS port (scripts/check-rust-core-configs.sh). The
   # CLI is built once per pin and cached (25 MB).
   rust-core-configs:
     needs: scope
-    if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true'
+    # Skipped scope (a dispatch) does not skip this job: !cancelled() asks it
+    # again, and a dispatch runs it only with a pin to try.
+    if: >-
+      !cancelled() &&
+      ((github.event_name != 'workflow_dispatch' && needs.scope.outputs.rust_core == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.pin != ''))
     name: "Rust core: the app's core.json"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # The one pin of the core on this branch. It moves to
-      # scripts/rust-core-pins.sh (XRAY_RUST_COMMIT) once that file, on
-      # feat/rust-core-ci, is on the same branch as this job; until then
-      # this is the only copy here, and the same commit: 77f14eb8, the head
-      # of the fork's gl/vision-padding-copy on its ghostlane after the
-      # third integration and its CI fixes, 1d60607f
-      # (reset-network, logs, hev-udp, hy2-memory, xhttp-upload-memory, the
-      # Chrome 156 hello, rustls from ghostlane-project/shaped-rustls
-      # b0dc21a7; then dns-forward, whose `forward` rule core.json writes,
-      # the gitleaks exception for the olcRTC vectors and the fork's
-      # AGENTS.md scope; then lean-futures-r2, byte-budget-relay,
-      # h2-read-buffer-r2, byte-budget-windows-r3 and a Vision buffer fix,
-      # memory work that leaves the config parser as it was; then the fork's
-      # guards in a workflow of their own, a quinn-proto test fix, a gitleaks
-      # exception for str0m's example keys and a doc fix, none of them in
-      # the config parser; then tls-send-limit and vision-padding-copy, how
-      # a TLS session and a padded Vision frame are written, with the config
-      # parser untouched). A parser older than dns-forward refuses the
-      # references. Bump it with the copy of the core's field lists in
-      # XrayRustSurface.
-      XRAY_RUST_REPO: ghostlane-project/xray-rust
-      XRAY_RUST_COMMIT: 77f14eb8cef9e3b1a6ba6fa7ca7fcac9589ace77
+      # The core is the one commit scripts/ghostlane-core-pin.sh names, read by
+      # scripts/ghostlane-core-resolve.sh in the first step (a dispatch's `pin`
+      # input overrides it for that run). No second copy of it lives here.
+      PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Which commit of the core
+        run: |
+          set -euo pipefail
+          shellcheck -x scripts/ghostlane-core-resolve.sh scripts/pin-move.sh
+          bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
 
       # Restored and saved as two steps, so a CLI built once is kept even
       # when the check after it fails.
@@ -731,7 +855,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/rust-core-cli
-          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.XRAY_RUST_COMMIT }}-v1
+          key: rust-core-cli-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
 
       # The project's own CLI build (its README: cargo build --locked -p
       # xray-cli) with --release, from exactly the pinned commit, with the
@@ -746,9 +870,9 @@ jobs:
           set -euo pipefail
           src="$RUNNER_TEMP/xray-rust"
           git init -q "$src"
-          git -C "$src" fetch -q --depth 1 "https://github.com/${XRAY_RUST_REPO}.git" "$XRAY_RUST_COMMIT"
+          git -C "$src" fetch -q --depth 1 "https://github.com/${GHOSTLANE_CORE_REPO}.git" "$GHOSTLANE_CORE_COMMIT"
           git -C "$src" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
-          test "$(git -C "$src" rev-parse HEAD)" = "$XRAY_RUST_COMMIT"
+          test "$(git -C "$src" rev-parse HEAD)" = "$GHOSTLANE_CORE_COMMIT"
           toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$src/rust-toolchain.toml")"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           (cd "$src" && cargo "+$toolchain" build --locked --release -p xray-cli)

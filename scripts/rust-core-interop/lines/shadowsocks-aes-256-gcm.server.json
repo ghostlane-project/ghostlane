@@ -1,0 +1,23 @@
+{
+  "about": "Shadowsocks AEAD, aes-256-gcm",
+  "shape": "shadowsocks",
+  "expect": "page",
+  "link": "ss://aes-256-gcm:pw-aes-256@127.0.0.1:{port}#interop-shadowsocks-aes-256-gcm",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/password",
+    "value": "pw-aes-257"
+  },
+  "inbounds": [
+    {
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "port": "{port}",
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "aes-256-gcm",
+        "password": "pw-aes-256",
+        "network": "tcp,udp"
+      }
+    }
+  ]
+}

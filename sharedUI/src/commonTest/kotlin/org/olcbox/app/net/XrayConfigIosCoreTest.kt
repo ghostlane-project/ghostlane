@@ -7,22 +7,42 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.core.CoreLines
+import org.olcbox.app.net.core.lines.Reality
+import org.olcbox.app.net.core.lines.VlessShapes
+import org.olcbox.app.net.core.lines.VmessFixture
+import org.olcbox.app.vpn.olc.RustCarriers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * `core.json` ([XrayConfig.buildIosCore]): the Rust core's config on iOS, for
- * each line it runs, under Global and Bypass Russia. The lists are stand-ins
- * here; the JVM dump test writes the reference configs (once more with the
- * bundled lists), and `scripts/check-rust-core-configs.sh` has the core's own
- * parser read those.
+ * each line it runs (every shape of every kind under `net/core/lines`), under
+ * Global and Bypass Russia; and what the app starts for a location
+ * ([IosCore.start]): core.json, olcrtc.json, or a refusal that names the line,
+ * decided before the extension is asked. The lists are stand-ins here; the
+ * JVM dump test writes the reference configs (once more with the bundled
+ * lists), and `scripts/check-rust-core-configs.sh` has the core's own parser
+ * read those.
  */
 class XrayConfigIosCoreTest {
     private val login = IosCoreFixtures.login
+
+    /**
+     * The six lines the extension shipped first, which Phase 0 (sing-box
+     * behind hev, Go's Xray for XHTTP) also ran: the comparisons with it are
+     * for these.
+     */
+    private val firstSix = listOf(
+        IosCoreLine.RealityVision, IosCoreLine.RealityGrpc, IosCoreLine.WebTunnelWs,
+        IosCoreLine.WebTunnelHttpUpgrade, IosCoreLine.Hysteria2, IosCoreLine.XhttpReality,
+    )
 
     private val lists = IosCoreFixtures.lists
 
@@ -231,16 +251,21 @@ class XrayConfigIosCoreTest {
         assertFailsWith<IllegalArgumentException>("a bypass carries its lists") {
             XrayConfig.buildIosCore(reality, login, bypass)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<IllegalArgumentException>("blocked-only needs Re:filter's lists the app does not carry in Xray's form") {
             XrayConfig.buildIosCore(reality, login, Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.BlockedOnly), geodata = lists)
         }
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<IllegalArgumentException>("a bypass with the user's rules still carries its lists") {
             XrayConfig.buildIosCore(
                 reality, login,
                 Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.Bypass("ru"), CustomRules.of(listOf("example.com"), emptyList())),
-                geodata = lists,
             )
         }
+        // The user's own rules (Android's Rust path): built, see CoreCustomRoutingTest.
+        XrayConfig.buildIosCore(
+            reality, login,
+            Routing.Rules("x", DirectDns.Placeholder, Routing.Policy.Bypass("ru"), CustomRules.of(listOf("example.com"), emptyList())),
+            geodata = lists,
+        )
     }
 
     @Test fun realityVision() {
@@ -329,7 +354,7 @@ class XrayConfigIosCoreTest {
             "&alpn=h2%2Chttp%2F1.1#DE%20%C2%B7%20WebTunnel"
         val spec = assertNotNull(LinkParser.parse(link)) as OutboundSpec.Vless
         assertEquals(listOf("h2", "http/1.1"), spec.alpn)
-        assertEquals(IosEngineChoice(IosEngine.RUST, IosCoreLine.WebTunnelHttpUpgrade), IosCore.choose(spec, allRust))
+        assertEquals(IosEngineChoice(IosEngine.RUST, IosCoreLine.WebTunnelHttpUpgrade), IosCore.choose(spec))
         val tls = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream().obj("tlsSettings")
         assertEquals(listOf("h2", "http/1.1"), tls["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
         // Phase 0 offers the same.
@@ -442,7 +467,7 @@ class XrayConfigIosCoreTest {
     }
 
     @Test fun theSameLinkMeansWhatItMeansToPhase0() {
-        for (line in IosCoreLine.entries - IosCoreLine.XhttpReality) {
+        for (line in firstSix - IosCoreLine.XhttpReality) {
             val sb = phase0(line).outbounds().first()
             val out = build(line).out()
             val stream = out.obj("streamSettings")
@@ -518,7 +543,7 @@ class XrayConfigIosCoreTest {
             val forward = build(line, routing).dnsRules().last()
             assertEquals(goRemote.str("address"), forward.str("address"), "$line $routing")
             assertEquals(goRemote.int("port"), forward.int("port"), "$line $routing")
-            if (line == IosCoreLine.XhttpReality) continue
+            if (line == IosCoreLine.XhttpReality || line !in firstSix) continue
             val sbRemote = phase0(line, routing).obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }
                 .single { it.str("tag") == "dns-remote" }
             assertEquals(sbRemote.str("server"), forward.str("address"), "$line $routing")
@@ -536,9 +561,9 @@ class XrayConfigIosCoreTest {
         assertEquals("safari", IosCore.fingerprint("hellosafari_26_3", reality = true))
         assertEquals("randomized", IosCore.fingerprint("randomizednoalpn", reality = true))
         assertEquals("android", IosCore.fingerprint("android", reality = false))
-        // No X25519 key share: no REALITY hello in the core.
-        assertNull(IosCore.fingerprint("android", reality = true))
-        assertNull(IosCore.fingerprint("360", reality = true))
+        // No X25519 key share: no REALITY hello in the core, so Chrome's is used.
+        assertEquals("chrome", IosCore.fingerprint("android", reality = true))
+        assertEquals("chrome", IosCore.fingerprint("360", reality = true))
     }
 
     @Test fun pinsAreCompactLowerCaseHexOfThirtyTwoBytes() {
@@ -550,83 +575,194 @@ class XrayConfigIosCoreTest {
         assertNull(IosCore.pin("m9U0V+MKz7I1bI6ijtuflS4GAfVqGqNwGltOongREfg="), "base64 is not what the core reads")
     }
 
-    /** Links the core would refuse, with a word of why each must go to Go. */
+    /** Links the core refuses: none has an engine to start on, since the extension carries no other. */
     private val refused = listOf(
-        "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#no-pin",
         "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&pinSHA256=abcd#short-pin",
         "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=abc&pinSHA256=${IosCoreFixtures.PIN}#short-obfs",
         "hysteria2://PASSWORD123@hy.example.com:443?sni=www.microsoft.com&pinSHA256=${IosCoreFixtures.PIN}#hostname",
         "vless://u@127.0.0.1:443?security=tls&sni=wt.example.com&type=ws&allowInsecure=1#insecure",
-        "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&fp=android&type=tcp#android",
         "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&type=tcp#no-sni",
         "vless://u@127.0.0.1:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&flow=xtls-rprx-direct&type=tcp#old-flow",
         "vless://u@de.example.com:443?security=reality&pbk=${IosCoreFixtures.PUBLIC_KEY}&sni=a.example&type=tcp#hostname",
     )
 
-    /** Not core lines at all. */
-    private val others = listOf(
-        "trojan://secret@127.0.0.1:443?security=tls&sni=example.com#trojan",
-        "vless://u@127.0.0.1:80?security=none&type=ws&path=%2F#plain",
-        "vless://u@127.0.0.1:443?security=tls&sni=example.com&type=tcp#tls-tcp",
-        "vless://u@127.0.0.1:443?security=tls&sni=example.com&type=grpc&serviceName=g#grpc-tls",
-        "vless://u@127.0.0.1:443?security=tls&sni=example.com&type=xhttp&path=%2F#xhttp-tls",
-        "vless://u@127.0.0.1:443?security=tls&sni=example.com&type=http&path=%2F#http",
-        "ss://YWVzLTI1Ni1nY206c2VjcmV0@127.0.0.1:8388#ss",
-    )
+    /** A VLESS id, made up. */
+    private val vlessId = "44444444-4444-4444-4444-444444444444"
 
-    private val allRust = IosTransport.entries.associateWith { IosEngine.RUST }
+    /** VLESS with no TLS to a public address: refused, as official Xray refuses it. */
+    private val plainToAPublicServer =
+        "vless://55555555-5555-5555-5555-555555555555@198.51.100.7:80?security=none&encryption=none&type=tcp#public"
 
-    @Test fun theExtensionCarriesNoGoSoEveryTransportIsRust() {
-        for (transport in IosTransport.entries) {
-            assertEquals(IosEngine.RUST, IosCore.ENGINES[transport], "$transport")
-        }
+    /** VLESS over HTTP/2, which the core does not carry. */
+    private val http2 =
+        "vless://$vlessId@127.0.0.1:443?security=tls&encryption=none&sni=example.com&type=http&path=%2F#http"
+
+    @Test fun everyShapeOfEveryKindIsALineOfTheIphones() {
+        // The line table is the kinds' shapes: a kind added under
+        // net/core/lines is a line of the iPhone's with nothing named by hand.
+        assertEquals(CoreLines.all.flatMap { it.shapes }, IosCoreLine.entries.map { it.slug })
+        for (line in firstSix) assertTrue(line in IosCoreLine.entries, "$line")
+    }
+
+    @Test fun theExtensionCarriesNoGoSoEveryLineChoosesRust() {
         for (line in IosCoreLine.entries) {
-            assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec(line), IosCore.ENGINES), "$line")
+            assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec(line)), "$line")
         }
     }
 
-    @Test fun theMapGivesEachCoreLineToRust() {
-        for (line in IosCoreLine.entries) {
-            assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec(line), allRust), "$line")
-        }
-    }
-
-    @Test fun aTransportMappedToGoStaysOnGoWithNoComplaint() {
-        for (line in IosCoreLine.entries) {
-            val engines = allRust + (line.transport to IosEngine.GO)
-            assertEquals(IosEngineChoice(IosEngine.GO, line), IosCore.choose(spec(line), engines), "$line")
-            assertEquals(IosEngineChoice(IosEngine.GO, line), IosCore.choose(spec(line), emptyMap()), "$line, no entry")
-        }
-        // WebTunnel is one transport for both handshakes.
-        assertEquals(IosTransport.WebTunnel, IosCoreLine.WebTunnelWs.transport)
-        assertEquals(IosTransport.WebTunnel, IosCoreLine.WebTunnelHttpUpgrade.transport)
-    }
-
-    @Test fun aLineTheCoreWouldRefuseGoesToGoWithTheReason() {
+    @Test fun aLineTheCoreRefusesHasNoEngineAndSaysWhy() {
         for (link in refused) {
             val spec = assertNotNull(LinkParser.parse(link), link)
-            val choice = IosCore.choose(spec, allRust)
-            assertEquals(IosEngine.GO, choice.engine, link)
+            val choice = IosCore.choose(spec)
+            assertTrue(choice.engine != IosEngine.RUST, link)
             assertNotNull(choice.line, link)
             assertNotNull(choice.reason, link)
+            assertEquals(IosCore.refusal(spec), choice.reason, link)
             assertFailsWith<IllegalArgumentException>(link) { XrayConfig.buildIosCore(spec, login) }
         }
     }
 
-    @Test fun otherLinesAreNotTheCoresAndStayOnGo() {
-        for (link in others) {
+    /**
+     * The kinds beside the first six: each link is a line of the iPhone's by
+     * its shape, chooses the core, and is written a core.json whose outbound
+     * speaks its own protocol and holds nothing the core does not know.
+     */
+    @Test fun trojanShadowsocksVmessAndVlessOverTlsChooseRustAndBuildACoreJson() {
+        val vmess = VmessFixture.link(
+            "ps" to "vm", "scy" to "auto", "net" to "ws", "host" to "vm.example.com", "path" to "/vm",
+            "tls" to "tls", "sni" to "vm.example.com",
+        )
+        val tls = "vless://$vlessId@127.0.0.1:443?security=tls&encryption=none&sni=example.com"
+        val links = listOf(
+            Triple("trojan://secret@127.0.0.1:443?security=tls&sni=example.com#trojan", "trojan", "trojan"),
+            Triple(
+                "trojan://secret@127.0.0.1:443?security=tls&sni=example.com&type=ws&path=%2Ft&host=cdn.example.com#trojan-ws",
+                "trojan-ws", "trojan",
+            ),
+            Triple("ss://YWVzLTI1Ni1nY206c2VjcmV0@127.0.0.1:8388#ss", "shadowsocks", "shadowsocks"),
+            Triple("ss://2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw%3D%3D@127.0.0.1:8388#ss2022", "shadowsocks-2022", "shadowsocks"),
+            Triple(vmess, "vmess-ws-tls", "vmess"),
+            Triple("$tls&type=tcp#tls-tcp", "vless-tls", "vless"),
+            Triple("$tls&flow=xtls-rprx-vision&type=tcp#tls-vision", "vless-tls", "vless"),
+            Triple("$tls&type=grpc&serviceName=g#grpc-tls", "vless-tls-grpc", "vless"),
+            Triple("$tls&type=xhttp&path=%2F#xhttp-tls", "vless-tls-xhttp", "vless"),
+            Triple("vless://$vlessId@127.0.0.1:80?security=none&encryption=none&type=ws&path=%2F#plain", "vless-none-ws", "vless"),
+        )
+        for ((link, slug, protocol) in links) {
             val spec = assertNotNull(LinkParser.parse(link), link)
-            assertNull(IosCore.lineOf(spec), link)
-            assertEquals(IosEngineChoice(IosEngine.GO, null), IosCore.choose(spec, allRust), link)
-            assertFailsWith<IllegalArgumentException>(link) { XrayConfig.buildIosCore(spec, login) }
+            val line = assertNotNull(IosCore.lineOf(spec), link)
+            assertEquals(slug, line.slug, link)
+            assertEquals(IosEngineChoice(IosEngine.RUST, line), IosCore.choose(spec), link)
+            val config = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject
+            assertEquals(protocol, config.out().str("protocol"), link)
+            assertEquals(emptyList<String>(), XrayRustSurface.violations(config), link)
         }
+    }
+
+    /** What the core refuses of these kinds has no engine either, and says why in the kind's own words. */
+    @Test fun http2AndPlainVlessToAPublicServerHaveNoEngineAndTheirSentences() {
+        val overHttp2 = IosCore.choose(assertNotNull(LinkParser.parse(http2)))
+        assertTrue(overHttp2.engine != IosEngine.RUST)
+        assertNull(overHttp2.line, "HTTP/2 is no shape the core writes")
+        assertEquals(VlessShapes.HTTP2_REFUSAL, overHttp2.reason)
+        val plain = IosCore.choose(assertNotNull(LinkParser.parse(plainToAPublicServer)))
+        assertTrue(plain.engine != IosEngine.RUST)
+        assertEquals("vless-none", plain.line?.slug)
+        assertEquals(VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER, plain.reason)
+    }
+
+    // What the app starts for a location (IosCore.start).
+
+    private fun kindOf(spec: OutboundSpec): LocationKind = when (spec) {
+        is OutboundSpec.Vless -> LocationKind.Vless
+        is OutboundSpec.Hysteria2 -> LocationKind.Hysteria2
+        is OutboundSpec.Trojan -> LocationKind.Trojan
+        is OutboundSpec.Shadowsocks -> LocationKind.Shadowsocks
+        is OutboundSpec.Vmess -> LocationKind.Vmess
+    }
+
+    /** A location of [link], as the list stores one: its kind, the link, a name. */
+    private fun located(link: String, name: String = "DE line"): LocationConfig {
+        val kind = LinkParser.parse(link)?.let { kindOf(it) } ?: LocationKind.Vless
+        return LocationConfig(name = name, kind = kind, rawLink = link)
+    }
+
+    /** An olcRTC room on [provider], with a made-up room and key. */
+    private fun room(provider: String, name: String = "NL room") = LocationConfig(
+        name = name,
+        id = "room-of-the-test",
+        key = "5a".repeat(32),
+        bypassProvider = provider,
+        kind = LocationKind.Olcrtc,
+    )
+
+    @Test fun everyLineStartsOnTheCoreFromCoreJson() {
+        for (line in IosCoreLine.entries) {
+            val spec = spec(line)
+            assertEquals(
+                IosStart.Core(spec, line, listOfNotNull(Reality.helloNote(spec))),
+                IosCore.start(located(IosCoreFixtures.link(line))),
+                "$line",
+            )
+        }
+    }
+
+    @Test fun aRealityHelloTheCoreLacksIsSwappedForChromesAndTheLogIsToldSo() {
+        val vision = IosCoreFixtures.links.getValue(IosCoreLine.RealityVision)
+        for (fp in listOf("android", "360")) {
+            val link = vision.replace("&fp=chrome&", "&fp=$fp&")
+            val spec = assertNotNull(LinkParser.parse(link), fp)
+            val start = assertIs<IosStart.Core>(IosCore.start(located(link)), fp)
+            val note = assertNotNull(Reality.helloNote(spec), fp)
+            assertEquals(listOf(note), start.notes, fp)
+            assertTrue(fp in note && "Chrome" in note, note)
+            val reality = Json.parseToJsonElement(XrayConfig.buildIosCore(start.spec, login)).jsonObject.stream().obj("realitySettings")
+            assertEquals("chrome", reality.str("fingerprint"), fp)
+        }
+        // A hello the core has: nothing to tell.
+        assertEquals(emptyList<String>(), assertIs<IosStart.Core>(IosCore.start(located(vision))).notes)
+    }
+
+    @Test fun aRetiredCarriersRoomIsRefusedBeforeTheExtensionIsAsked() {
+        for (provider in listOf(LocationConfig.PROVIDER_WB_STREAM, LocationConfig.PROVIDER_TELEMOST)) {
+            val room = room(provider)
+            val reason = assertNotNull(RustCarriers.refusal(room), provider)
+            assertEquals(IosStart.Refused("Cannot start NL room: $reason"), IosCore.start(room), provider)
+        }
+        for (provider in listOf(LocationConfig.PROVIDER_SALUTEJAZZ, LocationConfig.PROVIDER_VKCALLS, LocationConfig.PROVIDER_MTSLINK)) {
+            assertEquals(IosStart.Room, IosCore.start(room(provider)), provider)
+        }
+    }
+
+    @Test fun aRefusalNamesTheLineAndSaysWhy() {
+        assertEquals(
+            IosStart.Refused("Cannot start DE line: ${VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER}"),
+            IosCore.start(located(plainToAPublicServer)),
+        )
+        assertEquals(IosStart.Refused("Cannot start DE line: ${VlessShapes.HTTP2_REFUSAL}"), IosCore.start(located(http2)))
+        // A server named by a hostname is not refused for its name: the
+        // extension resolves it (IosStartHostPinTest).
+        for (link in refused.filter { XrayConfig.isIpLiteral(assertNotNull(LinkParser.parse(it), it).host) }) {
+            val reason = assertNotNull(IosCore.refusal(assertNotNull(LinkParser.parse(link), link)), link)
+            assertEquals(IosStart.Refused("Cannot start DE line: $reason"), IosCore.start(located(link)), link)
+        }
+        // A location with no name of its own is named by what it is, and a
+        // room never by its id: that is the address of a meeting.
+        assertEquals(
+            IosStart.Refused("Cannot start this line: ${VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER}"),
+            IosCore.start(located(plainToAPublicServer, name = " ")),
+        )
+        val unnamed = room(LocationConfig.PROVIDER_WB_STREAM, name = "")
+        assertEquals(IosStart.Refused("Cannot start this room: ${RustCarriers.refusal(unnamed)}"), IosCore.start(unnamed))
+        // A link the app does not read.
+        assertEquals(IosStart.Refused("Cannot start DE line: the app reads no link in it"), IosCore.start(located("https://example.com/")))
     }
 
     @Test fun aPinOverridesTheWaiverAndIsVerified() {
         // insecure=1 beside a pin: the core verifies the pin, sing-box skipped both.
         val link = "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&insecure=1&pinSHA256=${IosCoreFixtures.PIN}#both"
         val spec = assertNotNull(LinkParser.parse(link))
-        assertEquals(IosEngine.RUST, IosCore.choose(spec, allRust).engine)
+        assertEquals(IosEngine.RUST, IosCore.choose(spec).engine)
         val tls = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream().obj("tlsSettings")
         assertEquals(IosCoreFixtures.PIN.replace(":", "").lowercase(), tls.str("pinnedPeerCertSha256"))
     }
@@ -652,7 +788,7 @@ class XrayConfigIosCoreTest {
         }
         assertTrue(forward !in XrayConfig.buildXhttp(xhttp, routing = bypass, geodata = lists, login = login))
         for (line in IosCoreLine.entries) for (routing in routings) {
-            if (line != IosCoreLine.XhttpReality) {
+            if (line != IosCoreLine.XhttpReality && line in firstSix) {
                 assertTrue(forward !in SingBoxConfig.buildIosSocks(spec(line), login, routing = routing), "$line $routing")
             }
             assertTrue(forward in text(line, routing), "$line $routing")

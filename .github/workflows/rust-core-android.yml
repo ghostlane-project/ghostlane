@@ -1,0 +1,490 @@
+name: Rust core for Android
+
+# Phase 1 of the Android move to the Rust core: libghostlane_core.so (with the
+# `boring` feature) for arm64-v8a, armeabi-v7a and x86_64 from the pin in
+# scripts/ghostlane-core-pin.sh, built by scripts/build-ghostlane-core-android.sh
+# with the NDK the app pins; the report (sizes, 16 KiB alignment, imports,
+# BoringSSL) in the job summary, the libraries and the UniFFI Kotlin bindings as
+# an artifact; then an instrumented smoke test on an x86_64 emulator (4 KiB and
+# 16 KiB pages): load, start the xray core from a minimal config, a SOCKS
+# connection through it, stop; the olcRTC client object made and closed.
+#
+# Phase 2 (the app's VpnService on this core, behind a switch that is off by
+# default): job `app` builds the app's debug APK with the core and the UniFFI
+# bindings packed in (-PghostlaneCoreDir) plus its androidTest APK, and reports
+# the core's size inside the APK per ABI; job `e2e` runs RustCoreVpnE2ETest on
+# the x86_64 emulator with the switch ON: VPN consent by appops, the service
+# started on a profile whose core.json redirects a TEST-NET address to a
+# loopback server the test runs, a fetch from the shell uid through the tun,
+# then stop and the service, the core and the tun fd gone.
+#
+# Emulator only: no device, no store track, no live carrier room. The one
+# secret is the crypt1 client key of the lab APK step.
+# Runs on rust/all and on pull requests into it, when what it builds or reads
+# changed, or by hand; never on main and never on every push to a task branch.
+on:
+  push:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-core-android.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-android.sh
+      - 'scripts/rust-core-android-*.sh'
+      - scripts/olcrtc-pin.sh
+      - scripts/cores-pins.sh
+      - 'lab/rust-core-android/**'
+      - 'androidApp/**'
+      - 'sharedUI/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - gradle.properties
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-core-android.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/build-ghostlane-core-android.sh
+      - 'scripts/rust-core-android-*.sh'
+      - scripts/olcrtc-pin.sh
+      - scripts/cores-pins.sh
+      - 'lab/rust-core-android/**'
+      - 'androidApp/**'
+      - 'sharedUI/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - gradle.properties
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Build this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-core-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # androidApp/build.gradle.kts ndkVersion (and release.yml's).
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  EMULATOR_API: "35"
+
+jobs:
+  build:
+    name: Build ghostlane-core for Android (boring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Room on the disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install the NDK
+        run: sdkmanager "ndk;${ANDROID_NDK_VERSION}" > /dev/null
+
+      - name: Build tools (cmake and clang for BoringSSL's build)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang libclang-dev
+          cmake --version | head -1; clang --version | head -1
+
+      - name: Restore the cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/core/src/target
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+          restore-keys: rust-core-android-
+
+      - name: Build
+        env:
+          GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+        run: |
+          set +e -uo pipefail
+          bash scripts/build-ghostlane-core-android.sh out/core 2>&1 | tee out-build.log
+          rc=${PIPESTATUS[0]}
+          mkdir -p out/core
+          {
+            echo '### ghostlane-core for Android'
+            echo '```'
+            cat out/core/report.txt 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ $rc -eq 0 ] || { tail -80 out-build.log; exit $rc; }
+
+      - name: Save the cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            out/core/src/target
+          key: rust-core-android-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+
+      - name: Artifact (without the source and the target directory)
+        run: |
+          mkdir -p artifact
+          cp -r out/core/jniLibs out/core/kotlin out/core/checks out/core/report.txt artifact/
+          cp out-build.log artifact/ 2> /dev/null || true
+          find artifact -name '*.so' -exec ls -l {} +
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ghostlane-core-android
+          path: artifact/
+          retention-days: 14
+
+  smoke:
+    name: Smoke test on the x86_64 emulator
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghostlane-core-android
+          path: out/core
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: The lab app and its test APK
+        run: |
+          set -euo pipefail
+          ./gradlew -p lab/rust-core-android assembleDebug assembleDebugAndroidTest -PghostlaneCoreDir="$GITHUB_WORKSPACE/out/core" 2>&1 | tail -80
+          app=$(find lab/rust-core-android/build/outputs/apk/debug -name '*-debug.apk' | head -1)
+          unzip -l "$app" | grep 'lib/' | tee out-apk-libs.txt
+          for abi in x86_64 arm64-v8a armeabi-v7a; do
+            for lib in libghostlane_core.so libjnidispatch.so; do
+              grep -q "lib/$abi/$lib" out-apk-libs.txt || { echo "APK: no lib/$abi/$lib"; exit 1; }
+            done
+          done
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Smoke test (x86_64, 4 KiB pages)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-smoke.sh out/smoke-4k
+
+      - name: Smoke test (x86_64, 16 KiB pages)
+        if: ${{ !cancelled() }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis_ps16k
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-smoke.sh out/smoke-16k
+
+      - name: Summary
+        if: always()
+        run: |
+          for d in smoke-4k smoke-16k; do
+            [ -f "out/$d/results.txt" ] || { echo "### $d: no results" >> "$GITHUB_STEP_SUMMARY"; continue; }
+            { echo "### Smoke ($d)"; echo '```'; cat "out/$d/results.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rust-core-android-smoke
+          path: out/smoke-*
+          retention-days: 14
+
+  app:
+    name: The app with the Rust core (debug APK)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ANDROID_NDK_VERSION: "28.2.13676358"
+      XRAY_VERSION: "26.7.11"
+    steps:
+      - name: Checkout the app
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghostlane-core-android
+          path: olcbox/out/core
+
+      # The Go engine every build still carries (the switch is off by default):
+      # resolved and built as pr-checks.yml's Gradle checks do.
+      - name: Resolve the engine pin
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          olcbox/scripts/olcrtc-pin.sh > "$RUNNER_TEMP/pin.out"
+          cat "$RUNNER_TEMP/pin.out" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout olcrtc
+        uses: actions/checkout@v7
+        with:
+          repository: ghostlane-project/olcrtc
+          ref: ${{ steps.pin.outputs.olcrtc_sha }}
+          path: olcrtc
+          submodules: recursive
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.pin.outputs.go_version }}
+          cache-dependency-path: olcrtc/go.sum
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}" > /dev/null
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Go mobile tooling
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install github.com/magefile/mage@latest
+
+      - name: Initialize gomobile
+        working-directory: olcrtc
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          gomobile init
+
+      - name: Debug APK and test APK, with the core
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
+            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -120
+
+      # The Rust path's parts that need no device, on the JVM: the olcRTC room keeper (list,
+      # refusal, fetch, timing, memory), the core's config with the user's own rules, hev's.
+      # pr-checks.yml runs the whole jvmTest on a PR; a lab branch gets none without this.
+      - name: Host tests of the Rust path
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew :sharedUI:jvmTest --tests "org.olcbox.app.vpn.rooms.*" --tests "org.olcbox.app.net.*" \
+            --tests "org.olcbox.app.vpn.HevTunnelConfigTest" --stacktrace 2>&1 | tail -80
+
+      # A release build (minified, R8) keeps what the core needs: the engine the service
+      # finds by name, the UniFFI bindings, JNA. Unsigned; nothing is published.
+      - name: Release APK with the core keeps the engine, the bindings and JNA
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew :androidApp:assembleGithubRelease \
+            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -60
+          rel=$(find androidApp/build/outputs/apk/github/release -name '*.apk' | head -1)
+          ls -l "$rel"
+          unzip -p "$rel" 'classes*.dex' | strings > out-release-dex.txt
+          for name in org/olcbox/app/rustcore/RustCoreEngine org/ghostlane/olcrtc/OlcrtcRuntime com/sun/jna/Native xray_core_set_socket_protect_callback; do
+            grep -q "$name" out-release-dex.txt || { echo "release dex lost $name"; exit 1; }
+          done
+          [ "$(unzip -l "$rel" | grep -c 'libghostlane_core.so')" -eq 3 ]
+          { echo '### Release (R8) keeps the Rust core classes'; echo "APK: $(stat -c %s "$rel") bytes"; } >> "$GITHUB_STEP_SUMMARY"
+
+      # A phone test build: the Rust switch ON by default, its own applicationId
+      # (org.proofkit.app.rustlab) so it installs next to the store app. Built after the
+      # checked APKs, so it never feeds the e2e job.
+      # The crypt1 client key, as release.yml gives it to a store build: without it the
+      # app cannot read an olcrtc://crypt1/ list, nor the answer to a partner's
+      # happ:// link, and says "Link not recognised" to a link that is fine.
+      - name: Lab APK for a phone (Rust core on, installs next to the store app)
+        working-directory: olcbox
+        env:
+          OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OLCBOX_CRYPT_KEY_V1}" ]; then
+            echo '### Lab APK: crypt1 links ON' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this lab APK cannot import crypt1 or partner links"
+            echo '### Lab APK: crypt1 links OFF (no key)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          cp -r androidApp/build/outputs/apk/github/debug "$RUNNER_TEMP/checked-debug"
+          ./gradlew :androidApp:assembleGithubDebug -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" \
+            -Polcbox.rustCoreDefault=true -Polcbox.labSuffix=.rustlab 2>&1 | tail -20
+          mkdir -p "$RUNNER_TEMP/lab"
+          cp androidApp/build/outputs/apk/github/debug/*.apk "$RUNNER_TEMP/lab/"
+          rm -rf androidApp/build/outputs/apk/github/debug && cp -r "$RUNNER_TEMP/checked-debug" androidApp/build/outputs/apk/github/debug
+          ls -l "$RUNNER_TEMP/lab"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-core-lab-apk
+          path: ${{ runner.temp }}/lab/
+          retention-days: 14
+
+      - name: What the core adds to the APK, per ABI
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          app=$(find androidApp/build/outputs/apk/github/debug -name '*.apk' | head -1)
+          echo "APK: $app"; ls -l "$app"
+          unzip -v "$app" | grep -E 'lib/.*/(libghostlane_core|libjnidispatch)\.so' | tee out-core-in-apk.txt
+          for abi in x86_64 arm64-v8a armeabi-v7a; do
+            grep -q "lib/$abi/libghostlane_core.so" out-core-in-apk.txt || { echo "APK: no lib/$abi/libghostlane_core.so"; exit 1; }
+          done
+          {
+            echo '### The core in the debug APK (unzip -v: size, method, compressed, ...)'
+            echo '```'
+            echo "APK: $(stat -c %s "$app") bytes"
+            cat out-core-in-apk.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p apks
+          cp "$app" apks/
+          cp "$(find androidApp/build/outputs/apk/androidTest/github/debug -name '*.apk' | head -1)" apks/
+          cp out-core-in-apk.txt apks/
+          ls -l apks
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rust-core-app-apks
+          path: olcbox/apks/
+          retention-days: 14
+
+  e2e:
+    name: The service on the Rust core, on the x86_64 emulator
+    needs: app
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-core-app-apks
+          path: out/apks
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: End-to-end (x86_64, 4 KiB pages)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-e2e.sh out/apks out/e2e-4k
+
+      - name: End-to-end (x86_64, 16 KiB pages)
+        if: ${{ !cancelled() }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis_ps16k
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          script: bash scripts/rust-core-android-e2e.sh out/apks out/e2e-16k
+
+      - name: Summary
+        if: always()
+        run: |
+          for d in e2e-4k e2e-16k; do
+            [ -f "out/$d/results.txt" ] || { echo "### $d: no results" >> "$GITHUB_STEP_SUMMARY"; continue; }
+            { echo "### End-to-end ($d)"; echo '```'; cat "out/$d/results.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rust-core-android-e2e
+          path: out/e2e-*
+          retention-days: 14

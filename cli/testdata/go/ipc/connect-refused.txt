@@ -1,0 +1,2 @@
+{"verb":"connect","selector":"DE","mode":"tun","subscription":"https://sub.example/sub/a/","kill_switch":true}
+{"ok":false,"error":"no_subscription","message":"add a list first: ghostlane add \u003curl\u003e"}

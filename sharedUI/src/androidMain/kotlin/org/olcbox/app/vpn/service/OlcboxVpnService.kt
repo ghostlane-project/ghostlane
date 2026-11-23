@@ -58,10 +58,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import mobile.LogWriter
-import mobile.Mobile
-import mobile.Runtime as OlcrtcRuntime
-import mobile.SocketProtector
+import kotlinx.coroutines.flow.Flow
 import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
 import org.olcbox.app.data.datasource.AndroidLocations
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
@@ -72,15 +69,7 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingMode
 import org.olcbox.app.net.UpstreamDns
 import org.olcbox.app.data.repository.LocationsRepository
-import org.olcbox.app.net.AndroidCoreProcess
-import org.olcbox.app.net.AndroidSingBoxController
-import org.olcbox.app.net.AndroidXrayController
 import org.olcbox.app.net.DirectDns
-import org.olcbox.app.net.LinkParser
-import org.olcbox.app.net.LocationKind
-import org.olcbox.app.net.OlcrtcDirectRules
-import org.olcbox.app.net.OlcrtcDtls
-import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.SessionFailover
@@ -89,18 +78,15 @@ import org.olcbox.app.net.SmartConnect
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportGroup
 import org.olcbox.app.net.TransportProbe
-import org.olcbox.app.net.TransportSpec
 import org.olcbox.app.net.TunnelExit
 import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.net.WhitelistCheck
-import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.BridgeTarget
 import org.olcbox.app.vpn.HevTunnelConfig
 import org.olcbox.app.vpn.NativeTunnelRun
-import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.SessionPort
 import org.olcbox.app.vpn.SystemVpnMode
 import org.olcbox.app.vpn.TunSpec
@@ -112,6 +98,8 @@ import org.olcbox.app.vpn.UpstreamNetworkSelector
 import org.olcbox.app.vpn.UpstreamTransport
 import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.vpn.TunnelHold
+import org.olcbox.app.vpn.service.engine.EngineHost
+import org.olcbox.app.vpn.service.engine.EngineSwitch
 import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
@@ -124,7 +112,6 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.util.concurrent.atomic.AtomicInteger
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -166,10 +153,6 @@ class OlcboxVpnService : VpnService() {
     private var lastRtcFailureAtMs = 0L
     @Volatile
     private var rtcFailureCount = 0
-    @Volatile
-    private var lastMobileProvider: String? = null
-    @Volatile
-    private var lastJitsiStopCompletedAtMs = 0L
 
     private var vpnInterface: ParcelFileDescriptor? = null
 
@@ -215,14 +198,65 @@ class OlcboxVpnService : VpnService() {
     private var splitTunnelBypassApps = emptySet<String>()
     private var socksProxy: AuthenticatedSocksProxy? = null
 
-    // Unified client: sing-box / Xray cores for vless/hy2/xhttp locations. Exec'd
-    // subprocesses (this VpnService is a Context). The app's UID already bypasses
-    // the tun (addDisallowedApp(self) in applySplitTunneling), so a core's own
-    // sockets don't loop back through the tunnel. `activeCorePort` is the SOCKS
-    // port the hev bridge targets when a core is active (null = olcrtc default),
-    // and `activeCoreLogin` the login that port demands (null = none, proxy mode).
-    private val singBoxCore by lazy { AndroidSingBoxController(this) }
-    private val xrayCore by lazy { AndroidXrayController(this) }
+    // `activeCorePort` is the SOCKS port the hev bridge targets when a core is
+    // active (null = olcrtc default), and `activeCoreLogin` the login that port
+    // demands (null = none, proxy mode). The engines themselves live behind
+    // EngineSession; this is what a session is given of the service.
+    private val engineHost = object : EngineHost {
+        override val context: Context get() = this@OlcboxVpnService
+        override val scope: CoroutineScope get() = this@OlcboxVpnService.scope
+        override val generation: Long get() = this@OlcboxVpnService.generation
+        override val connectionMode: AndroidConnectionMode get() = this@OlcboxVpnService.connectionMode
+        override val socksListenHost: String get() = this@OlcboxVpnService.socksListenHost
+        override val socksListenPort: Int get() = this@OlcboxVpnService.socksListenPort
+        override val socksUsername: String get() = this@OlcboxVpnService.socksUsername
+        override val socksPassword: String get() = this@OlcboxVpnService.socksPassword
+        override val verboseDebugLogs: Boolean get() = this@OlcboxVpnService.verboseDebugLogs
+        override val routingSettings: RoutingSettings get() = this@OlcboxVpnService.routingSettings
+        override var activeCorePort: Int?
+            get() = this@OlcboxVpnService.activeCorePort
+            set(value) { this@OlcboxVpnService.activeCorePort = value }
+        override var activeCoreLogin: SocksLogin?
+            get() = this@OlcboxVpnService.activeCoreLogin
+            set(value) { this@OlcboxVpnService.activeCoreLogin = value }
+        override val sessionCorePort: SessionPort get() = this@OlcboxVpnService.sessionCorePort
+        override val coreReadyTimeoutMs: Long get() = MOBILE_READY_TIMEOUT_MS
+        override val socksReleaseQuickTimeoutMs: Long get() = SOCKS_RELEASE_QUICK_TIMEOUT_MS
+        override val networkStabilityGraceMs: Long get() = NETWORK_STABILITY_GRACE_MS
+        override val storedLocationsChanges: Flow<Long> get() = repository.changes
+
+        override fun protect(fd: Int): Boolean = this@OlcboxVpnService.protect(fd)
+        override fun addLog(msg: String) = OlcboxVpnState.addLog(msg)
+        override fun handleRtcLine(line: String) = this@OlcboxVpnService.handleRtcLine(line)
+        override fun resetRtcHealthState() = this@OlcboxVpnService.resetRtcHealthState()
+        override fun markRtcConnected() = this@OlcboxVpnService.markRtcConnected()
+        override fun setStatus(status: VpnStatus) = this@OlcboxVpnService.setStatus(status)
+        override fun updateNotification(status: String) = this@OlcboxVpnService.updateNotification(status)
+        override suspend fun routingFor(upstream: Network?): Routing = this@OlcboxVpnService.routingFor(upstream)
+        override fun upstreamDnsList(network: Network?): String = this@OlcboxVpnService.upstreamDnsList(network)
+        override fun upstreamDnsAddresses(network: Network?): List<String> =
+            this@OlcboxVpnService.upstreamDnsAddresses(network)
+        override fun bindProcessToNetwork(network: Network?, successLog: String?) =
+            this@OlcboxVpnService.bindProcessToNetwork(network, successLog)
+        override fun unbindProcessFromNetwork() = this@OlcboxVpnService.unbindProcessFromNetwork()
+        override fun getNetName(network: Network): String = this@OlcboxVpnService.getNetName(network)
+        override fun shouldKeepProcessBound(network: Network): Boolean =
+            this@OlcboxVpnService.shouldKeepProcessBound(network)
+        override fun isLocalSocksPortOpen(port: Int): Boolean = this@OlcboxVpnService.isLocalSocksPortOpen(port)
+        override suspend fun waitForSocksPortOpen(port: Int, timeoutMs: Long): Boolean =
+            this@OlcboxVpnService.waitForSocksPortOpen(port, timeoutMs)
+        override suspend fun waitForSocksPortReleased(port: Int, timeoutMs: Long) =
+            this@OlcboxVpnService.waitForSocksPortReleased(port, timeoutMs)
+        override fun freeLoopbackPort(): Int = this@OlcboxVpnService.freeLoopbackPort()
+        override suspend fun stopTransportAndWait() = this@OlcboxVpnService.stopMobileAndWait()
+        override suspend fun deviceHwid(): String? = deviceIdentityProvider.hwid()
+        override suspend fun storedBundle(): LocationBundleV4 = this@OlcboxVpnService.storedBundle()
+        override fun requestTransportRecovery(reason: String, fullRestart: Boolean) =
+            this@OlcboxVpnService.requestTransportRecovery(reason = reason, fullRestart = fullRestart)
+    }
+
+    /** The session's engine: the Go engines, or the Rust core behind the developer switch (RustCore.resolve). */
+    private val engine = EngineSwitch(engineHost)
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
 
@@ -248,16 +282,11 @@ class OlcboxVpnService : VpnService() {
 
     /** The outage of the active line, while there is one; see [SessionFailover]. */
     private var outage: SessionFailover.Outage? = null
-    private val failoverSerial = AtomicInteger()
 
     /** The routing choice read at the last start, so a reconnect in place keeps it. */
     private var routingMode = RoutingMode.Global
     private var routingSettings = RoutingSettings()
     private var verboseDebugLogs = false
-
-    // One engine per service. Created by the Go constructor: the generated
-    // no-argument Runtime() allocates an empty struct that cannot start.
-    private val olcrtc: OlcrtcRuntime by lazy { Mobile.new_() }
 
     private data class StartOptions(
         val connectionMode: AndroidConnectionMode,
@@ -344,6 +373,8 @@ class OlcboxVpnService : VpnService() {
                 is VpnStatus.Connected -> {
                     if (isBenignWifiRefresh(previousTransport, nextTransport)) {
                         addLog("Keeping transport on refreshed Wi-Fi network")
+                    } else if (engine.networkChanged()) {
+                        // The engine keeps its tun and its config and meets the new network by itself.
                     } else {
                         requestTransportRecovery(
                             reason = "Upstream network changed",
@@ -384,7 +415,7 @@ class OlcboxVpnService : VpnService() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Olcbox::VpnWakeLock")
             .apply { setReferenceCounted(false) }
 
-        installMobileCallbacks()
+        engine.installCallbacks()
         OlcboxVpnState.trafficReader = ::currentTraffic
     }
 
@@ -421,6 +452,8 @@ class OlcboxVpnService : VpnService() {
         // Always-on is a VPN by definition: a saved proxy mode never establishes
         // the tun the system is waiting for.
         applyStartOptions(if (bySystem) options.copy(connectionMode = AndroidConnectionMode.Tun) else options)
+        engine.rustCore = RustCore.resolve(startIntent, applicationContext)
+        if (engine.rustCore) addLog("Transport engine: Rust core (developer switch)")
         val isRestart = shouldRestartForStartCommand()
         // Android's claim lasts the session: a restart the app asks for inside
         // it (another location, an edited app list) is not a first connect again.
@@ -439,6 +472,11 @@ class OlcboxVpnService : VpnService() {
         return START_REDELIVER_INTENT
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        engine.trimMemory(level)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         OlcboxVpnState.trafficReader = null
@@ -450,25 +488,6 @@ class OlcboxVpnService : VpnService() {
         cleanup()
         stopSelf()
         super.onRevoke()
-    }
-
-    private fun installMobileCallbacks() {
-        olcrtc.setProtector(object : SocketProtector {
-            override fun protect(fd: Long): Boolean {
-                if (connectionMode == AndroidConnectionMode.Proxy) return true
-                return this@OlcboxVpnService.protect(fd.toInt())
-            }
-        })
-        Mobile.setLogWriter(object : LogWriter {
-            override fun writeLog(msg: String) {
-                val line = msg.trimEnd()
-                addLog("rtc: $line")
-                // Its own tag, so it needs its own scrub: this one does not go through
-                // addLog, and logcat is captured by bug reports.
-                Log.v("olcrtc", LogScrubber.default.scrub(line))
-                handleRtcLine(line)
-            }
-        })
     }
 
     private fun loadStartOptions(intent: Intent): StartOptions {
@@ -898,7 +917,7 @@ class OlcboxVpnService : VpnService() {
             if (requestedGeneration != generation) return false
             val candidate = step.entry.location.normalized()
             if (step is SmartConnect.Step.Probe &&
-                !TransportProbe.passes(candidate, resolver, failoverStarter)
+                !TransportProbe.passes(candidate, resolver, engine.probeStarter)
             ) {
                 continue
             }
@@ -969,25 +988,6 @@ class OlcboxVpnService : VpnService() {
         stopBridgeForHold()
         OlcboxVpnState.activeLocation = original
         return false
-    }
-
-    /** A candidate's own core, alone, in a work dir of its own: the session's core is never touched. */
-    private val failoverStarter = TransportProbe.Starter { spec, config ->
-        val label = "failover-${failoverSerial.incrementAndGet()}"
-        val core = AndroidCoreProcess(
-            context = this,
-            soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
-            label = label,
-            argv = { bin, file -> listOf(bin, "run", "-c", file) },
-        )
-        core.start(config)
-        object : TransportProbe.Core {
-            override fun isRunning(): Boolean = core.isRunning()
-            override suspend fun stop() {
-                core.stop()
-                File(cacheDir, "olcbox-$label").deleteRecursively()
-            }
-        }
     }
 
     /** Asked directly: this app's own traffic never enters the tun. See [WhitelistCheck]. */
@@ -1203,163 +1203,16 @@ class OlcboxVpnService : VpnService() {
     }
 
     /**
-     * Start the transport for [location], branching on its kind: olcrtc runs the
-     * engine in this process ([startMobile]), which routes by itself under a
-     * bypass; vless/hysteria2/xhttp start a sing-box / Xray core subprocess via
-     * [startCore]. Both leave the hev bridge pointed at the right SOCKS port
-     * (via [activeCorePort]).
+     * Start the transport for [location] on the session's engine (EngineSession):
+     * an olcRTC room or a core line, each leaving the hev bridge pointed at the
+     * right SOCKS port (via [activeCorePort]).
      */
     private suspend fun startTransport(
         location: LocationConfig,
         upstream: Network,
         requestedGeneration: Long,
         setErrorOnFailure: Boolean
-    ): Boolean {
-        val routing = routingFor(upstream)
-        return if (location.kind == LocationKind.Olcrtc) {
-            activeCorePort = null
-            activeCoreLogin = null
-            startMobile(location, upstream, requestedGeneration, setErrorOnFailure, routing)
-        } else {
-            // A core is a process of its own and needs no binding. One left from
-            // an olcRTC room on mobile data would keep this process's own
-            // requests on that network after the session has moved off it.
-            unbindProcessFromNetwork()
-            startCore(location, setErrorOnFailure, routing, upstream)
-        }
-    }
-
-    /**
-     * Start a sing-box (reality/hy2) or Xray (xhttp) core.
-     *
-     * In proxy mode the core listens on [socksListenPort], because that is the
-     * endpoint the app tells other apps to use — putting the core anywhere else
-     * leaves that promised port dead — and, as before, without a login. In tun
-     * mode nothing outside talks to it, so it takes a port the kernel hands out
-     * for this tun session and demands the app's own login: tun2socks is started
-     * against [activeCorePort] with [activeCoreLogin], and [ensureBridge] restarts
-     * it if either ever differs. It used to be 10810, open, which any app on the
-     * phone could use to leave through the tunnel or to read its exit address
-     * (see [SocksLogin]).
-     */
-    private suspend fun startCore(
-        location: LocationConfig,
-        setErrorOnFailure: Boolean,
-        routing: Routing,
-        upstream: Network
-    ): Boolean {
-        val tun = connectionMode == AndroidConnectionMode.Tun
-        val port = if (tun) sessionCorePort.acquire() else socksListenPort
-        val login = if (tun) SocksLogin.of(socksUsername, socksPassword) else null
-        return try {
-            val raw = location.rawLink ?: error("core location has no link")
-            val spec = LinkParser.parse(raw) ?: error("unparseable core link")
-            stopCoreProcesses()
-            waitForSocksPortReleased(port, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
-            val label: String
-            // Which core to ask afterwards, decided here rather than re-derived
-            // from the label — the failure path should not have to parse a string
-            // we build for humans.
-            val diagnose: () -> String
-            // Which processes must be alive once the port answers. A port that
-            // answers proves nothing about who answers.
-            val alive: () -> Boolean
-            val fronted = routing is Routing.Rules && connectionMode == AndroidConnectionMode.Tun
-            if (spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp) {
-                if (fronted) {
-                    // Xray does not route; sing-box does, so it goes in front.
-                    // Both ports are loopback and both demand the login: the one
-                    // behind the front is as reachable from other apps as the
-                    // front itself.
-                    val xrayPort = freeLoopbackPort()
-                    xrayCore.start(
-                        XrayConfig.buildXhttp(
-                            spec,
-                            socksPort = xrayPort,
-                            verboseLogs = verboseDebugLogs,
-                            login = login
-                        )
-                    )
-                    singBoxCore.start(
-                        SingBoxConfig.buildSocksChain(
-                            xrayPort,
-                            socksPort = port,
-                            username = login?.username.orEmpty(),
-                            password = login?.password.orEmpty(),
-                            routing = routing,
-                            verboseLogs = verboseDebugLogs,
-                            login = login
-                        )
-                    )
-                    label = "sing-box front + Xray/xhttp"
-                    diagnose = { singBoxCore.diagnostics() + "\n" + xrayCore.diagnostics() }
-                    alive = { singBoxCore.isRunning() && xrayCore.isRunning() }
-                } else {
-                    if (routing is Routing.Rules) addLog("Routing: proxy mode keeps xhttp global")
-                    xrayCore.start(
-                        XrayConfig.buildXhttp(spec, socksPort = port, verboseLogs = verboseDebugLogs, login = login)
-                    )
-                    label = "Xray/xhttp"
-                    diagnose = xrayCore::diagnostics
-                    alive = xrayCore::isRunning
-                }
-            } else {
-                singBoxCore.start(
-                    SingBoxConfig.build(
-                        spec,
-                        socksPort = port,
-                        routing = routing,
-                        verboseLogs = verboseDebugLogs,
-                        login = login,
-                        // A server named by hostname: the core has no system
-                        // resolver to ask on Android, so it is given the network's.
-                        serverResolver = DirectDns.Servers(upstreamDnsAddresses(upstream))
-                    )
-                )
-                label = "sing-box/${location.kind}"
-                diagnose = singBoxCore::diagnostics
-                alive = singBoxCore::isRunning
-            }
-            activeCorePort = port
-            activeCoreLogin = login
-            if (!waitForSocksPortOpen(port, MOBILE_READY_TIMEOUT_MS) || !alive()) {
-                // The core's own account of what went wrong, which otherwise sits
-                // in a cache file only root can read. Without it this branch says
-                // a port did not open and nothing about why, and that is all a
-                // user has ever been able to report.
-                addLog(diagnose())
-                error("$label SOCKS not ready on $port")
-            }
-            coroutineContext.ensureActive()
-            addLog("$label ready on $socksListenHost:$port")
-            true
-        } catch (e: CancellationException) {
-            withContext(NonCancellable) {
-                addLog("core start canceled")
-                stopCoreProcesses()
-            }
-            throw e
-        } catch (e: Exception) {
-            val msg = e.message ?: "Core transport failed"
-            addLog("core start failed: $msg")
-            stopCoreProcesses()
-            // Whatever went wrong, the next start draws another port: one that
-            // something else took in the meantime would fail every start alike.
-            if (tun) sessionCorePort.release()
-            if (setErrorOnFailure) {
-                setStatus(VpnStatus.Error(msg))
-                updateNotification("Connection failed")
-            }
-            false
-        }
-    }
-
-    private fun stopCoreProcesses() {
-        singBoxCore.stopNow()
-        xrayCore.stopNow()
-        activeCorePort = null
-        activeCoreLogin = null
-    }
+    ): Boolean = engine.start(location, upstream, requestedGeneration, setErrorOnFailure)
 
     /**
      * A loopback port nothing holds at this moment, from the kernel's ephemeral
@@ -1393,127 +1246,6 @@ class OlcboxVpnService : VpnService() {
             delay(SOCKS_RELEASE_POLL_MS)
         }
         return isLocalSocksPortOpen(port)
-    }
-
-    private suspend fun startMobile(
-        location: LocationConfig,
-        upstream: Network,
-        requestedGeneration: Long,
-        setErrorOnFailure: Boolean,
-        routing: Routing
-    ): Boolean {
-        val keepProcessBound = shouldKeepProcessBound(upstream)
-        val config = location.normalized()
-        return try {
-            installMobileCallbacks()
-            val targetSocksPort = socksListenPort
-            val deviceId = deviceIdentityProvider.hwid().orEmpty()
-            resetRtcHealthState()
-
-            waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
-            if (isLocalSocksPortOpen(targetSocksPort)) {
-                throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
-            }
-            waitForJitsiRoomCleanup(config.bypassProvider)
-            bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
-            // The engine routes by itself (internal/route), as it does on iOS:
-            // the region's lists as rules, or none under Global.
-            val directRules = OlcrtcDirectRules.forRouting(routing)
-            configureMobileTransport(config, upstream, directRules)
-            addLog(
-                "Starting olcRTC provider=${config.bypassProvider}, " +
-                    "transport=${config.transport}, room=${config.id}"
-            )
-            lastMobileProvider = config.bypassProvider
-            olcrtc.setProvider(config.bypassProvider)
-            olcrtc.setRoom(config.id)
-            olcrtc.setDeviceID(deviceId)
-            olcrtc.setKey(config.key)
-            olcrtc.setSocksPort(targetSocksPort.toLong())
-            olcrtc.setSocksCredentials(socksUsername, socksPassword)
-            olcrtc.start()
-            olcrtc.waitReady(OLCRTC_READY_TIMEOUT_MS)
-            if (requestedGeneration != generation) {
-                addLog("olcRTC start superseded")
-                return false
-            }
-            coroutineContext.ensureActive()
-            addLog("olcRTC ready on $socksListenHost:$targetSocksPort")
-            markRtcConnected()
-            if (keepProcessBound) {
-                addLog("Keeping olcRTC bound to ${getNetName(upstream)}")
-            }
-            true
-        } catch (e: CancellationException) {
-            withContext(NonCancellable) {
-                addLog("olcRTC start canceled")
-                unbindProcessFromNetwork()
-                stopMobileAndWait()
-            }
-            throw e
-        } catch (e: Exception) {
-            val staleRequest = requestedGeneration != generation
-            val message = e.message ?: "Transport failed"
-            if (staleRequest) {
-                addLog("olcRTC start canceled: $message")
-            } else {
-                addLog("olcRTC start failed: $message")
-            }
-            unbindProcessFromNetwork()
-            stopMobileAndWait()
-            if (!staleRequest && setErrorOnFailure) {
-                setStatus(VpnStatus.Error(message))
-                updateNotification("Connection failed")
-            }
-            false
-        } finally {
-            if (!keepProcessBound || !olcrtc.isRunning()) {
-                unbindProcessFromNetwork()
-            }
-        }
-    }
-
-    private suspend fun waitForJitsiRoomCleanup(provider: String) {
-        if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
-
-        val waitMs = JITSI_RESTART_SETTLE_MS -
-            (System.currentTimeMillis() - lastJitsiStopCompletedAtMs)
-        if (waitMs <= 0L) return
-
-        addLog("Waiting for previous Jitsi room cleanup")
-        delay(waitMs)
-    }
-
-    private fun configureMobileTransport(location: LocationConfig, upstream: Network?, directRules: String) {
-        val config = location.normalized()
-        olcrtc.setTransport(config.transport)
-        // The upstream network's own resolvers first, the public operator
-        // behind them: some mobile networks answer only their own (olcbox#16).
-        // Direct names under a bypass are resolved on the same list.
-        olcrtc.setDNS(upstreamDnsList(upstream))
-        olcrtc.setSocksListenHost(socksListenHost)
-        olcrtc.setVP8Options(config.vp8Fps.toLong(), config.vp8Batch.toLong())
-        // Set on every start, the empty text included: the one Runtime keeps
-        // its rules across Starts, so Global after a bypass would keep them.
-        // Parsed here, so a list the engine refuses fails this start loudly.
-        olcrtc.setDirectRules(directRules)
-        if (directRules.isNotEmpty()) {
-            addLog("Routing: olcRTC takes ${directRules.count { it == '\n' }} direct rules")
-        }
-        // Off on a Jitsi room, which has no datagram lane, unless a bypass gives
-        // the relay direct flows to carry (OlcRtcUdpRelay). Set on every start,
-        // for the same reason as the rules: a WB room after a Jitsi one would
-        // otherwise run with no UDP.
-        olcrtc.setUDP(
-            OlcRtcUdpRelay.enabled(config.bypassProvider, config.transport, directRules = directRules.isNotEmpty())
-        )
-        // Set on every start too, "off" included: the Runtime keeps a profile
-        // across Starts, so switching the setting off would otherwise not stick.
-        val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
-        olcrtc.setDTLSProfile(dtlsProfile)
-        if (dtlsProfile != OlcrtcDtls.OFF) {
-            addLog("olcRTC handshake: $dtlsProfile")
-        }
     }
 
     /**
@@ -1714,7 +1446,9 @@ class OlcboxVpnService : VpnService() {
                 socksPort = socksListenPort,
                 corePort = activeCorePort,
                 username = upstreamLogin().first,
-                password = upstreamLogin().second
+                password = upstreamLogin().second,
+                // The lane the engine's SOCKS port takes UDP on (EngineSession.hevUdpLane).
+                udp = engine.hevUdpLane()
             )
         )
         return file
@@ -1893,11 +1627,7 @@ class OlcboxVpnService : VpnService() {
      * location runs neither, and saying so is the useful answer there rather than
      * an empty string that reads like a core with nothing to report.
      */
-    private fun activeCoreDiagnostics(): String = when {
-        xrayCore.isRunning() -> xrayCore.diagnostics()
-        singBoxCore.isRunning() -> singBoxCore.diagnostics()
-        else -> "no core process is running"
-    }
+    private fun activeCoreDiagnostics(): String = engine.diagnostics()
 
     private fun cleanup(stopService: Boolean = true) {
         if (cleanupJob?.isActive == true) return
@@ -2026,20 +1756,8 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun stopMobile() {
-        val provider = lastMobileProvider
-        val wasRunning = olcrtc.isRunning()
-        // Logged rather than swallowed. A stop that misses its deadline is the
-        // difference between the next room joining and "olcRTC runtime is
-        // already active", and for one whole debugging session this line threw
-        // that away: the phone reported a start refused by a runtime nobody
-        // could see had failed to stop.
-        runCatching { olcrtc.stop(MOBILE_STOP_TIMEOUT_MS) }
-            .onFailure { addLog("olcRTC stop did not finish in time: ${it.message ?: it}") }
-        // Also tear down any active sing-box / Xray core (no-op if none running).
-        runCatching { stopCoreProcesses() }
-        if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
-            lastJitsiStopCompletedAtMs = System.currentTimeMillis()
-        }
+        // Whatever of the engine runs: the room client, a core (no-op if none does).
+        engine.stop()
     }
 
     private fun stopAuthenticatedSocksProxy() {
@@ -2343,12 +2061,7 @@ class OlcboxVpnService : VpnService() {
      * active transport, so the watchdog declared every core connection dead fifteen
      * seconds after it came up and restarted it, forever.
      */
-    private fun isActiveTransportRunning(): Boolean =
-        if (activeCorePort != null) {
-            singBoxCore.isRunning() || xrayCore.isRunning()
-        } else {
-            olcrtc.isRunning()
-        }
+    private fun isActiveTransportRunning(): Boolean = engine.isTransportRunning()
 
     private fun activeTransportLabel(): String =
         if (activeCorePort != null) "core transport" else "olcRTC"
@@ -2424,12 +2137,7 @@ class OlcboxVpnService : VpnService() {
         if (connectionMode == AndroidConnectionMode.Tun || vpnInterface != null) {
             setUnderlyingNetworks(if (network != null) arrayOf(network) else null)
         }
-        // A running olcRTC re-points its lookups at the new network's resolvers
-        // at once; the engine applies SetDNS live and refuses a malformed list.
-        if (network != null && olcrtc.isRunning()) {
-            runCatching { olcrtc.setDNS(upstreamDnsList(network)) }
-                .onFailure { addLog("olcRTC resolvers not updated: ${it.message}") }
-        }
+        if (network != null) engine.underlyingNetworkChanged(network)
     }
 
     /**
@@ -2595,6 +2303,7 @@ class OlcboxVpnService : VpnService() {
         if (status is VpnStatus.Connected && connectionMode == AndroidConnectionMode.Tun && vpnInterface != null) {
             sessionVerified = true
         }
+        if (status is VpnStatus.Connected) engine.connected()
         if (status is VpnStatus.Connected) {
             val (username, password) = upstreamLogin()
             OlcboxVpnState.channelProxy = org.olcbox.app.data.repository.SubscriptionFetchProxy(
@@ -2838,17 +2547,7 @@ class OlcboxVpnService : VpnService() {
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858
         private const val MOBILE_READY_TIMEOUT_MS = 25_000L
-        /**
-         * How long olcRTC may take to come up: the room's auth, the call's own
-         * ICE and DTLS, then the handshake. The engine now gives a WB Stream
-         * (LiveKit) join 25 s by itself (it was the SDK's 5 s), and a cellular
-         * ICE negotiation has taken 21 s, so the 25 s the cores get is too
-         * short here. The iOS tunnel waits 35 s for the same start.
-         */
-        private const val OLCRTC_READY_TIMEOUT_MS = 35_000L
-        private const val MOBILE_STOP_TIMEOUT_MS = 5_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
-        private const val JITSI_RESTART_SETTLE_MS = 2_000L
         private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
         private const val TUN2SOCKS_RESTART_WAIT_MS = 5_000L
         private const val CANCELLED_START_WAIT_MS = 3_000L

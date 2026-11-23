@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# A pin move's iOS step (scripts/pin-move.sh runs it with the new commit):
+# prints the iOS closure class of the move and checks the size of the library.
+#
+#   GHOSTLANE_CORE_COMMIT=<new> scripts/pin-move.d/ios-size <new commit>
+#
+# The class (scripts/ios-closure.sh) says whether the iPhone's extension links
+# other crate sources than at the pin the move leaves: "same" means the
+# iOS set (K6) need not be re-run, "changed" means it must be green.
+#
+# The size cannot be read without a build, and none is made here: it is the
+# aarch64-apple-ios line of the Core build's Apple job at the NEW commit
+# ("SIZE aarch64-apple-ios: libghostlane_core.a <bytes> bytes", in the job's
+# log and in report.txt of its core-apple artifact). Give it as
+#   IOS_LIB_BYTES=<bytes>            or
+#   IOS_CORE_REPORT=<path of that report.txt>
+# The one before it is the line of scripts/pin-move.d/ios-size.record for the pin the move leaves
+# (the first twelve characters of a commit and the bytes at it). A growth over
+# IOS_SIZE_MAX_GROWTH (default 131072 bytes) fails the step; the person moving
+# the pin may raise the limit for one move by naming it, and says why in the
+# pull request. A step that passes appends its line to the record.
+#
+# Overrides, for tests: IOS_OLD_COMMIT (else the pin at HEAD), IOS_CLOSURE_REPO
+# (a git directory with both commits), IOS_SIZE_RECORD (another record file).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+scripts="$(cd "$here/.." && pwd)"
+new="${1:-${GHOSTLANE_CORE_COMMIT:-}}"
+record="${IOS_SIZE_RECORD:-$here/ios-size.record}"
+[[ "$new" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex commit of the core>" >&2; exit 2; }
+
+old="${IOS_OLD_COMMIT:-}"
+if [ -z "$old" ]; then
+  old="$(git -C "$scripts" show "HEAD:scripts/ghostlane-core-pin.sh" 2> /dev/null |
+    sed -n 's/^GHOSTLANE_CORE_COMMIT=\([0-9a-f]\{40\}\)$/\1/p' | head -n 1)"
+fi
+
+if [ -n "$old" ]; then
+  if [ "$old" = "$new" ]; then
+    echo "ios closure: the pin does not move"
+    echo "class: same"
+  else
+    bash "$scripts/ios-closure.sh" class "$old" "$new" ${IOS_CLOSURE_REPO:+"$IOS_CLOSURE_REPO"}
+  fi
+else
+  echo "ios closure: the pin before this move is not known (no pin at HEAD); no class"
+fi
+
+bytes="${IOS_LIB_BYTES:-}"
+if [ -z "$bytes" ] && [ -n "${IOS_CORE_REPORT:-}" ]; then
+  bytes="$(sed -n 's/^SIZE aarch64-apple-ios: .* \([0-9][0-9]*\) bytes$/\1/p' "$IOS_CORE_REPORT" | head -n 1)"
+fi
+if ! [[ "$bytes" =~ ^[0-9]+$ ]]; then
+  echo "ios size: give the library's size at $new: IOS_LIB_BYTES=<bytes>, or IOS_CORE_REPORT=<report.txt of the core-apple artifact of the Core build at that commit>" >&2
+  exit 1
+fi
+
+last=""
+if [ -n "$old" ]; then
+  [ ! -f "$record" ] || last="$(grep -E "^${old:0:12} [0-9]+\$" "$record" | tail -n 1 || true)"
+  if [ -z "$last" ]; then
+    echo "ios size: the record holds no size for the pin this move leaves (${old:0:12}); add its line from the Core build's Apple job at that commit to $record" >&2
+    exit 1
+  fi
+fi
+short="${new:0:12}"
+if [ -n "$last" ]; then
+  echo "ios size: the record's line for the pin left is ${last% *} at ${last##* } bytes"
+  bash "$scripts/ios-closure.sh" size-delta "${last##* }" "$bytes"
+else
+  echo "ios size: no size recorded before; $bytes bytes at $short"
+fi
+{
+  [ ! -f "$record" ] || grep -vE "^$short " "$record" || true
+  echo "$short $bytes"
+} > "$record.new"
+mv "$record.new" "$record"
