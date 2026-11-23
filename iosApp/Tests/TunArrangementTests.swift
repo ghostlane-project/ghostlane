@@ -63,14 +63,6 @@ enum TunArrangementTests {
               "the refusal names the files it looked for")
         check(!TunArrangement.noLine.contains("Go") && !TunArrangement.noLine.contains("sing-box"),
               "and sends nobody looking for an engine this build does not carry")
-        // The spelling the engine host (iosApp/Tests/EngineHost) still calls:
-        // xray.json and config.json are not read, whatever they hold.
-        check(TunArrangement.decide(coreConfig: nil, olcrtcSocks: nil, xrayConfig: core, config: singBox)
-              == .refused(TunArrangement.noLine),
-              "xray.json and config.json decide nothing")
-        check(TunArrangement.decide(coreConfig: core, olcrtcSocks: nil, xrayConfig: nil, config: singBox)
-              == .engineBehindHev(.core, coreSocks),
-              "the older spelling gives the same answer")
 
         // What follows from it: what hev forwards to and how it carries UDP,
         // and what the diagnostics call it.

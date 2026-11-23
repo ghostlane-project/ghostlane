@@ -73,7 +73,7 @@ scripts/ghostlane-core-pin.sh
 scripts/ghostlane-core-resolve.sh
 scripts/build-ghostlane-core-host.sh
 sharedUI/src/jvmTest/resources/reference-configs/*core-*.json
-sharedUI/src/jvmTest/resources/reference-configs/ios-tun-socks-lossy.json
+scripts/rust-core-interop/lines/**
 scripts/xray-servers.txt"
 APP_PATHS=".github/workflows/rust-ios.yml
 scripts/test-ios-app-room-check.sh

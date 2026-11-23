@@ -46,10 +46,10 @@ enum EngineHost {
     }()
 
     static let usage = """
-    usage: engine-host start  <core.json> <config.json> <budget-bytes>
-           engine-host refuse <core.json> <config.json> <word>
-           engine-host olcrtc <config.json> <carrier> <direct-rules-file|-> <budget-bytes> joins|refused
-           engine-host fetch  <core.json> <config.json> <budget-bytes> <down-bytes> <up-bytes> reach|refused <label>
+    usage: engine-host start  <core.json> <budget-bytes>
+           engine-host refuse <core.json> <word>
+           engine-host olcrtc <carrier> <direct-rules-file|-> <budget-bytes> joins|refused
+           engine-host fetch  <core.json> <budget-bytes> <down-bytes> <up-bytes> reach|refused <label>
            engine-host x25519
            engine-host pinned-address
 
@@ -87,11 +87,11 @@ enum EngineHost {
     /// for the login it names and refuses any other; then stopped, and the
     /// port is let go.
     static func start(_ arguments: [String]) throws {
-        let a = try want(arguments, "<core.json>", "<config.json>", "<budget-bytes>")
+        let a = try want(arguments, "<core.json>", "<budget-bytes>")
         let name = fileName(a[0])
-        let budget = try bytes(a[2])
+        let budget = try bytes(a[1])
         let began = Date()
-        let socks = try startCore(try read(a[0]), tunConfig: try read(a[1]))
+        let socks = try startCore(try read(a[0]))
         let startedIn = Date().timeIntervalSince(began)
         try checkSocks(socks)
         let core = try coreBytes()
@@ -108,16 +108,16 @@ enum EngineHost {
     /// A core.json the core must refuse, with the core's own sentence naming
     /// `word`: the starts above can fail.
     static func refuse(_ arguments: [String]) throws {
-        let a = try want(arguments, "<core.json>", "<config.json>", "<word>")
+        let a = try want(arguments, "<core.json>", "<word>")
         let name = fileName(a[0])
         do {
-            _ = try startCore(try read(a[0]), tunConfig: try read(a[1]))
+            _ = try startCore(try read(a[0]))
         } catch let failure as HostFailure {
-            guard failure.description.contains(a[2]) else {
-                throw HostFailure("\(name): refused, but the reason does not name \(a[2]): \(failure.description)")
+            guard failure.description.contains(a[1]) else {
+                throw HostFailure("\(name): refused, but the reason does not name \(a[1]): \(failure.description)")
             }
             guard !CoreEngine.isRunning else { throw HostFailure("\(name): refused, and a core runs") }
-            print("ok   \(name): refused, naming \(a[2]): \(failure.description)")
+            print("ok   \(name): refused, naming \(a[1]): \(failure.description)")
             return
         }
         CoreEngine.stop()
@@ -131,13 +131,12 @@ enum EngineHost {
     /// dialed the room through the pin; `refused` that a carrier this build
     /// does not carry is refused, naming it, before any room is dialed.
     static func olcrtc(_ arguments: [String]) throws {
-        let a = try want(arguments, "<config.json>", "<carrier>", "<direct-rules-file|->", "<budget-bytes>", "joins|refused")
-        let tunConfig = try read(a[0])
-        let carrier = a[1]
+        let a = try want(arguments, "<carrier>", "<direct-rules-file|->", "<budget-bytes>", "joins|refused")
+        let carrier = a[0]
         var directRules = ""
-        if a[2] != "-" { directRules = try read(a[2]) }
-        let budget = try bytes(a[3])
-        let expect = a[4]
+        if a[1] != "-" { directRules = try read(a[1]) }
+        let budget = try bytes(a[2])
+        let expect = a[3]
         guard expect == "joins" || expect == "refused" else { throw HostFailure("expect joins or refused, not \(expect)") }
         let label = "olcRTC \(carrier), \(directRules.isEmpty ? "no direct rules" : "\(directRules.split(separator: "\n").count) direct rules")"
 
@@ -171,9 +170,7 @@ enum EngineHost {
         )
         let arrangement = TunArrangement.decide(
             coreConfig: nil,
-            olcrtcSocks: LoopbackSocks(port: parameters.socksPort, username: parameters.socksUser, password: parameters.socksPass),
-            xrayConfig: nil,
-            config: tunConfig
+            olcrtcSocks: LoopbackSocks(port: parameters.socksPort, username: parameters.socksUser, password: parameters.socksPass)
         )
         guard case .engineBehindHev(.olcrtc, let socks) = arrangement, arrangement.hevUdp == "udp" else {
             throw HostFailure("\(label): the arrangement is \(arrangement.engineLabel), not olcRTC behind hev with UDP")
@@ -219,17 +216,18 @@ enum EngineHost {
     /// One line through CoreEngine to a local server: 2 MiB down and 1 MiB up
     /// through the SOCKS port as hev would send them, with the footprint and
     /// the core's bytes read while they flow. `refused`: the same line with a
-    /// key or a pin the server does not answer to must not reach the page.
+    /// credential, a key or a pin the server does not answer to, or without
+    /// the waiver its server's certificate needs, must not reach the page.
     static func fetch(_ arguments: [String]) throws {
-        let a = try want(arguments, "<core.json>", "<config.json>", "<budget-bytes>", "<down-bytes>", "<up-bytes>", "reach|refused", "<label>")
-        let budget = try bytes(a[2])
-        let down = Int(try bytes(a[3]))
-        let up = Int(try bytes(a[4]))
-        let expect = a[5]
-        let label = a[6]
+        let a = try want(arguments, "<core.json>", "<budget-bytes>", "<down-bytes>", "<up-bytes>", "reach|refused", "<label>")
+        let budget = try bytes(a[1])
+        let down = Int(try bytes(a[2]))
+        let up = Int(try bytes(a[3]))
+        let expect = a[4]
+        let label = a[5]
         guard expect == "reach" || expect == "refused" else { throw HostFailure("expect reach or refused, not \(expect)") }
 
-        let socks = try startCore(try read(a[0]), tunConfig: try read(a[1]))
+        let socks = try startCore(try read(a[0]))
         defer { CoreEngine.stop() }
         let sampler = HostSampler()
         sampler.start()
@@ -322,11 +320,11 @@ enum EngineHost {
     /// The resolvers, the arrangement, the direct resolver, `CoreEngine.start`:
     /// the provider's order up to the engine listening. Returns the SOCKS
     /// server hev would be pointed at.
-    static func startCore(_ coreConfig: String, tunConfig: String) throws -> LoopbackSocks {
+    static func startCore(_ coreConfig: String) throws -> LoopbackSocks {
         // Before anything else, as the provider reads them before the
         // tunnel's settings go on.
         let resolvers = ResolverSnapshot.servers()
-        let arrangement = TunArrangement.decide(coreConfig: coreConfig, olcrtcSocks: nil, xrayConfig: nil, config: tunConfig)
+        let arrangement = TunArrangement.decide(coreConfig: coreConfig, olcrtcSocks: nil)
         guard case .engineBehindHev(.core, let socks) = arrangement else {
             throw HostFailure("the arrangement is \(arrangement.engineLabel), not the Rust core behind hev")
         }
