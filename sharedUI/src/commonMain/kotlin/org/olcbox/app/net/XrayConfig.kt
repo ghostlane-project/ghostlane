@@ -258,13 +258,14 @@ object XrayConfig {
 
     /**
      * `core.json`: the config the iOS extension starts `ghostlane-core`
-     * (xray-rust) from, behind hev-socks5-tunnel, for a line the per-transport
-     * choice gives to the Rust core ([IosCore.choose]). A shape of its own:
-     * [buildXhttp] stays what Go's Xray runs on every platform.
+     * (xray-rust) from, behind hev-socks5-tunnel, for a line the core takes
+     * ([IosCore.choose]: every shape of every kind of line under `net/core`,
+     * the core's own refusals aside). A shape of its own: [buildXhttp] stays
+     * what Go's Xray runs on every platform.
      *
-     * It is sing-box's iOS shape ([SingBoxConfig.buildIosSocks]) in the Xray
-     * JSON xray-rust's parser accepts, which refuses the whole document over
-     * one field it does not know:
+     * It is the iPhone's shape of one SOCKS inbound behind the tun, written in
+     * the Xray JSON xray-rust's parser accepts, which refuses the whole document
+     * over one field it does not know:
      *  - one inbound, SOCKS5 on 127.0.0.1:[socksPort] demanding [login], UDP on;
      *  - DNS answered by the core: the tun's resolver reaches it as a query to
      *    port 53, which the routing hands to a `dns` outbound; A gets a fake
