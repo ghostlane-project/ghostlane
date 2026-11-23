@@ -519,12 +519,15 @@ def datagram():
     if why:
         raise ConnectionError(why)
     with conn:
-        rep, addr, bport = request(conn, 3, "0.0.0.0", 0)
+        # The core pins an association that demands a login to the socket the
+        # client declares, so the client binds first and says its port.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", 0))
+        sock.settimeout(2)
+        rep, addr, bport = request(conn, 3, "0.0.0.0", sock.getsockname()[1])
         if rep != 0:
             raise ConnectionError("UDP ASSOCIATE replied %d" % rep)
         relay = (HOST if addr in ("0.0.0.0", "::") else addr, bport)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2)
         payload = b"lan-check-" + bytes(range(64))
         head = b"\x00\x00\x00\x01" + socket.inet_aton(TARGET) + struct.pack(">H", 53)
         got = None
@@ -591,7 +594,16 @@ set +e
 wait "$gradle_pid"
 gradle=$?
 set -e
-tail -n 60 "$work/gradle.out"
+tail -n 20 "$work/gradle.out"
+echo "--- what the session's port carried"
+cat "$work/upstream.log"
+echo "--- the test's own output"
+"$py" -I - "$results/TEST-$class.xml" <<'PY' || true
+import sys
+import xml.etree.ElementTree as ET
+for e in ET.parse(sys.argv[1]).getroot().iter("system-out"):
+    print((e.text or "")[-3000:])
+PY
 
 source="$root/sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxyRealTest.kt"
 verdict="$("$py" -I - "$results/TEST-$class.xml" "$source" <<'PY'
