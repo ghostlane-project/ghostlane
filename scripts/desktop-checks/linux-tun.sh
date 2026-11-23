@@ -172,6 +172,10 @@ world="gl-l2-w-$$"
 as_root() { sudo -n "$@"; }
 in_client() { sudo -n ip netns exec "$client" "$@"; }
 in_world() { sudo -n ip netns exec "$world" "$@"; }
+# The app's own directory for the test: hev keeps 63 bytes of a script's
+# path (hev-config.c reads post-up-script and pre-down-script with
+# strncpy(..., 64 - 1)), and one under the runner's work directory is longer.
+app_data="$(mktemp -d /tmp/gl-l2.XXXXXX)"
 cleanup() {
   set +e
   local ns
@@ -180,6 +184,7 @@ cleanup() {
     sudo -n ip netns del "$ns" 2> /dev/null
     sudo -n rm -rf "/etc/netns/$ns"
   done
+  sudo -n rm -rf "$app_data"
 }
 trap cleanup EXIT
 
@@ -502,7 +507,7 @@ grep -q "Link connected" "$work/olcrtc-server.log" ||
 say "the far side is up: DNS, the origin, the echo, Xray, the hub and the olcRTC server in its room"
 
 # ---- the scripts' resolvectl, written down instead of told to resolved -----------------
-mkdir -p "$work/shim" "$work/app-data"
+mkdir -p "$work/shim"
 resolvectl_real="$(sudo -n sh -c 'command -v resolvectl' 2> /dev/null || true)"
 resolvectl_log=""
 if [ -n "$resolvectl_real" ]; then
@@ -526,7 +531,7 @@ json.dump({
             "&sni=reality.test&flow=xtls-rprx-vision&type=tcp#linux-tun",
     "room": {"provider": "none", "rooms": ["tcp://hub.test:7000/$room"], "key": "$key",
              "dns": "10.232.0.53:53", "udp": True},
-    "app_data": "$work/app-data",
+    "app_data": "$app_data",
     "logs": "$logs",
     "xray_access": "$work/xray-access.log",
     "resolvectl": "$resolvectl_log",
@@ -603,6 +608,26 @@ print("; ".join(bad) if bad else "%d of %d tests passed" % (n["tests"], written)
 sys.exit(1 if bad else 0)
 PY
 )" && held=0 || held=1
+
+# What the test said, where it did not pass: its failures and the end of what it printed.
+if [ "$held" -ne 0 ]; then
+  python3 -I - "$results/TEST-$class.xml" <<'PY' || true
+import sys
+import xml.etree.ElementTree as ET
+try:
+    suite = ET.parse(sys.argv[1]).getroot()
+except (OSError, ET.ParseError):
+    sys.exit(0)
+for case in suite.iter("testcase"):
+    for kind in ("failure", "error"):
+        for e in case.iter(kind):
+            print("== %s: %s" % (case.get("name"), kind))
+            print("\n".join((e.text or e.get("message") or "").splitlines()[:25]))
+out = "".join(e.text or "" for e in suite.iter("system-out"))
+print("== what the test printed, its end")
+print("\n".join(out.splitlines()[-200:]))
+PY
+fi
 
 # The runner's own namespace was not touched.
 host_left=""

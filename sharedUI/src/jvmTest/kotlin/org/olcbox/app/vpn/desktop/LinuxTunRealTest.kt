@@ -14,6 +14,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.junit.Assume
+import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
@@ -398,6 +399,11 @@ class LinuxTunRealTest {
     }
 
     private suspend fun startTunnel(port: Int, login: SocksLogin, killSwitch: Boolean = false): Process {
+        // hev keeps 63 bytes of a script's path and runs what is left of it.
+        for (name in listOf("linux-tun-up.sh", "linux-tun-down.sh")) {
+            val script = DesktopPaths.appDataDir().resolve(name).toString()
+            assertTrue(script.toByteArray().size < 64, "hev would cut the path of $script to 63 bytes")
+        }
         val controller = LinuxTunController(addLog = { line -> say(line) })
         tun = controller
         val process = controller.start(
