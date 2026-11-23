@@ -347,11 +347,7 @@ class InteropDumpTest {
         val reality = IosCoreFixtures.link(IosCoreLine.RealityVision)
         val byName = reality.replace("@127.0.0.1:", "@server.interop.test:")
         val lines = listOf(RunLine("reality", reality, 21000), RunLine("by-name", byName, 21001))
-        val modes = listOf(
-            RunMode("blocked-only", "reality", "10.1.2.3"),
-            RunMode("no-such-mode", "reality", "10.1.2.3"),
-            RunMode("blocked-only-by-name", "by-name", "10.1.2.3"),
-        )
+        val modes = listOf(RunMode("blocked-only", "reality", "10.1.2.3"), RunMode("no-such-mode", "reality", "10.1.2.3"))
         val moded = dump(lines, login, out, modes).getValue("modes").jsonObject
         val said = moded.getValue("blocked-only").jsonObject
         assertEquals("reality", said.getValue("line").jsonPrimitive.content)
@@ -368,13 +364,16 @@ class InteropDumpTest {
             moded.getValue("no-such-mode").jsonObject.getValue("refusal").jsonPrimitive.content,
         )
         assertEquals(
-            CoreRefusal.of(assertNotNull(LinkParser.parse(byName))),
-            moded.getValue("blocked-only-by-name").jsonObject.getValue("refusal").jsonPrimitive.content,
-        )
-        assertEquals(
             listOf("manifest.json", "reality.blocked-only.core.json", "reality.core.json"),
             out.list().orEmpty().sorted(),
         )
+        val refusedOut = temp()
+        val refused = dump(lines, login, refusedOut, listOf(RunMode("blocked-only", "by-name", "10.1.2.3")))
+            .getValue("modes").jsonObject.getValue("blocked-only").jsonObject
+        assertEquals("by-name", refused.getValue("line").jsonPrimitive.content)
+        assertEquals(CoreRefusal.of(assertNotNull(LinkParser.parse(byName))), refused.getValue("refusal").jsonPrimitive.content)
+        assertNull(refused["config"])
+        assertEquals(listOf("manifest.json", "reality.core.json"), refusedOut.list().orEmpty().sorted())
     }
 
     /** A run's modes are read as the driver writes them; none is none, and a mode on no line, or twice, is refused. */
