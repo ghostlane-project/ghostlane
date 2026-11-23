@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # desktop-check-os: linux
+# desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
+# desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
+# desktop-check-paths: androidApp/src/main/jni/hev-socks5-tunnel/**
+#
+# The files above are what this check holds: a change to any of them starts
+# Rust desktop (scripts/p6-tests/desktop-check-paths.sh holds its paths to
+# them).
 #
 # K2 on ghostlane-engine: the Linux tunnel as the app makes it, in network
 # namespaces, with the real hev built from the app's tree, the engine as the
