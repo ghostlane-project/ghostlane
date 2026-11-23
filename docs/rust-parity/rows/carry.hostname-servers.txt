@@ -1,4 +1,5 @@
 android | not-proven | - | -
+ios | proven | sharedUI/src/commonTest/kotlin/org/olcbox/app/net/IosStartHostPinTest.kt::aServerNamedByAHostnameStartsOnTheCoreWrittenForThePlaceholder, scripts/p6-tests/ios-host-pin.sh, scripts/test-ios-engine-on-mac.sh::named_cells, .github/workflows/rust-ios.yml::The extension's engines on a Mac | The app writes the line for a placeholder address with the name as the TLS server name and the Host, and the name at the head of core.json (IosCore.start); HostPin's reading and its exchange with a resolver are held on stubs; on a Mac the extension's own step (HostPin.apply with HostPin.lookup from a pinned socket) resolves the name against a local resolver, and the core dials that address while the local server holds the Host and the TLS server name to the name (another Host or server name reaches nothing); a name the resolver does not know fails with the line's own sentence and starts no core
 macos | not-proven | - | -
 linux | not-proven | - | -
 windows | not-proven | - | -
