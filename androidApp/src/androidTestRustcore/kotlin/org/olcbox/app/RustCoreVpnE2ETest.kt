@@ -65,12 +65,13 @@ class RustCoreVpnE2ETest {
         return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
     }
 
-    /** Shell's `nc` with a request on stdin; what the server sent back. */
-    private fun shellFetch(host: String, port: Int, request: String): String {
-        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("toybox nc -w 8 $host $port")
-        ParcelFileDescriptor.AutoCloseOutputStream(input).use { it.write(request.toByteArray()); it.flush() }
-        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
-    }
+    /**
+     * The shell's GET of 192.0.2.1:80[path] (ShellNet, as uid 2000: toybox has no `nc` on
+     * Android 6 and 7, and the instrumentation's two-way shell needs Android 12); true when
+     * the answer held [needle].
+     */
+    private fun shellFetch(path: String, needle: String): Boolean =
+        RustE2eDevice.shellFetch("192.0.2.1", 80, path, needle)
 
     private fun tunFds(): List<String> =
         File("/proc/self/fd").listFiles().orEmpty()
@@ -189,7 +190,7 @@ class RustCoreVpnE2ETest {
             .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_MODE, "proxy_selected")
             .putExtra(OlcboxVpnActions.EXTRA_SPLIT_TUNNEL_PROXY_APPS, arrayListOf("com.android.shell"))
         try {
-            context.startForegroundService(start)
+            RustE2eDevice.startVpn(start)
             waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
             say("RESULT status Connected; log: ${OlcboxVpnState.logs.value.filter { it.contains("Rust core") }.joinToString(" | ")}")
             assertTrue("a tun fd is held while connected: ${tunFds()}", tunFds().isNotEmpty())
@@ -199,9 +200,9 @@ class RustCoreVpnE2ETest {
 
             val before = tunInterfaceBytes() ?: 0L
             val hitsBefore = hits.get()
-            val reply = shellFetch("192.0.2.1", 80, "GET /e2e HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            say("RESULT fetch of 192.0.2.1:80 through the tun answered: ${reply.lineSequence().firstOrNull()} ... ${reply.takeLast(24)}")
-            assertTrue("the answer is the test server's: '$reply'", reply.contains(nonce))
+            val answered = shellFetch("/e2e", nonce)
+            say("RESULT fetch of 192.0.2.1:80 through the tun answered with the test server's nonce: $answered")
+            assertTrue("the answer is the test server's", answered)
             assertEquals("the server saw one request", hitsBefore + 1, hits.get())
             val after = tunInterfaceBytes() ?: 0L
             say("RESULT tun0 bytes $before -> $after")
@@ -213,23 +214,31 @@ class RustCoreVpnE2ETest {
             say("RESULT resetNetwork closed $closed connection(s)")
             assertTrue("resetNetwork answers a count", closed >= 0)
             assertTrue("the core still runs after the reset", RustCoreEngine.isCoreRunning())
-            val again = shellFetch("192.0.2.1", 80, "GET /e2e-after-reset HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            assertTrue("a fetch after the reset is answered: '$again'", again.contains(nonce))
+            assertTrue("a fetch after the reset is answered", shellFetch("/e2e-after-reset", nonce))
             assertEquals("the server saw the second request", hitsBefore + 2, hits.get())
             assertTrue("still connected after the reset", OlcboxVpnState.status.value is VpnStatus.Connected)
+        } catch (e: Throwable) {
+            // A red test leaves neither its server nor its core.json behind: a later class's
+            // session must not be led to this server (an answer with a nonce of another test).
+            RustCore.testConfig = null
+            server.close()
+            throw e
         } finally {
             context.startService(
                 Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME).setAction(OlcboxVpnActions.ACTION_STOP_VPN)
             )
         }
-        waitFor("the status Disconnected", 30_000) { OlcboxVpnState.status.value is VpnStatus.Disconnected }
-        waitFor("the Rust core to stop", 10_000) { !RustCoreEngine.isCoreRunning() }
-        waitFor("the service to end", 20_000) { !serviceRunning() }
-        waitFor("the tun fd to close", 10_000) { tunFds().isEmpty() }
-        assertEquals("tun0 is gone", null, tunInterfaceBytes())
-        say("RESULT stopped: status Disconnected, core stopped, service ended, tun fd closed, tun0 gone")
-        RustCore.testConfig = null
-        server.close()
+        try {
+            waitFor("the status Disconnected", 30_000) { OlcboxVpnState.status.value is VpnStatus.Disconnected }
+            waitFor("the Rust core to stop", 10_000) { !RustCoreEngine.isCoreRunning() }
+            waitFor("the service to end", 20_000) { !serviceRunning() }
+            waitFor("the tun fd to close", 10_000) { tunFds().isEmpty() }
+            assertEquals("tun0 is gone", null, tunInterfaceBytes())
+            say("RESULT stopped: status Disconnected, core stopped, service ended, tun fd closed, tun0 gone")
+        } finally {
+            RustCore.testConfig = null
+            server.close()
+        }
     }
 
     // ---- the gaps closed after phase 2: UDP, a hostname with bypass routing, proxy mode ----
@@ -276,16 +285,9 @@ class RustCoreVpnE2ETest {
 
     private fun logCount(needle: String) = OlcboxVpnState.logs.value.count { it.contains(needle) }
 
-    /** The shell sends one UDP datagram through the tun and prints what comes back. */
-    private fun shellUdp(host: String, port: Int, payload: String): String {
-        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("sh")
-        ParcelFileDescriptor.AutoCloseOutputStream(input).use {
-            // toybox nc -u never ends on its own (run 4 sat 15 min here): timeout ends it.
-            it.write("(echo $payload; sleep 3) | toybox timeout 8 toybox nc -u -w 5 $host $port; exit\n".toByteArray())
-            it.flush()
-        }
-        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
-    }
+    /** The shell (ShellNet, uid 2000) sends one UDP datagram through the tun; what came back, or the failure. */
+    private fun shellUdp(host: String, port: Int, payload: String): String =
+        RustE2eDevice.shellUdp(host, port, payload)
 
     @Test
     fun udpRoundTripsThroughTheTunOnTheRustCore() {
@@ -317,7 +319,7 @@ class RustCoreVpnE2ETest {
         }
         saveProfile("vless://00000000-0000-4000-8000-000000000000@192.0.2.9:443?type=tcp&security=none#e2e")
         try {
-            context.startForegroundService(startIntent("tun", user, pass))
+            RustE2eDevice.startVpn(startIntent("tun", user, pass))
             waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
             val reply = shellUdp("192.0.2.1", 5353, nonce)
             say("RESULT UDP through the tun: '${reply.trim()}', datagrams at the echo: ${datagrams.get()}")
@@ -344,7 +346,7 @@ class RustCoreVpnE2ETest {
         val readyBefore = logCount("Rust core ready on")
         val resolvedBefore = logCount("resolved to an address")
         try {
-            context.startForegroundService(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
+            RustE2eDevice.startVpn(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
             waitFor("the core to start on a resolved, bypass-routed line", 60_000) {
                 logCount("Rust core ready on") > readyBefore
             }
@@ -375,7 +377,7 @@ class RustCoreVpnE2ETest {
         )
         val readyBefore = logCount("Rust core ready on")
         try {
-            context.startForegroundService(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
+            RustE2eDevice.startVpn(startIntent("tun", "u${System.nanoTime() % 100000}", "p${System.nanoTime() % 100000}x"))
             waitFor("the core to start with the user's rules", 60_000) { logCount("Rust core ready on") > readyBefore }
             assertTrue("the core is running", RustCoreEngine.isCoreRunning())
             say("RESULT Global + the user's direct/tunnel rules: the core started")
@@ -503,7 +505,7 @@ class RustCoreVpnE2ETest {
             val port = freePort()
             val readyBefore = logCount("Rust core ready on")
             try {
-                context.startForegroundService(proxyIntent(port, "", ""))
+                RustE2eDevice.startVpn(proxyIntent(port, "", ""))
                 waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
                 assertTrue("the Rust core runs", RustCoreEngine.isCoreRunning())
                 assertTrue("the core was started", logCount("Rust core ready on") > readyBefore)
@@ -528,7 +530,7 @@ class RustCoreVpnE2ETest {
             saveProfile(plainLine(server.port))
             val port = freePort()
             try {
-                context.startForegroundService(proxyIntent(port, user, pass))
+                RustE2eDevice.startVpn(proxyIntent(port, user, pass))
                 waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
                 val reply = socksGet(port, null, null)
                 assertTrue("a client with no login is carried: '$reply'", reply.contains(nonce))
@@ -547,7 +549,7 @@ class RustCoreVpnE2ETest {
             saveProfile(plainLine(server.port))
             val port = freePort()
             try {
-                context.startForegroundService(proxyIntent(port, "", "").putExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST, "localhost"))
+                RustE2eDevice.startVpn(proxyIntent(port, "", "").putExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST, "localhost"))
                 waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
                 val reply = socksGet(port, null, null)
                 assertTrue("the answer is the far end's: '$reply'", reply.contains(nonce))
@@ -555,5 +557,142 @@ class RustCoreVpnE2ETest {
                 stopAndWait()
             }
         }
+    }
+
+    // ---- the app's check of the tunnel, on every API level ----
+
+    /**
+     * A SOCKS server on loopback that demands [user] and [pass] the way every tun session's
+     * core does, and records what each client said first: its SOCKS version (4 or 5), and for
+     * a SOCKS5 client the login it sent and where it asked to go. A CONNECT it took is
+     * answered as an HTTP server would, with [body].
+     */
+    private class RecordingSocksServer(private val user: String, private val pass: String, private val body: String) : AutoCloseable {
+        private val socket = ServerSocket(0, 20, InetAddress.getByName("127.0.0.1"))
+        val port: Int get() = socket.localPort
+        val seen: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+        init {
+            Thread {
+                while (!socket.isClosed) {
+                    val client = try { socket.accept() } catch (_: Exception) { break }
+                    Thread { runCatching { handle(client) }.onFailure { seen.add("error ${it.javaClass.simpleName}") } }
+                        .also { it.isDaemon = true }.start()
+                }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        private fun handle(client: Socket) = client.use {
+            client.soTimeout = 10_000
+            val input = DataInputStream(client.getInputStream())
+            val output = client.getOutputStream()
+            when (val version = input.readUnsignedByte()) {
+                4 -> {
+                    // SOCKS4 carries a user id and no password: refused, as a core with a login refuses it.
+                    seen.add("socks4")
+                    output.write(byteArrayOf(0, 0x5b, 0, 0, 0, 0, 0, 0)); output.flush()
+                }
+                5 -> {
+                    val methods = ByteArray(input.readUnsignedByte()).also { input.readFully(it) }.map { it.toInt() }
+                    if (2 !in methods) {
+                        seen.add("socks5 methods $methods without a login")
+                        output.write(byteArrayOf(5, 0xff.toByte())); output.flush()
+                        return@use
+                    }
+                    output.write(byteArrayOf(5, 2)); output.flush()
+                    input.readUnsignedByte()
+                    val u = String(ByteArray(input.readUnsignedByte()).also { input.readFully(it) })
+                    val p = String(ByteArray(input.readUnsignedByte()).also { input.readFully(it) })
+                    if (u != user || p != pass) {
+                        seen.add("socks5 a wrong login")
+                        output.write(byteArrayOf(1, 1)); output.flush()
+                        return@use
+                    }
+                    output.write(byteArrayOf(1, 0)); output.flush()
+                    input.readUnsignedByte()
+                    val command = input.readUnsignedByte()
+                    input.readUnsignedByte()
+                    val host = when (input.readUnsignedByte()) {
+                        1 -> InetAddress.getByAddress(ByteArray(4).also { input.readFully(it) }).hostAddress
+                        3 -> String(ByteArray(input.readUnsignedByte()).also { input.readFully(it) }, Charsets.US_ASCII)
+                        4 -> InetAddress.getByAddress(ByteArray(16).also { input.readFully(it) }).hostAddress
+                        else -> "?"
+                    }
+                    val destPort = input.readUnsignedShort()
+                    seen.add("socks5 login, command $command to $host:$destPort")
+                    output.write(byteArrayOf(5, 0, 0, 1, 0, 0, 0, 0, 0, 0)); output.flush()
+                    val request = client.getInputStream().bufferedReader()
+                    while (request.readLine().let { it != null && it.isNotEmpty() }) Unit
+                    output.write("HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body".toByteArray())
+                    output.flush()
+                }
+                else -> {
+                    seen.add("version $version")
+                    Unit
+                }
+            }
+        }
+
+        override fun close() = socket.close()
+    }
+
+    /**
+     * The app's check of a tunnel (TunnelVerifier, the step before "Connected" on every engine)
+     * through a SOCKS port that demands a login, as the core of every tun session does: it must
+     * speak SOCKS5 and send the login, on every API level the app installs on. The probe asks
+     * for 192.0.2.1 over plain HTTP, which only this server answers.
+     */
+    @Test
+    fun theTunnelCheckSpeaksSocks5WithTheLogin() {
+        val user = "u${System.nanoTime() % 100000}"
+        val pass = "p${System.nanoTime() % 100000}x"
+        RecordingSocksServer(user, pass, "ip=192.0.2.77\nloc=XX\n").use { server ->
+            // What the platform's own SOCKS client sends (java.net.Socket with a SOCKS proxy).
+            runCatching {
+                Socket(java.net.Proxy(java.net.Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", server.port))).use {
+                    it.connect(InetSocketAddress("192.0.2.1", 80), 5_000)
+                }
+            }
+            Thread.sleep(300)
+            say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the platform's SOCKS client said ${server.seen.toList()}")
+            server.seen.clear()
+
+            val exit = runBlocking {
+                org.olcbox.app.net.TunnelVerifier.verify(
+                    socksHost = "127.0.0.1",
+                    socksPort = server.port,
+                    username = user,
+                    password = pass,
+                    timeoutMs = 8_000,
+                    probeUrls = listOf("http://192.0.2.1/cdn-cgi/trace")
+                )
+            }
+            say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the tunnel check through a SOCKS port with a login said ${server.seen.toList()}, exit ${exit?.ip}")
+            assertEquals("the check came back with the trace's address", "192.0.2.77", exit?.ip)
+            assertTrue("the check spoke SOCKS5 with the login: ${server.seen.toList()}", server.seen.isNotEmpty() && server.seen.all { it.startsWith("socks5 login") })
+        }
+        // Whether this Android's TLS takes the probe's own servers, with no tunnel in front (what
+        // the check asks the far end for). Said, not asserted: it is the network's, not the app's.
+        val direct = runBlocking { org.olcbox.app.net.TunnelVerifier.verifySystemTunnel(timeoutMs = 8_000) }
+        say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the probe's servers straight from this process: ${direct?.let { "answered" } ?: "no answer"}")
+    }
+
+    /**
+     * Only when a script names a port (-e tunnelCheckPort): the app's tunnel check through that
+     * loopback SOCKS port, with the login it names (-e tunnelCheckUser, -e tunnelCheckPass) or
+     * none, against the probe's own servers. A reference run for another core on the device.
+     */
+    @Test
+    fun theTunnelCheckThroughAPortTheScriptNames() {
+        val args = InstrumentationRegistry.getArguments()
+        val port = args.getString("tunnelCheckPort")?.toIntOrNull()
+        org.junit.Assume.assumeTrue("only a script names a port (-e tunnelCheckPort)", port != null)
+        val user = args.getString("tunnelCheckUser").orEmpty()
+        val pass = args.getString("tunnelCheckPass").orEmpty()
+        val failures = mutableListOf<String>()
+        val exit = runBlocking {
+            org.olcbox.app.net.TunnelVerifier.verify("127.0.0.1", port!!, user, pass, onFailure = { failures.add("${it.url}: ${it.reason} (${it.tookMs} ms)") })
+        }
+        say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the tunnel check through 127.0.0.1:$port, login ${user.isNotEmpty()}: ${if (exit != null) "answered" else "no answer"}; $failures")
     }
 }

@@ -470,10 +470,11 @@ jobs:
       fail-fast: false
       matrix:
         # K3's legs. A leg is one emulator: every class of the e2e package, then the kill.
-        # API 23 and 24 boot with the image's own RAM and data partition: with 4 GiB and
-        # a 4 GiB partition their app_process commands (am, pm, input) aborted or hung.
+        # API 23 and 24 boot with 2 GiB of RAM: with 4 GiB their app_process commands
+        # (am, pm, input) aborted (SIGABRT, 23) or hung (24). API 23's own data partition
+        # is too small for the app (INSTALL_FAILED_INSUFFICIENT_STORAGE): 2 GiB.
         leg:
-          - { api: 23, target: google_apis, pages: 4k, ram: 2048M, disk: '' }
+          - { api: 23, target: google_apis, pages: 4k, ram: 2048M, disk: 2048M }
           - { api: 24, target: google_apis, pages: 4k, ram: 2048M, disk: '' }
           - { api: 29, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
           - { api: 34, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
@@ -504,6 +505,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # What a red start is read by: the line's port on the host's loopback (the
+      # session script captures it when SESSION_DIAG=1).
+      - name: tcpdump for the line's capture
+        run: command -v tcpdump > /dev/null || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends tcpdump; }
+
       # The kill's line: the first official Xray server of scripts/xray-servers.txt
       # (the exits' release), checked against its pinned hash.
       - name: The Xray server for the kill, by hash
@@ -517,6 +523,8 @@ jobs:
       # One line: the kill runs whatever the classes did, and the leg fails if either failed.
       - name: "Every class of the e2e package, then kill -9 and restart (API ${{ matrix.leg.api }}, ${{ matrix.leg.pages }})"
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SESSION_DIAG: '1'
         with:
           api-level: ${{ matrix.leg.api }}
           arch: x86_64
@@ -527,7 +535,7 @@ jobs:
           disk-size: ${{ matrix.leg.disk }}
           # adbd as the shell (uid 2000) where the image starts it as root (API 23): the
           # app lists name the shell's package, and root is in none of them.
-          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
+          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; bash scripts/rust-core-android-goref.sh out/leg/goref; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
 
       - name: Summary
         if: always()
@@ -539,6 +547,7 @@ jobs:
             cat out/leg/e2e/classes.txt 2> /dev/null || echo "no class ran"
             grep -E '^(OK|FAILURES|Tests run)' out/leg/e2e/am.txt 2> /dev/null | tr -d '\r'
             grep '^RESULT' out/leg/kill/results.txt 2> /dev/null || echo "no kill result"
+            grep '^RESULT' out/leg/goref/results.txt 2> /dev/null || echo "no reference run"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0

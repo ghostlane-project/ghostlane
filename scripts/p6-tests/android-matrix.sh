@@ -7,9 +7,9 @@
 #   - RustSplitE2ETest or RustKillE2ETest is missing, or a helper file of the
 #     package (ShellNet.kt, RustE2eDevice.kt) holds a test, so that the e2e
 #     script would ask for it as a class;
-#   - those four files call what Android 6 lacks: the instrumentation's
-#     two-way shell (Android 12), toybox's nc (Android 8), or
-#     startForegroundService (Android 8) anywhere but behind
+#   - those four files or RustCoreVpnE2ETest call what Android 6 lacks: the
+#     instrumentation's two-way shell (Android 12), toybox's nc (Android 8),
+#     or startForegroundService (Android 8) anywhere but behind
 #     RustE2eDevice.startVpn's version check;
 #   - rust-core-android-host.py's `serve` (here against a stand-in xray) does
 #     not write a REALITY link to 10.0.2.2 with the run's public key, its
@@ -89,8 +89,8 @@ for h in ShellNet RustE2eDevice; do
   [ -f "$pkg/$h.kt" ] || { bad "$h.kt is missing"; continue; }
   grep -q '@Test' "$pkg/$h.kt" && bad "$h.kt holds '@Test': the e2e script would ask for it as a class" || ok "$h.kt is no class of tests"
 done
-for f in RustSplitE2ETest RustKillE2ETest ShellNet RustE2eDevice; do
-  [ -f "$pkg/$f.kt" ] || continue
+for f in RustSplitE2ETest RustKillE2ETest ShellNet RustE2eDevice RustCoreVpnE2ETest; do
+  [ -f "$pkg/$f.kt" ] || { bad "$f.kt is missing"; continue; }
   code=$(grep -v '^\s*\(\*\|//\|/\*\)' "$pkg/$f.kt")
   echo "$code" | grep -q 'executeShellCommandRw' && bad "$f.kt calls executeShellCommandRw (Android 12)"
   echo "$code" | grep -q 'toybox nc' && bad "$f.kt runs toybox's nc (not on Android 6 and 7)"
@@ -100,7 +100,7 @@ for f in RustSplitE2ETest RustKillE2ETest ShellNet RustE2eDevice; do
     fi
   fi
 done
-ok "A5's e2e files checked for calls Android 6 lacks"
+ok "A5's e2e files and RustCoreVpnE2ETest checked for calls Android 6 lacks"
 
 # ---- the host's helper ---------------------------------------------------------
 tmp=$(mktemp -d)
@@ -221,8 +221,8 @@ fi
 
 # ---- the kill, and its cells in K3's table ----------------------------------------
 # A stand-in for adb and the emulator behind it: one app process, its tun0 and its log.
-# SIGKILL takes the process and tun0; with FAKE_RESTART=android, Android starts the
-# service again in a new process at once, as START_REDELIVER_INTENT asks.
+# SIGKILL (and SIGABRT) takes the process and tun0; with FAKE_RESTART=android, Android
+# starts the service again in a new process at once, as START_REDELIVER_INTENT asks.
 mkdir -p "$tmp/fake"
 cat > "$tmp/fake/adb" << 'EOF'
 #!/usr/bin/env bash
@@ -257,7 +257,7 @@ case "$1" in
       "dumpsys activity services "*) [ -f "$st/service" ] && echo "  * ServiceRecord{1 u0 org.proofkit.app/org.olcbox.app.vpn.service.OlcboxVpnService}" ;;
       *DEBUG_START_VPN* | "su 0 am start"*) up; echo "Broadcast completed: result=0" ;;
       *DEBUG_STOP_VPN*) down; rm -f "$st/service" ;;
-      "su 0 kill -9 "* | "kill -9 "*)
+      "su 0 kill -9 "* | "kill -9 "* | "su 0 kill -6 "*)
         if [ "${cmd##* }" = "$(pid)" ]; then
           down
           [ "${FAKE_RESTART:-}" = android ] && up
@@ -415,7 +415,7 @@ curve 0 "" 1 > "$tmp/failing.csv"
 [ "$(verdict "$tmp/restarted.csv")" = "not flat" ] && ok "soak-summary: a restarted process fails the soak" || bad "soak-summary passed a soak whose process restarted"
 [ "$(verdict "$tmp/failing.csv")" = "not flat" ] && ok "soak-summary: a tenth of the rounds failing fails the soak" || bad "soak-summary passed a soak whose fetches failed"
 
-for s in session kill soak e2e; do
+for s in session kill soak e2e goref; do
   bash -n "$root/scripts/rust-core-android-$s.sh" && ok "rust-core-android-$s.sh parses" || bad "rust-core-android-$s.sh does not parse"
 done
 

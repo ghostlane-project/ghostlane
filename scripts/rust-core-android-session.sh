@@ -20,6 +20,13 @@
 #       the shell's GET of 192.0.2.1, through the tun, the line and the page
 #   say, fail, finish, app_pid, alive, tun_up, log_count, wait_session, dev
 #
+# With SESSION_DIAG=1 (the e2e legs) a red run says more: every start samples
+# the app's process for 24 s (each thread's name, the system call it sits in
+# and where in the kernel, its descriptors by kind, its sockets to the line's
+# port with the bytes the kernel queues, the kernel's entropy), and the host's
+# loopback is captured on the line's port (tcpdump, where sudo runs it), where
+# the emulator hands Xray what the device sent; both are printed when it fails.
+#
 # A session under instrumentation could not be killed and watched: when the
 # instrumented process dies, Android ends the instrumentation and force-stops
 # the package, and the service's restart with it.
@@ -32,6 +39,8 @@ session_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 host_pid=
 out=
 session_name=session
+capture_pid=
+line_port=
 
 say() { echo "RESULT $*" | tee -a "$out/results.txt"; }
 
@@ -40,6 +49,10 @@ finish() {
   if [ -n "$host_pid" ]; then
     kill "$host_pid" 2> /dev/null
     wait "$host_pid" 2> /dev/null
+  fi
+  if [ -n "$capture_pid" ]; then
+    sudo -n kill "$capture_pid" 2> /dev/null
+    wait "$capture_pid" 2> /dev/null
   fi
   # The run's keys and credential stay out of the artifact even if the host's helper could not remove them.
   rm -f "$out/host/server.json" "$out/host/target.key" "$out/host/target.crt" "$out/host/link"
@@ -57,6 +70,14 @@ finish() {
     grep -E '/OlcboxVpnService' "$out/logcat.txt" | tail -n 40 | cut -c1-300
     echo "--- errors and aborts"
     grep -E ' (E|F|A)/(AndroidRuntime|DEBUG|libc|art|ActivityManager|PackageManager|ghostlane-core)' "$out/logcat.txt" | tail -n 40 | cut -c1-300
+    if [ -s "$out/start-samples.txt" ]; then
+      echo "--- the app's process while the last session came up (threads: name | system call | kernel wait)"
+      tail -n 150 "$out/start-samples.txt" | cut -c1-200
+    fi
+    if [ -s "$out/line.pcap" ]; then
+      echo "--- the line's port on the host's loopback (what reached Xray), $line_port"
+      { tcpdump -nn -tt -r "$out/line.pcap" 2> /dev/null || sudo -n tcpdump -nn -tt -r "$out/line.pcap" 2> /dev/null; } | head -n 80 | cut -c1-200
+    fi
   fi
   exit "$1"
 }
@@ -118,6 +139,23 @@ wait_session() {
   return 1
 }
 
+# One sample of the app's process [pid] as root, by the device script session_open pushed.
+sample_once() {
+  dev su 0 sh /data/local/tmp/pk-sample.sh "$1" "$(printf '%04X' "${line_port:-0}")"
+}
+
+# Every 2 s for 24 s from a start: what the app's process does while the session comes up.
+sample_start() {
+  local i pid
+  echo "=== a start at $(date +%T)" >> "$out/start-samples.txt"
+  for i in $(seq 1 12); do
+    sleep 2
+    pid=$(app_pid)
+    [ -n "$pid" ] || continue
+    { echo "--- $(date +%T), +$((i * 2)) s, process $pid"; sample_once "$pid"; } >> "$out/start-samples.txt" 2>&1
+  done
+}
+
 session_open() {
   local apks=$1 app test_apk a try
   out=$2
@@ -137,6 +175,24 @@ session_open() {
   [ -f "$out/host/ready" ] || { cat "$out/host.log"; fail "the host's line did not come up"; }
   link=$(cat "$out/host/link")
   nonce=$(cat "$out/host/nonce")
+  line_port=$(cat "$out/host/ready")
+  if [ "${SESSION_DIAG:-}" = 1 ]; then
+    if command -v tcpdump > /dev/null 2>&1 && sudo -n true 2> /dev/null; then
+      sudo -n tcpdump -i lo -nn -U -s 160 -w "$out/line.pcap" "tcp port $line_port" > "$out/tcpdump.log" 2>&1 &
+      capture_pid=$!
+    fi
+    cat > "$out/pk-sample.sh" << 'EOF'
+# pk-sample.sh <pid> <port, 4 hex digits>: one sample of a process, run as root on the device.
+p=$1
+echo "entropy $(cat /proc/sys/kernel/random/entropy_avail)"
+for t in /proc/$p/task/*; do
+  echo "$(cat $t/comm 2> /dev/null) | $(cat $t/syscall 2> /dev/null) | $(cat $t/wchan 2> /dev/null)"
+done
+ls -l /proc/$p/fd 2> /dev/null | sed -n 's/.*-> //p' | sed 's/[[][0-9]*[]]//' | sort | uniq -c
+grep -i ":$2 " /proc/net/tcp /proc/net/tcp6 2> /dev/null
+EOF
+    adb push "$out/pk-sample.sh" /data/local/tmp/pk-sample.sh > /dev/null 2>&1 || true
+  fi
 
   echo "device: API $(dev getprop ro.build.version.sdk), $(dev getprop ro.product.cpu.abi), $(dev getprop ro.build.type), kernel $(dev uname -r), entropy $(dev cat /proc/sys/kernel/random/entropy_avail), the shell as $(dev id | cut -d" " -f1)" | tee "$out/device.txt"
   app=$(find "$apks" -name '*.apk' ! -name '*androidTest*' | head -1)
@@ -160,17 +216,26 @@ session_open() {
 }
 
 session_start() {
-  local established verb
+  local established verb sampler=
   adb logcat -c || true
   established=$(log_count 'VPN tunnel established')
   dev am broadcast -f 0x20 -n "$receiver" -a org.proofkit.app.DEBUG_START_VPN > "$out/start.txt"
+  if [ "${SESSION_DIAG:-}" = 1 ]; then
+    sample_start &
+    sampler=$!
+  fi
   if ! wait_session "start by the debug receiver" 60 "$established"; then
+    [ -n "$sampler" ] && wait "$sampler" 2> /dev/null
     [ -z "$(app_pid)" ] || fail "the session did not come up (start: $(tr '\n' ' ' < "$out/start.txt"))"
     verb=startservice
     [ "$(dev getprop ro.build.version.sdk)" -ge 26 ] && verb=start-foreground-service
     dev su 0 am "$verb" -n "$pkg/$service" -a "$service.START" >> "$out/start.txt"
     say "the debug receiver started no session: started by su am $verb instead"
     wait_session "start by su am $verb" 120 "$established" || fail "the session did not come up (start: $(tr '\n' ' ' < "$out/start.txt"))"
+  fi
+  if [ -n "$sampler" ]; then
+    kill "$sampler" 2> /dev/null
+    wait "$sampler" 2> /dev/null
   fi
   [ "$(log_count 'Transport engine: Rust core')" -ge 1 ] || fail "the session is not on the Rust core"
 }

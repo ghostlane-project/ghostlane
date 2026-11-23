@@ -23,7 +23,10 @@
 #      process on the Rust core (by Android, or else by the next start, the
 #      one the app's Connect sends), tun0 comes back and the shell's GET is
 #      answered again; the RESULT line "down-and-back: ok", the other cell;
-#   5. the debug receiver's stop takes the tun and the service down.
+#   5. SIGABRT to that process, as a crash of the core inside it would be, and
+#      whether Android starts the service again within 90 s: said in the RESULT
+#      line "android-restart-after-abort", no verdict;
+#   6. the debug receiver's stop takes the tun and the service down.
 #
 # Every step is a RESULT line in <out dir>/results.txt; logcat, the host's
 # logs and the instrumentation's output stay in <out dir>. Non-zero when a
@@ -107,8 +110,30 @@ by="by Android"
 [ "$android" = yes ] || by="by the next start"
 say "back $by, in process $pid2, $(($(date +%s) - killed_at)) s after the kill, on the Rust core"
 shell_fetch after-restart || fail "no GET through the restarted session"
-session_stop
 say "down-and-back: ok, back $by"
+
+# ---- a native abort ------------------------------------------------------------------
+# What a crash of the core inside the app's process is to Android: SIGABRT, which the
+# process's crash handler reports to the system before the process dies. Said, not a
+# verdict: whether Android starts the service again after it.
+established=$(log_count 'VPN tunnel established')
+dev su 0 kill -6 "$pid2" > /dev/null
+for _ in $(seq 1 20); do alive "$pid2" || break; sleep 1; done
+if alive "$pid2"; then
+  say "android-restart-after-abort: not looked at (SIGABRT did not end $pid2)"
+else
+  aborted_at=$(date +%s)
+  if wait_session "Android's restart after the abort" 90 "$established"; then
+    say "android-restart-after-abort: yes, in process $(app_pid), $(($(date +%s) - aborted_at)) s after the abort"
+  else
+    echo "--- Android on the process and the service after the abort"
+    adb logcat -d -v time 2> /dev/null | grep -E '(ActivityManager|ActiveServices|Vpn|DEBUG)' \
+      | grep -i -E 'proofkit|olcbox|restart|died|crash' | grep -v -E 'Start proc|Broadcasting|Enqueued' | tail -n 20 | cut -c1-300
+    say "android-restart-after-abort: none within 90 s of the abort"
+    session_start
+  fi
+fi
+session_stop
 
 [ "$android" = yes ] || fail "Android did not restart the service within 90 s of the kill"
 finish 0
