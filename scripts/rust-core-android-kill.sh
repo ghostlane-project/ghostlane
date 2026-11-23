@@ -31,6 +31,9 @@ pid1=$(app_pid)
 say "the session's process: $pid1"
 
 # ---- SIGKILL -------------------------------------------------------------------
+# The service as Android holds it before the kill: started, foreground, its starts.
+dev dumpsys activity services "$pkg" > "$out/services-before-kill.txt"
+grep -E 'ServiceRecord|startRequested|isForeground|deliveredStarts|restart' "$out/services-before-kill.txt" | head -n 12 | cut -c1-200
 established=$(log_count 'VPN tunnel established')
 on_rust=$(log_count 'Transport engine: Rust core')
 killed_by=
@@ -54,6 +57,12 @@ say "SIGKILL to $pid1 (by $killed_by)"
 # ---- Android's restart -----------------------------------------------------------
 if ! wait_session "restart after the kill" 240 "$established"; then
   dev dumpsys activity services "$pkg" > "$out/services-after-kill.txt"
+  # What Android said of the process and its service, in the job's log.
+  echo "--- Android on the process and the service after the kill"
+  adb logcat -d -v time 2> /dev/null | grep -E '(ActivityManager|ActiveServices|Vpn|ConnectivityService)' \
+    | grep -i -E 'proofkit|olcbox|restart|died' | tail -n 40 | cut -c1-300
+  grep -E 'ServiceRecord|restart|Restart|pendingStarts|deliveredStarts|startRequested|crashCount|isForeground|app=' \
+    "$out/services-after-kill.txt" | head -n 30 | cut -c1-300
   fail "Android did not bring the session back within 240 s"
 fi
 pid2=$(app_pid)
