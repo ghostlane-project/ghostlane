@@ -554,6 +554,18 @@ PY
     echo "ok   the $line line and its server: $out"
   done
 
+  # Every line the app writes a reference for, one per case of every kind
+  # (ios-core-<shape>.json, core-<case>.json), is fetched under the phone's
+  # B, not only started.
+  missing=""
+  for f in "$REFS"/ios-core-*.json "$REFS"/core-*.json; do
+    line="$(basename "$f" .json)"
+    line="${line#ios-}"
+    line="${line#core-}"
+    case " $LINES " in *" $line "*) ;; *) missing="$missing $(basename "$f")" ;; esac
+  done
+  [ -z "$missing" ] || die "the fetch leaves out $(echo "$missing" | wc -w | tr -d ' ') reference lines, which are only started:$missing"
+
   "$PY" -I "$HOST/lines.py" refuse "$REFS/ios-core-reality.json" "$work/refuse.json" 20005 engineHostUnknownField
   grep -q '"engineHostUnknownField": true' "$work/refuse.json" || die "the refusal copy lacks its field"
   "$PY" -I "$HOST/lines.py" socks "$REFS/ios-core-reality.json" "$work/socks.json" 20006
