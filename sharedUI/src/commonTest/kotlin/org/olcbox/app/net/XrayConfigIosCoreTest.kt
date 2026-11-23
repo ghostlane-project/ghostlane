@@ -740,7 +740,9 @@ class XrayConfigIosCoreTest {
             IosCore.start(located(plainToAPublicServer)),
         )
         assertEquals(IosStart.Refused("Cannot start DE line: ${VlessShapes.HTTP2_REFUSAL}"), IosCore.start(located(http2)))
-        for (link in refused) {
+        // A server named by a hostname is not refused for its name: the
+        // extension resolves it (IosStartHostPinTest).
+        for (link in refused.filter { XrayConfig.isIpLiteral(assertNotNull(LinkParser.parse(it), it).host) }) {
             val reason = assertNotNull(IosCore.refusal(assertNotNull(LinkParser.parse(link), link)), link)
             assertEquals(IosStart.Refused("Cannot start DE line: $reason"), IosCore.start(located(link)), link)
         }
