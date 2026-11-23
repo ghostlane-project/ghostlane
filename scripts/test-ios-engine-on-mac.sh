@@ -606,9 +606,11 @@ selftest() {
 
   # Every command this program gives the host is one the host has.
   missed=""
-  for f in $(grep -oE '"\$host" [a-z0-9-]+' "${BASH_SOURCE[0]}" | awk '{ print $2 }' | sort -u); do
+  grep -oE '"[$]host" [a-z0-9-]+' "${BASH_SOURCE[0]}" | awk '{ print $2 }' | sort -u > "$work/host-commands.txt"
+  while read -r f; do
     grep -q "case \"$f\":" "$HOST/EngineHost.swift" || missed="$missed $f"
-  done
+  done < "$work/host-commands.txt"
+  [ -s "$work/host-commands.txt" ] || die "no command of the host found in this program"
   [ -z "$missed" ] || die "the host has no command for:$missed (iosApp/Tests/EngineHost/EngineHost.swift)"
   echo "ok   every command this program gives the host is one it has"
 
@@ -616,10 +618,10 @@ selftest() {
   # say what the app says for a name that did not resolve.
   want="$(sed -n 's/.*const val HOST_PIN_PLACEHOLDER = "\([^"]*\)".*/\1/p' "$ROOT/sharedUI/src/commonMain/kotlin/org/olcbox/app/net/IosCore.kt")"
   got="$(sed -n 's/^HOST_PIN_PLACEHOLDER = "\([^"]*\)".*/\1/p' "$HOST/lines.py")"
-  [ -n "$want" ] && [ "$want" = "$got" ] || die "lines.py writes the placeholder ${got:-none}, IosCore.HOST_PIN_PLACEHOLDER is ${want:-none}"
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then die "lines.py writes the placeholder ${got:-none}, IosCore.HOST_PIN_PLACEHOLDER is ${want:-none}"; fi
   want="$(sed -n 's/.*const val HOST_UNRESOLVED = "\([^"]*\)".*/\1/p' "$ROOT/sharedUI/src/commonMain/kotlin/org/olcbox/app/net/IosCore.kt")"
   got="$(sed -n 's/^HOST_UNRESOLVED = "\([^"]*\)".*/\1/p' "$HOST/lines.py")"
-  [ -n "$want" ] && [ "$want" = "$got" ] || die "lines.py writes the sentence \"${got:-none}\", IosCore.HOST_UNRESOLVED is \"${want:-none}\""
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then die "lines.py writes the sentence \"${got:-none}\", IosCore.HOST_UNRESOLVED is \"${want:-none}\""; fi
   echo "ok   the lines named by a hostname are written for IosCore's placeholder and say its sentence for a name that did not resolve"
   "$PY" -I "$HOST/local_servers.py" resolver "$work/resolver.port" 127.0.0.1 one.example.test=192.0.2.9 2> "$work/resolver.err" &
   stub=$!
