@@ -40,3 +40,16 @@ internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: 
         mode == DesktopMode.LinuxTun && isOlcrtc -> DesktopRulesHome.Engine
         else -> DesktopRulesHome.Nowhere
     }
+
+/** Which engine runs a desktop session's line or room. */
+internal enum class DesktopLineEngine {
+    /** The Go programs: sing-box or Xray for a line, the olcRTC engine for a room with sing-box in front of it. */
+    Go,
+
+    /** ghostlane-engine, the Rust core: a line, or a room with the core in front of it in the same process. */
+    Rust
+}
+
+/** Where [mode] applies the rules [needsRules] asks for when [engine] runs the session. Not written yet: its tests come first. */
+internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean, engine: DesktopLineEngine): DesktopRulesHome =
+    desktopRulesHome(mode, isOlcrtc, needsRules)
