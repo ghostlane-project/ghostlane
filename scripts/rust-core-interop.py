@@ -12,13 +12,16 @@ A run has three steps, and the middle one is not this script's:
 
   1. prepare: the run's own keys (`xray x25519`), a self-signed certificate,
      a server port and a SOCKS port for every line, and the line's link with
-     them written in. <work>/links.json holds the links, for step 2.
+     them written in. <work>/links.json holds the links, for step 2, and
+     each routing mode (below) with the line it rides and the resolver the
+     builder is to name.
   2. The builder: sharedUI's jvmTest InteropDumpTest, with INTEROP_LINKS set
      to <work>/links.json and INTEROP_DUMPS to <dumps>, parses each link as
      the app does and writes the config the app would start the core from,
      <dumps>/<line>.core.json, with <dumps>/manifest.json naming the kind
      and shape of each link (or why the builder refused it) and every shape
-     the builder writes.
+     the builder writes; and for each mode <dumps>/<line>.<mode>.core.json,
+     the same link under that mode, named in the manifest's "modes".
   3. run: for every server release and every line, the server from the
      line's file, the client from the builder's dump, and through them a
      2 MiB download and a 1 MiB upload, each checked by sha256, fetched from
@@ -70,6 +73,35 @@ line's file writes it as vmess:// and the object itself, placeholders in
 its strings ("port": "{port}"); prepare fills them and then encodes the
 object, so the builder is handed the link as it is shared.
 
+Routing modes. A line's cells run the builder's dump of its link under
+Global. A mode is the same link written under another routing, with pages
+that prove where the mode sends a name. MODES names each mode and the line
+whose link carries it, here and not in the line's file: the iPhone's Mac
+harness reads those files too, and the iPhone has no routing modes.
+
+  blocked-only  "Only blocked sites": the names Re:filter lists by the line,
+            every other name straight out. The list is the file the app
+            bundles (refilter.dat under files/xray), copied beside the
+            client's config, where the core looks for the geodata a rule
+            names. Two pages through the client, fetched by name (socks5h),
+            at the port of a page on loopback that only a connection made
+            straight out reaches: a name under the first root domain of the
+            list must bring the line's page (the server's redirect), and a
+            name the list does not hold (direct.interop.test) the direct page.
+            The core resolves the names itself: prepare hands the builder this
+            host's own address as the network's resolver, and run answers
+            there, on port 53, each name with 127.0.0.1, so a listed name
+            whose rule did not match would go straight out too. The unlisted
+            name is fetched first: its page proves the resolver answers.
+            Port 53 needs root: when run is not root, `sudo -n` binds the
+            socket in a helper that hands it back, and nothing else runs as
+            root. The mutant sends the rule that names the list straight
+            out: the listed name must then not bring the line's page.
+
+A mode's cells are named "<line>, <mode>" and "<line>, <mode> (mutated)",
+and are held to the same rules as a line's: no dump, a refusal, a dump that
+names no list or names one the run does not have, all fail.
+
 A cell gets three tries over the same pair of processes when it must reach
 the page (a REALITY server may spend its first connection on the target),
 one when it must not. Every cell is named: one that cannot run (no dump, a
@@ -92,6 +124,7 @@ import re
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -113,6 +146,22 @@ DOWN_BYTES = 2 * 1024 * 1024
 UP_BYTES = 1024 * 1024
 PORTS = (20000, 29999)  # below Linux's ephemeral range, where the page and the target bind
 TRIES, TRY_SECONDS, REFUSED_SECONDS = 3, 30, 10
+
+# Routing modes: each mode and the line whose link the builder writes under it.
+MODES = {"blocked-only": "reality"}
+# The lists the app bundles; a host puts the geodata files among them in the
+# core's geodata directory.
+GEODATA = os.path.normpath(os.path.join(HERE, "..", "sharedUI", "src", "commonMain", "composeResources", "files", "xray"))
+# The blocked-only mode's list, and the code of its names in it.
+BLOCKED_LIST, BLOCKED_NAMES = "refilter.dat", "DOMAINS"
+# A name under a listed root (a root is every name under it), and one no list holds.
+LISTED_LABEL, UNLISTED = "interop-k5", "direct.interop.test"
+# What each name of a mode resolves to: the direct page's address.
+RESOLVED = "127.0.0.1"
+LINE_PAGE, DIRECT_PAGE = b"the line's page", b"the direct page"
+EXT = re.compile(r"^ext:([^:]+):(.+)$")
+# v2fly's Domain.Type.
+PLAIN, REGEX, ROOT_DOMAIN, FULL = 0, 1, 2, 3
 
 
 class Refused(Exception):
@@ -316,6 +365,134 @@ def socks_of(config, port):
     return port, accounts[0]["user"], accounts[0]["pass"]
 
 
+def resolver_of(config, address):
+    """The port of the dump's one DNS server, which must be <address>: where the run answers the mode's names."""
+    servers = (config.get("dns") or {}).get("servers") or []
+    if len(servers) != 1 or not isinstance(servers[0], dict):
+        raise Refused("the dump has %d DNS servers, not the one the run named" % len(servers))
+    server = servers[0]
+    port = server.get("port", 53)
+    if server.get("address") != address or not isinstance(port, int):
+        raise Refused("the dump asks names of %s:%s, not %s, the resolver the run named" % (server.get("address"), port, address))
+    return port
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+
+
+def lists_of(config):
+    """The geodata files the dump names (`ext:<file>:<code>`), sorted."""
+    return sorted({m.group(1) for m in map(EXT.match, strings(config)) if m})
+
+
+def list_mutant(config):
+    """The pointer of the routing rule that sends a listed name by the line: the one rule whose names are a geodata list's."""
+    rules = (config.get("routing") or {}).get("rules") or []
+    found = [i for i, rule in enumerate(rules) if isinstance(rule, dict) and rule.get("outboundTag") == LINE_OUTBOUND
+             and any(EXT.match(name) for name in rule.get("domain") or [] if isinstance(name, str))]
+    if len(found) != 1:
+        raise Refused("the dump has %d routing rules that send a list's names by the line, not one" % len(found))
+    return "/routing/rules/%d/outboundTag" % found[0]
+
+
+# ---------------------------------------------------------------- geodata
+
+def varint(data, i):
+    value, shift = 0, 0
+    while True:
+        if i >= len(data) or shift > 63:
+            raise Refused("a geodata varint runs past its end")
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, i
+        shift += 7
+
+
+def fields(data):
+    """(field, value) of each field of one protobuf message: an int or bytes."""
+    i = 0
+    while i < len(data):
+        key, i = varint(data, i)
+        wire = key & 7
+        if wire == 0:
+            value, i = varint(data, i)
+        elif wire == 2:
+            size, i = varint(data, i)
+            if i + size > len(data):
+                raise Refused("a geodata field runs past its message")
+            value, i = data[i:i + size], i + size
+        else:
+            raise Refused("a geodata field of wire type %d" % wire)
+        yield key >> 3, value
+
+
+def geosite(path, code):
+    """[(type, name)] of the entry <code> of the geodata file at <path>, read as the core reads a GeoSite."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        raise Refused("the list %s: %s" % (path, e))
+    for field, entry in fields(data):
+        parts = list(fields(entry)) if field == 1 and isinstance(entry, bytes) else []
+        if any(f == 1 and v.decode("utf-8", "replace").upper() == code for f, v in parts if isinstance(v, bytes)):
+            names = []
+            for f, domain in parts:
+                if f == 2 and isinstance(domain, bytes):
+                    d = dict(fields(domain))
+                    names.append((d.get(1, PLAIN), d.get(2, b"").decode("utf-8", "replace")))
+            return names
+    raise Refused("the list %s holds no code %s" % (path, code))
+
+
+def holds(names, name):
+    """Whether one of a GeoSite's <names> matches <name>, as the core matches them."""
+    for kind, value in names:
+        if kind == ROOT_DOMAIN and (name == value or name.endswith("." + value)):
+            return True
+        if (kind == FULL and name == value) or (kind == PLAIN and value in name):
+            return True
+        if kind == REGEX and re.search(value, name):
+            return True
+    return False
+
+
+def mode_names(geodata):
+    """(listed, unlisted) for blocked-only: a name under the list's first root domain, and one it does not hold."""
+    path = os.path.join(geodata, BLOCKED_LIST)
+    names = geosite(path, BLOCKED_NAMES)
+    roots = [value for kind, value in names if kind == ROOT_DOMAIN and re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", value)]
+    if not roots:
+        raise Refused("%s:%s holds no root domain to fetch a page under" % (BLOCKED_LIST, BLOCKED_NAMES))
+    listed = "%s.%s" % (LISTED_LABEL, roots[0])
+    if holds(names, UNLISTED):
+        raise Refused("%s:%s holds %s, the name the run fetches straight out" % (BLOCKED_LIST, BLOCKED_NAMES, UNLISTED))
+    return listed, UNLISTED
+
+
+def local_address():
+    """This host's own IPv4 address towards the internet: no packet is sent to learn it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("203.0.113.1", 9))
+        except OSError as e:
+            raise Refused("this host has no IPv4 route to name a resolver on: %s" % e)
+        address = s.getsockname()[0]
+    if address.startswith("127.") or address == "0.0.0.0":
+        raise Refused("this host's address %s is loopback; the builder never names a loopback resolver" % address)
+    return address
+
+
 # ---------------------------------------------------------------- prepare
 
 def free_port(used, network):
@@ -357,8 +534,24 @@ def reality_keys(xray):
     return values[0], values[1]
 
 
-def prepare(work, xray, lines_dir):
+def plan_modes(lines, modes, geodata, resolver):
+    """[{mode, line, directDns, listed, unlisted}] for each of <modes> ({mode: line})."""
+    by_name = dict(lines)
+    plan = []
+    for mode, line in sorted(modes.items()):
+        if mode not in MODES:
+            raise Refused("the mode %s is none the driver has pages for (%s)" % (mode, ", ".join(sorted(MODES))))
+        if line not in by_name or by_name[line]["expect"] != "page":
+            raise Refused("the mode %s rides %s, which is no line under lines/ that reaches the page" % (mode, line))
+        listed, unlisted = mode_names(geodata)
+        plan.append({"mode": mode, "line": line, "directDns": resolver, "listed": listed, "unlisted": unlisted})
+    return plan
+
+
+def prepare(work, xray, lines_dir, modes=None, geodata=GEODATA, resolver=None):
     lines = load_lines(lines_dir)
+    modes = MODES if modes is None else modes
+    mode_plan = plan_modes(lines, modes, geodata, resolver or local_address()) if modes else []
     os.makedirs(work, exist_ok=True)
     private, public = reality_keys(xray)
     other_public = reality_keys(xray)[1]
@@ -378,12 +571,15 @@ def prepare(work, xray, lines_dir):
         links.append({"name": name, "link": link, "socksPort": socks})
         plan.append({"name": name, "line": line, "values": values, "socks": socks, "link": link})
     with open(os.path.join(work, "links.json"), "w") as f:
-        json.dump({"lines": links}, f, indent=1)
+        json.dump({"lines": links, "modes": [{k: m[k] for k in ("mode", "line", "directDns")} for m in mode_plan]}, f, indent=1)
     with open(os.path.join(work, "run.json"), "w") as f:
-        json.dump({"lines": plan}, f, indent=1)
+        json.dump({"lines": plan, "modes": mode_plan}, f, indent=1)
     for entry in plan:
         print("%-28s %s" % (entry["name"], entry["line"]["shape"]))
-    print("%d lines; links for the builder in %s" % (len(plan), os.path.join(work, "links.json")))
+    for entry in mode_plan:
+        print("%-28s %s, names asked of %s: %s by the line, %s straight out" % (
+            "%s, %s" % (entry["line"], entry["mode"]), entry["mode"], entry["directDns"], entry["listed"], entry["unlisted"]))
+    print("%d lines and %d modes; links for the builder in %s" % (len(plan), len(mode_plan), os.path.join(work, "links.json")))
     return 0
 
 
@@ -405,7 +601,7 @@ class Page(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        body = self.down if self.path == "/down" else b"page"
+        body = self.down if self.path == "/down" else LINE_PAGE if self.path == "/which" else b"page"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -442,6 +638,153 @@ def start_page():
     server = PageServer(("127.0.0.1", 0), Page)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+class DirectPage(http.server.BaseHTTPRequestHandler):
+    """The page a mode's name reaches when it goes straight out: no server's redirect leads here."""
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(DIRECT_PAGE)))
+        self.end_headers()
+        self.wfile.write(DIRECT_PAGE)
+
+
+def start_direct_page():
+    server = PageServer(("127.0.0.1", 0), DirectPage)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+# Run by `sudo -n` when the driver is not root: binds the UDP socket and hands it back.
+BIND_HELPER = r'''
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind((sys.argv[1], int(sys.argv[2])))
+u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+u.connect(sys.argv[3])
+socket.send_fds(u, [b"bound"], [s.fileno()])
+'''
+
+
+def bind_udp(address, port):
+    """A UDP socket bound to <address>:<port>. A port under 1024 needs root:
+    when this process may not bind it, `sudo -n` runs BIND_HELPER, which binds
+    it and hands the socket back over a Unix socket; nothing else runs as root."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind((address, port))
+        return sock
+    except PermissionError:
+        sock.close()
+    except OSError as e:
+        sock.close()
+        raise Refused("cannot bind %s:%d/udp: %s" % (address, port, e))
+    if os.geteuid() == 0 or not shutil.which("sudo"):
+        raise Refused("cannot bind %s:%d/udp: not permitted, and no sudo to bind it" % (address, port))
+    with tempfile.TemporaryDirectory(prefix="bind.") as d:
+        path = os.path.join(d, "socket")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(path)
+            listener.listen(1)
+            listener.settimeout(0.5)
+            helper = subprocess.Popen(["sudo", "-n", sys.executable, "-I", "-c", BIND_HELPER, address, str(port), path],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            deadline, conn = time.monotonic() + 30, None
+            while conn is None and time.monotonic() < deadline:
+                try:
+                    conn, _ = listener.accept()
+                except socket.timeout:
+                    if helper.poll() is not None:
+                        break
+            fds = []
+            if conn is not None:
+                with conn:
+                    conn.settimeout(10)
+                    _, fds, _, _ = socket.recv_fds(conn, 16, 1)
+            try:
+                _, err = helper.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                helper.kill()
+                _, err = helper.communicate()
+    if not fds:
+        raise Refused("cannot bind %s:%d/udp through sudo -n: %s" % (address, port, err.decode(errors="replace").strip() or "no socket came back"))
+    return socket.socket(fileno=fds[0])
+
+
+def dns_answer(query, table):
+    """(name, answer) for one DNS query: an A of <table>'s address for a name it holds, no record of another
+    type for it, NXDOMAIN for any other name; (None, None) for what is no query of one question."""
+    if len(query) < 12:
+        return None, None
+    ident, flags, questions = struct.unpack(">HHH", query[:6])
+    if flags & 0x8000 or questions != 1:
+        return None, None
+    i, labels = 12, []
+    while True:
+        if i >= len(query):
+            return None, None
+        size = query[i]
+        i += 1
+        if size == 0:
+            break
+        if size & 0xC0 or i + size > len(query):
+            return None, None
+        labels.append(query[i:i + size])
+        i += size
+    if i + 4 > len(query):
+        return None, None
+    qtype, qclass = struct.unpack(">HH", query[i:i + 4])
+    question = query[12:i + 4]
+    name = b".".join(labels).decode("ascii", "replace").lower()
+    address = table.get(name)
+    answer = b""
+    if address is not None and qtype == 1 and qclass == 1:
+        answer = b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton(address)
+    rcode = 0 if address is not None else 3
+    head = struct.pack(">HHHHHH", ident, 0x8000 | (flags & 0x7900) | 0x0400 | 0x0080 | rcode, 1, 1 if answer else 0, 0, 0)
+    return name, head + question + answer
+
+
+class Resolver:
+    """What answers a mode's names where the builder was told the network's resolver is: UDP on <address>:<port>."""
+
+    def __init__(self, address, port, table):
+        self.address, self.port, self.table, self.asked = address, port, dict(table), []
+        self.sock = bind_udp(address, port)
+        # A socket closed under a blocked recvfrom keeps its port: the loop wakes to see it is to stop.
+        self.sock.settimeout(0.2)
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.stopping.is_set():
+            try:
+                query, peer = self.sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            name, reply = dns_answer(query, self.table)
+            if reply is None:
+                continue
+            self.asked.append(name)
+            try:
+                self.sock.sendto(reply, peer)
+            except OSError:
+                pass
+
+    def said(self):
+        return ", ".join(sorted(set(self.asked))) or "nothing"
+
+    def close(self):
+        self.stopping.set()
+        self.thread.join(5)
+        self.sock.close()
 
 
 def start_reality_target(work):
@@ -542,6 +885,23 @@ def through(socks, upload, seconds):
     return None
 
 
+def routed(socks, port, pages, seconds, resolver=None):
+    """None when each of <pages> [(name, page, what)] came back as that page,
+    fetched by name through the client at <port>, else what went wrong."""
+    socks_port, user, password = socks
+    proxy = "socks5h://%s:%s@127.0.0.1:%d" % (user, password, socks_port)
+    said = {LINE_PAGE: "the line's page", DIRECT_PAGE: "the direct page"}
+    for name, page, what in pages:
+        got = subprocess.run(["curl", "-sS", "--max-time", str(seconds), "-x", proxy, "http://%s:%d/which" % (name, port)],
+                             capture_output=True)
+        asked = "; the resolver was asked for %s" % resolver.said() if resolver else ""
+        if got.returncode != 0:
+            return "%s (%s): curl exit %d: %s%s" % (what, name, got.returncode, got.stderr.decode(errors="replace").strip(), asked)
+        if got.stdout != page:
+            return "%s (%s) brought %s, not %s%s" % (what, name, said.get(got.stdout, repr(got.stdout[:40])), said[page], asked)
+    return None
+
+
 def tail(path, lines=40):
     try:
         with open(path, errors="replace") as f:
@@ -576,12 +936,16 @@ class Cell:
         return True, "refused, as it must"
 
 
-def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, network, upload):
+def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, network, probe, beside=()):
+    """Runs <cell>: the server, then the client from <client_config> with the files <beside> copied next to
+    it, then <probe>(seconds) (None when the page came back right, else what went wrong)."""
     cell.dir = os.path.join(cells_dir, "%s-%s" % (cell.version, re.sub(r"[^a-z0-9.-]+", "-", cell.row).strip("-")))
     os.makedirs(cell.dir)
     for name, config in (("server", server_config), ("client", client_config)):
         with open(os.path.join(cell.dir, name + ".json"), "wb" if isinstance(config, bytes) else "w") as f:
             f.write(config) if isinstance(config, bytes) else json.dump(config, f, indent=1)
+    for path in beside:
+        shutil.copyfile(path, os.path.join(cell.dir, os.path.basename(path)))
     port = server_config["inbounds"][0]["port"]
     server = client_process = None
     start = time.monotonic()
@@ -605,7 +969,7 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
         tries, seconds = (TRIES, TRY_SECONDS) if cell.expect == "page" else (1, REFUSED_SECONDS)
         for attempt in range(1, tries + 1):
             cell.attempts = attempt
-            why = through(socks, upload, seconds)
+            why = probe(seconds)
             if why is None:
                 cell.reached, cell.why = True, None
                 break
@@ -621,7 +985,7 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
             with open(os.path.join(cell.dir, "client-again.log"), "w") as log:
                 client_process = subprocess.Popen([client, "run", "-config", os.path.join(cell.dir, "client.json")],
                                                   stdout=log, stderr=log)
-            again = through(socks, upload, TRY_SECONDS) if wait_tcp(socks[0], client_process, 15) else "it did not listen"
+            again = probe(TRY_SECONDS) if wait_tcp(socks[0], client_process, 15) else "it did not listen"
             cell.why += "; then a new client process " + ("reached the page" if again is None else "failed too: " + again)
     finally:
         cell.seconds = time.monotonic() - start
@@ -629,9 +993,10 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
         stop(server)
 
 
-def run(work, dumps, client, servers, out=sys.stdout):
+def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
     with open(os.path.join(work, "run.json")) as f:
-        plan = json.load(f)["lines"]
+        whole = json.load(f)
+    plan, modes = whole["lines"], whole.get("modes") or []
     if not servers:
         raise Refused("no server release to run against")
     manifest_path = os.path.join(dumps, "manifest.json")
@@ -689,17 +1054,78 @@ def run(work, dumps, client, servers, out=sys.stdout):
         for name in sorted(set(manifest.get("lines") or {}) - {e["name"] for e in plan}):
             problems.append("the builder's manifest names %s, which is no line of this run" % name)
 
+    # What the builder wrote for each routing mode, and what answers its names.
+    by_entry = {e["name"]: e for e in plan}
+    direct = start_direct_page() if modes else None
+    table = {name: RESOLVED for mode in modes for name in (mode["listed"], mode["unlisted"])}
+    resolvers, dumped_modes, mode_rows = {}, {}, []
+    for mode in modes:
+        row = "%s, %s" % (mode["line"], mode["mode"])
+        rows.extend([row, row + " (mutated)"])
+        mode_rows.append((mode, row))
+        entry = by_entry.get(mode["line"])
+        info = ((manifest or {}).get("modes") or {}).get(mode["mode"])
+        why = None
+        if entry is None:
+            why = "the mode rides %s, which is no line of this run" % mode["line"]
+        elif manifest is None:
+            why = "no manifest from the builder: the dump step did not run"
+        elif info is None:
+            why = "the builder's manifest names no mode %s: the builder did not write the link under it" % mode["mode"]
+        elif info.get("line") != mode["line"]:
+            why = "the builder wrote the mode for the line %r, not %r" % (info.get("line"), mode["line"])
+        elif "refusal" in info:
+            why = "the builder refused the mode: " + str(info["refusal"])
+        else:
+            path = os.path.join(dumps, "%s.%s.core.json" % (mode["line"], mode["mode"]))
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+                config = json.loads(raw)
+                socks = socks_of(config, entry["socks"])
+                port = resolver_of(config, mode["directDns"])
+                named = lists_of(config)
+                if not named:
+                    raise Refused("it names no list (ext:<file>:<code>), as the mode does")
+                beside = [os.path.join(geodata, n) for n in named]
+                missing = [n for n, b in zip(named, beside) if not os.path.isfile(b)]
+                if missing:
+                    raise Refused("it names %s, which the lists in %s do not hold" % (", ".join(missing), geodata))
+                if entry["line"].get("trust") == "pin":
+                    config = trusted(config, entry["values"]["pin"])
+                mutant = mutate(config, list_mutant(config), "direct")
+                key = (mode["directDns"], port)
+                if key not in resolvers:
+                    try:
+                        resolvers[key] = Resolver(mode["directDns"], port, table)
+                    except (Refused, OSError) as e:
+                        resolvers[key] = str(e)
+                if isinstance(resolvers[key], str):
+                    raise Refused("nothing answers its names: %s" % resolvers[key])
+                dumped_modes[mode["mode"]] = (raw, config, socks, mutant, beside, resolvers[key])
+            except OSError:
+                why = "no dump %s from the builder" % os.path.basename(path)
+            except (ValueError, Refused) as e:
+                why = "the dump cannot be run: %s" % e
+        if why:
+            dumped_modes[mode["mode"]] = why
+    if manifest is not None:
+        for name in sorted(set(manifest.get("modes") or {}) - {m["mode"] for m in modes}):
+            problems.append("the builder's manifest names the mode %s, which is no mode of this run" % name)
+
+    def server_for(entry):
+        values = dict(entry["values"], target=target)
+        return {"log": {"loglevel": "warning"}, "inbounds": fill(entry["line"]["inbounds"], values), "outbounds": [{
+            "tag": "direct", "protocol": "freedom",
+            "settings": {"redirect": "127.0.0.1:%d" % page.server_address[1], "ipsBlocked": [],
+                         "finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}]}
+
     for version, xray in servers:
         head = subprocess.run([xray, "version"], capture_output=True, text=True).stdout.splitlines()
         say("== Xray %s: %s" % (version, head[0] if head else "(no version)"))
-        values_target = {"target": target}
         for entry in plan:
             name, line = entry["name"], entry["line"]
-            values = dict(entry["values"], **values_target)
-            server_config = {"log": {"loglevel": "warning"}, "inbounds": fill(line["inbounds"], values), "outbounds": [{
-                "tag": "direct", "protocol": "freedom",
-                "settings": {"redirect": "127.0.0.1:%d" % page.server_address[1], "ipsBlocked": [],
-                             "finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}]}
+            server_config = server_for(entry)
             variants = [(name, line["expect"], None)]
             if line["expect"] == "page":
                 variants.append((name + " (mutated)", "refused", name))
@@ -718,8 +1144,32 @@ def run(work, dumps, client, servers, out=sys.stdout):
                         cell.note = "; the run's certificate pinned"
                     else:
                         client_config = raw  # the builder's bytes, as they are
-                    run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, line.get("network", "tcp"), upload)
+                    run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, line.get("network", "tcp"),
+                             lambda seconds, s=socks: through(s, upload, seconds))
                 say("%-8s %-36s %s" % (version, row, cell.verdict(cells)[1]))
+        # Each mode: its two pages through the dump, then the mutant's listed page, which must not come.
+        for mode, row in mode_rows:
+            entry, what = by_entry.get(mode["line"]), dumped_modes[mode["mode"]]
+            listed = (mode["listed"], LINE_PAGE, "the listed name")
+            unlisted = (mode["unlisted"], DIRECT_PAGE, "the unlisted name")
+            for r, expect, against in ((row, "page", None), (row + " (mutated)", "refused", row)):
+                cell = Cell(version, r, mode["line"], expect, against)
+                cells[(version, r)] = cell
+                if isinstance(what, str):
+                    cell.why = what
+                else:
+                    raw, config, socks, mutant, beside, resolver = what
+                    if r == row:
+                        client_config = config if entry["line"].get("trust") == "pin" else raw
+                        pages = [unlisted, listed]
+                    else:
+                        client_config, pages = mutant, [listed]
+
+                    def probe(seconds, s=socks, p=pages, res=resolver):
+                        return routed(s, direct.server_address[1], p, seconds, res)
+                    run_cell(cell, cells_dir, client, xray, server_for(entry), client_config, socks,
+                             entry["line"].get("network", "tcp"), probe, beside)
+                say("%-8s %-36s %s" % (version, r, cell.verdict(cells)[1]))
 
     # A shape the builder writes that no line carries to the page on every server.
     if manifest is not None:
@@ -736,7 +1186,9 @@ def run(work, dumps, client, servers, out=sys.stdout):
     header = "| line | " + " | ".join("Xray " + v for v, _ in servers) + " |"
     table = ["### The builder's dumps through xray-rust against official Xray servers", "",
              "A 2 MiB download and a 1 MiB upload through each line, checked by sha256; the client config is the "
-             "builder's dump of the run's link. A mutated dump and a line marked to fail must not reach the page.", "",
+             "builder's dump of the run's link. A mutated dump and a line marked to fail must not reach the page. "
+             "A routing mode's row fetches its names through the dump of the line's link under the mode: a listed "
+             "name must bring the line's page and an unlisted one the page only a direct connection reaches.", "",
              header, "|---|" + "---|" * len(servers)]
     for row in rows:
         table.append("| `%s` | " % row + " | ".join(cells[(v, row)].verdict(cells)[1].replace("|", "\\|") for v, _ in servers) + " |")
@@ -758,6 +1210,11 @@ def run(work, dumps, client, servers, out=sys.stdout):
             say(tail(os.path.join(cell.dir, name), 40 if name.endswith(".log") else 400))
         say("::endgroup::")
     page.shutdown()
+    if direct:
+        direct.shutdown()
+    for resolver in resolvers.values():
+        if not isinstance(resolver, str):
+            resolver.close()
     if failed or problems:
         say("::error::%d of %d cells failed%s" % (len(failed), len(cells), ", and %d more problems" % len(problems) if problems else ""))
         return 1
@@ -781,9 +1238,14 @@ STUB = r'''#!/usr/bin/env python3
 # A stand-in for both ends: `x25519`, `version`, and `run -config <file>`.
 # As a server (an inbound with clients) it takes a connection whose first line
 # is its client's id and relays the rest to its freedom redirect. As a client
-# (a SOCKS inbound with a login) it is a SOCKS5 server that sends its
-# outbound's id first, then relays to the outbound's address.
-import json, os, socket, struct, sys, threading
+# (a SOCKS inbound with a login) it is a SOCKS5 server that routes each
+# request as the core would, by the config's routing: a name by its `domain`
+# rules (domain:, full:, and ext:<file>:<code> read from the geodata file
+# beside the config, which must be there, as the core refuses a config
+# without it), then, under IPIfNonMatch, by the address its one DNS server
+# answers; else the first outbound. To the line it sends the outbound's id
+# first, then relays; straight out it connects to the address.
+import ipaddress, json, os, re, socket, struct, sys, threading
 if sys.argv[1] == "x25519":
     key = os.urandom(8).hex()
     print("PrivateKey: priv" + key); print("Password (PublicKey): pub" + key); sys.exit(0)
@@ -791,6 +1253,64 @@ if sys.argv[1] == "version":
     print("Stub 0.0.0"); sys.exit(0)
 config = json.load(open(sys.argv[3]))
 inbound = config["inbounds"][0]
+routing = config.get("routing") or {}
+rules = [r for r in routing.get("rules") or [] if "inboundTag" not in r]
+def varint(data, i):
+    value, shift = 0, 0
+    while True:
+        value |= (data[i] & 0x7F) << shift
+        i += 1
+        if not data[i - 1] & 0x80: return value, i
+        shift += 7
+def fields(data):
+    i = 0
+    while i < len(data):
+        key, i = varint(data, i)
+        if key & 7 == 0: value, i = varint(data, i)
+        else:
+            size, i = varint(data, i); value, i = data[i:i + size], i + size
+        yield key >> 3, value
+lists = {}
+for rule in rules:
+    for name in rule.get("domain") or []:
+        m = re.match(r"^ext:([^:]+):(.+)$", name)
+        if not m: continue
+        path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[3])), m.group(1))
+        if not os.path.isfile(path): sys.exit("geodata file %s was not found" % m.group(1))
+        for f, entry in fields(open(path, "rb").read()):
+            parts = list(fields(entry))
+            if (1, m.group(2).upper().encode()) in parts:
+                lists[name] = [(dict(fields(d)).get(1, 0), dict(fields(d)).get(2, b"").decode()) for k, d in parts if k == 2]
+        if name not in lists: sys.exit("geodata file %s holds no code %s" % (m.group(1), m.group(2)))
+def named(entry, name):
+    if entry in lists:
+        return any((k == 2 and (name == v or name.endswith("." + v))) or (k == 3 and name == v) for k, v in lists[entry])
+    if entry.startswith("domain:"): return name == entry[7:] or name.endswith("." + entry[7:])
+    return entry.startswith("full:") and name == entry[5:]
+def addressed(entry, ip):
+    return not entry.startswith("ext:") and ipaddress.ip_address(ip) in ipaddress.ip_network(entry)
+def first(name, ip):
+    for rule in rules:
+        if name is not None and any(named(e, name) for e in rule.get("domain") or []): return rule["outboundTag"]
+        if ip is not None and any(addressed(e, ip) for e in rule.get("ip") or []): return rule["outboundTag"]
+    return None
+def resolve(name):
+    server = config["dns"]["servers"][0]
+    query = struct.pack(">HHHHHH", 7, 0x0100, 1, 0, 0, 0) + b"".join(
+        bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0" + struct.pack(">HH", 1, 1)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(3)
+        s.sendto(query, (server["address"], server.get("port", 53)))
+        try: answer = s.recv(512)
+        except OSError: return None
+    if answer[3] & 0x0F or struct.unpack(">H", answer[6:8])[0] < 1: return None
+    return socket.inet_ntoa(answer[-4:])
+def route(host, by_name):
+    tag = first(host, None) if by_name else first(None, host)
+    if tag is None and by_name and routing.get("domainStrategy") == "IPIfNonMatch":
+        ip = resolve(host)
+        if ip: tag = first(host, ip)
+    return tag or config["outbounds"][0]["tag"]
 def relay(a, b):
     def pump(x, y):
         try:
@@ -829,14 +1349,19 @@ def as_client(conn):
         conn.sendall(b"\x01\x01"); conn.close(); return
     conn.sendall(b"\x01\x00")
     request = exact(conn, 4)
-    if request[3] == 1: exact(conn, 4)
-    elif request[3] == 3: exact(conn, exact(conn, 1)[0])
-    else: exact(conn, 16)
-    exact(conn, 2)
-    out = [o for o in config["outbounds"] if o["tag"] == "out"][0]
-    server = out["settings"]["vnext"][0]
-    upstream = socket.create_connection((server["address"], server["port"]))
-    upstream.sendall((server["users"][0]["id"] + "\n").encode())
+    if request[3] == 1: host, by_name = socket.inet_ntoa(exact(conn, 4)), False
+    elif request[3] == 3: host, by_name = exact(conn, exact(conn, 1)[0]).decode(), True
+    else: host, by_name = socket.inet_ntop(socket.AF_INET6, exact(conn, 16)), False
+    port = struct.unpack(">H", exact(conn, 2))[0]
+    tag = route(host, by_name)
+    if tag == "out":
+        server = [o for o in config["outbounds"] if o["tag"] == "out"][0]["settings"]["vnext"][0]
+        upstream = socket.create_connection((server["address"], server["port"]))
+        upstream.sendall((server["users"][0]["id"] + "\n").encode())
+    else:
+        address = resolve(host) if by_name else host
+        if address is None: conn.close(); return
+        upstream = socket.create_connection((address, port))
     conn.sendall(b"\x05\x00\x00\x01" + bytes(4) + struct.pack(">H", 0))
     relay(conn, upstream)
 listener = socket.socket(); listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -862,6 +1387,39 @@ def stub_dump(entry):
             "outbounds": [{"tag": "out", "protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
                                                                                       "users": [{"id": uuid, "encryption": "none"}]}]},
                            "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": {"serverName": "stub.test"}}}]}
+
+
+def stub_mode_dump(entry, dns_port):
+    """What the builder would write for a stub line under blocked-only: the line's dump with the resolver,
+    a way straight out and the mode's routing, the list named as the builder names it."""
+    config = stub_dump(entry)
+    config["dns"] = {"servers": [{"tag": "dns-direct", "address": "127.0.0.1", "port": dns_port}]}
+    config["outbounds"].append({"tag": "direct", "protocol": "freedom"})
+    config["routing"] = {"domainStrategy": "IPIfNonMatch", "rules": [
+        {"type": "field", "inboundTag": ["in"], "network": "tcp,udp", "port": 53, "outboundTag": "direct"},
+        {"type": "field", "ip": ["10.0.0.0/8", "127.0.0.0/8"], "outboundTag": "direct"},
+        {"type": "field", "domain": ["ext:%s:domains" % BLOCKED_LIST], "outboundTag": "out"},
+        {"type": "field", "ip": ["ext:%s:ips" % BLOCKED_LIST], "outboundTag": "out"},
+        {"type": "field", "ip": ["0.0.0.0/0", "::/0"], "outboundTag": "direct"}]}
+    return config
+
+
+def made_list(names, extra=b""):
+    """A geodata file of one GeoSite, DOMAINS, of [(type, name)], written as tools/xray-geodata writes one."""
+    def number(n):
+        out = bytearray()
+        while True:
+            out.append((n & 0x7F) | (0x80 if n >> 7 else 0))
+            n >>= 7
+            if not n:
+                return bytes(out)
+
+    def field(f, payload):
+        return number(f << 3 | 2) + number(len(payload)) + payload
+    site = field(1, BLOCKED_NAMES.encode())
+    for kind, name in names:
+        site += field(2, (number(1 << 3) + number(kind) if kind else b"") + field(2, name.encode()))
+    return field(1, site) + extra
 
 
 def selftest():
@@ -928,6 +1486,64 @@ def selftest():
     refused("a dump whose SOCKS port is not the run's", lambda: socks_of(dump, 6))
     refused("a dump with an open SOCKS inbound", lambda: socks_of(mutate(dump, "/inbounds/0/settings/auth", "noauth"), 5))
 
+    # Routing modes: the list, the names, the resolver's answers and the mutant.
+    geo_root = tempfile.mkdtemp(prefix="rust-core-interop-geodata.")
+    try:
+        geo = os.path.join(geo_root, "lists")
+        os.makedirs(geo)
+        with open(os.path.join(geo, BLOCKED_LIST), "wb") as f:
+            f.write(made_list([(ROOT_DOMAIN, "blocked.example"), (FULL, "only.example"), (REGEX, "^re[0-9]+\\.example$")]))
+        names = geosite(os.path.join(geo, BLOCKED_LIST), BLOCKED_NAMES)
+        check("the list's names are read as the core reads a GeoSite", names == [
+            (ROOT_DOMAIN, "blocked.example"), (FULL, "only.example"), (REGEX, "^re[0-9]+\\.example$")])
+        check("a root holds every name under it, and only those", holds(names, "a.blocked.example")
+              and holds(names, "blocked.example") and not holds(names, "notblocked.example")
+              and not holds(names, "a.only.example") and holds(names, "re7.example"))
+        check("the mode fetches a name under the list's first root, and one the list does not hold",
+              mode_names(geo) == ("interop-k5.blocked.example", "direct.interop.test"))
+        with open(os.path.join(geo_root, "holds-unlisted.dat"), "wb") as f:
+            f.write(made_list([(ROOT_DOMAIN, "interop.test")]))
+        os.makedirs(os.path.join(geo_root, "bad"))
+        os.replace(os.path.join(geo_root, "holds-unlisted.dat"), os.path.join(geo_root, "bad", BLOCKED_LIST))
+        refused("a list that holds the name fetched straight out", lambda: mode_names(os.path.join(geo_root, "bad")))
+        refused("a list with no such code", lambda: geosite(os.path.join(geo, BLOCKED_LIST), "IPS"))
+        refused("a run with no list", lambda: mode_names(geo_root))
+        query = struct.pack(">HHHHHH", 9, 0x0100, 1, 0, 0, 0) + b"\x05a-b-c\x07example\x00"
+        name, answer = dns_answer(query + struct.pack(">HH", 1, 1), {"a-b-c.example": "127.0.0.1"})
+        check("a name of the run's is answered with its address", name == "a-b-c.example" and answer[:2] == query[:2]
+              and answer[3] & 0x0F == 0 and answer[6:8] == b"\x00\x01" and answer[-4:] == b"\x7f\x00\x00\x01")
+        name, answer = dns_answer(query + struct.pack(">HH", 28, 1), {"a-b-c.example": "127.0.0.1"})
+        check("another type of a name of the run's has no record", answer[3] & 0x0F == 0 and answer[6:8] == b"\x00\x00")
+        name, answer = dns_answer(query + struct.pack(">HH", 1, 1), {"other.example": "127.0.0.1"})
+        check("a name that is not the run's does not exist", answer[3] & 0x0F == 3 and answer[6:8] == b"\x00\x00")
+        check("what is no query gets no answer", dns_answer(answer, {}) == (None, None) and dns_answer(b"\x00" * 5, {}) == (None, None))
+        port = free_port(set(), "udp")
+        resolver = Resolver("127.0.0.1", port, {"a-b-c.example": "127.0.0.1"})
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(5)
+                s.sendto(query + struct.pack(">HH", 1, 1), ("127.0.0.1", port))
+                reply = s.recv(512)
+            check("the resolver answers over UDP, and says what it was asked", reply[-4:] == b"\x7f\x00\x00\x01"
+                  and resolver.said() == "a-b-c.example")
+        finally:
+            resolver.close()
+        mode_dump = stub_mode_dump({"link": "stub://id-1@127.0.0.1:7", "socksPort": 5}, 53)
+        check("the mutant is the rule that sends the list's names by the line", list_mutant(mode_dump) == "/routing/rules/2/outboundTag"
+              and lists_of(mode_dump) == [BLOCKED_LIST])
+        refused("a mode's dump whose list does not go by the line", lambda: list_mutant(mutate(mode_dump, "/routing/rules/2/outboundTag", "direct")))
+        check("the resolver's port is the dump's", resolver_of(mode_dump, "127.0.0.1") == 53)
+        refused("a mode's dump that asks another resolver than the run's", lambda: resolver_of(mode_dump, "127.0.0.2"))
+        lines_here = [("l", {"expect": "page"}), ("w", {"expect": "refused"})]
+        refused("a mode on no line", lambda: plan_modes(lines_here, {"blocked-only": "none"}, geo, "127.0.0.1"))
+        refused("a mode on a line that must not reach the page", lambda: plan_modes(lines_here, {"blocked-only": "w"}, geo, "127.0.0.1"))
+        refused("a mode the driver has no pages for", lambda: plan_modes(lines_here, {"other-mode": "l"}, geo, "127.0.0.1"))
+        check("the driver's own mode rides a line under lines/ that reaches the page",
+              all(dict(lines).get(line, {}).get("expect") == "page" for line in MODES.values()))
+        check("the run's list is the one the app bundles", os.path.isfile(os.path.join(GEODATA, BLOCKED_LIST)))
+    finally:
+        shutil.rmtree(geo_root, ignore_errors=True)
+
     # The whole run on stand-ins for Xray and for the Rust core.
     root = tempfile.mkdtemp(prefix="rust-core-interop-selftest.")
     try:
@@ -949,21 +1565,32 @@ def selftest():
         for name, line in stub_lines.items():
             with open(os.path.join(lines_dir, name + SUFFIX), "w") as f:
                 json.dump(line, f)
+        geo = os.path.join(root, "lists")
+        os.makedirs(geo)
+        with open(os.path.join(geo, BLOCKED_LIST), "wb") as f:
+            f.write(made_list([(ROOT_DOMAIN, "blocked.example")]))
         work = os.path.join(root, "work")
         quiet = open(os.devnull, "w")
         stdout, sys.stdout = sys.stdout, quiet
         try:
-            prepare(work, stub, lines_dir)
+            prepare(work, stub, lines_dir, modes={"blocked-only": "stub"}, geodata=geo, resolver="127.0.0.1")
         finally:
             sys.stdout = stdout
         with open(os.path.join(work, "links.json")) as f:
-            links = json.load(f)["lines"]
+            written = json.load(f)
+        links = written["lines"]
         check("prepare writes a link per line, with the run's port and key",
               sorted(e["name"] for e in links) == sorted(stub_lines)
               and all("{" not in e["link"] for e in links)
               and re.search(r"k=pub[0-9a-f]{16}$", [e for e in links if e["name"] == "stub"][0]["link"]) is not None)
+        with open(os.path.join(work, "run.json")) as f:
+            planned = json.load(f)["modes"]
+        check("prepare writes each mode with its line and the resolver for the builder, and its names for the run",
+              written["modes"] == [{"mode": "blocked-only", "line": "stub", "directDns": "127.0.0.1"}]
+              and [(m["listed"], m["unlisted"]) for m in planned] == [("interop-k5.blocked.example", UNLISTED)])
+        dns_port = free_port(set(), "udp")
 
-        def dumps(name, edit=None, shapes=("stub-shape",), drop=(), refuse=(), shape_of=None):
+        def dumps(name, edit=None, shapes=("stub-shape",), drop=(), refuse=(), shape_of=None, mode=True, edit_mode=None):
             """A dumps directory as InteropDumpTest writes one, for the stand-in lines."""
             d = os.path.join(root, name)
             os.makedirs(d)
@@ -980,17 +1607,26 @@ def selftest():
                 with open(os.path.join(d, entry["name"] + ".core.json"), "w") as f:
                     json.dump(config, f, separators=(",", ":"))
                 manifest["lines"][entry["name"]] = {"kind": "Stub", "shape": (shape_of or {}).get(entry["name"], "stub-shape")}
+            if mode:
+                entry = [e for e in links if e["name"] == "stub"][0]
+                config = stub_mode_dump(entry, dns_port)
+                for change in (edit_mode, edit):
+                    if change:
+                        config = change("stub.blocked-only", config)
+                with open(os.path.join(d, "stub.blocked-only.core.json"), "w") as f:
+                    json.dump(config, f, separators=(",", ":"))
+                manifest["modes"] = {"blocked-only": {"line": "stub", "config": "stub.blocked-only.core.json"}}
             with open(os.path.join(d, "manifest.json"), "w") as f:
                 json.dump(manifest, f)
             return d
 
         servers = [("1.0", stub), ("2.0", stub)]
 
-        def go(d, label):
+        def go(d, label, lists=geo):
             """(exit code, {row: [cell text per server]}, whole output) of a run on the stand-ins."""
             log = os.path.join(root, label + ".log")
             with open(log, "w") as f:
-                code = run(work, d, stub, servers, out=f)
+                code = run(work, d, stub, servers, out=f, geodata=lists)
             with open(log) as f:
                 text = f.read()
             table = {}
@@ -1002,11 +1638,13 @@ def selftest():
                 print(text)
             return code, table, text
 
-        every = ["stub", "stub (mutated)", "stub-pinned", "stub-pinned (mutated)", "stub-wrong"]
+        moded = "stub, blocked-only"
+        every = ["stub", "stub (mutated)", "stub-pinned", "stub-pinned (mutated)", "stub-wrong", moded, moded + " (mutated)"]
         code, table, text = go(dumps("dumps-good"), "good")
         check("the builder's dumps of the stand-in lines pass every cell (exit %d)" % code, code == 0
-              and all(c.startswith("ok, ") for row in ("stub", "stub-pinned") for c in table[row])
-              and all(c == "refused, as it must" for row in ("stub (mutated)", "stub-pinned (mutated)", "stub-wrong") for c in table[row])
+              and all(c.startswith("ok, ") for row in ("stub", "stub-pinned", moded) for c in table[row])
+              and all(c == "refused, as it must" for row in ("stub (mutated)", "stub-pinned (mutated)", "stub-wrong", moded + " (mutated)")
+                      for c in table[row])
               and all(c.endswith("; the run's certificate pinned") for c in table["stub-pinned"])
               and not any(c.endswith("pinned") for c in table["stub"]))
         check("every cell is named in the table: each line and each mutant on each server",
@@ -1038,6 +1676,46 @@ def selftest():
         code, table, text = go(dumps("dumps-other-shape", shape_of={"stub-pinned": "other-shape"}), "other-shape")
         check("a line the builder reads as another shape than its file says fails (exit %d)" % code, code == 1
               and all(c.startswith("FAILED: the builder reads the link as the shape 'other-shape'") for c in table["stub-pinned"]))
+        code, table, text = go(dumps("dumps-no-mode", mode=False), "no-mode")
+        check("a mode the builder did not write fails both its rows, named, and no line's (exit %d)" % code, code == 1
+              and all(c == "FAILED: the builder's manifest names no mode blocked-only: the builder did not write the link under it"
+                      for row in (moded, moded + " (mutated)") for c in table[row])
+              and all(c.startswith("ok, ") for c in table["stub"]))
+
+        def all_by_the_line(name, config):
+            rules = config["routing"]["rules"]
+            del rules[1]
+            rules[-1]["outboundTag"] = "out"
+            return config
+        code, table, text = go(dumps("dumps-mode-by-line", edit_mode=all_by_the_line), "mode-by-line")
+        check("a mode that sends the unlisted name by the line fails, and its mutant then proves nothing (exit %d)" % code, code == 1
+              and all(c.startswith("FAILED: the unlisted name (direct.interop.test) brought the line's page, not the direct page")
+                      for c in table[moded])
+              and all("proves nothing, %s did not reach the page" % moded in c for c in table[moded + " (mutated)"]))
+        def listed_direct(name, config):
+            config["routing"]["rules"].insert(2, {"type": "field", "domain": ["domain:blocked.example"], "outboundTag": "direct"})
+            return config
+        code, table, text = go(dumps("dumps-mode-listed-direct", edit_mode=listed_direct), "mode-listed-direct")
+        check("a mode that sends the listed name straight out fails (exit %d)" % code, code == 1
+              and all(c.startswith("FAILED: the listed name (interop-k5.blocked.example) brought the direct page, not the line's page")
+                      for c in table[moded]))
+        bare = os.path.join(root, "no-lists")
+        os.makedirs(bare)
+        code, table, text = go(dumps("dumps-mode-no-list"), "mode-no-list", lists=bare)
+        check("a mode whose list the run does not have fails, named (exit %d)" % code, code == 1
+              and all(c.startswith("FAILED: the dump cannot be run: it names %s, which the lists in" % BLOCKED_LIST)
+                      for row in (moded, moded + " (mutated)") for c in table[row]))
+        code, table, text = go(dumps("dumps-mode-other-resolver", edit_mode=lambda n, c: mutate(
+            c, "/dns/servers/0/address", "127.0.0.2")), "mode-other-resolver")
+        check("a mode's dump that asks another resolver than the run's fails, named (exit %d)" % code, code == 1
+              and all(c.startswith("FAILED: the dump cannot be run: the dump asks names of 127.0.0.2")
+                      for row in (moded, moded + " (mutated)") for c in table[row]))
+        d = dumps("dumps-mode-no-file")
+        os.remove(os.path.join(d, "stub.blocked-only.core.json"))
+        code, table, text = go(d, "mode-no-file")
+        check("a mode the manifest names with no dump fails, named (exit %d)" % code, code == 1
+              and all(c == "FAILED: no dump stub.blocked-only.core.json from the builder" for row in (moded, moded + " (mutated)")
+                      for c in table[row]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

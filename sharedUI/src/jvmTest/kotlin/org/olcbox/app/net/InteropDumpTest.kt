@@ -26,6 +26,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * JVM-only: the builder's half of the run that holds the lines the app writes
@@ -46,6 +47,9 @@ import kotlin.test.assertTrue
  * Where no driver wrote links (every other Gradle run) there is nothing to
  * dump, and only the writer of the dumps is tested, against the kinds'
  * fixtures.
+ *
+ * The blocked-only mode's reference config (check K12's) is held here too:
+ * [modeConfig] writes it, as it writes the run's dump of a line under a mode.
  */
 class InteropDumpTest {
     /** One line of a run: its name, the link the driver wrote, and the SOCKS port the core is to listen on. */
@@ -124,6 +128,70 @@ class InteropDumpTest {
         }
 
         private fun temp(): File = Files.createTempDirectory("interop-dumps").toFile().also { it.deleteOnExit() }
+
+        /** The rule-set directory a [Routing.Rules] names, which the Rust core's writer never reads. */
+        private const val NO_RULE_SET_DIR = "unused-on-the-rust-core"
+
+        /**
+         * The config the app writes for [spec] under the routing [policy], names
+         * bound straight out asked of [directDns], with the host's word that the
+         * list the mode names is in the core's geodata directory: the driver
+         * copies it beside the client's config, and
+         * `scripts/check-rust-core-configs.sh` hands the core a geodata
+         * directory that holds it.
+         */
+        fun modeConfig(spec: OutboundSpec, login: SocksLogin, policy: Routing.Policy, directDns: String, socksPort: Int): String =
+            CoreConfig.build(
+                spec,
+                login,
+                routing = Routing.Rules(NO_RULE_SET_DIR, DirectDns.Servers(listOf(directDns)), policy),
+                socksPort = socksPort,
+                refilterDat = true,
+            )
+
+        /**
+         * K12's reference of the blocked-only mode. In a directory of its own:
+         * the references beside it are the kinds' cases' (CoreRegistry), and
+         * this one is no case's.
+         */
+        val BLOCKED_ONLY_REFERENCE = File("src/jvmTest/resources/reference-configs/blocked-only/core-reality.json")
+
+        /** Where the reference asks names bound straight out, as CoreBlockedOnlyTest's configs do. */
+        const val REFERENCE_DNS = "10.20.30.40"
+    }
+
+    /**
+     * K12's reference of the blocked-only mode is the builder's config, byte
+     * for byte: the iPhone's Reality line under "only blocked sites", as
+     * CoreBlockedOnlyTest reads it, written by [modeConfig] as a run's dump is.
+     * `scripts/check-rust-core-configs.sh` hands it to the core with a geodata
+     * directory that holds the list, and with one that does not, where the
+     * core must refuse it. A writer change that moves it: copy
+     * `build/rust-core-configs/blocked-only/core-reality.json` over it and run
+     * the script.
+     */
+    @Test fun theBlockedOnlyReferenceIsTheBuildersConfig() {
+        val json = modeConfig(
+            IosCoreFixtures.spec(IosCoreLine.RealityVision), CoreFixtures.login, Routing.Policy.BlockedOnly,
+            REFERENCE_DNS, XrayConfig.XRAY_SOCKS_PORT,
+        )
+        val written = File("build/rust-core-configs/blocked-only/core-reality.json")
+        written.parentFile.mkdirs()
+        written.writeText(json)
+        assertEquals(emptyList<String>(), XrayRustSurface.violations(Json.parseToJsonElement(json).jsonObject))
+        assertTrue(
+            "\"ext:refilter.dat:domains\"" in json && "\"ext:refilter.dat:ips\"" in json,
+            "the blocked-only config names no list: the reference would prove nothing of the geodata directory",
+        )
+        assertTrue(
+            BLOCKED_ONLY_REFERENCE.isFile,
+            "no ${BLOCKED_ONLY_REFERENCE.path}: copy it from ${written.path} and run scripts/check-rust-core-configs.sh",
+        )
+        val reference = BLOCKED_ONLY_REFERENCE.readBytes()
+        if (!reference.contentEquals(json.encodeToByteArray())) {
+            val at = reference.decodeToString().commonPrefixWith(json).length
+            fail("${BLOCKED_ONLY_REFERENCE.path} is not the builder's config (they part at character $at); the builder wrote: $json")
+        }
     }
 
     /** The run's own dumps: written when the driver has written its links, and then each line is written or refused. */

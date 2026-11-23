@@ -6,7 +6,9 @@
 # for each sharedUI/src/jvmTest/resources/reference-configs/*core-*.json (the
 # iPhone's ios-core-*.json and bypass-ios-core-*.json, and core-*.json and
 # bypass-core-*.json of every other kind of line), the configs
-# RustCoreConfigDumpTest holds the app's writer (net/core) to, byte for byte:
+# RustCoreConfigDumpTest holds the app's writer (net/core) to, byte for byte,
+# and each blocked-only/*core-*.json there, the blocked-only mode's, which
+# InteropDumpTest holds to the writer:
 #
 #   1. `<xray-rust-binary> config check -config <file>`: the core's parser.
 #      It refuses a whole config over one field it does not know; exit 0 is
@@ -44,6 +46,7 @@ if [ "${#configs[@]}" -eq 0 ]; then
   echo "no core.json reference configs (*core-*.json) under $references" >&2
   exit 1
 fi
+blocked=("$references"/blocked-only/*core-*.json)
 
 work="$(mktemp -d)"
 server=""
@@ -105,8 +108,8 @@ PY
 }
 
 failed=0
-for config in "${configs[@]}"; do
-  name="$(basename "$config")"
+for config in "${configs[@]}" "${blocked[@]}"; do
+  name="${config#"$references"/}"
   if ! "$bin" config check -config "$config"; then
     echo "FAIL $name: the parser refuses it"
     failed=1
