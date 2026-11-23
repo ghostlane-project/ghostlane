@@ -1,5 +1,8 @@
 package org.olcbox.app.net
 
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.core.CoreConfig
 import org.olcbox.app.net.core.CoreDns
@@ -11,6 +14,7 @@ import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.net.core.CoreStream
 import org.olcbox.app.net.core.CoreSupport
 import org.olcbox.app.net.core.lines.Reality
+import org.olcbox.app.net.core.lines.VlessShapes
 import org.olcbox.app.net.core.lines.WebTunnel
 import org.olcbox.app.net.core.lines.Hysteria2 as Hysteria2Kind
 import org.olcbox.app.vpn.olc.OlcSession
@@ -102,10 +106,19 @@ data class IosEngineChoice(val engine: IosEngine, val line: IosCoreLine?, val re
 sealed interface IosStart {
     /**
      * A line of the core: `core.json` is written from [spec], one of [line]'s
-     * links. [notes] are for the app's log: what the core does other than
-     * the link says (the Reality hello it has no form of, [Reality.helloNote]).
+     * links, and handed over by [IosCore.handOver]. [notes] are for the app's
+     * log: what the core does other than the link says (the Reality hello it
+     * has no form of, [Reality.helloNote]; a server's name resolved by the
+     * extension, [IosCore.HOST_PIN_NOTE]). For a server named by a hostname
+     * [spec] is the link written for [IosCore.HOST_PIN_PLACEHOLDER] and
+     * [hostPin] names the server.
      */
-    data class Core(val spec: OutboundSpec, val line: IosCoreLine, val notes: List<String>) : IosStart
+    data class Core(
+        val spec: OutboundSpec,
+        val line: IosCoreLine,
+        val notes: List<String>,
+        val hostPin: IosHostPin? = null,
+    ) : IosStart
 
     /** An olcRTC room on a carrier the Rust client carries: `olcrtc.json`. */
     data object Room : IosStart
@@ -113,6 +126,14 @@ sealed interface IosStart {
     /** The start is refused: [sentence] names the line and says why ([IosCore.refused]). */
     data class Refused(val sentence: String) : IosStart
 }
+
+/**
+ * A line's server named by a hostname, which the extension resolves outside
+ * the tunnel before the core starts (HostPin.swift): the [server]'s name, and
+ * the sentence the start fails with when it does not resolve, [unresolved],
+ * which names the line as [IosCore.refused] does.
+ */
+data class IosHostPin(val server: String, val unresolved: String)
 
 /**
  * What the Rust core runs on the iPhone, and the `core.json` it runs it from.
@@ -167,19 +188,86 @@ object IosCore {
      * extension is asked: a room on a carrier the Rust client carries
      * ([OlcSession.refusal]), a line the core takes ([choose]), or a refusal
      * that names the line.
+     *
+     * A line whose server is named by a hostname is not refused for it
+     * ([CoreRefusal.HOSTNAME]): it is written for [HOST_PIN_PLACEHOLDER]
+     * ([CoreLines.pinHost], which keeps the name as the TLS server name and
+     * the Host), and the extension resolves the name outside the tunnel and
+     * writes its address there ([handOver]). Whatever else the core refuses
+     * of the line is said as for a line given by its address.
      */
     fun start(location: LocationConfig): IosStart {
         if (location.kind == LocationKind.Olcrtc) {
             return OlcSession.refusal(location)?.let { IosStart.Refused(refused(location, it)) } ?: IosStart.Room
         }
-        val spec = location.rawLink?.let { LinkParser.parse(it) }
+        val asked = location.rawLink?.let { LinkParser.parse(it) }
             ?: return IosStart.Refused(refused(location, NO_LINK))
+        val named = CoreLines.of(asked) != null && !XrayConfig.isIpLiteral(asked.host)
+        val spec = if (named) CoreLines.pinHost(asked, HOST_PIN_PLACEHOLDER) else asked
         val choice = choose(spec)
         val line = choice.line
         if (choice.engine != IosEngine.RUST || line == null) {
-            return IosStart.Refused(refused(location, choice.reason ?: CoreRefusal.noLine(spec)))
+            val reason = choice.reason ?: CoreRefusal.noLine(spec)
+            val said = if (named && reason == VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER) PLAIN_NAMED else reason
+            return IosStart.Refused(refused(location, said))
         }
-        return IosStart.Core(spec, line, listOfNotNull(Reality.helloNote(spec)))
+        val pin = if (named) IosHostPin(asked.host, refused(location, HOST_UNRESOLVED)) else null
+        val notes = listOfNotNull(Reality.helloNote(spec), pin?.let { HOST_PIN_NOTE })
+        return IosStart.Core(spec, line, notes, pin)
+    }
+
+    /**
+     * Where a line whose server is named by a hostname is written to connect
+     * until the extension has resolved the name ([start]): TEST-NET-2, one
+     * past [CoreDns.DIRECT_DNS_PLACEHOLDER], so a core.json the extension did
+     * not finish dials nowhere. The extension's `HostPin.placeholder` is the
+     * same text (scripts/p6-tests/ios-host-pin.sh holds them to it). Not a
+     * private address: a line the core carries only to one is not taken on
+     * the placeholder ([PLAIN_NAMED]).
+     */
+    const val HOST_PIN_PLACEHOLDER = "198.51.100.54"
+
+    /** Why a start fails whose server's name the extension could not resolve ([IosHostPin.unresolved]). */
+    const val HOST_UNRESOLVED = "the server's name did not resolve on the network underneath the tunnel"
+
+    /** The log's line for a line whose server is named by a hostname. */
+    const val HOST_PIN_NOTE =
+        "the server is named by a hostname: the tunnel resolves it on the network underneath, " +
+            "connects to its address and keeps the name as the TLS server name and the Host"
+
+    /**
+     * Why a line of VLESS with no TLS whose server is named by a hostname is
+     * refused: the core sends it only to a private server
+     * ([VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER]), and which address the name
+     * has is learnt only in the extension, after the app has decided.
+     */
+    const val PLAIN_NAMED =
+        "the link asks for VLESS with no TLS (security=none) to a server named by a hostname: the core sends VLESS in the clear " +
+            "only to a private, loopback or link-local server, and the name's address is learnt only once the tunnel starts"
+
+    /**
+     * `core.json` as the extension is handed it: [config], written by
+     * [XrayConfig.buildIosCore] from [start]'s spec, and for a server named
+     * by a hostname ([IosStart.Core.hostPin]) the server ahead of everything
+     * else, in the root's `meta`, which the core type-checks and ignores:
+     *
+     *     {"meta":{"hostPin":{"server":"<name>","unresolved":"<sentence>"}},"log":...
+     *
+     * HostPin.swift reads it from the head of the file, without parsing a
+     * document that may carry a region's lists, resolves the name outside
+     * the tunnel and writes the address over [HOST_PIN_PLACEHOLDER].
+     */
+    fun handOver(start: IosStart.Core, config: String): String {
+        val pin = start.hostPin ?: return config
+        require(config.startsWith("{\"") && config.endsWith("}")) { "core.json is a JSON object with members" }
+        require("\"$HOST_PIN_PLACEHOLDER\"" in config) { "core.json is not written for the placeholder" }
+        val meta = buildJsonObject {
+            putJsonObject("hostPin") {
+                put("server", pin.server)
+                put("unresolved", pin.unresolved)
+            }
+        }
+        return "{\"meta\":$meta,${config.substring(1)}"
     }
 
     /** Why a location whose link the app does not read is refused. */

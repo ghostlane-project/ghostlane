@@ -526,8 +526,8 @@ class IosVpnManager(
             }
             is IosStart.Core -> {
                 // What the core does other than the link says (a Reality hello
-                // it has no form of, swapped for Chrome's), told in the same
-                // log a refusal goes to.
+                // it has no form of, swapped for Chrome's; a server's name the
+                // tunnel resolves), told in the same log a refusal goes to.
                 start.notes.forEach { addLog("Rust core: $it") }
                 // Demanded by the SOCKS inbound hev forwards to: hev reaches
                 // it on loopback, and so could any other app on the phone (see
@@ -535,13 +535,23 @@ class IosVpnManager(
                 // core.json, as it reads the port. The settings always hold a
                 // generated pair.
                 val socksLogin = _socksProxySettings.value.let { SocksLogin.of(it.username, it.password) }
+                // A server named by a hostname: core.json is written for the
+                // placeholder and names the server at its head, and the
+                // extension resolves the name outside the tunnel and writes
+                // the address in before the core starts (IosCore.handOver,
+                // HostPin.swift). Not here: this process's own questions go
+                // through a tunnel that is up, and under the kill switch iOS
+                // restarts the tunnel from the same file with no app at all.
                 IosPacketTunnelStartRequest(
-                    coreConfig = XrayConfig.buildIosCore(
-                        start.spec,
-                        login = requireNotNull(socksLogin) { "No login for the tunnel's own SOCKS port" },
-                        routing = routing,
-                        geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
-                        verboseLogs = verboseLogs,
+                    coreConfig = IosCore.handOver(
+                        start,
+                        XrayConfig.buildIosCore(
+                            start.spec,
+                            login = requireNotNull(socksLogin) { "No login for the tunnel's own SOCKS port" },
+                            routing = routing,
+                            geodata = if (routing is Routing.BypassRussia) XrayGeodata.lists() else null,
+                            verboseLogs = verboseLogs,
+                        ),
                     ),
                     olcrtc = null,
                 )
