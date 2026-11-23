@@ -251,6 +251,7 @@ case "$1" in
       "uname -r") echo 6.6 ;;
       "cat /proc/sys/kernel/random/entropy_avail") echo 256 ;;
       "pidof "*) pid ;;
+      "cat /proc/"*"/cmdline") [ -n "$(pid)" ] && [ "$cmd" = "cat /proc/$(pid)/cmdline" ] && printf 'org.proofkit.app\0' ;;
       ps | "ps -A") echo "USER PID PPID NAME" ;;
       "ls -d /proc/"*) if [ -n "$(pid)" ] && [ "${cmd#ls -d /proc/}" = "$(pid)" ]; then echo "/proc/$(pid)"; else echo "no such file" >&2; fi ;;
       "cat /proc/net/dev") echo "lo: 0"; [ -f "$st/tun" ] && echo "tun0: 0" ;;

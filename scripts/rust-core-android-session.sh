@@ -87,16 +87,23 @@ fail() {
   finish 1
 }
 
-dev() { adb shell "$@" 2> /dev/null | tr -d '\r'; }
+# Every device command is bounded: an API 24 image once hung in one for 44 minutes.
+dev() { timeout 600 adb shell "$@" 2> /dev/null | tr -d '\r'; }
 hits() { cat "$out/host/hits" 2> /dev/null || echo 0; }
 installed() { dev pm path "$1" | grep -q '^package:'; }
 code_path() { dev pm path "$1" | sed -n 's/^package://p' | grep -m1 'base.apk$'; }
 
+# The app's main process: a candidate of pidof or ps whose command line is the package's
+# own (on Android 6 one of them named process 1, and the sampler read init).
 app_pid() {
   local p
-  p=$(dev pidof "$pkg" | awk '{print $1}')
-  case "$p" in '' | *[!0-9]*) p=$({ dev ps -A; dev ps; } | awk -v n="$pkg" '$NF == n { print $2; exit }') ;; esac
-  echo "$p"
+  for p in $(dev pidof "$pkg") $({ dev ps -A; dev ps; } | awk -v n="$pkg" '$NF == n { print $2 }'); do
+    case "$p" in '' | *[!0-9]*) continue ;; esac
+    if [ "$(timeout 60 adb shell cat "/proc/$p/cmdline" 2> /dev/null | tr -d '\r\000')" = "$pkg" ]; then
+      echo "$p"
+      return
+    fi
+  done
 }
 alive() { [ -n "$1" ] && dev ls -d "/proc/$1" | grep -q "^/proc/$1\$"; }
 tun_up() { dev cat /proc/net/dev | grep -q 'tun0:'; }
@@ -151,7 +158,10 @@ sample_start() {
   for i in $(seq 1 12); do
     sleep 2
     pid=$(app_pid)
-    [ -n "$pid" ] || continue
+    if [ -z "$pid" ]; then
+      echo "--- $(date +%T), +$((i * 2)) s, no process of $pkg (pidof: '$(dev pidof "$pkg")')" >> "$out/start-samples.txt"
+      continue
+    fi
     { echo "--- $(date +%T), +$((i * 2)) s, process $pid"; sample_once "$pid"; } >> "$out/start-samples.txt" 2>&1
   done
 }
@@ -200,7 +210,7 @@ EOF
   [ -f "$app" ] && [ -f "$test_apk" ] || fail "no APKs under $apks"
   for a in "$app" "$test_apk"; do
     for try in 1 2 3; do
-      adb install -r -t "$a" >> "$out/install.txt" 2>&1 && break
+      timeout 300 adb install -r -t "$a" >> "$out/install.txt" 2>&1 && break
       [ "$try" -eq 3 ] && fail "install of $(basename "$a")"
       sleep 10
     done
@@ -210,7 +220,7 @@ EOF
   case "$(dev id)" in 'uid=0('*) shell_as="su 2000" ;; esac
 
   adb logcat -G 16M > /dev/null 2>&1 || true
-  adb shell "am instrument -w -r -e class org.olcbox.app.RustKillE2ETest#armTheSessionForTheShell -e rustKill arm -e rustKillLink '$link' $runner" > "$out/arm.txt" 2>&1
+  timeout 300 adb shell "am instrument -w -r -e class org.olcbox.app.RustKillE2ETest#armTheSessionForTheShell -e rustKill arm -e rustKillLink '$link' $runner" > "$out/arm.txt" 2>&1
   tr -d '\r' < "$out/arm.txt" | grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' || { tail -30 "$out/arm.txt"; fail "the arm did not pass"; }
   say "armed: the Rust core, tun mode, the shell alone in the tun, the host's REALITY line"
 }
