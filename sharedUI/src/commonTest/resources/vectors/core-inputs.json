@@ -1,0 +1,4118 @@
+{
+  "about": [
+    "What the Rust CLI's core config port (cli/crates/gl-coreconfig) is held to, written from the app's own builder",
+    "(sharedUI net/core) and held to it by CoreInputVectorsTest. Each case is a fixture link of a kind under",
+    "net/core/lines, the spec the app's link parser reads from it, and the reference config the app writes for it",
+    "under Global with the fixture login on the default port. A plan's config is in core-plans/<name>.json.",
+    "A spec is OutboundSpec as JSON: every field, null where it is absent. The crate's vectors.sha256 lists every",
+    "file here and every reference a case names: a change to any of them changes it, and so runs the Rust tests."
+  ],
+  "login": {
+    "username": "ios-tun-user",
+    "password": "ios-tun-password"
+  },
+  "socksPort": 10810,
+  "kinds": [
+    {
+      "name": "Hysteria2",
+      "shapes": [
+        "hysteria2"
+      ]
+    },
+    {
+      "name": "Reality",
+      "shapes": [
+        "reality",
+        "grpc-reality",
+        "xhttp"
+      ]
+    },
+    {
+      "name": "Shadowsocks",
+      "shapes": [
+        "shadowsocks",
+        "shadowsocks-2022"
+      ]
+    },
+    {
+      "name": "Trojan",
+      "shapes": [
+        "trojan",
+        "trojan-ws",
+        "trojan-grpc",
+        "trojan-httpupgrade"
+      ]
+    },
+    {
+      "name": "VlessShapes",
+      "shapes": [
+        "vless-tls",
+        "vless-tls-grpc",
+        "vless-tls-xhttp",
+        "vless-none",
+        "vless-none-ws",
+        "vless-none-grpc",
+        "vless-none-httpupgrade",
+        "vless-none-xhttp"
+      ]
+    },
+    {
+      "name": "Vmess",
+      "shapes": [
+        "vmess-raw",
+        "vmess-ws",
+        "vmess-grpc",
+        "vmess-httpupgrade",
+        "vmess-raw-tls",
+        "vmess-ws-tls",
+        "vmess-grpc-tls",
+        "vmess-httpupgrade-tls"
+      ]
+    },
+    {
+      "name": "WebTunnel",
+      "shapes": [
+        "webtunnel-ws",
+        "webtunnel-httpupgrade"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "hysteria2",
+      "kind": "Hysteria2",
+      "shape": "hysteria2",
+      "link": "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&pinSHA256=9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8#RU-hy2",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "reference": "ios-core-hysteria2",
+      "helloNote": null
+    },
+    {
+      "name": "hysteria2-insecure",
+      "kind": "Hysteria2",
+      "shape": "hysteria2",
+      "link": "hysteria2://PASSWORD123@127.0.0.1:443?sni=www.microsoft.com&obfs=salamander&obfs-password=OBFSPW&insecure=1#RU-hy2-insecure",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": true,
+        "tag": "RU-hy2-insecure",
+        "certPinSha256": null
+      },
+      "reference": "core-hysteria2-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "reality",
+      "kind": "Reality",
+      "shape": "reality",
+      "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#DE-reality",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-reality",
+      "helloNote": null
+    },
+    {
+      "name": "grpc-reality",
+      "kind": "Reality",
+      "shape": "grpc-reality",
+      "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:2053?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12cd34&fp=chrome&sni=rutube.ru&type=grpc&serviceName=media%2Fsync#KZ-grpc",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 2053,
+        "sni": "rutube.ru",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "KZ-grpc",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-grpc-reality",
+      "helloNote": null
+    },
+    {
+      "name": "xhttp",
+      "kind": "Reality",
+      "shape": "xhttp",
+      "link": "vless://22222222-2222-2222-2222-222222222222@127.0.0.1:443?type=xhttp&security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=cd34&fp=chrome&sni=www.microsoft.com&path=%2Fdownload&host=www.microsoft.com&mode=packet-up#FI-xhttp",
+      "spec": {
+        "kind": "vless",
+        "uuid": "22222222-2222-2222-2222-222222222222",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "cd34",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/download",
+          "host": "www.microsoft.com",
+          "mode": "packet-up"
+        },
+        "tag": "FI-xhttp",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-xhttp",
+      "helloNote": null
+    },
+    {
+      "name": "reality-android",
+      "kind": "Reality",
+      "shape": "reality",
+      "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12cd34&fp=android&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#DE-reality-android",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "android",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality-android",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "core-reality-android",
+      "helloNote": "the link asks for the android hello, which the core has no REALITY form of: the Chrome hello is used instead"
+    },
+    {
+      "name": "reality-360",
+      "kind": "Reality",
+      "shape": "reality",
+      "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12cd34&fp=360&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#DE-reality-360",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "360",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality-360",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "core-reality-360",
+      "helloNote": "the link asks for the 360 hello, which the core has no REALITY form of: the Chrome hello is used instead"
+    },
+    {
+      "name": "shadowsocks-aes-128-gcm",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks",
+      "link": "ss://aes-128-gcm:pw-aes-128@192.0.2.1:8388#ss-aes-128-gcm",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "aes-128-gcm",
+        "password": "pw-aes-128",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-aes-128-gcm"
+      },
+      "reference": "core-shadowsocks-aes-128-gcm",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks-aes-256-gcm",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks",
+      "link": "ss://aes-256-gcm:pw-aes-256@192.0.2.1:8388#ss-aes-256-gcm",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "aes-256-gcm",
+        "password": "pw-aes-256",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-aes-256-gcm"
+      },
+      "reference": "core-shadowsocks-aes-256-gcm",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks",
+      "link": "ss://chacha20-ietf-poly1305:pw-chacha@192.0.2.1:8388#ss-chacha20",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "chacha20-ietf-poly1305",
+        "password": "pw-chacha",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "reference": "ios-core-shadowsocks",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks-xchacha20-poly1305",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks",
+      "link": "ss://xchacha20-ietf-poly1305:pw-xchacha@192.0.2.1:8388#ss-xchacha20",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "xchacha20-ietf-poly1305",
+        "password": "pw-xchacha",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-xchacha20"
+      },
+      "reference": "core-shadowsocks-xchacha20-poly1305",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks-2022",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks-2022",
+      "link": "ss://2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw%3D%3D@192.0.2.1:8388#ss2022-aes-128",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw==",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "reference": "ios-core-shadowsocks-2022",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks-2022-aes-256-gcm",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks-2022",
+      "link": "ss://2022-blake3-aes-256-gcm:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8%3D@192.0.2.1:8388#ss2022-aes-256",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-256-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-256"
+      },
+      "reference": "core-shadowsocks-2022-aes-256-gcm",
+      "helloNote": null
+    },
+    {
+      "name": "shadowsocks-2022-chacha20-poly1305",
+      "kind": "Shadowsocks",
+      "shape": "shadowsocks-2022",
+      "link": "ss://2022-blake3-chacha20-poly1305:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8%3D@192.0.2.1:8388#ss2022-chacha",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-chacha20-poly1305",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-chacha"
+      },
+      "reference": "core-shadowsocks-2022-chacha20-poly1305",
+      "helloNote": null
+    },
+    {
+      "name": "trojan",
+      "kind": "Trojan",
+      "shape": "trojan",
+      "link": "trojan://trojan-fixture-password@127.0.0.1:443?security=tls&sni=trojan.example.com&fp=chrome&type=tcp#trojan",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "reference": "ios-core-trojan",
+      "helloNote": null
+    },
+    {
+      "name": "trojan-ws",
+      "kind": "Trojan",
+      "shape": "trojan-ws",
+      "link": "trojan://trojan-fixture-password@127.0.0.1:443?security=tls&sni=trojan.example.com&fp=chrome&type=ws&path=%2Ftr&host=cdn.example.com&alpn=http%2F1.1#trojan-ws",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "transport": {
+          "type": "ws",
+          "path": "/tr",
+          "host": "cdn.example.com"
+        },
+        "tag": "trojan-ws"
+      },
+      "reference": "ios-core-trojan-ws",
+      "helloNote": null
+    },
+    {
+      "name": "trojan-grpc",
+      "kind": "Trojan",
+      "shape": "trojan-grpc",
+      "link": "trojan://trojan-fixture-password@127.0.0.1:443?security=tls&sni=trojan.example.com&fp=firefox&type=grpc&serviceName=tr.grpc#trojan-grpc",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "grpc",
+          "serviceName": "tr.grpc"
+        },
+        "tag": "trojan-grpc"
+      },
+      "reference": "ios-core-trojan-grpc",
+      "helloNote": null
+    },
+    {
+      "name": "trojan-httpupgrade",
+      "kind": "Trojan",
+      "shape": "trojan-httpupgrade",
+      "link": "trojan://trojan-fixture-password@127.0.0.1:443?security=tls&sni=trojan.example.com&type=httpupgrade&path=%2Fup&host=trojan.example.com#trojan-httpupgrade",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": null,
+          "alpn": []
+        },
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/up",
+          "host": "trojan.example.com"
+        },
+        "tag": "trojan-httpupgrade"
+      },
+      "reference": "ios-core-trojan-httpupgrade",
+      "helloNote": null
+    },
+    {
+      "name": "trojan-insecure",
+      "kind": "Trojan",
+      "shape": "trojan",
+      "link": "trojan://trojan-fixture-password@127.0.0.1:443?security=tls&sni=trojan.example.com&fp=chrome&allowInsecure=1&type=tcp#trojan-insecure",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": true,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan-insecure"
+      },
+      "reference": "core-trojan-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls",
+      "kind": "VlessShapes",
+      "shape": "vless-tls",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&type=tcp#vless-tls",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-tls",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-vision",
+      "kind": "VlessShapes",
+      "shape": "vless-tls",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&flow=xtls-rprx-vision&type=tcp#vless-tls-vision",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-tls-vision",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "core-vless-tls-vision",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-insecure",
+      "kind": "VlessShapes",
+      "shape": "vless-tls",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&allowInsecure=1&type=tcp#vless-tls-insecure",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-tls-insecure",
+        "plain": false,
+        "insecure": true,
+        "alpn": []
+      },
+      "reference": "core-vless-tls-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-grpc",
+      "kind": "VlessShapes",
+      "shape": "vless-tls-grpc",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&type=grpc&serviceName=media%2Fsync#vless-tls-grpc",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-tls-grpc",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-tls-grpc",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-grpc-insecure",
+      "kind": "VlessShapes",
+      "shape": "vless-tls-grpc",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&allowInsecure=1&type=grpc&serviceName=media%2Fsync#vless-tls-grpc-insecure",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-tls-grpc-insecure",
+        "plain": false,
+        "insecure": true,
+        "alpn": []
+      },
+      "reference": "core-vless-tls-grpc-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-xhttp",
+      "kind": "VlessShapes",
+      "shape": "vless-tls-xhttp",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&type=xhttp&path=%2Fx#vless-tls-xhttp",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "vless.example.com",
+          "mode": "auto"
+        },
+        "tag": "vless-tls-xhttp",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-tls-xhttp",
+      "helloNote": null
+    },
+    {
+      "name": "vless-tls-xhttp-insecure",
+      "kind": "VlessShapes",
+      "shape": "vless-tls-xhttp",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&allowInsecure=1&type=xhttp&path=%2Fx#vless-tls-xhttp-insecure",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "vless.example.com",
+          "mode": "auto"
+        },
+        "tag": "vless-tls-xhttp-insecure",
+        "plain": false,
+        "insecure": true,
+        "alpn": []
+      },
+      "reference": "core-vless-tls-xhttp-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "vless-none",
+      "kind": "VlessShapes",
+      "shape": "vless-none",
+      "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none&type=tcp#vless-none",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-none",
+      "helloNote": null
+    },
+    {
+      "name": "vless-none-ws",
+      "kind": "VlessShapes",
+      "shape": "vless-none-ws",
+      "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none&type=ws&path=%2Fp&host=cdn.example.com#vless-none-ws",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/p",
+          "host": "cdn.example.com"
+        },
+        "tag": "vless-none-ws",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-none-ws",
+      "helloNote": null
+    },
+    {
+      "name": "vless-none-grpc",
+      "kind": "VlessShapes",
+      "shape": "vless-none-grpc",
+      "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none&type=grpc&serviceName=media%2Fsync#vless-none-grpc",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-none-grpc",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-none-grpc",
+      "helloNote": null
+    },
+    {
+      "name": "vless-none-httpupgrade",
+      "kind": "VlessShapes",
+      "shape": "vless-none-httpupgrade",
+      "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none&type=httpupgrade&path=%2Fu&host=cdn.example.com#vless-none-httpupgrade",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/u",
+          "host": "cdn.example.com"
+        },
+        "tag": "vless-none-httpupgrade",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-none-httpupgrade",
+      "helloNote": null
+    },
+    {
+      "name": "vless-none-xhttp",
+      "kind": "VlessShapes",
+      "shape": "vless-none-xhttp",
+      "link": "vless://55555555-5555-5555-5555-555555555555@127.0.0.1:80?security=none&encryption=none&type=xhttp&path=%2Fx&host=cdn.example.com&mode=packet-up#vless-none-xhttp",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "cdn.example.com",
+          "mode": "packet-up"
+        },
+        "tag": "vless-none-xhttp",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-none-xhttp",
+      "helloNote": null
+    },
+    {
+      "name": "webtunnel-ws",
+      "kind": "WebTunnel",
+      "shape": "webtunnel-ws",
+      "link": "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:443?security=tls&encryption=none&sni=wt.example.com&fp=chrome&type=ws&path=%2Fv&host=wt.example.com&alpn=h2%2Chttp%2F1.1#NL-webtunnel",
+      "spec": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "wt.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/v",
+          "host": "wt.example.com"
+        },
+        "tag": "NL-webtunnel",
+        "plain": false,
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "reference": "ios-core-webtunnel-ws",
+      "helloNote": null
+    },
+    {
+      "name": "webtunnel-httpupgrade",
+      "kind": "WebTunnel",
+      "shape": "webtunnel-httpupgrade",
+      "link": "vless://33333333-3333-3333-3333-333333333333@127.0.0.1:443?encryption=none&security=tls&sni=wt.example.com&host=wt.example.com&type=httpupgrade&path=%2Fu&fp=chrome&alpn=h2%2Chttp%2F1.1#NL-webtunnel-hu",
+      "spec": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "wt.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/u",
+          "host": "wt.example.com"
+        },
+        "tag": "NL-webtunnel-hu",
+        "plain": false,
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "reference": "ios-core-webtunnel-httpupgrade",
+      "helloNote": null
+    }
+  ],
+  "plans": [
+    {
+      "name": "tunnel-own-port",
+      "case": "reality",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": "tun-user",
+            "password": "tun-password"
+          }
+        },
+        "lan": null
+      },
+      "verboseLogs": false
+    },
+    {
+      "name": "tunnel-verbose",
+      "case": "hysteria2",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 10810,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": null
+      },
+      "verboseLogs": true
+    },
+    {
+      "name": "proxy-open",
+      "case": "reality",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": null
+      },
+      "verboseLogs": false
+    },
+    {
+      "name": "proxy-login-ipv6",
+      "case": "vless-tls-xhttp",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1081,
+          "login": {
+            "username": "proxy-user",
+            "password": "proxy-password"
+          },
+          "listen": "[::1]"
+        },
+        "lan": null
+      },
+      "verboseLogs": false
+    },
+    {
+      "name": "proxy-loopback-trimmed",
+      "case": "trojan-ws",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 2080,
+          "login": null,
+          "listen": " 127.0.0.2 "
+        },
+        "lan": null
+      },
+      "verboseLogs": false
+    },
+    {
+      "name": "tunnel-and-lan",
+      "case": "reality",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 10810,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "verboseLogs": false
+    },
+    {
+      "name": "proxy-and-lan-verbose",
+      "case": "webtunnel-httpupgrade",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "10.0.0.5",
+          "port": 2080,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "verboseLogs": true
+    },
+    {
+      "name": "proxy-and-lan-172",
+      "case": "shadowsocks-2022",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": {
+            "username": "proxy-user",
+            "password": "proxy-password"
+          },
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "172.31.255.1",
+          "port": 65535,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "verboseLogs": false
+    }
+  ],
+  "planRefusals": [
+    {
+      "name": "tunnel-port-zero",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 0,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a listener's port is from 1 to 65535"
+    },
+    {
+      "name": "tunnel-port-past-the-last",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 65536,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a listener's port is from 1 to 65535"
+    },
+    {
+      "name": "tunnel-port-last",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 65535,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": null
+      },
+      "refusal": null
+    },
+    {
+      "name": "tunnel-blank-username",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": " ",
+            "password": "pw"
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a loopback SOCKS port other apps can reach needs a login"
+    },
+    {
+      "name": "tunnel-blank-password",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": "u",
+            "password": ""
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a loopback SOCKS port other apps can reach needs a login"
+    },
+    {
+      "name": "tunnel-password-of-256-bytes",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": "u",
+            "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a SOCKS5 login holds at most 255 bytes of username and 255 of password"
+    },
+    {
+      "name": "tunnel-password-of-255-bytes",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": "u",
+            "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa"
+          }
+        },
+        "lan": null
+      },
+      "refusal": null
+    },
+    {
+      "name": "tunnel-username-of-256-bytes",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 1080,
+          "login": {
+            "username": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+            "password": "pw"
+          }
+        },
+        "lan": null
+      },
+      "refusal": "a SOCKS5 login holds at most 255 bytes of username and 255 of password"
+    },
+    {
+      "name": "proxy-every-address",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "0.0.0.0"
+        },
+        "lan": null
+      },
+      "refusal": "proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "proxy-a-name",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "localhost"
+        },
+        "lan": null
+      },
+      "refusal": "proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "proxy-leading-zero",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.000.0.1"
+        },
+        "lan": null
+      },
+      "refusal": "proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "proxy-private-address",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "192.168.1.2"
+        },
+        "lan": null
+      },
+      "refusal": "proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "proxy-other-ipv6",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "::2"
+        },
+        "lan": null
+      },
+      "refusal": "proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "proxy-127-255",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.255.255.254"
+        },
+        "lan": null
+      },
+      "refusal": null
+    },
+    {
+      "name": "proxy-half-login",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": {
+            "username": "u",
+            "password": "  "
+          },
+          "listen": "127.0.0.1"
+        },
+        "lan": null
+      },
+      "refusal": "a login is a username and a password, neither of them blank"
+    },
+    {
+      "name": "proxy-long-login",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": {
+            "username": "u",
+            "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+          },
+          "listen": "127.0.0.1"
+        },
+        "lan": null
+      },
+      "refusal": "a SOCKS5 login holds at most 255 bytes of username and 255 of password"
+    },
+    {
+      "name": "proxy-port-zero",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 0,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": null
+      },
+      "refusal": "a listener's port is from 1 to 65535"
+    },
+    {
+      "name": "lan-public-address",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "8.8.8.8",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing listens on one private IPv4 address of this machine (in 10/8, 172.16/12 or 192.168/16), not on every address, a public one or a name"
+    },
+    {
+      "name": "lan-past-172-16-12",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "172.32.0.1",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing listens on one private IPv4 address of this machine (in 10/8, 172.16/12 or 192.168/16), not on every address, a public one or a name"
+    },
+    {
+      "name": "lan-loopback",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "127.0.0.1",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing listens on one private IPv4 address of this machine (in 10/8, 172.16/12 or 192.168/16), not on every address, a public one or a name"
+    },
+    {
+      "name": "lan-every-address",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "0.0.0.0",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing listens on one private IPv4 address of this machine (in 10/8, 172.16/12 or 192.168/16), not on every address, a public one or a name"
+    },
+    {
+      "name": "lan-privileged-port",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 1023,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing's port is from 1024 to 65535 and is not the core's own"
+    },
+    {
+      "name": "lan-first-port",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 1024,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": null
+    },
+    {
+      "name": "lan-the-cores-own-port",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 10818,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 10818,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "LAN sharing's port is from 1024 to 65535 and is not the core's own"
+    },
+    {
+      "name": "lan-blank-login",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 10818,
+          "login": {
+            "username": "guest",
+            "password": " "
+          }
+        }
+      },
+      "refusal": "LAN sharing demands a login: the username and the password the devices on the network are given"
+    },
+    {
+      "name": "lan-long-login",
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": {
+          "address": "192.168.50.10",
+          "port": 10818,
+          "login": {
+            "username": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+            "password": "pw"
+          }
+        }
+      },
+      "refusal": "a SOCKS5 login holds at most 255 bytes of username and 255 of password"
+    },
+    {
+      "name": "own-before-lan",
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 0,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": {
+          "address": "8.8.8.8",
+          "port": 80,
+          "login": {
+            "username": "ghostlane-guest",
+            "password": "generated-lan-password"
+          }
+        }
+      },
+      "refusal": "a listener's port is from 1 to 65535"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "a-hostname",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the server is named by a hostname, which the core would resolve through the tunnel's own resolver"
+    },
+    {
+      "name": "a-number-too-big-for-an-address",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "256.1.1.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the server is named by a hostname, which the core would resolve through the tunnel's own resolver"
+    },
+    {
+      "name": "three-numbers",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "10.1.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "the server is named by a hostname, which the core would resolve through the tunnel's own resolver"
+    },
+    {
+      "name": "an-ipv6-address",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "2001:db8::1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "a-leading-zero-is-still-an-address",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.01",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "no-kind-before-the-hostname",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vm.example.com",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "the Rust core has no Vmess line of this shape"
+    },
+    {
+      "name": "no-vless-kind",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the Rust core has no Vless line of this shape"
+    },
+    {
+      "name": "reality-waived",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": true,
+        "alpn": []
+      },
+      "refusal": "the link waives certificate checks (allowInsecure), which the core does not do"
+    },
+    {
+      "name": "reality-direct-flow",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-direct",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the core knows no flow but Vision"
+    },
+    {
+      "name": "reality-vision-in-capitals",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": " XTLS-RPRX-VISION ",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "reality-vision-udp443",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision-udp443",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "reality-blank-flow",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "  ",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the core knows no flow but Vision"
+    },
+    {
+      "name": "reality-no-server-name",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 2053,
+        "sni": " ",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "KZ-grpc",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "a Reality line with no server name"
+    },
+    {
+      "name": "reality-android-hello",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "android",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality-android",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-http2",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": [
+            "h.example.com"
+          ]
+        },
+        "tag": "vless-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+    },
+    {
+      "name": "vless-http2-reality",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": []
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+    },
+    {
+      "name": "vless-http2-plain",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/h",
+          "hosts": []
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+    },
+    {
+      "name": "vless-tls-other-flow",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": "none",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the core knows no flow but Vision"
+    },
+    {
+      "name": "vless-tls-waived-is-carried",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-tls-insecure",
+        "plain": false,
+        "insecure": true,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-vision",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "127.0.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for Vision with no TLS (security=none), and Vision runs only inside TLS or Reality"
+    },
+    {
+      "name": "vless-none-public",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "8.8.8.8",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-10-8",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "10.20.30.40",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-172-16",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "172.16.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-172-32",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "172.32.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-192-168",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "192.168.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-link-local",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "169.254.10.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/p",
+          "host": "cdn.example.com"
+        },
+        "tag": "vless-none-ws",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-leading-zero",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "10.01.0.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-ipv6-loopback",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "::1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-ipv6-bracketed",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "[fd00::1]",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-none-grpc",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-ipv6-unique-local",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "fc12:3456::9",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-ipv6-link-local",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "FE80::1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-ipv6-public",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "2001:db8::1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-ipv4-mapped-private",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "::ffff:192.168.1.1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "vless-none-ipv4-mapped-public",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "::ffff:8.8.8.8",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-ipv6-zone",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "fe80::1%eth0",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-ipv6-two-gaps",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "fe80::1::2",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": "the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "vless-none-ipv6-full",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "0:0:0:0:0:0:0:1",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "refusal": null
+    },
+    {
+      "name": "webtunnel-waived",
+      "spec": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "wt.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/v",
+          "host": "wt.example.com"
+        },
+        "tag": "NL-webtunnel",
+        "plain": false,
+        "insecure": true,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "refusal": "the link waives certificate checks (allowInsecure), which the core does not do"
+    },
+    {
+      "name": "webtunnel-other-flow",
+      "spec": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "wt.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-splice",
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/u",
+          "host": "wt.example.com"
+        },
+        "tag": "NL-webtunnel-hu",
+        "plain": false,
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "refusal": "the core knows no flow but Vision"
+    },
+    {
+      "name": "hysteria2-pin-not-hex",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "zz"
+      },
+      "refusal": "the certificate pin is not a SHA-256 in hex"
+    },
+    {
+      "name": "hysteria2-pin-short",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11"
+      },
+      "refusal": "the certificate pin is not a SHA-256 in hex"
+    },
+    {
+      "name": "hysteria2-pin-compact-upper",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": " 9BD53457E30ACFB2356C8EA28EDB9F952E0601F56A1AA3701A5B4EA278A111F8 "
+      },
+      "refusal": null
+    },
+    {
+      "name": "hysteria2-empty-password",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "a Hysteria2 password the core does not send"
+    },
+    {
+      "name": "hysteria2-control-in-password",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "pass\u0001word",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "a Hysteria2 password the core does not send"
+    },
+    {
+      "name": "hysteria2-delete-in-password",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "a Hysteria2 password the core does not send"
+    },
+    {
+      "name": "hysteria2-password-of-4097-bytes",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "a Hysteria2 password the core does not send"
+    },
+    {
+      "name": "hysteria2-password-of-4096-bytes",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": null
+    },
+    {
+      "name": "hysteria2-salamander-of-3-bytes",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "abc",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": "a Salamander password outside 4 to 4096 bytes"
+    },
+    {
+      "name": "hysteria2-salamander-of-4-bytes",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "abcd",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "refusal": null
+    },
+    {
+      "name": "hysteria2-waived-with-no-pin",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": true,
+        "tag": "RU-hy2-insecure",
+        "certPinSha256": null
+      },
+      "refusal": null
+    },
+    {
+      "name": "trojan-http2",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": []
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the link asks for HTTP/2 (type=http), a transport the core does not have"
+    },
+    {
+      "name": "trojan-xhttp",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "xhttp",
+          "path": "/",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the Rust core has no Trojan line of this shape"
+    },
+    {
+      "name": "trojan-empty-password",
+      "spec": {
+        "kind": "trojan",
+        "password": "",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "a Trojan password the core does not send (it sends 1 to 4096 bytes)"
+    },
+    {
+      "name": "trojan-password-of-4097-bytes",
+      "spec": {
+        "kind": "trojan",
+        "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "a Trojan password the core does not send (it sends 1 to 4096 bytes)"
+    },
+    {
+      "name": "trojan-port-zero",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 0,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the port is not one from 1 to 65535"
+    },
+    {
+      "name": "trojan-from-mitm-name",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "FromMitm",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the link asks for fromMitm, which only Xray's MITM inbound gives"
+    },
+    {
+      "name": "trojan-from-mitm-alpn",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "h2",
+            "fromMITM"
+          ]
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan"
+      },
+      "refusal": "the link asks for fromMitm, which only Xray's MITM inbound gives"
+    },
+    {
+      "name": "trojan-waived-is-carried",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "127.0.0.1",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": true,
+          "fingerprint": "chrome",
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "trojan-insecure"
+      },
+      "refusal": null
+    },
+    {
+      "name": "shadowsocks-aes-192-gcm",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "aes-192-gcm",
+        "password": "pw-chacha",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "refusal": "the Shadowsocks method aes-192-gcm, which the core does not speak"
+    },
+    {
+      "name": "shadowsocks-stream-cipher",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "RC4-MD5",
+        "password": "pw-chacha",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "refusal": "the Shadowsocks cipher rc4-md5 is a stream cipher or one the core does not speak: it speaks the AEAD ciphers and the 2022 ones"
+    },
+    {
+      "name": "shadowsocks-method-spelled-loosely",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": " AES-128-GCM ",
+        "password": "pw-chacha",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "refusal": null
+    },
+    {
+      "name": "shadowsocks-no-password",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "chacha20-ietf-poly1305",
+        "password": "",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "refusal": "a Shadowsocks password the core does not send"
+    },
+    {
+      "name": "shadowsocks-2022-empty-key",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 key the core does not take: empty or over 8192 bytes"
+    },
+    {
+      "name": "shadowsocks-2022-key-of-8193-bytes",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 key the core does not take: empty or over 8192 bytes"
+    },
+    {
+      "name": "shadowsocks-2022-wrong-length",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 key that is not standard base64 of 16 bytes, as 2022-blake3-aes-128-gcm takes"
+    },
+    {
+      "name": "shadowsocks-2022-stray-bits",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODx==",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 key that is not standard base64 of 16 bytes, as 2022-blake3-aes-128-gcm takes"
+    },
+    {
+      "name": "shadowsocks-2022-url-safe",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-256-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8_",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-256"
+      },
+      "refusal": "a Shadowsocks 2022 key that is not standard base64 of 32 bytes, as 2022-blake3-aes-256-gcm takes"
+    },
+    {
+      "name": "shadowsocks-2022-no-padding",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 key that is not standard base64 of 16 bytes, as 2022-blake3-aes-128-gcm takes"
+    },
+    {
+      "name": "shadowsocks-2022-identity-keys",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-256-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-256"
+      },
+      "refusal": null
+    },
+    {
+      "name": "shadowsocks-2022-short-identity-key",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-256-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-256"
+      },
+      "refusal": "a Shadowsocks 2022 key that is not standard base64 of 32 bytes, as 2022-blake3-aes-256-gcm takes"
+    },
+    {
+      "name": "shadowsocks-2022-eight-keys",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": null
+    },
+    {
+      "name": "shadowsocks-2022-nine-keys",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-aes-128-gcm",
+        "password": "AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==:AAECAwQFBgcICQoLDA0ODw==",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-aes-128"
+      },
+      "refusal": "a Shadowsocks 2022 password of more than 8 identity keys"
+    },
+    {
+      "name": "shadowsocks-2022-chacha-identity-keys",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "2022-blake3-chacha20-poly1305",
+        "password": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "host": "192.0.2.1",
+        "port": 8388,
+        "tag": "ss2022-chacha"
+      },
+      "refusal": "a Shadowsocks 2022 ChaCha20 password with identity keys, which that cipher does not take"
+    },
+    {
+      "name": "vmess-legacy",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 1,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a legacy VMess line (alterId above 0), which the core does not speak: it speaks VMess AEAD alone"
+    },
+    {
+      "name": "vmess-zero-cipher",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "zero",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a VMess body cipher other than auto, aes-128-gcm and chacha20-poly1305 (none, zero or a legacy one), which the core does not speak"
+    },
+    {
+      "name": "vmess-none-cipher",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "none",
+        "tls": null,
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-ws"
+      },
+      "refusal": "a VMess body cipher other than auto, aes-128-gcm and chacha20-poly1305 (none, zero or a legacy one), which the core does not speak"
+    },
+    {
+      "name": "vmess-cipher-spelled-loosely",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": " AES-128-GCM ",
+        "tls": null,
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-ws"
+      },
+      "refusal": null
+    },
+    {
+      "name": "vmess-empty-cipher-is-auto",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": " ",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": null
+    },
+    {
+      "name": "vmess-empty-id",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a VMess id that is neither a UUID nor 1 to 30 bytes of text, which the core does not read"
+    },
+    {
+      "name": "vmess-id-of-30-bytes",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": null
+    },
+    {
+      "name": "vmess-id-of-31-bytes",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a VMess id that is neither a UUID nor 1 to 30 bytes of text, which the core does not read"
+    },
+    {
+      "name": "vmess-id-of-32-hex",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444444444444444444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": null
+    },
+    {
+      "name": "vmess-id-not-hex",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "4444444g-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a VMess id that is neither a UUID nor 1 to 30 bytes of text, which the core does not read"
+    },
+    {
+      "name": "vmess-id-with-a-tail",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-4444444444441",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a VMess id that is neither a UUID nor 1 to 30 bytes of text, which the core does not read"
+    },
+    {
+      "name": "vmess-id-with-a-short-tail",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "4444444444444444444444444444444499",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": null
+    },
+    {
+      "name": "vmess-port-past-the-last",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 70000,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "a port outside 1 to 65535"
+    },
+    {
+      "name": "vmess-xhttp",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vm-raw"
+      },
+      "refusal": "the Rust core has no Vmess line of this shape"
+    },
+    {
+      "name": "vmess-http2",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": {
+          "sni": "vm.example.com",
+          "insecure": false,
+          "fingerprint": null,
+          "alpn": []
+        },
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": []
+        },
+        "tag": "vm-raw-tls"
+      },
+      "refusal": "the Rust core has no Vmess line of this shape"
+    }
+  ],
+  "pins": [
+    {
+      "name": "reality-blank-server-name",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "vpn.example.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "reality-own-server-name",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "webtunnel-ws-blank-host",
+      "spec": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": " ",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/v",
+          "host": ""
+        },
+        "tag": "NL-webtunnel",
+        "plain": false,
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "vpn.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "ws",
+          "path": "/v",
+          "host": "vpn.example.com"
+        },
+        "tag": "NL-webtunnel",
+        "plain": false,
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      }
+    },
+    {
+      "name": "vless-none-httpupgrade-blank-host",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "vpn.example.com",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/u",
+          "host": ""
+        },
+        "tag": "vless-none-httpupgrade",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "10.0.0.7",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "10.0.0.7",
+        "port": 80,
+        "sni": "vpn.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/u",
+          "host": "vpn.example.com"
+        },
+        "tag": "vless-none-httpupgrade",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "vless-tls-xhttp-blank-host",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vless-tls-xhttp",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "vpn.example.com",
+          "mode": "auto"
+        },
+        "tag": "vless-tls-xhttp",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "vless-http2-no-hosts",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": []
+        },
+        "tag": "vless-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/",
+          "hosts": [
+            "vpn.example.com"
+          ]
+        },
+        "tag": "vless-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "vless-tls-grpc",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-tls-grpc",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "2001:db8::10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "2001:db8::10",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "media/sync"
+        },
+        "tag": "vless-tls-grpc",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "trojan-ws-blank-names",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "vpn.example.com",
+        "port": 443,
+        "tls": {
+          "sni": "",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "transport": {
+          "type": "ws",
+          "path": "/tr",
+          "host": ""
+        },
+        "tag": "trojan-ws"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "192.0.2.10",
+        "port": 443,
+        "tls": {
+          "sni": "vpn.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "transport": {
+          "type": "ws",
+          "path": "/tr",
+          "host": "vpn.example.com"
+        },
+        "tag": "trojan-ws"
+      }
+    },
+    {
+      "name": "trojan-grpc-own-name",
+      "spec": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "vpn.example.com",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "grpc",
+          "serviceName": "tr.grpc"
+        },
+        "tag": "trojan-grpc"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "trojan",
+        "password": "trojan-fixture-password",
+        "host": "192.0.2.10",
+        "port": 443,
+        "tls": {
+          "sni": "trojan.example.com",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "grpc",
+          "serviceName": "tr.grpc"
+        },
+        "tag": "trojan-grpc"
+      }
+    },
+    {
+      "name": "vmess-httpupgrade-tls-blank-names",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": {
+          "sni": "  ",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/vu",
+          "host": ""
+        },
+        "tag": "vm-up-tls"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "192.0.2.10",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": {
+          "sni": "vpn.example.com",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/vu",
+          "host": "vpn.example.com"
+        },
+        "tag": "vm-up-tls"
+      }
+    },
+    {
+      "name": "vmess-ws-no-tls",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 10086,
+        "alterId": 0,
+        "security": "aes-128-gcm",
+        "tls": null,
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": ""
+        },
+        "tag": "vm-ws"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "192.0.2.10",
+        "port": 10086,
+        "alterId": 0,
+        "security": "aes-128-gcm",
+        "tls": null,
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": "vpn.example.com"
+        },
+        "tag": "vm-ws"
+      }
+    },
+    {
+      "name": "hysteria2-blank-server-name",
+      "spec": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "hysteria2",
+        "password": "PASSWORD123",
+        "host": "192.0.2.10",
+        "port": 443,
+        "sni": "vpn.example.com",
+        "obfsPassword": "OBFSPW",
+        "insecure": false,
+        "tag": "RU-hy2",
+        "certPinSha256": "9B:D5:34:57:E3:0A:CF:B2:35:6C:8E:A2:8E:DB:9F:95:2E:06:01:F5:6A:1A:A3:70:1A:5B:4E:A2:78:A1:11:F8"
+      }
+    },
+    {
+      "name": "shadowsocks",
+      "spec": {
+        "kind": "shadowsocks",
+        "method": "chacha20-ietf-poly1305",
+        "password": "pw-chacha",
+        "host": "vpn.example.com",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "shadowsocks",
+        "method": "chacha20-ietf-poly1305",
+        "password": "pw-chacha",
+        "host": "192.0.2.10",
+        "port": 8388,
+        "tag": "ss-chacha20"
+      }
+    },
+    {
+      "name": "an-address-is-left-as-it-is",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      }
+    },
+    {
+      "name": "no-kind-is-left-as-it-is",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vm-raw"
+      },
+      "address": "192.0.2.10",
+      "pinned": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "vpn.example.com",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vm-raw"
+      }
+    }
+  ],
+  "hellos": [
+    {
+      "fp": null,
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "  Chrome  ",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "chrome_psk",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "chrome_pq",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "HelloChrome_133",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "hellofirefox_148",
+      "name": "firefox",
+      "reality": "firefox"
+    },
+    {
+      "fp": "hellosafari_16_0",
+      "name": "safari",
+      "reality": "safari"
+    },
+    {
+      "fp": "helloios_14",
+      "name": "ios",
+      "reality": "ios"
+    },
+    {
+      "fp": "helloedge_106",
+      "name": "edge",
+      "reality": "edge"
+    },
+    {
+      "fp": "hello360_11_0",
+      "name": "360",
+      "reality": "chrome"
+    },
+    {
+      "fp": "helloqq_11_1",
+      "name": "qq",
+      "reality": "qq"
+    },
+    {
+      "fp": "helloandroid_11_okhttp",
+      "name": "android",
+      "reality": "chrome"
+    },
+    {
+      "fp": "randomizednoalpn",
+      "name": "randomized",
+      "reality": "randomized"
+    },
+    {
+      "fp": "randomized",
+      "name": "randomized",
+      "reality": "randomized"
+    },
+    {
+      "fp": "random",
+      "name": "random",
+      "reality": "random"
+    },
+    {
+      "fp": "unsafe",
+      "name": "chrome",
+      "reality": "chrome"
+    },
+    {
+      "fp": "firefox",
+      "name": "firefox",
+      "reality": "firefox"
+    },
+    {
+      "fp": "safari",
+      "name": "safari",
+      "reality": "safari"
+    },
+    {
+      "fp": "edge",
+      "name": "edge",
+      "reality": "edge"
+    },
+    {
+      "fp": "ios",
+      "name": "ios",
+      "reality": "ios"
+    },
+    {
+      "fp": "android",
+      "name": "android",
+      "reality": "chrome"
+    },
+    {
+      "fp": "360",
+      "name": "360",
+      "reality": "chrome"
+    },
+    {
+      "fp": "QQ",
+      "name": "qq",
+      "reality": "qq"
+    },
+    {
+      "fp": "opera",
+      "name": "chrome",
+      "reality": "chrome"
+    }
+  ],
+  "buildErrors": [
+    {
+      "name": "blank-login",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "",
+        "password": "pw"
+      },
+      "socksPort": 10810,
+      "plan": null,
+      "message": "a loopback SOCKS port other apps can reach needs a login"
+    },
+    {
+      "name": "long-login",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "u",
+        "password": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+      },
+      "socksPort": 10810,
+      "plan": null,
+      "message": "a SOCKS5 login holds at most 255 bytes of username and 255 of password"
+    },
+    {
+      "name": "login-before-the-line",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "",
+        "password": "pw"
+      },
+      "socksPort": 10810,
+      "plan": null,
+      "message": "a loopback SOCKS port other apps can reach needs a login"
+    },
+    {
+      "name": "a-refused-line",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "ios-tun-user",
+        "password": "ios-tun-password"
+      },
+      "socksPort": 10810,
+      "plan": null,
+      "message": "the Rust core cannot run this line: the server is named by a hostname, which the core would resolve through the tunnel's own resolver"
+    },
+    {
+      "name": "line-before-the-port",
+      "spec": {
+        "kind": "vless",
+        "uuid": "55555555-5555-5555-5555-555555555555",
+        "host": "8.8.8.8",
+        "port": 80,
+        "sni": "",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vless-none",
+        "plain": true,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "ios-tun-user",
+        "password": "ios-tun-password"
+      },
+      "socksPort": 0,
+      "plan": null,
+      "message": "the Rust core cannot run this line: the link asks for VLESS with no TLS (security=none) to a public address, and the core sends VLESS in the clear only to a private, loopback or link-local server"
+    },
+    {
+      "name": "a-port-that-is-none",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": {
+        "username": "ios-tun-user",
+        "password": "ios-tun-password"
+      },
+      "socksPort": 0,
+      "plan": null,
+      "message": "a listener's port is from 1 to 65535"
+    },
+    {
+      "name": "a-plan-refused",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": null,
+      "socksPort": null,
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "0.0.0.0"
+        },
+        "lan": null
+      },
+      "message": "the Rust core cannot listen so: proxy mode listens on a loopback address (127.0.0.1 or ::1): an address other devices reach is LAN sharing's, which demands a login"
+    },
+    {
+      "name": "plan-before-the-line",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "vpn.example.com",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": "xtls-rprx-vision",
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "DE-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "login": null,
+      "socksPort": null,
+      "plan": {
+        "own": {
+          "kind": "tunnel",
+          "port": 0,
+          "login": {
+            "username": "ios-tun-user",
+            "password": "ios-tun-password"
+          }
+        },
+        "lan": null
+      },
+      "message": "the Rust core cannot listen so: a listener's port is from 1 to 65535"
+    },
+    {
+      "name": "a-plan-with-a-refused-line",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "xhttp",
+          "path": "/x",
+          "host": "",
+          "mode": "auto"
+        },
+        "tag": "vm-raw"
+      },
+      "login": null,
+      "socksPort": null,
+      "plan": {
+        "own": {
+          "kind": "proxy",
+          "port": 1080,
+          "login": null,
+          "listen": "127.0.0.1"
+        },
+        "lan": null
+      },
+      "message": "the Rust core cannot run this line: the Rust core has no Vmess line of this shape"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[package]
+name = "ghostlane-coreconfig"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+description = "core.json for a line, as the app writes it: a port of the app's builder (sharedUI net/core), held to it by the vectors the app's own test writes"
+
+[lib]
+name = "coreconfig"
+path = "src/lib.rs"
+
+# serde for the spec and the plan, which the CLI keeps and the vectors carry
+# as JSON. The JSON the core is given is written here, in the app's bytes.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+sha2 = "0.10"
