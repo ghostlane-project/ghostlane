@@ -454,7 +454,7 @@ run() {
 }
 
 selftest() {
-  local work f n out want got
+  local work f n out want got missed
   work="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$work'" EXIT
