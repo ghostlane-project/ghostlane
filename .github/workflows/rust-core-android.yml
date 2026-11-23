@@ -23,9 +23,13 @@ name: Rust core for Android
 #   - scripts/rust-core-android-kill.sh: a session started outside any
 #     instrumentation on a VLESS REALITY line to an official Xray server on the
 #     runner (scripts/xray-servers.txt, by hash), SIGKILL to the app's process,
-#     Android's restart of the service, a fetch through the tun before and after.
-# Job `k3` puts every class and the kill on every leg in one table and fails
-# on any cell that did not pass, a leg that left no result included.
+#     and two cells: Android's own restart of the service within 90 s (the
+#     service answers START_REDELIVER_INTENT), red when it did not happen; and
+#     the session down with the process and back in a new one, by Android or
+#     else by the next start, a fetch through the tun before and after.
+# Job `k3` puts every class and both cells of the kill on every leg in one
+# table and fails on any cell that did not pass, a leg that left no result
+# included.
 #
 # The soak (job `soak`, only by workflow_dispatch with soak=true): one session
 # on that line for soak_minutes (120) on API 35 under traffic, `dumpsys
@@ -582,6 +586,7 @@ jobs:
                   classes.append((m.group(1) + "." if m else "") + name[:-3])
           classes.sort()
           legs = os.environ["LEGS"].split()
+          KILL_BACK, KILL_RESTART = "kill -9, down and back", "kill -9, Android's restart"
           cells, bad = {}, 0
           for leg in legs:
               d = os.path.join("out/k3", "k3-" + leg)
@@ -613,15 +618,21 @@ jobs:
                       cells[(k, leg)] = "pass %d" % c["pass"] + (" (%d skipped)" % c["skip"] if c["skip"] else "")
               kill = os.path.join(d, "kill", "results.txt")
               text = open(kill, errors="replace").read() if os.path.exists(kill) else ""
-              if "RESULT KILL ok" in text:
-                  # Who brought the session back: Android, or the next start when Android did not.
-                  how = "by Android" if "RESULT restart: by Android" in text else "by the next start"
-                  cells[("kill -9 and restart", leg)] = "pass, restarted " + how
+              fails = [l[len("RESULT FAIL "):] for l in text.splitlines() if l.startswith("RESULT FAIL ")]
+              first = ("FAIL: " + fails[0][:60]) if fails else "not finished" if text else "no result"
+              # The session goes down with the process and comes back in a new one on the
+              # Rust core: by Android, or by the next start when Android did not.
+              m = re.search(r"^RESULT down-and-back: ok, back (by Android|by the next start)", text, re.M)
+              cells[(KILL_BACK, leg)] = ("pass, back " + m.group(1)) if m else first
+              bad += 0 if m else 1
+              # Android's own restart of the service (START_REDELIVER_INTENT) within 90 s.
+              if re.search(r"^RESULT android-restart: yes", text, re.M):
+                  cells[(KILL_RESTART, leg)] = "pass"
               else:
-                  fails = [l[len("RESULT FAIL "):] for l in text.splitlines() if l.startswith("RESULT FAIL ")]
-                  cells[("kill -9 and restart", leg)] = ("FAIL: " + fails[0][:60]) if fails else "no result"
+                  none = re.search(r"^RESULT android-restart: none", text, re.M)
+                  cells[(KILL_RESTART, leg)] = "FAIL: Android did not restart it in 90 s" if none else first
                   bad += 1
-          rows = classes + ["kill -9 and restart"]
+          rows = classes + [KILL_BACK, KILL_RESTART]
           out = ["### K3: every class of the e2e package and the kill, on every leg", "",
                  "| | " + " | ".join(legs) + " |", "|---|" + "---|" * len(legs)]
           for r in rows:
