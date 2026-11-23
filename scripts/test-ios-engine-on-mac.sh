@@ -67,6 +67,20 @@
 #   interface's own address, which the harness reads back from a socket the
 #   pin bound. What only the servers dial (the page, the Reality target)
 #   stays on loopback.
+#   A line named by a hostname (a Trojan and a WebTunnel line over WebSocket
+#   and TLS) is written the way the app hands it over (IosCore.start and
+#   handOver: the server's address is HostPin's placeholder, the name is the
+#   TLS server name and the Host, and the name and the sentence for one that
+#   does not resolve stand at the head of core.json), and goes through the
+#   provider's step before the engine: HostPin.apply with HostPin.lookup, from
+#   a socket pinned to the physical interface, against a resolver this run
+#   stands up (iosApp/Tests/EngineHost/local_servers.py resolver) that
+#   answers the name with the Mac's own address, and then CoreEngine.start. The core
+#   must dial that address and no other (the placeholder goes nowhere), while the
+#   local server holds the TLS server name and the Host to the name: the same
+#   line with another Host or another server name reaches nothing. A name
+#   the resolver does not know fails with the line's own sentence and starts no
+#   core.
 # Both: the byte budget B is the phone's (setByteBudget(3,000,000), the memory
 #   class formula on a phone), the core's own payload bytes stay within it, and
 #   the process's footprint (phys_footprint and the kernel's peak of it, the
@@ -333,10 +347,62 @@ certificate() {
   echo "$names"
 }
 
+# named_cells <host> <work> <limit-bytes> <xray-dir> <version> <address> <page> <target> <private> <public> <wrong-public>
+# The lines named by a hostname against one Xray version: the server for
+# each (K5's, told to check the Host and the server name), the resolver's
+# answer in the config by HostPin, and the refusals.
+named_cells() {
+  local host="$1" work="$2" limit="$3" xray="$4" version="$5" address="$6" page="$7" target="$8"
+  local private="$9" public="${10}" wrong_public="${11}"
+  local failed=0 line name dir socks port pid ok resolver label
+  resolver="$(cat "$work/resolver.port")"
+  while read -r line name <&5; do
+    dir="$work/lines/$version/named-$line"
+    mkdir -p "$dir"
+    socks="$(free_port)"
+    port="$(free_port)"
+    label="$line named $name against Xray $version"
+    if ! "$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$LINES_DIR" "$dir" "$address" "$socks" "$port" "$target" "$page" \
+      "$work/certs/cert.pem" "$work/certs/key.pem" "$private" "$public" "$wrong_public" > "$dir/made.txt" 2>&1 ||
+      ! "$PY" -I "$HOST/lines.py" named "$line" "$dir" >> "$dir/made.txt" 2>&1; then
+      echo "FAIL $label: no configs for it: $(tr '\n' ' ' < "$dir/made.txt")"
+      failed=1
+      continue
+    fi
+    "$xray/$version/xray" run -c "$dir/$line.named.server.json" > "$dir/$line.xray.log" 2>&1 < /dev/null &
+    pid=$!
+    PIDS="$PIDS $pid"
+    ok=1
+    if ! xray_up "$dir/$line.xray.log" "$pid" tcp "$address" "$port"; then
+      echo "FAIL $label: the server did not listen on tcp $address:$port"
+      ok=0
+    elif "$host" named "$dir/$line.named.client.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" "$resolver" reach "$label" < /dev/null; then
+      # A refusal proves something only where the line got through.
+      "$host" named "$dir/$line.named-host.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" "$resolver" refused \
+        "$label, with a Host other than the name" < /dev/null || ok=0
+      "$host" named "$dir/$line.named-sni.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" "$resolver" refused \
+        "$label, with a server name the server's certificate does not name" < /dev/null || ok=0
+    else
+      ok=0
+      echo "     not asked: $label with another Host or another server name, since nothing reached the page"
+    fi
+    "$host" named "$dir/$line.named-unknown.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" "$resolver" unresolved \
+      "$label, a name the resolver does not know" < /dev/null || ok=0
+    kill "$pid" 2> /dev/null || true
+    wait "$pid" 2> /dev/null || true
+    [ "$ok" -eq 1 ] || failed=1
+    if [ "$ok" -eq 0 ]; then
+      echo "     the server's log:"
+      tail -n 30 "$dir/$line.xray.log" | sed 's/^/       /'
+    fi
+  done 5< "$work/named-lines.txt"
+  return "$failed"
+}
+
 # fetch <host> <work> <limit-bytes> <xray-dir>
 fetch() {
   local host="$1" work="$2" limit="$3" xray="$4" failed=0 page target private public wrong_public names address
-  local version line reference server network dir socks port pid ok reached diagnosed refusal what
+  local version line reference server network dir socks port pid ok reached diagnosed refusal what resolves name
   mkdir -p "$work/certs" "$work/lines"
   "$PY" -I -c 'import ssl, sys; print("python", sys.version.split()[0], ssl.OPENSSL_VERSION); sys.exit(0 if ssl.HAS_TLSv1_3 else 1)' ||
     die "$PY has no TLS 1.3 for the Reality target: set PYTHON to one that has"
@@ -365,6 +431,18 @@ fetch() {
   # The servers listen where the engine's pinned sockets can reach them.
   address="$("$host" pinned-address)"
   echo "     the local servers listen on $address, the address of the pin's interface"
+  # The network's resolver for the lines named by a hostname, on the same
+  # address: the names it knows are the ones the lines are written for.
+  "$PY" -I "$HOST/lines.py" named-lines > "$work/named-lines.txt" || die "no lines named by a hostname"
+  resolves=""
+  while read -r line name; do
+    resolves="$resolves $name=$address"
+  done < "$work/named-lines.txt"
+  # shellcheck disable=SC2086
+  "$PY" -I "$HOST/local_servers.py" resolver "$work/resolver.port" "$address" $resolves 2> "$work/resolver.log" &
+  PIDS="$PIDS $!"
+  wait_file "$work/resolver.port" "$!" || die "the resolver did not listen: $(cat "$work/resolver.log")"
+  echo "     the resolver for the lines named by a hostname listens on $address:$(cat "$work/resolver.port") ($(wc -l < "$work/named-lines.txt" | tr -d ' ') lines)"
   read -r private public < <("$host" x25519)
   read -r _ wrong_public < <("$host" x25519)
   for version in $(xray_versions); do
@@ -421,7 +499,19 @@ fetch() {
         tail -n 30 "$dir/$line.xray.log" | sed 's/^/       /'
       fi
     done 3< "$work/lines.txt"
+    named_cells "$host" "$work" "$limit" "$xray" "$version" "$address" "$page" "$target" "$private" "$public" "$wrong_public" || failed=1
   done
+  # The resolver was asked each name the app wrote, and the one it does not know.
+  while read -r line name; do
+    for what in "$name" "unknown-$name"; do
+      if grep -qxF "$what" "$work/resolver.port.asked"; then
+        echo "ok   the resolver was asked for $what"
+      else
+        echo "FAIL the resolver was never asked for $what"
+        failed=1
+      fi
+    done
+  done < "$work/named-lines.txt"
   return "$failed"
 }
 
@@ -454,7 +544,7 @@ run() {
 }
 
 selftest() {
-  local work f n out want got missed
+  local work f n out want got missed stub
   work="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$work'" EXIT
@@ -513,6 +603,36 @@ selftest() {
   [ -z "$missed" ] ||
     die "a change of these does not start the Mac's engines job (ENGINE_PATHS in scripts/test-ios-app-room-check.sh, and the paths of rust-ios.yml):$missed"
   echo "ok   a change of any of the $n files of the tree the Mac's engines job reads starts it"
+
+  # Every command this program gives the host is one the host has.
+  missed=""
+  for f in $(grep -oE '"\$host" [a-z0-9-]+' "${BASH_SOURCE[0]}" | awk '{ print $2 }' | sort -u); do
+    grep -q "case \"$f\":" "$HOST/EngineHost.swift" || missed="$missed $f"
+  done
+  [ -z "$missed" ] || die "the host has no command for:$missed (iosApp/Tests/EngineHost/EngineHost.swift)"
+  echo "ok   every command this program gives the host is one it has"
+
+  # The lines named by a hostname are written for the app's placeholder and
+  # say what the app says for a name that did not resolve.
+  want="$(sed -n 's/.*const val HOST_PIN_PLACEHOLDER = "\([^"]*\)".*/\1/p' "$ROOT/sharedUI/src/commonMain/kotlin/org/olcbox/app/net/IosCore.kt")"
+  got="$(sed -n 's/^HOST_PIN_PLACEHOLDER = "\([^"]*\)".*/\1/p' "$HOST/lines.py")"
+  [ -n "$want" ] && [ "$want" = "$got" ] || die "lines.py writes the placeholder ${got:-none}, IosCore.HOST_PIN_PLACEHOLDER is ${want:-none}"
+  want="$(sed -n 's/.*const val HOST_UNRESOLVED = "\([^"]*\)".*/\1/p' "$ROOT/sharedUI/src/commonMain/kotlin/org/olcbox/app/net/IosCore.kt")"
+  got="$(sed -n 's/^HOST_UNRESOLVED = "\([^"]*\)".*/\1/p' "$HOST/lines.py")"
+  [ -n "$want" ] && [ "$want" = "$got" ] || die "lines.py writes the sentence \"${got:-none}\", IosCore.HOST_UNRESOLVED is \"${want:-none}\""
+  echo "ok   the lines named by a hostname are written for IosCore's placeholder and say its sentence for a name that did not resolve"
+  "$PY" -I "$HOST/local_servers.py" resolver "$work/resolver.port" 127.0.0.1 one.example.test=192.0.2.9 2> "$work/resolver.err" &
+  stub=$!
+  wait_file "$work/resolver.port" "$stub" || die "the resolver did not listen: $(cat "$work/resolver.err")"
+  got="$("$PY" -I "$HOST/local_servers.py" ask 127.0.0.1 "$(cat "$work/resolver.port")" one.example.test A)"
+  [ "$got" = "0 192.0.2.9" ] || { kill "$stub"; die "the resolver answers A for a name it knows with '$got'"; }
+  got="$("$PY" -I "$HOST/local_servers.py" ask 127.0.0.1 "$(cat "$work/resolver.port")" one.example.test AAAA)"
+  [ "$got" = "0 " ] || { kill "$stub"; die "the resolver answers AAAA for a name it knows with '$got'"; }
+  got="$("$PY" -I "$HOST/local_servers.py" ask 127.0.0.1 "$(cat "$work/resolver.port")" two.example.test A)"
+  kill "$stub" 2> /dev/null || true
+  [ "$got" = "3 " ] || die "the resolver answers a name it does not know with '$got', not NXDOMAIN"
+  [ "$(cat "$work/resolver.port.asked")" = "$(printf 'one.example.test\none.example.test\ntwo.example.test')" ] || die "the resolver's record of the names asked is wrong"
+  echo "ok   the resolver answers A with the address, AAAA with none and an unknown name with NXDOMAIN, and keeps what it was asked"
 
   # The certificate for every name the lines send, then each line made and
   # read back, and each refusal of a line or a server that does not fit it.
