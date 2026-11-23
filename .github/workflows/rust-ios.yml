@@ -10,9 +10,12 @@ name: Rust core for iOS
 #           extension starts it, its SOCKS port and its login, then stopped;
 #           one the core must refuse; olcRTC up to its room, and a carrier
 #           this build does not carry refused
-#   fetch   each iPhone line against a local server of every Xray version
-#           the CLI's end-to-ends use (the official macOS builds, by hash):
-#           2 MiB down, 1 MiB up; a wrong key or pin reaches nothing
+#   fetch   every line the app writes a reference for (one per case of
+#           every kind) against K5's server for it
+#           (scripts/rust-core-interop/lines/), on every Xray version the
+#           CLI's end-to-ends use (the official macOS builds, by hash):
+#           2 MiB down, 1 MiB up; another credential, a wrong key or pin, no
+#           pin and a waived line without its waiver reach nothing
 # with the phone's byte budget, and the process's footprint held to the
 # limit the extension states for itself.
 #
@@ -266,7 +269,7 @@ jobs:
             echo "### The extension's engines on a Mac ($STAGE)"
             echo '```'
             grep -E '^(core|limit): ' out-engine.log
-            grep -E '^(ok  |FAIL|known|note) |^     (known|diagnosis)' out-engine.log
+            grep -E '^(ok  |FAIL) |^     (diagnosis|not asked)' out-engine.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"

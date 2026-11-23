@@ -83,18 +83,6 @@ enum TunArrangement: Equatable {
         return .refused(noLine)
     }
 
-    /// The older spelling, which the Mac engine host still calls. xray.json
-    /// and config.json were Go's files: nothing writes them now, and they
-    /// decide nothing.
-    static func decide(
-        coreConfig: String?,
-        olcrtcSocks: LoopbackSocks?,
-        xrayConfig: String?,
-        config: String?
-    ) -> TunArrangement {
-        decide(coreConfig: coreConfig, olcrtcSocks: olcrtcSocks)
-    }
-
     /// The SOCKS server hev forwards to, or nil on a refusal.
     var hevSocks: LoopbackSocks? {
         switch self {
