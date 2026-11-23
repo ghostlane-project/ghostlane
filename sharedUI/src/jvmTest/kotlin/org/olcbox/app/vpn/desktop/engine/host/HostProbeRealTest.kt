@@ -125,7 +125,7 @@ class HostProbeRealTest {
         val origin = Origin()
         val line = LineServer()
         try {
-            val url = "http://${origin.address}/generate_204"
+            val url = "http://127.0.0.1:${origin.address.port}/generate_204"
             val result = probe().probe(coreOf(line.address, socksPort = 0), url, timeoutMs = 10_000, bindInterface = null)
             assertNotNull(result.millis, "$result")
             assertNull(result.reason)
