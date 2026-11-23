@@ -676,23 +676,4 @@ class RustCoreVpnE2ETest {
         val direct = runBlocking { org.olcbox.app.net.TunnelVerifier.verifySystemTunnel(timeoutMs = 8_000) }
         say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the probe's servers straight from this process: ${direct?.let { "answered" } ?: "no answer"}")
     }
-
-    /**
-     * Only when a script names a port (-e tunnelCheckPort): the app's tunnel check through that
-     * loopback SOCKS port, with the login it names (-e tunnelCheckUser, -e tunnelCheckPass) or
-     * none, against the probe's own servers. A reference run for another core on the device.
-     */
-    @Test
-    fun theTunnelCheckThroughAPortTheScriptNames() {
-        val args = InstrumentationRegistry.getArguments()
-        val port = args.getString("tunnelCheckPort")?.toIntOrNull()
-        org.junit.Assume.assumeTrue("only a script names a port (-e tunnelCheckPort)", port != null)
-        val user = args.getString("tunnelCheckUser").orEmpty()
-        val pass = args.getString("tunnelCheckPass").orEmpty()
-        val failures = mutableListOf<String>()
-        val exit = runBlocking {
-            org.olcbox.app.net.TunnelVerifier.verify("127.0.0.1", port!!, user, pass, onFailure = { failures.add("${it.url}: ${it.reason} (${it.tookMs} ms)") })
-        }
-        say("RESULT API ${android.os.Build.VERSION.SDK_INT}: the tunnel check through 127.0.0.1:$port, login ${user.isNotEmpty()}: ${if (exit != null) "answered" else "no answer"}; $failures")
-    }
 }

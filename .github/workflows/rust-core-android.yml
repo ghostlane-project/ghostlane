@@ -535,7 +535,7 @@ jobs:
           disk-size: ${{ matrix.leg.disk }}
           # adbd as the shell (uid 2000) where the image starts it as root (API 23): the
           # app lists name the shell's package, and root is in none of them.
-          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; bash scripts/rust-core-android-goref.sh out/leg/goref; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
+          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
 
       - name: Summary
         if: always()
@@ -547,7 +547,6 @@ jobs:
             cat out/leg/e2e/classes.txt 2> /dev/null || echo "no class ran"
             grep -E '^(OK|FAILURES|Tests run)' out/leg/e2e/am.txt 2> /dev/null | tr -d '\r'
             grep '^RESULT' out/leg/kill/results.txt 2> /dev/null || echo "no kill result"
-            grep '^RESULT' out/leg/goref/results.txt 2> /dev/null || echo "no reference run"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0

@@ -415,7 +415,7 @@ curve 0 "" 1 > "$tmp/failing.csv"
 [ "$(verdict "$tmp/restarted.csv")" = "not flat" ] && ok "soak-summary: a restarted process fails the soak" || bad "soak-summary passed a soak whose process restarted"
 [ "$(verdict "$tmp/failing.csv")" = "not flat" ] && ok "soak-summary: a tenth of the rounds failing fails the soak" || bad "soak-summary passed a soak whose fetches failed"
 
-for s in session kill soak e2e goref; do
+for s in session kill soak e2e; do
   bash -n "$root/scripts/rust-core-android-$s.sh" && ok "rust-core-android-$s.sh parses" || bad "rust-core-android-$s.sh does not parse"
 done
 
