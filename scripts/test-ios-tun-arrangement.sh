@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Compiles TunArrangement.swift with its test and runs it: what the tunnel
-# extension decides owns the tun (sing-box on it, sing-box behind hev, or Xray
-# or olcRTC behind hev) from the files the app wrote, and the SOCKS port and
-# login it reads for hev. The root is passed so the test also reads the
-# configs the shared Kotlin writes (SingBoxConfigDumpTest's reference files).
+# extension starts behind hev from the files the app wrote (the Rust core
+# from core.json, the olcRTC client from olcrtc.json, a refusal with
+# neither), and the SOCKS port and login it reads for hev. The root is passed
+# so the test also reads the configs the shared Kotlin writes (every iPhone
+# reference core.json of RustCoreConfigDumpTest).
 # `xcrun` on a Mac; any swift.org toolchain's swiftc elsewhere
 # (SWIFTC=/path/to/swiftc).
 set -euo pipefail

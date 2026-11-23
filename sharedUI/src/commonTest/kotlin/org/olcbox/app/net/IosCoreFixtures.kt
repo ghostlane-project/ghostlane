@@ -1,9 +1,13 @@
 package org.olcbox.app.net
 
+import org.olcbox.app.net.core.CoreFixtures
+
 /**
- * One share link per [IosCoreLine], shaped as ProofKit hands them out, for the
- * shape tests here and for the reference configs the JVM dump test writes
- * (`RustCoreConfigDumpTest`). The addresses are loopback and the keys made up.
+ * A share link for each [IosCoreLine], for the shape tests here and for the
+ * reference configs the JVM dump test writes (`RustCoreConfigDumpTest`): the
+ * first six lines the extension shipped by the links ProofKit hands out
+ * ([links]), every other line by its kind's own fixture, the case named after
+ * the line ([link]). The addresses are test ones and the keys made up.
  */
 object IosCoreFixtures {
     const val PUBLIC_KEY = "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"
@@ -52,6 +56,12 @@ object IosCoreFixtures {
             "&sid=cd34&fp=chrome&sni=www.microsoft.com&path=%2Fdownload&host=www.microsoft.com&mode=packet-up#FI-xhttp",
     )
 
+    /**
+     * The link of [line]: its own in [links] for the first six, else the case
+     * of its kind's fixture named after it ([CoreFixtures.case]).
+     */
+    fun link(line: IosCoreLine): String = links[line] ?: CoreFixtures.case(line.slug).link
+
     fun spec(line: IosCoreLine): OutboundSpec =
-        requireNotNull(LinkParser.parse(links.getValue(line))) { "fixture for $line does not parse" }
+        requireNotNull(LinkParser.parse(link(line))) { "fixture for $line does not parse" }
 }

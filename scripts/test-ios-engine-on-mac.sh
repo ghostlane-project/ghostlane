@@ -5,9 +5,10 @@
 #       the extension's Swift files the harness compiles, the ones it leaves
 #       out and why, and the memory limit read from the extension. Any host.
 #   test-ios-engine-on-mac.sh selftest
-#       this script's own parts that need no Mac: the plan, the lines and
-#       the olcRTC direct rules made from the reference configs, the Xray
-#       list. Any host with bash, python3 and openssl; seconds.
+#       this script's own parts that need no Mac: the plan, the lines (every
+#       case's reference with K5's server for it) and the olcRTC direct rules
+#       made from the reference configs, the Xray list. Any host with bash,
+#       python3 and openssl; seconds.
 #   test-ios-engine-on-mac.sh bindings <core-dir>
 #       olc-ffi's UniFFI Swift bindings for the darwin library in <core-dir>
 #       (scripts/build-ghostlane-core-host.sh's output), made as
@@ -32,8 +33,9 @@
 #
 # starts: every reference core.json the app writes
 #   (sharedUI/src/jvmTest/resources/reference-configs/*core-*.json) started
-#   as the extension starts it (resolvers, TunArrangement.decide,
-#   DirectResolver.substitute, CoreEngine.start), on a free loopback port as
+#   as the extension starts it (resolvers, TunArrangement.decide from
+#   core.json alone, DirectResolver.substitute, CoreEngine.start), on a free
+#   loopback port as
 #   scripts/check-rust-core-configs.sh does; its SOCKS port asks for the login
 #   the arrangement read and refuses any other; then stopped and the port let
 #   go. One the core must refuse (a field no core.json has) is refused, naming
@@ -42,17 +44,23 @@
 #   (carrier `none`) through the pin; no olcRTC server stands in that room, so
 #   its start ends there. A carrier this build does not carry is refused
 #   before any room is dialed.
-# fetch: each iPhone line (ios-core-<line>.json) against a local Xray server
-#   of every version the CLI's end-to-ends use: 2 MiB down and 1 MiB up
-#   through the core's SOCKS port, the page reached at a TEST-NET-3 address
-#   the server sends to loopback, the body's sha256 checked both ways. A
-#   line known to fail (known_failure) is excused only for the stall it is
-#   listed for: it passes when the same fetch under the darwin slice's own B
-#   reaches the page in one of KNOWN_TRIES tries, and fails when neither
-#   does. Once the line reached the page against a server under either B,
-#   the same line with a key or a pin that server does not answer to must
-#   not reach it (asked where nothing got through, a refusal would prove
-#   nothing).
+# fetch: every line the app writes a reference for, one per case of every
+#   kind (ios-core-<shape>.json and core-<case>.json; no list here names
+#   one), against K5's server for it (scripts/rust-core-interop/lines/, the
+#   servers scripts/rust-core-interop.py runs the builder's dumps against;
+#   iosApp/Tests/EngineHost/lines.py says how a line finds its server and
+#   what of it the run sets), on a local Xray server of every version the
+#   CLI's end-to-ends use: 2 MiB down and 1 MiB up through the core's SOCKS
+#   port, the page reached at a TEST-NET-3 address the server sends to
+#   loopback, the body's sha256 checked both ways. No line is excused: one
+#   that does not reach the page under the phone's B fails, and the same
+#   fetch under the darwin slice's own B is printed beside it as a
+#   diagnosis, not a check. Once the line reached the page against a server
+#   under either B, its refusals must not reach it (asked where nothing got
+#   through, a refusal would prove nothing): another credential (K5's
+#   mutant), for REALITY a public key the server does not hold, for TLS a pin
+#   of another certificate and no pin, and for a line that waives the
+#   certificate checks, the same line without the waiver.
 # The engines pin every socket they open to the physical interface
 #   (TunPlatform), and a pinned socket cannot reach a loopback address on
 #   Darwin (EADDRNOTAVAIL): the hub and the Xray servers listen on that
@@ -77,41 +85,10 @@ EXT="$ROOT/iosApp/PacketTunnel"
 HOST="$ROOT/iosApp/Tests/EngineHost"
 REFS="$ROOT/sharedUI/src/jvmTest/resources/reference-configs"
 DARWIN=aarch64-apple-darwin
-# The tunnel's own config.json as the app writes it beside core.json; the
-# arrangement asks only that it is there.
-TUN_CONFIG="$REFS/ios-tun-socks-lossy.json"
+# K5's servers, one file a line (scripts/rust-core-interop.py).
+LINES_DIR="$ROOT/scripts/rust-core-interop/lines"
 # The files of the extension this program does not compile (why_left_out).
 LEFT_OUT="PacketTunnelProvider.swift HevTunnel.swift MemoryWatch.swift MemoryPressure.swift"
-LINES="reality grpc-reality webtunnel-ws webtunnel-httpupgrade hysteria2 xhttp"
-# known_failure <line>: why a line is known not to reach the page under the
-# phone's B, or nothing. Such a line is still run against every server; a
-# stall is printed as known, and the same fetch under the darwin slice's own
-# B is then its check (line_reached), in up to KNOWN_TRIES tries since it
-# stalls there too at times (a try that is not the last prints as known).
-# One that reaches the page under the phone's B says so in a note (a stall
-# that depends on timing may pass once), and leaves this list once it
-# passes every time.
-known_failure() {
-  case "$1" in
-    # gRPC over REALITY was listed here until the pin a46c8ed0: under the
-    # phone's byte budget most fetches stalled until the client gave up, and
-    # only then did the server receive the request. The core claimed a held
-    # first payload written while the carrier was still Pending (fork task FG).
-    *) echo "" ;;
-  esac
-}
-# line_reached <known> <reached> <diagnosed>: 1 when a line counts as having
-# reached the page against a server, else 0. <known> is known_failure's
-# reason (empty for none), <reached> 1 when the fetch under the phone's B
-# reached it, <diagnosed> 1 when the same fetch under the darwin slice's own
-# B did (0 when that did not run). A line not known to fail must reach it
-# under the phone's B; a known one is excused only for a stall that the
-# darwin slice's B clears, and one that reaches it under neither is broken.
-line_reached() {
-  if [ "$2" = 1 ] || { [ -n "$1" ] && [ "$3" = 1 ]; }; then echo 1; else echo 0; fi
-}
-# The tries of a known line's fetch under the darwin slice's own B.
-KNOWN_TRIES=3
 DOWN_BYTES=2097152
 UP_BYTES=1048576
 PY="${PYTHON:-python3}"
@@ -122,7 +99,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -289,18 +266,18 @@ starts() {
     name="$(basename "$f")"
     n=$((n + 1))
     "$PY" -I "$HOST/lines.py" socks "$f" "$work/starts/$name" "$(free_port)"
-    "$host" start "$work/starts/$name" "$TUN_CONFIG" "$limit" || failed=1
+    "$host" start "$work/starts/$name" "$limit" || failed=1
   done
   [ "$n" -gt 0 ] || die "no *core-*.json in $REFS"
   echo "     $n reference core.json files started"
   "$PY" -I "$HOST/lines.py" refuse "$REFS/ios-core-reality.json" "$work/starts/ios-core-reality-unknown-field.json" \
     "$(free_port)" engineHostUnknownField
-  "$host" refuse "$work/starts/ios-core-reality-unknown-field.json" "$TUN_CONFIG" engineHostUnknownField || failed=1
+  "$host" refuse "$work/starts/ios-core-reality-unknown-field.json" engineHostUnknownField || failed=1
 
   "$PY" -I "$HOST/lines.py" rules "$REFS/bypass-ios-core-bundled-lists.json" "$work/direct-rules.txt"
-  "$host" olcrtc "$TUN_CONFIG" none - "$limit" joins || failed=1
-  "$host" olcrtc "$TUN_CONFIG" none "$work/direct-rules.txt" "$limit" joins || failed=1
-  "$host" olcrtc "$TUN_CONFIG" telemost - "$limit" refused || failed=1
+  "$host" olcrtc none - "$limit" joins || failed=1
+  "$host" olcrtc none "$work/direct-rules.txt" "$limit" joins || failed=1
+  "$host" olcrtc telemost - "$limit" refused || failed=1
   return "$failed"
 }
 
@@ -342,28 +319,41 @@ stop_servers() {
   PIDS=""
 }
 
+# certificate <dir>: the local servers' certificate, made for every name
+# the lines send (lines.py names); prints the names.
+certificate() {
+  local dir="$1" names
+  names="$("$PY" -I "$HOST/lines.py" names "$REFS" "$LINES_DIR")" || die "no server names for the local servers' certificate"
+  printf '%s\n' "[req]" "distinguished_name = dn" "x509_extensions = san" "prompt = no" \
+    "[dn]" "CN = engine-host" \
+    "[san]" "subjectAltName = $names" "basicConstraints = critical,CA:FALSE" \
+    "keyUsage = critical,digitalSignature,keyEncipherment" "extendedKeyUsage = serverAuth" > "$dir/openssl.cnf"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$dir/openssl.cnf" \
+    -keyout "$dir/key.pem" -out "$dir/cert.pem" 2> /dev/null || die "openssl made no certificate for $names"
+  echo "$names"
+}
+
 # fetch <host> <work> <limit-bytes> <xray-dir>
 fetch() {
-  local host="$1" work="$2" limit="$3" xray="$4" failed=0 page target private public wrong_public
-  local version line dir transport what socks port pid ok address known reached diagnosed show tries try
+  local host="$1" work="$2" limit="$3" xray="$4" failed=0 page target private public wrong_public names address
+  local version line reference server network dir socks port pid ok reached diagnosed refusal what
   mkdir -p "$work/certs" "$work/lines"
   "$PY" -I -c 'import ssl, sys; print("python", sys.version.split()[0], ssl.OPENSSL_VERSION); sys.exit(0 if ssl.HAS_TLSv1_3 else 1)' ||
     die "$PY has no TLS 1.3 for the Reality target: set PYTHON to one that has"
-  cat > "$work/certs/openssl.cnf" << 'CNF'
-[req]
-distinguished_name = dn
-x509_extensions = san
-prompt = no
-[dn]
-CN = www.microsoft.com
-[san]
-subjectAltName = DNS:www.microsoft.com,DNS:wt.example.com,DNS:rutube.ru
-basicConstraints = critical,CA:FALSE
-keyUsage = critical,digitalSignature,keyEncipherment
-extendedKeyUsage = serverAuth
-CNF
-  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$work/certs/openssl.cnf" \
-    -keyout "$work/certs/key.pem" -out "$work/certs/cert.pem" 2> /dev/null
+  # The lines, each a case's reference with K5's server for it. A reference
+  # with no server, or a shape K5 carries that no line here does, fails;
+  # the other lines still run.
+  if ! "$PY" -I "$HOST/lines.py" lines "$REFS" "$LINES_DIR" > "$work/lines.txt" 2> "$work/lines.err"; then
+    cat "$work/lines.err"
+    failed=1
+  fi
+  [ -s "$work/lines.txt" ] || die "no line to fetch: $(cat "$work/lines.err")"
+  echo "     $(wc -l < "$work/lines.txt" | tr -d ' ') lines, each a reference against K5's server for it:"
+  while read -r line reference server network; do
+    echo "       $line: $reference, scripts/rust-core-interop/lines/$server.server.json ($network)"
+  done < "$work/lines.txt"
+  names="$(certificate "$work/certs")"
+  echo "     the local servers' certificate names $names"
   "$PY" -I "$HOST/local_servers.py" page "$work/page.port" "$DOWN_BYTES" 2> "$work/page.log" &
   PIDS="$PIDS $!"
   wait_file "$work/page.port" "$!" || die "the page did not listen: $(cat "$work/page.log")"
@@ -379,85 +369,58 @@ CNF
   read -r _ wrong_public < <("$host" x25519)
   for version in $(xray_versions); do
     [ -x "$xray/$version/xray" ] || die "no Xray $version in $xray: run $0 xray $xray"
-    for line in $LINES; do
-      dir="$work/lines/$version"
-      mkdir -p "$dir"
+    dir="$work/lines/$version"
+    mkdir -p "$dir"
+    while read -r line reference server network <&3; do
       socks="$(free_port)"
       port="$(free_port)"
-      transport=""
-      read -r transport what < <("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$dir" "$address" "$socks" "$port" "$target" "$page" \
-        "$work/certs/cert.pem" "$work/certs/key.pem" "$private" "$public" "$wrong_public")
-      if [ -z "$transport" ]; then
-        echo "FAIL $line against Xray $version: no configs for it"
+      if ! "$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$LINES_DIR" "$dir" "$address" "$socks" "$port" "$target" "$page" \
+        "$work/certs/cert.pem" "$work/certs/key.pem" "$private" "$public" "$wrong_public" > "$dir/$line.made.txt" 2>&1; then
+        echo "FAIL $line against Xray $version: no configs for it: $(tr '\n' ' ' < "$dir/$line.made.txt")"
         failed=1
         continue
       fi
-      "$xray/$version/xray" run -c "$dir/$line.server.json" > "$dir/$line.xray.log" 2>&1 &
+      "$xray/$version/xray" run -c "$dir/$line.server.json" > "$dir/$line.xray.log" 2>&1 < /dev/null &
       pid=$!
       PIDS="$PIDS $pid"
       ok=1
-      show=0
-      if ! xray_up "$dir/$line.xray.log" "$pid" "$transport" "$address" "$port"; then
-        echo "FAIL $line against Xray $version: the server did not listen on $transport $address:$port"
+      if ! xray_up "$dir/$line.xray.log" "$pid" "$network" "$address" "$port"; then
+        echo "FAIL $line against Xray $version: the server did not listen on $network $address:$port"
         ok=0
       else
-        known="$(known_failure "$line")"
         reached=1
-        "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
-          "$line against Xray $version" > "$dir/$line.reach.txt" 2>&1 || reached=0
-        if [ -z "$known" ]; then
-          cat "$dir/$line.reach.txt"
-        elif [ "$reached" -eq 1 ]; then
-          sed -E 's/^ok   /note /' "$dir/$line.reach.txt"
-          echo "     known: listed as known to fail, and it reached the page this time: $known"
-        else
-          sed -E 's/^FAIL /known /' "$dir/$line.reach.txt"
-          echo "     known: $known"
-          show=1
-        fi
+        "$host" fetch "$dir/$line.client.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
+          "$line against Xray $version" < /dev/null || reached=0
         diagnosed=0
         if [ "$reached" -eq 0 ]; then
-          # Whether the phone's byte budget is what stops it: the same
-          # fetch with the darwin slice's own B. The check of a line known
-          # to fail (line_reached), which stalls there too at times, so it
-          # has KNOWN_TRIES tries; for any other line, one, a diagnosis.
-          tries=1
-          [ -z "$known" ] || tries="$KNOWN_TRIES"
-          for try in $(seq 1 "$tries"); do
-            diagnosed=1
-            ENGINE_HOST_BYTE_BUDGET=0 "$host" fetch "$dir/$line.client.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" \
-              reach "$line against Xray $version with the darwin slice's own byte budget, try $try of $tries" \
-              > "$dir/$line.diagnosis.txt" 2>&1 || diagnosed=0
-            if [ -z "$known" ]; then
-              sed -E 's/^(ok   |FAIL )/     diagnosis, not a check: /' "$dir/$line.diagnosis.txt"
-            elif [ "$diagnosed" -eq 1 ] || [ "$try" -eq "$tries" ]; then
-              cat "$dir/$line.diagnosis.txt"
-            else
-              sed -E 's/^FAIL /known /' "$dir/$line.diagnosis.txt"
-            fi
-            [ "$diagnosed" -eq 0 ] || break
-          done
-          if [ -n "$known" ] && [ "$diagnosed" -eq 0 ]; then
-            echo "     broken, not the known stall: it reached the page under neither the phone's B nor, in $tries tries, the darwin slice's own"
-          fi
+          ok=0
+          # Whether the phone's byte budget is what stops it: the same fetch
+          # with the darwin slice's own B, once. Not a check: the line has
+          # failed, and this says what to report.
+          diagnosed=1
+          ENGINE_HOST_BYTE_BUDGET=0 "$host" fetch "$dir/$line.client.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" reach \
+            "$line against Xray $version with the darwin slice's own byte budget" > "$dir/$line.diagnosis.txt" 2>&1 < /dev/null ||
+            diagnosed=0
+          sed -E 's/^(ok   |FAIL )/     diagnosis, not a check: /' "$dir/$line.diagnosis.txt"
         fi
-        [ "$(line_reached "$known" "$reached" "$diagnosed")" -eq 1 ] || ok=0
         # A refusal proves something only where the line got through.
         if [ "$reached" -eq 1 ] || [ "$diagnosed" -eq 1 ]; then
-          "$host" fetch "$dir/$line.wrong.json" "$TUN_CONFIG" "$limit" "$DOWN_BYTES" "$UP_BYTES" refused \
-            "$line against Xray $version, with $what" || ok=0
+          while IFS=$'\t' read -r refusal what <&4; do
+            "$host" fetch "$dir/$line.$refusal.json" "$limit" "$DOWN_BYTES" "$UP_BYTES" refused \
+              "$line against Xray $version, $what" < /dev/null || ok=0
+          done 4< "$dir/$line.refusals"
         else
-          echo "     not asked: $line against Xray $version with $what, since nothing reached the page against this server"
+          echo "     not asked: $line against Xray $version $(cut -f 2 "$dir/$line.refusals" | paste -s -d ';' - | sed 's/;/; /g'), since nothing reached the page against this server"
         fi
       fi
       kill "$pid" 2> /dev/null || true
       wait "$pid" 2> /dev/null || true
       [ "$ok" -eq 1 ] || failed=1
-      if [ "$ok" -eq 0 ] || [ "$show" -eq 1 ]; then
+      if [ "$ok" -eq 0 ]; then
         echo "     the server's log:"
         tail -n 30 "$dir/$line.xray.log" | sed 's/^/       /'
       fi
-    done
+    done 3< "$work/lines.txt"
   done
   return "$failed"
 }
@@ -491,7 +454,7 @@ run() {
 }
 
 selftest() {
-  local work f line n private public out known reached diagnosed want got
+  local work f n out want got missed
   work="$(mktemp -d)"
   # shellcheck disable=SC2064
   trap "rm -rf '$work'" EXIT
@@ -520,65 +483,51 @@ selftest() {
   [ "$n" -gt 1000 ] || die "only $n direct rules"
   echo "ok   the olcRTC direct rules: $out, $n lines"
 
-  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=selftest" \
-    -keyout "$work/key.pem" -out "$work/cert.pem" 2> /dev/null
-  private="mOc5Wn4V5Fj9kqy2W1wKkOq2uhxn8A3x6f1k7Q0qJ0o"
-  public="jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"
-  for line in $LINES; do
-    out="$("$PY" -I "$HOST/lines.py" line "$line" "$REFS" "$work" 192.0.2.7 20001 20002 20003 20004 \
-      "$work/cert.pem" "$work/key.pem" "$private" "$public" "wrong-public-key")"
-    "$PY" -I - "$work" "$line" "$("$PY" -I "$HOST/lines.py" pin "$work/cert.pem")" << 'PY' || die "the $line line"
-import json, sys
-work, line, pin = sys.argv[1:4]
-server = json.load(open(f"{work}/{line}.server.json"))
-client = json.load(open(f"{work}/{line}.client.json"))
-wrong = json.load(open(f"{work}/{line}.wrong.json"))
-out = next(o for o in client["outbounds"] if o["tag"] == "out")
-bad = next(o for o in wrong["outbounds"] if o["tag"] == "out")
-assert client["inbounds"][0]["port"] == 20001 == wrong["inbounds"][0]["port"]
-inbound = server["inbounds"][0]
-assert inbound["port"] == 20002 and inbound["listen"] == "192.0.2.7"
-assert server["outbounds"][0]["settings"]["redirect"] == "127.0.0.1:20004"
-s = out["settings"]
-target = s["vnext"][0] if "vnext" in s else s
-assert target["port"] == 20002 and target["address"] == "192.0.2.7"
-stream, bad_stream = out["streamSettings"], bad["streamSettings"]
-if stream["security"] == "reality":
-    assert inbound["streamSettings"]["realitySettings"]["dest"] == "127.0.0.1:20003"
-    assert stream["realitySettings"]["publicKey"] != bad_stream["realitySettings"]["publicKey"]
-else:
-    assert stream["tlsSettings"]["pinnedPeerCertSha256"] == pin
-    assert bad_stream["tlsSettings"]["pinnedPeerCertSha256"] != pin
-assert out["protocol"] == inbound["protocol"] or (out["protocol"], inbound["protocol"]) == ("hysteria", "hysteria")
-PY
-    echo "ok   the $line line and its server: $out"
+  # The lines: every case's reference, as a glob finds them here and as
+  # lines.py reads them, each with K5's server for it.
+  "$PY" -I "$HOST/lines.py" lines "$REFS" "$LINES_DIR" > "$work/lines.txt" ||
+    die "the lines: a reference with no server, or a shape no line carries (above)"
+  want="$(for f in "$REFS"/ios-core-*.json "$REFS"/core-*.json; do basename "$f"; done | sort)"
+  got="$(awk '{ print $2 }' "$work/lines.txt" | sort)"
+  [ "$got" = "$want" ] ||
+    die "the fetch's lines are not every case's reference: $(diff <(echo "$want") <(echo "$got") | grep -E '^[<>]' | tr '\n' ' ')"
+  [ "$(awk '{ print $1 }' "$work/lines.txt" | sort -u | wc -l)" -eq "$(wc -l < "$work/lines.txt")" ] || die "two references are one line"
+  echo "ok   the fetch's lines are every case's reference ($(echo "$want" | wc -l | tr -d ' ') of them), each with K5's server for it"
+
+  # Every file of the tree the Mac job reads reaches it: a change of any one
+  # of them starts the engines job, by the room check's scope, whose lists
+  # the workflow's paths are held to. A server of K5's changed alone is to
+  # be fetched against too, not found out by the next change to the iPhone.
+  missed=""
+  n=0
+  for f in "$LINES_DIR"/* "$REFS"/*core-*.json "$HOST"/* "$EXT"/*.swift \
+    "$ROOT/scripts/test-ios-engine-on-mac.sh" "$ROOT/scripts/xray-servers.txt" "$ROOT/scripts/ghostlane-core-pin.sh" \
+    "$ROOT/scripts/ghostlane-core-resolve.sh" "$ROOT/scripts/build-ghostlane-core-host.sh"; do
+    [ -e "$f" ] || die "no $f"
+    case "$f" in */__pycache__) continue ;; esac
+    echo "${f#"$ROOT"/}" > "$work/changed"
+    out="$(bash "$ROOT/scripts/test-ios-app-room-check.sh" scope "$work/changed")" || die "the room check's scope of ${f#"$ROOT"/}"
+    case "$out" in *engines=true*) ;; *) missed="$missed ${f#"$ROOT"/}" ;; esac
+    n=$((n + 1))
   done
+  [ -z "$missed" ] ||
+    die "a change of these does not start the Mac's engines job (ENGINE_PATHS in scripts/test-ios-app-room-check.sh, and the paths of rust-ios.yml):$missed"
+  echo "ok   a change of any of the $n files of the tree the Mac's engines job reads starts it"
+
+  # The certificate for every name the lines send, then each line made and
+  # read back, and each refusal of a line or a server that does not fit it.
+  out="$(certificate "$work")"
+  for n in $(echo "$out" | tr ',' ' '); do
+    openssl x509 -in "$work/cert.pem" -noout -text | grep -qF "$n" || die "the certificate does not name ${n#DNS:}"
+  done
+  echo "ok   the local servers' certificate names every server name the lines send: $out"
+  "$PY" -I "$HOST/lines.py" selftest "$REFS" "$LINES_DIR" "$work" || die "the lines' own checks (above)"
 
   "$PY" -I "$HOST/lines.py" refuse "$REFS/ios-core-reality.json" "$work/refuse.json" 20005 engineHostUnknownField
   grep -q '"engineHostUnknownField": true' "$work/refuse.json" || die "the refusal copy lacks its field"
   "$PY" -I "$HOST/lines.py" socks "$REFS/ios-core-reality.json" "$work/socks.json" 20006
   "$PY" -I -c 'import json, sys; c = json.load(open(sys.argv[1])); assert c["inbounds"][0]["port"] == 20006' "$work/socks.json"
   echo "ok   the copies on another SOCKS port, and the one with a field no core.json has"
-
-  # A line known to fail is excused only for what it is listed for, a stall
-  # under the phone's B that the darwin slice's own B clears: one that
-  # reaches the page under neither is broken. One not known to fail must
-  # reach it under the phone's B. Columns: known (- for none), reached,
-  # reached under the darwin slice's B, the verdict.
-  while read -r known reached diagnosed want; do
-    [ "$known" != - ] || known=""
-    got="$(line_reached "$known" "$reached" "$diagnosed")"
-    [ "$got" = "$want" ] ||
-      die "line_reached: known '$known', reached $reached, under the darwin slice's B $diagnosed: $got, not $want"
-  done << 'CASES'
-- 1 0 1
-- 0 1 0
-- 0 0 0
-a-stall 1 0 1
-a-stall 0 1 1
-a-stall 0 0 0
-CASES
-  echo "ok   the judgment of a fetch: a line known to fail passes only when the darwin slice's own B reaches the page"
 }
 
 [ $# -ge 1 ] || usage

@@ -7,9 +7,13 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.DataInputStream
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -380,21 +384,176 @@ class RustCoreVpnE2ETest {
         }
     }
 
-    @Test
-    fun proxyModeIsRefusedForACoreLineWithAReason() {
-        val link = "vless://11111111-1111-1111-1111-111111111111@192.0.2.9:443" +
-            "?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0" +
-            "&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#p"
-        saveProfile(link)
-        try {
-            context.startForegroundService(startIntent("proxy", "", ""))
-            waitFor("a status that says why", 30_000) {
-                (OlcboxVpnState.status.value as? VpnStatus.Error)?.message?.contains("proxy mode") == true
+    /**
+     * A VLESS server with no TLS and no flow, on loopback, standing for the line's far end: it reads
+     * the request header the core writes, answers 192.0.2.1:80 itself (an address nothing reaches),
+     * and relays every other destination, so the app's own check of the tunnel gets its answer.
+     * [served] counts what it carried to 192.0.2.1:80.
+     */
+    private class PlainVlessServer(private val body: String) : AutoCloseable {
+        private val socket = ServerSocket(0, 20, InetAddress.getByName("127.0.0.1"))
+        val port: Int get() = socket.localPort
+        val served = AtomicInteger()
+
+        init {
+            Thread {
+                while (!socket.isClosed) {
+                    val client = try { socket.accept() } catch (_: Exception) { break }
+                    Thread { runCatching { handle(client) } }.also { it.isDaemon = true }.start()
+                }
+            }.also { it.isDaemon = true }.start()
+        }
+
+        private fun handle(client: Socket) = client.use {
+            val input = DataInputStream(client.getInputStream())
+            val output = client.getOutputStream()
+            input.readUnsignedByte() // version
+            input.readFully(ByteArray(16)) // the user's id
+            input.readFully(ByteArray(input.readUnsignedByte())) // addons
+            val command = input.readUnsignedByte()
+            val destPort = input.readUnsignedShort()
+            val host = when (input.readUnsignedByte()) {
+                1 -> InetAddress.getByAddress(ByteArray(4).also { input.readFully(it) }).hostAddress!!
+                2 -> String(ByteArray(input.readUnsignedByte()).also { input.readFully(it) }, Charsets.US_ASCII)
+                3 -> InetAddress.getByAddress(ByteArray(16).also { input.readFully(it) }).hostAddress!!
+                else -> return@use
             }
-            assertFalse("no core runs", RustCoreEngine.isCoreRunning())
-            say("RESULT proxy mode refused: ${(OlcboxVpnState.status.value as VpnStatus.Error).message}")
-        } finally {
-            stopAndWait()
+            if (command != 1) return@use // a stream only
+            output.write(byteArrayOf(0, 0)) // the answer's version and no addons
+            output.flush()
+            if (host == "192.0.2.1" && destPort == 80) {
+                val request = client.getInputStream().bufferedReader()
+                while (request.readLine().let { it != null && it.isNotEmpty() }) Unit
+                served.incrementAndGet()
+                output.write(
+                    "HTTP/1.0 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body".toByteArray()
+                )
+                output.flush()
+            } else {
+                Socket().use { remote ->
+                    remote.connect(InetSocketAddress(host, destPort), 8_000)
+                    Thread { runCatching { remote.getInputStream().copyTo(output) }; runCatching { client.close() } }
+                        .also { it.isDaemon = true }.start()
+                    runCatching { client.getInputStream().copyTo(remote.getOutputStream()) }
+                }
+            }
+        }
+
+        override fun close() = socket.close()
+    }
+
+    /** A SOCKS5 CONNECT to [host]:[port] (an IPv4 literal) through 127.0.0.1:[proxyPort], with a login when given; the open socket, or an IOException saying which step the proxy refused. */
+    private fun socksConnect(proxyPort: Int, user: String?, pass: String?, host: String, port: Int): Socket {
+        val s = Socket()
+        try {
+            s.connect(InetSocketAddress("127.0.0.1", proxyPort), 5_000)
+            s.soTimeout = 20_000
+            val out = s.getOutputStream()
+            val inp = DataInputStream(s.getInputStream())
+            out.write(byteArrayOf(5, 1, if (user == null) 0 else 2)); out.flush()
+            check(inp.readUnsignedByte() == 5) { "not a SOCKS5 server" }
+            val method = inp.readUnsignedByte()
+            if (user == null) {
+                if (method != 0) throw IOException("the proxy wants a login (method $method)")
+            } else {
+                if (method != 2) throw IOException("the proxy did not take the login (method $method)")
+                val u = user.toByteArray(); val p = (pass ?: "").toByteArray()
+                out.write(byteArrayOf(1, u.size.toByte()) + u + byteArrayOf(p.size.toByte()) + p); out.flush()
+                inp.readUnsignedByte()
+                if (inp.readUnsignedByte() != 0) throw IOException("the proxy refused the login")
+            }
+            val ip = InetAddress.getByName(host).address
+            out.write(byteArrayOf(5, 1, 0, 1) + ip + byteArrayOf((port shr 8).toByte(), port.toByte())); out.flush()
+            inp.readUnsignedByte()
+            val reply = inp.readUnsignedByte()
+            if (reply != 0) throw IOException("CONNECT refused, reply $reply")
+            inp.readUnsignedByte()
+            when (inp.readUnsignedByte()) {
+                1 -> inp.readFully(ByteArray(4 + 2))
+                4 -> inp.readFully(ByteArray(16 + 2))
+                3 -> inp.readFully(ByteArray(inp.readUnsignedByte() + 2))
+            }
+            return s
+        } catch (e: Exception) {
+            s.close()
+            throw e
+        }
+    }
+
+    private fun socksGet(proxyPort: Int, user: String?, pass: String?): String =
+        socksConnect(proxyPort, user, pass, "192.0.2.1", 80).use { s ->
+            s.getOutputStream().write("GET /proxy HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n".toByteArray())
+            s.getOutputStream().flush()
+            s.getInputStream().readBytes().toString(Charsets.UTF_8)
+        }
+
+    private fun freePort(): Int = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+
+    private fun proxyIntent(port: Int, user: String, pass: String) =
+        startIntent("proxy", user, pass).putExtra(OlcboxVpnActions.EXTRA_SOCKS_PORT, port)
+
+    private fun plainLine(serverPort: Int) =
+        "vless://11111111-1111-4111-8111-111111111111@127.0.0.1:$serverPort?type=tcp&security=none&encryption=none#e2e-proxy"
+
+    @Test
+    fun proxyModeCarriesAFetchOnACoreLine() {
+        val nonce = "PROXY-${System.nanoTime()}"
+        PlainVlessServer(nonce).use { server ->
+            saveProfile(plainLine(server.port))
+            val port = freePort()
+            val readyBefore = logCount("Rust core ready on")
+            try {
+                context.startForegroundService(proxyIntent(port, "", ""))
+                waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+                assertTrue("the Rust core runs", RustCoreEngine.isCoreRunning())
+                assertTrue("the core was started", logCount("Rust core ready on") > readyBefore)
+                assertTrue("no tun is held in proxy mode: ${tunFds()}", tunFds().isEmpty())
+                val reply = socksGet(port, null, null)
+                say("RESULT a fetch of 192.0.2.1:80 through the proxy port answered: ${reply.lineSequence().firstOrNull()} ... ${reply.takeLast(24)}")
+                assertTrue("the answer is the far end's: '$reply'", reply.contains(nonce))
+                assertEquals("the far end carried one fetch", 1, server.served.get())
+            } finally {
+                stopAndWait()
+            }
+        }
+    }
+
+    /** The app always writes a login into its start intent; a core line stays open on loopback as the Go core line did, so other apps that send none still connect. */
+    @Test
+    fun proxyModeOnACoreLineStaysOpenWhateverLoginTheAppSets() {
+        val nonce = "PROXYOPEN-${System.nanoTime()}"
+        val user = "u${System.nanoTime() % 100000}"
+        val pass = "p${System.nanoTime() % 100000}x"
+        PlainVlessServer(nonce).use { server ->
+            saveProfile(plainLine(server.port))
+            val port = freePort()
+            try {
+                context.startForegroundService(proxyIntent(port, user, pass))
+                waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+                val reply = socksGet(port, null, null)
+                assertTrue("a client with no login is carried: '$reply'", reply.contains(nonce))
+                say("RESULT proxy mode with the app's login set: a client with none is carried, as on the Go core line")
+            } finally {
+                stopAndWait()
+            }
+        }
+    }
+
+    /** "localhost" is a listen host the settings sheet takes; it means this phone, as it does on the Go cores. */
+    @Test
+    fun proxyModeAcceptsLocalhostAsTheListenHost() {
+        val nonce = "PROXYLOCAL-${System.nanoTime()}"
+        PlainVlessServer(nonce).use { server ->
+            saveProfile(plainLine(server.port))
+            val port = freePort()
+            try {
+                context.startForegroundService(proxyIntent(port, "", "").putExtra(OlcboxVpnActions.EXTRA_SOCKS_HOST, "localhost"))
+                waitFor("proxy mode to connect on the core", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
+                val reply = socksGet(port, null, null)
+                assertTrue("the answer is the far end's: '$reply'", reply.contains(nonce))
+            } finally {
+                stopAndWait()
+            }
         }
     }
 }

@@ -1,0 +1,173 @@
+name: Rust core Jitsi
+
+# Jitsi rooms through the Rust core, on the fork's Go fake of a Jitsi Meet
+# deployment (check K4's Jitsi leg). The client is olc-client built at the
+# commit the app pins (scripts/ghostlane-core-pin.sh), the same olcRTC client
+# the apps link; the server is the Go engine at the interop pin in a fresh
+# room of the fake (Prosody and Jicofo over a WebSocket, a pion peer per
+# participant as the videobridge). olc/interop/jitsi.sh in the core's tree
+# says what each set runs:
+#   --dry  the engine plus the overlay, gofmt and vet; no client
+#   gate   the scenarios S0 to S7 over datachannel, the client's log held
+#          free of the room's name, a JID and stanzas
+#   gate with -olcrtc.gate-jitsi-tls: https and wss as an app dials, the
+#          fake's certificate trusted by a pin (a client built with the
+#          test-only tls-test-pin feature, which no shipped build has)
+#   gate with -olcrtc.gate-jitsi-bosh: the WebSocket refused, the join over
+#          BOSH
+#
+# Only fakes: no public Jitsi host and no live room is joined, there is no
+# secret, and nothing is signed or published. The Go here is the harness
+# (the engine at the interop pin), never in what the app ships.
+#
+# When: on rust/all and on pull requests into it when the pin or this file
+# changed, and by hand with pin=<sha>.
+on:
+  push:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-jitsi.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/rust-core-checkout.sh
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-jitsi.yml
+      - scripts/ghostlane-core-pin.sh
+      - scripts/ghostlane-core-resolve.sh
+      - scripts/rust-core-checkout.sh
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Run this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-jitsi-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+env:
+  PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "5"
+
+jobs:
+  client:
+    # plain: the client as the fake's memory scenario (S7) is calibrated on.
+    # app: as the apps build it (BoringSSL's DTLS, the shaped TLS) plus the
+    # test-only pin the https pass needs.
+    name: olc-client at the commit, ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: plain
+            features: ""
+          - variant: app
+            features: "--features boring,shaped-tls,tls-test-pin"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Which commit of the core
+        run: bash scripts/ghostlane-core-resolve.sh "$PIN_OVERRIDE" | tee -a "$GITHUB_ENV"
+
+      - name: Restore the client
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/rust-jitsi-client
+          key: rust-jitsi-client-${{ matrix.variant }}-${{ runner.os }}-${{ runner.arch }}-${{ env.GHOSTLANE_CORE_COMMIT }}-v1
+
+      - name: Build olc-client at the commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
+          rustup toolchain install "$GHOSTLANE_CORE_TOOLCHAIN" --profile minimal --no-self-update
+          # shellcheck disable=SC2086
+          (cd "$src" && cargo "+$GHOSTLANE_CORE_TOOLCHAIN" build --locked --release -p olc-client $FEATURES)
+          install -D -m 0755 "$src/target/release/olc-client" ~/.cache/rust-jitsi-client/olc-client
+
+      - name: Save the client
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/rust-jitsi-client
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: olc-client-${{ matrix.variant }}
+          path: ~/.cache/rust-jitsi-client/olc-client
+          retention-days: 1
+
+  fake:
+    needs: client
+    name: Jitsi on jitsifake, ${{ matrix.pass }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pass: websocket
+            client: plain
+            flags: ""
+          - pass: tls
+            client: app
+            flags: "-olcrtc.gate-jitsi-tls"
+          - pass: bosh
+            client: plain
+            flags: "-olcrtc.gate-jitsi-bosh"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The core's tree, for its interop scripts
+        id: fork
+        run: |
+          set -euo pipefail
+          src="$(bash scripts/rust-core-checkout.sh "$RUNNER_TEMP/xray-rust" "$PIN_OVERRIDE" | tail -n 1)"
+          echo "dir=$src" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: olc-client-${{ matrix.client }}
+          path: ${{ runner.temp }}/bin
+
+      - name: The overlay and the engine, vetted
+        working-directory: ${{ steps.fork.outputs.dir }}/olc/interop
+        run: bash jitsi.sh --dry
+
+      # The client names a Jitsi room, the Go server joins the same room of
+      # the fake. A set whose tests are missing fails, it does not pass empty.
+      - name: The client joins and carries traffic
+        working-directory: ${{ steps.fork.outputs.dir }}/olc/interop
+        env:
+          CLIENT: ${{ runner.temp }}/bin/olc-client
+          FLAGS: ${{ matrix.flags }}
+        run: |
+          set -euo pipefail
+          chmod +x "$CLIENT"
+          # shellcheck disable=SC2086
+          bash jitsi.sh "$CLIENT" gate $FLAGS

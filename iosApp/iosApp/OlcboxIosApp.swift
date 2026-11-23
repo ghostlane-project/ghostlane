@@ -860,38 +860,33 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
         }
 
         do {
-            // Atomically, here and in handOver: the extension reads these files at
-            // its own start, which the system can decide on, and a file caught
-            // half written is a config that does not parse.
-            try Data(request.config.utf8)
-                .write(to: container.appendingPathComponent("config.json"), options: .atomic)
-            // Written or removed, never left behind: a stale file from a previous
-            // connection would start a core behind a tunnel that does not use one.
-            try Self.handOver(
-                request.xrayConfig,
-                to: container.appendingPathComponent("xray.json")
-            )
+            // The one file this start is decided by, core.json for a line of
+            // the core or olcrtc.json for a room (IosCore.start chose it, and
+            // refused in the app a line it has neither for): written, and the
+            // other removed, never left behind, since a stale file from a
+            // previous connection would start a second engine behind a tunnel
+            // that does not use it. Atomically, in handOver: the extension
+            // reads the file at its own start, which the system can decide
+            // on, and a file caught half written is a config that does not
+            // parse.
             try Self.handOver(
                 Self.olcrtcParameters(request.olcrtc),
                 to: container.appendingPathComponent("olcrtc.json")
             )
-            // The Rust core's config, for a line the app gives to it (none
-            // yet: IosVpnManager.IOS_ENGINES). The extension that is to read
-            // it, after olcrtc.json and xray.json and before config.json,
-            // comes in a later branch; it is removed on every other line.
             try Self.handOver(
                 request.coreConfig,
                 to: container.appendingPathComponent("core.json")
             )
-            // Written or removed, like the two above: a `rules/` left behind
-            // by a Bypass Russia connection is harmless to a Global config,
-            // which never names it, but a config that names a file the app
-            // failed to write stops libbox with "no such file" — so the write
-            // happens here, before the extension is asked for anything.
-            try Self.handOverRuleSets(
-                request.ruleSets,
-                into: container.appendingPathComponent("libbox/work/rules", isDirectory: true)
-            )
+            // What the Go engines read, left by a build that still wrote it:
+            // sing-box's config and rule sets, Go's Xray config. Nothing
+            // reads them now; removed so the container holds this start's
+            // file alone.
+            for leftover in ["config.json", "xray.json", "libbox/work/rules"] {
+                let url = container.appendingPathComponent(leftover)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+            }
             // Claim the breadcrumb before the extension is asked to run.
             //
             // `stage.txt` outlives the process that wrote it, and the app now
@@ -936,29 +931,6 @@ final class SwiftPacketTunnelBridge: NSObject, @unchecked Sendable, IosPacketTun
             try Data(contents.utf8).write(to: url, options: .atomic)
         } else if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
-        }
-    }
-
-    /// Writes each file, or removes the directory when there is nothing to write.
-    /// The directory is libbox's working path plus the relative directory the
-    /// Kotlin config uses (`RuleSets.IOS_RELATIVE_DIR`); the two must agree.
-    private static func handOverRuleSets(_ files: [String: String], into directory: URL) throws {
-        let fileManager = FileManager.default
-        if files.isEmpty {
-            if fileManager.fileExists(atPath: directory.path) {
-                try fileManager.removeItem(at: directory)
-            }
-            return
-        }
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        for (name, base64) in files {
-            guard let data = Data(base64Encoded: base64) else {
-                throw NSError(
-                    domain: "org.proofkit.app", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "rule-set \(name) is not base64"]
-                )
-            }
-            try data.write(to: directory.appendingPathComponent(name))
         }
     }
 

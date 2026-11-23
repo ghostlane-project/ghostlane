@@ -1,0 +1,37 @@
+{"event":"version","engine":"0.10.0","protocol":1,"pin":"0123456789abcdef0123456789abcdef01234567","boringssl":true,"rooms":true,"target":"x86_64-unknown-linux-musl"}
+{"event":"version","engine":"0.10.0","protocol":1,"pin":"unknown","boringssl":false,"rooms":false,"target":"x86_64-pc-windows-msvc"}
+{"event":"check_config","ok":true,"diagnostics":[]}
+{"event":"check_config","ok":true,"diagnostics":[{"severity":"warning","source":"core","path":"$.log.loglevel","message":"unknown loglevel `loud` reads as warning, as in Xray-core"}]}
+{"event":"check_config","ok":false,"diagnostics":[{"severity":"error","source":"core","path":"$.outbounds[0].streamSettings.network","message":"stream network `http` was removed from Xray; use `xhttp` instead"},{"severity":"error","source":"room","path":null,"message":"this build carries no rooms"}]}
+{"event":"bound","interface":"eth0"}
+{"event":"warning","source":"core","path":"$.log.loglevel","message":"unknown loglevel `loud` reads as warning, as in Xray-core"}
+{"event":"warning","source":"room","path":null,"message":"the room list holds one room twice"}
+{"event":"ready","inbounds":[{"tag":"socks-in","address":"127.0.0.1:41080"},{"tag":"http-in","address":"127.0.0.1:41081"}]}
+{"event":"ready","inbounds":[{"tag":"room","address":"127.0.0.1:41090"}]}
+{"event":"ready","inbounds":[{"tag":null,"address":"[::1]:41080"}]}
+{"event":"session_opened","room":"https://rooms.example/r/one","session_id":"3f2a9c"}
+{"event":"log","source":"core","level":"debug","line":"dns: answered from the cache"}
+{"event":"log","source":"core","level":"info","line":"inbound socks-in is listening"}
+{"event":"log","source":"core","level":"warning","line":"outbound proxy: dial failed, trying again"}
+{"event":"log","source":"core","level":"error","line":"outbound proxy: the server refused the handshake"}
+{"event":"log","source":"core","level":"access","line":"access from <redacted-source> accepted <redacted-ip>:443 outbound=proxy"}
+{"event":"log","source":"room","level":"info","line":"2026/11/21 20:00:00 link up"}
+{"event":"log","source":"engine","level":"info","line":"the file limit is 1048576"}
+{"event":"probe","ok":true,"millis":184,"error":null}
+{"event":"probe","ok":false,"millis":null,"error":"timeout"}
+{"event":"olc_check","ok":true,"millis":2310,"error":null}
+{"event":"olc_check","ok":false,"millis":null,"error":"probe timed out"}
+{"event":"olc_ping","ok":true,"millis":96,"error":null}
+{"event":"olc_ping","ok":false,"millis":null,"error":"probe timed out"}
+{"event":"error","code":"usage","message":"unknown command `start`"}
+{"event":"error","code":"session","message":"the session file is open to other users: its mode must be 0600"}
+{"event":"error","code":"unsupported","message":"this build carries no rooms"}
+{"event":"error","code":"internal","message":"the runtime could not start: no threads"}
+{"event":"ended","reason":"stdin_closed","code":null,"message":null}
+{"event":"ended","reason":"signal","code":null,"message":null}
+{"event":"ended","reason":"failed","code":"session","message":"the session file names protocol 2; this engine reads protocol 1"}
+{"event":"ended","reason":"failed","code":"config","message":"$.outbounds[0].streamSettings.network: stream network `http` was removed from Xray; use `xhttp` instead"}
+{"event":"ended","reason":"failed","code":"start","message":"the core could not start: address in use"}
+{"event":"ended","reason":"failed","code":"room","message":"the room ended: every room of the list was tried"}
+{"event":"ended","reason":"failed","code":"bind","message":"interface `eth9` does not exist"}
+{"event":"ended","reason":"failed","code":"unsupported","message":"a core in front of a room is not built yet"}
