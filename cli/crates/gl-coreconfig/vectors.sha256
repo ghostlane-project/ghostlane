@@ -1,4 +1,4 @@
-043a190d86be05c36a78484d5bf373b822006fca2a5645768f9d40b51842c933  sharedUI/src/commonTest/resources/vectors/core-inputs.json
+bf6ca36318b5df7a409bafc2406e49bf4589c47c8c8710a7e4ecbac8317da49a  sharedUI/src/commonTest/resources/vectors/core-inputs.json
 c4f1c7437fbf1d7ea85fb6db2af8e3b8c20e4234ff5c81535ab6bbd27900fba5  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-and-lan-172.json
 bbc24648d4ddca0cf14cd895b8564fd455af4b10a85368be4e0c0fb49d619730  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-and-lan-verbose.json
 632fdb32cb29dce0d3d0d881ddcae1158343ab49c21690d030c496bee7bd83be  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-login-ipv6.json
@@ -37,6 +37,14 @@ b5d36a2748597db37cc2033084b6833ce6b7190b301367068657d3b8f3c90ef1  sharedUI/src/j
 8902254f3c33486b992e03b29cecd3b69a0d21429d5693d5323b4a0e97a91503  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-tls-grpc.json
 b8d58f02c1c415a8392146b9285787e441213ea48a2ecfab615f27ae0ee119ae  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-tls-xhttp.json
 51edf4736b73658a9059998e5907da26dcb5764cbd98049348b112b67a7d4071  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-tls.json
+2334754d3db2655543c8fbdf7a970f77b671c00592a1c12b7fa385a8ea350615  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-grpc-tls.json
+8919b4813ef6f3fd5eda016d6b195e97c78400fa27306572383074e8136880c3  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-grpc.json
+3998553f52f08acbc7162e5d3c1ca56c5dbfc30b489ce1c0525eadb3e249f795  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-httpupgrade-tls.json
+d66643da4782cbeaddd393f0e32edd738100340a2ce3b356b3e5075676d414ef  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-httpupgrade.json
+5870dc67731c7a177e3542973303da3293a7a8baaa0754ed56de1af2cad4ab39  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-raw-tls.json
+1170ffc9ac04b1d9541cc207ab9a60d78b35160e3ebfbc2e669c2c662c777e7f  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-raw.json
+c17ce0a2c55df994c8de16273f7a963238083f7b9cb8da38000164e64eb83b8c  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-ws-tls.json
+c22fcc1d053ece90149ddb099bffba958750baacee6f0787c40dc6570d9f7ae0  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vmess-ws.json
 71debd55895858f2cb41a6eb611cdab413092ef05dfacacbf6da0a25f8f8fa5d  sharedUI/src/jvmTest/resources/reference-configs/ios-core-webtunnel-httpupgrade.json
 fea4fcfe04b0a8f283974e6d0fa0c8c9749f4c5f430d54dbcc5e6f1eb8b65b89  sharedUI/src/jvmTest/resources/reference-configs/ios-core-webtunnel-ws.json
 5f9418cbb6dc5c84caffd8557fa666672cfc2bf91440e6efeeb90b0d8b6b38e8  sharedUI/src/jvmTest/resources/reference-configs/ios-core-xhttp.json

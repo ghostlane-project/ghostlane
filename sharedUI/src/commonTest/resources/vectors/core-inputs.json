@@ -818,6 +818,209 @@
       "helloNote": null
     },
     {
+      "name": "vmess-raw",
+      "kind": "Vmess",
+      "shape": "vmess-raw",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tcmF3Iiwic2N5IjoiYXV0byIsIm5ldCI6InRjcCIsInR5cGUiOiJub25lIn0=",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw"
+      },
+      "reference": "ios-core-vmess-raw",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-ws",
+      "kind": "Vmess",
+      "shape": "vmess-ws",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0td3MiLCJzY3kiOiJhZXMtMTI4LWdjbSIsIm5ldCI6IndzIiwiaG9zdCI6InZtLmV4YW1wbGUuY29tIiwicGF0aCI6Ii92bSJ9",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "aes-128-gcm",
+        "tls": null,
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-ws"
+      },
+      "reference": "ios-core-vmess-ws",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-grpc",
+      "kind": "Vmess",
+      "shape": "vmess-grpc",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tZ3JwYyIsInNjeSI6ImNoYWNoYTIwLXBvbHkxMzA1IiwibmV0IjoiZ3JwYyIsInBhdGgiOiJ2bS1ncnBjIn0=",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "chacha20-poly1305",
+        "tls": null,
+        "transport": {
+          "type": "grpc",
+          "serviceName": "vm-grpc"
+        },
+        "tag": "vm-grpc"
+      },
+      "reference": "ios-core-vmess-grpc",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-httpupgrade",
+      "kind": "Vmess",
+      "shape": "vmess-httpupgrade",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tdXAiLCJzY3kiOiJhdXRvIiwibmV0IjoiaHR0cHVwZ3JhZGUiLCJob3N0Ijoidm0uZXhhbXBsZS5jb20iLCJwYXRoIjoiL3Z1In0=",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": null,
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/vu",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-up"
+      },
+      "reference": "ios-core-vmess-httpupgrade",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-raw-tls",
+      "kind": "Vmess",
+      "shape": "vmess-raw-tls",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tcmF3LXRscyIsInNjeSI6ImF1dG8iLCJuZXQiOiJ0Y3AiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ2bS5leGFtcGxlLmNvbSJ9",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": {
+          "sni": "vm.example.com",
+          "insecure": false,
+          "fingerprint": null,
+          "alpn": []
+        },
+        "transport": {
+          "type": "tcp"
+        },
+        "tag": "vm-raw-tls"
+      },
+      "reference": "ios-core-vmess-raw-tls",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-ws-tls",
+      "kind": "Vmess",
+      "shape": "vmess-ws-tls",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0td3MtdGxzIiwic2N5IjoiYWVzLTEyOC1nY20iLCJuZXQiOiJ3cyIsImhvc3QiOiJ2bS5leGFtcGxlLmNvbSIsInBhdGgiOiIvdm0iLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ2bS5leGFtcGxlLmNvbSIsImZwIjoiY2hyb21lIiwiYWxwbiI6ImgyLGh0dHAvMS4xIn0=",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "aes-128-gcm",
+        "tls": {
+          "sni": "vm.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "h2",
+            "http/1.1"
+          ]
+        },
+        "transport": {
+          "type": "ws",
+          "path": "/vm",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-ws-tls"
+      },
+      "reference": "ios-core-vmess-ws-tls",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-grpc-tls",
+      "kind": "Vmess",
+      "shape": "vmess-grpc-tls",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tZ3JwYy10bHMiLCJzY3kiOiJjaGFjaGEyMC1wb2x5MTMwNSIsIm5ldCI6ImdycGMiLCJwYXRoIjoidm0tZ3JwYyIsInRscyI6InRscyIsInNuaSI6InZtLmV4YW1wbGUuY29tIiwiZnAiOiJjaHJvbWUiLCJhbHBuIjoiaDIifQ==",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "chacha20-poly1305",
+        "tls": {
+          "sni": "vm.example.com",
+          "insecure": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "h2"
+          ]
+        },
+        "transport": {
+          "type": "grpc",
+          "serviceName": "vm-grpc"
+        },
+        "tag": "vm-grpc-tls"
+      },
+      "reference": "ios-core-vmess-grpc-tls",
+      "helloNote": null
+    },
+    {
+      "name": "vmess-httpupgrade-tls",
+      "kind": "Vmess",
+      "shape": "vmess-httpupgrade-tls",
+      "link": "vmess://eyJ2IjoiMiIsImFkZCI6IjEyNy4wLjAuMSIsInBvcnQiOiIxMDA4NiIsImlkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTQ0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWlkIjoiMCIsInBzIjoidm0tdXAtdGxzIiwic2N5IjoiYXV0byIsIm5ldCI6Imh0dHB1cGdyYWRlIiwiaG9zdCI6InZtLmV4YW1wbGUuY29tIiwicGF0aCI6Ii92dSIsInRscyI6InRscyIsInNuaSI6InZtLmV4YW1wbGUuY29tIiwiZnAiOiJmaXJlZm94In0=",
+      "spec": {
+        "kind": "vmess",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 10086,
+        "alterId": 0,
+        "security": "auto",
+        "tls": {
+          "sni": "vm.example.com",
+          "insecure": false,
+          "fingerprint": "firefox",
+          "alpn": []
+        },
+        "transport": {
+          "type": "httpupgrade",
+          "path": "/vu",
+          "host": "vm.example.com"
+        },
+        "tag": "vm-up-tls"
+      },
+      "reference": "ios-core-vmess-httpupgrade-tls",
+      "helloNote": null
+    },
+    {
       "name": "webtunnel-ws",
       "kind": "WebTunnel",
       "shape": "webtunnel-ws",
