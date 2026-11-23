@@ -1,8 +1,5 @@
 package org.olcbox.app.net
 
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.core.CoreConfig
 import org.olcbox.app.net.core.CoreDns
@@ -128,14 +125,6 @@ sealed interface IosStart {
 }
 
 /**
- * A line's server named by a hostname, which the extension resolves outside
- * the tunnel before the core starts (HostPin.swift): the [server]'s name, and
- * the sentence the start fails with when it does not resolve, [unresolved],
- * which names the line as [IosCore.refused] does.
- */
-data class IosHostPin(val server: String, val unresolved: String)
-
-/**
  * What the Rust core runs on the iPhone, and the `core.json` it runs it from.
  *
  * The writer itself is `net/core`, shared by every platform: [CoreConfig]
@@ -247,28 +236,11 @@ object IosCore {
 
     /**
      * `core.json` as the extension is handed it: [config], written by
-     * [XrayConfig.buildIosCore] from [start]'s spec, and for a server named
-     * by a hostname ([IosStart.Core.hostPin]) the server ahead of everything
-     * else, in the root's `meta`, which the core type-checks and ignores:
-     *
-     *     {"meta":{"hostPin":{"server":"<name>","unresolved":"<sentence>"}},"log":...
-     *
-     * HostPin.swift reads it from the head of the file, without parsing a
-     * document that may carry a region's lists, resolves the name outside
-     * the tunnel and writes the address over [HOST_PIN_PLACEHOLDER].
+     * [XrayConfig.buildIosCore] from [start]'s spec, as it is for a line
+     * given by its address, and for a server named by a hostname with the
+     * server named at its head ([IosHostPin.handOver]).
      */
-    fun handOver(start: IosStart.Core, config: String): String {
-        val pin = start.hostPin ?: return config
-        require(config.startsWith("{\"") && config.endsWith("}")) { "core.json is a JSON object with members" }
-        require("\"$HOST_PIN_PLACEHOLDER\"" in config) { "core.json is not written for the placeholder" }
-        val meta = buildJsonObject {
-            putJsonObject("hostPin") {
-                put("server", pin.server)
-                put("unresolved", pin.unresolved)
-            }
-        }
-        return "{\"meta\":$meta,${config.substring(1)}"
-    }
+    fun handOver(start: IosStart.Core, config: String): String = start.hostPin?.handOver(config) ?: config
 
     /** Why a location whose link the app does not read is refused. */
     const val NO_LINK = "the app reads no link in it"
