@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# A pin move's step for the engine's events (scripts/pin-move.sh runs it with
+# the new commit): copies crates/ghostlane-engine/tests/fixtures/events.jsonl
+# of the core at that commit into the app's tests, and writes its sha256
+# beside it as sha256sum does.
+#
+#   GHOSTLANE_CORE_COMMIT=<new> scripts/pin-move.d/events-hash <new commit>
+#   scripts/pin-move.d/events-hash --check <commit>
+#
+# HostEventsTest reads every line of the copy as its kind and holds the
+# parser's kinds and words to it, so a move to a commit whose events changed
+# shows in the pull request as the copy's diff, and the test says what the
+# app has to learn. Prints "events: unchanged" or "events: changed".
+#
+# --check writes nothing: it fails unless the copy is the fixture at <commit>
+# byte for byte and the hash beside it is the copy's (rust-desktop.yml, at the
+# pin).
+#
+# The fixture is read from EVENTS_SOURCE_REPO (a git directory that holds the
+# commit) when it is set, else fetched over https from the core's repository
+# on GitHub. A commit with no fixture fails the step. EVENTS_COPY names
+# another copy, for the tests; its hash goes beside it as <copy>.sha256.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+fixture="crates/ghostlane-engine/tests/fixtures/events.jsonl"
+copy="${EVENTS_COPY:-$root/sharedUI/src/jvmTest/resources/ghostlane-engine/events.jsonl}"
+record="$copy.sha256"
+
+check=no
+if [ "${1:-}" = "--check" ]; then
+  check=yes
+  shift
+fi
+commit="${1:-${GHOSTLANE_CORE_COMMIT:-}}"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 [--check] <40-hex commit of the core>" >&2; exit 2; }
+
+sha256() {
+  if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+fetched="$work/events.jsonl"
+if [ -n "${EVENTS_SOURCE_REPO:-}" ]; then
+  git -C "$EVENTS_SOURCE_REPO" show "$commit:$fixture" > "$fetched" 2> "$work/err" || {
+    echo "events: the core at ${commit:0:12} has no $fixture ($(head -n 1 "$work/err"))" >&2
+    exit 1
+  }
+else
+  repo="$(bash -c '. "$1"; echo "$GHOSTLANE_CORE_REPO"' _ "$root/scripts/ghostlane-core-pin.sh")"
+  curl -fsSL --retry 3 -o "$fetched" "https://raw.githubusercontent.com/$repo/$commit/$fixture" || {
+    echo "events: the core at ${commit:0:12} has no $fixture in $repo, or it could not be fetched" >&2
+    exit 1
+  }
+fi
+[ -s "$fetched" ] || { echo "events: the fixture at ${commit:0:12} is empty" >&2; exit 1; }
+sum="$(sha256 "$fetched")"
+line="$sum  $(basename "$copy")"
+
+if [ "$check" = yes ]; then
+  bad=""
+  if [ ! -f "$copy" ] || ! cmp -s "$fetched" "$copy"; then
+    bad="the copy $(basename "$copy") is not the engine's fixture at ${commit:0:12}"
+  elif [ ! -f "$record" ] || [ "$(cat "$record")" != "$line" ]; then
+    bad="$(basename "$record") does not hold the fixture's hash ($sum)"
+  fi
+  if [ -n "$bad" ]; then
+    echo "events: $bad: run scripts/pin-move.d/events-hash $commit and commit what it writes" >&2
+    exit 1
+  fi
+  echo "events: the copy is the fixture at ${commit:0:12} ($sum)"
+  exit 0
+fi
+
+if [ -f "$copy" ] && cmp -s "$fetched" "$copy" && [ -f "$record" ] && [ "$(cat "$record")" = "$line" ]; then
+  echo "events: unchanged ($sum)"
+  exit 0
+fi
+mkdir -p "$(dirname "$copy")"
+cp "$fetched" "$copy"
+printf '%s\n' "$line" > "$record"
+echo "events: changed: the copy and its hash are the fixture at ${commit:0:12} ($sum); HostEventsTest says what the parser has to learn"
