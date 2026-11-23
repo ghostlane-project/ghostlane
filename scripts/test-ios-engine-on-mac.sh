@@ -494,6 +494,26 @@ selftest() {
   [ "$(awk '{ print $1 }' "$work/lines.txt" | sort -u | wc -l)" -eq "$(wc -l < "$work/lines.txt")" ] || die "two references are one line"
   echo "ok   the fetch's lines are every case's reference ($(echo "$want" | wc -l | tr -d ' ') of them), each with K5's server for it"
 
+  # Every file of the tree the Mac job reads reaches it: a change of any one
+  # of them starts the engines job, by the room check's scope, whose lists
+  # the workflow's paths are held to. A server of K5's changed alone is to
+  # be fetched against too, not found out by the next change to the iPhone.
+  missed=""
+  n=0
+  for f in "$LINES_DIR"/* "$REFS"/*core-*.json "$HOST"/* "$EXT"/*.swift \
+    "$ROOT/scripts/test-ios-engine-on-mac.sh" "$ROOT/scripts/xray-servers.txt" "$ROOT/scripts/ghostlane-core-pin.sh" \
+    "$ROOT/scripts/ghostlane-core-resolve.sh" "$ROOT/scripts/build-ghostlane-core-host.sh"; do
+    [ -e "$f" ] || die "no $f"
+    case "$f" in */__pycache__) continue ;; esac
+    echo "${f#"$ROOT"/}" > "$work/changed"
+    out="$(bash "$ROOT/scripts/test-ios-app-room-check.sh" scope "$work/changed")" || die "the room check's scope of ${f#"$ROOT"/}"
+    case "$out" in *engines=true*) ;; *) missed="$missed ${f#"$ROOT"/}" ;; esac
+    n=$((n + 1))
+  done
+  [ -z "$missed" ] ||
+    die "a change of these does not start the Mac's engines job (ENGINE_PATHS in scripts/test-ios-app-room-check.sh, and the paths of rust-ios.yml):$missed"
+  echo "ok   a change of any of the $n files of the tree the Mac's engines job reads starts it"
+
   # The certificate for every name the lines send, then each line made and
   # read back, and each refusal of a line or a server that does not fit it.
   out="$(certificate "$work")"
