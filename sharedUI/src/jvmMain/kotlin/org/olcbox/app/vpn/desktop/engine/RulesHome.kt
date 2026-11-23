@@ -7,7 +7,11 @@ internal enum class DesktopRulesHome {
     /** Everything through the tunnel: no rules asked for, or no way out for a direct socket. */
     Nowhere,
 
-    /** The proxy's core, or for olcRTC the sing-box front before the engine. */
+    /**
+     * The proxy's core; for olcRTC the core in front of the room: sing-box
+     * before the Go engine, the core half of the session on ghostlane-engine
+     * ([org.olcbox.app.net.core.CoreRoomFront]).
+     */
     Core,
 
     /** The macOS tunnel daemon; the core behind it stays as it was. */
@@ -50,6 +54,30 @@ internal enum class DesktopLineEngine {
     Rust
 }
 
-/** Where [mode] applies the rules [needsRules] asks for when [engine] runs the session. Not written yet: its tests come first. */
+/**
+ * Where [mode] applies the rules [needsRules] asks for when [engine] runs the
+ * session.
+ *
+ * On the Go engines, and for a core line on ghostlane-engine, the answer of
+ * the [desktopRulesHome] above: where a line's rules live in the tunnels is
+ * the tunnels' own to move.
+ *
+ * A room on ghostlane-engine keeps its rules in its front, the core half of
+ * its session ([org.olcbox.app.net.core.CoreRoomFront]), in the process the
+ * room runs in: every rule a line has, "only blocked sites" and a tunnel rule
+ * under a whole-TLD entry among them. A rule that sends a connection direct
+ * needs a socket that leaves outside the tunnel, and the engine makes them:
+ *
+ * - in proxy mode its sockets are ordinary ones;
+ * - in the Linux and macOS tunnels the session names the way out (`bind`),
+ *   and every socket of the engine but loopback's leaves by it, as the user;
+ * - in the Windows tunnel the engine binds no socket yet, so everything goes
+ *   through the tunnel.
+ */
 internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean, engine: DesktopLineEngine): DesktopRulesHome =
-    desktopRulesHome(mode, isOlcrtc, needsRules)
+    when {
+        engine == DesktopLineEngine.Go || !isOlcrtc -> desktopRulesHome(mode, isOlcrtc, needsRules)
+        !needsRules -> DesktopRulesHome.Nowhere
+        mode == DesktopMode.WindowsTun -> DesktopRulesHome.Nowhere
+        else -> DesktopRulesHome.Core
+    }
