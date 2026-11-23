@@ -49,6 +49,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME_INITIALIZED
 import org.olcbox.app.vpn.data.vpnPrefDataStore
 import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
+import org.olcbox.app.vpn.service.engine.RustProbe
 import java.io.File
 import java.security.SecureRandom
 
@@ -323,31 +324,39 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
 
     override val canProbeTransports: Boolean get() = true
 
-    // Smart connect: the location's core, alone, in a work dir of its own so the
-    // service's core is never touched (AndroidCoreProcess keys its dir by label).
+    /**
+     * Smart connect: the location's core, alone, beside whatever runs. On the
+     * engine the next start would run: the Rust core's own handle in this
+     * process (RustProbe) when the switch says Rust, else [goProbeStarter].
+     */
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
         TransportProbe.passes(
             locationConfig,
-            serverResolver = DirectDns.Servers(activeNetworkResolvers())
-        ) { spec, config ->
-            val label = "probe-${probeSerial.incrementAndGet()}"
-            val core = AndroidCoreProcess(
-                context = appContext,
-                soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
-                label = label,
-                argv = { bin, file -> listOf(bin, "run", "-c", file) },
-            )
-            core.start(config)
-            object : TransportProbe.Core {
-                override fun isRunning(): Boolean = core.isRunning()
-                override suspend fun stop() {
-                    core.stop()
-                    File(appContext.cacheDir, "olcbox-$label").deleteRecursively()
-                }
-            }
-        }
+            serverResolver = DirectDns.Servers(activeNetworkResolvers()),
+            starter = RustProbe.appStarter(appContext) ?: goProbeStarter
+        )
 
     private val probeSerial = AtomicInteger()
+
+    // The location's Go core, in a work dir of its own so the service's core is
+    // never touched (AndroidCoreProcess keys its dir by label).
+    private val goProbeStarter = TransportProbe.Starter { spec, config ->
+        val label = "probe-${probeSerial.incrementAndGet()}"
+        val core = AndroidCoreProcess(
+            context = appContext,
+            soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
+            label = label,
+            argv = { bin, file -> listOf(bin, "run", "-c", file) },
+        )
+        core.start(config)
+        object : TransportProbe.Core {
+            override fun isRunning(): Boolean = core.isRunning()
+            override suspend fun stop() {
+                core.stop()
+                File(appContext.cacheDir, "olcbox-$label").deleteRecursively()
+            }
+        }
+    }
 
     /**
      * The resolvers of the network the phone is on, for a probe whose server is
