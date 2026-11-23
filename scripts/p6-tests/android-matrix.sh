@@ -17,6 +17,12 @@
 #     192.0.2.1:80 alone (Xray's freedom refuses reserved addresses), its page
 #     does not answer /bytes/<n>/ with <n> bytes that begin with the nonce, it
 #     does not count what it served, or the run's keys and link outlive it;
+#   - rust-core-android-kill.sh, on a stand-in adb whose Android does not
+#     restart the killed service, passes, or K3's table (the k3 job's own
+#     script) passes its cell of Android's restart; or, where Android does
+#     restart it, either is red; or the table does not keep the session's
+#     going down with the process and coming back by the next start as a
+#     cell of its own;
 #   - its `meminfo` misreads Android 6's or Android 15's dumpsys, or its
 #     `soak-summary` calls a growing curve, a restarted process or failed
 #     fetches flat, or a flat clean curve not flat;
@@ -98,7 +104,12 @@ ok "A5's e2e files checked for calls Android 6 lacks"
 
 # ---- the host's helper ---------------------------------------------------------
 tmp=$(mktemp -d)
-cleanup() { [ -n "${serve_pid:-}" ] && kill "$serve_pid" 2> /dev/null; rm -rf "$tmp"; }
+cleanup() {
+  [ -n "${serve_pid:-}" ] && kill "$serve_pid" 2> /dev/null
+  # A kill run that did not reach its finish leaves the host's helper behind.
+  pkill -f -- "--work $tmp/" 2> /dev/null || true
+  rm -rf "$tmp"
+}
 trap cleanup EXIT
 
 cat > "$tmp/xray" << 'EOF'
@@ -206,6 +217,138 @@ EOF
   serve_pid=
   left=$(cd "$tmp/work" && ls server.json target.key target.crt link 2> /dev/null || true)
   [ -z "$left" ] && ok "serve left none of the run's keys, config or link" || bad "serve left behind: $left"
+fi
+
+# ---- the kill, and its cells in K3's table ----------------------------------------
+# A stand-in for adb and the emulator behind it: one app process, its tun0 and its log.
+# SIGKILL takes the process and tun0; with FAKE_RESTART=android, Android starts the
+# service again in a new process at once, as START_REDELIVER_INTENT asks.
+mkdir -p "$tmp/fake"
+cat > "$tmp/fake/adb" << 'EOF'
+#!/usr/bin/env bash
+st=$FAKE_STATE
+pid() { cat "$st/pid" 2> /dev/null; }
+up() {
+  local n
+  n=$(($(cat "$st/next" 2> /dev/null || echo 4000) + 1))
+  echo "$n" > "$st/next"; echo "$n" > "$st/pid"; : > "$st/tun"; : > "$st/service"
+  printf 'D/OlcboxVpnService(%s): Transport engine: Rust core\nD/OlcboxVpnService(%s): VPN tunnel established\n' "$n" "$n" >> "$st/log"
+}
+down() { rm -f "$st/pid" "$st/tun"; }
+case "$1" in
+  install) echo Success ;;
+  root | unroot | wait-for-device) ;;
+  logcat) case "$2" in -c) : > "$st/log" ;; -G) ;; *) cat "$st/log" 2> /dev/null ;; esac ;;
+  shell)
+    shift
+    cmd="$*"
+    case "$cmd" in
+      "am instrument "*) echo "INSTRUMENTATION_STATUS_CODE: 0" ;;
+      "pm path "*) echo "package:/data/app/${cmd#pm path }-1/base.apk" ;;
+      "getprop ro.build.version.sdk") echo 35 ;;
+      "getprop "*) echo x ;;
+      id) echo "uid=2000(shell) gid=2000(shell)" ;;
+      "uname -r") echo 6.6 ;;
+      "cat /proc/sys/kernel/random/entropy_avail") echo 256 ;;
+      "pidof "*) pid ;;
+      ps | "ps -A") echo "USER PID PPID NAME" ;;
+      "ls -d /proc/"*) if [ -n "$(pid)" ] && [ "${cmd#ls -d /proc/}" = "$(pid)" ]; then echo "/proc/$(pid)"; else echo "no such file" >&2; fi ;;
+      "cat /proc/net/dev") echo "lo: 0"; [ -f "$st/tun" ] && echo "tun0: 0" ;;
+      "dumpsys activity services "*) [ -f "$st/service" ] && echo "  * ServiceRecord{1 u0 org.proofkit.app/org.olcbox.app.vpn.service.OlcboxVpnService}" ;;
+      *DEBUG_START_VPN* | "su 0 am start"*) up; echo "Broadcast completed: result=0" ;;
+      *DEBUG_STOP_VPN*) down; rm -f "$st/service" ;;
+      "su 0 kill -9 "* | "kill -9 "*)
+        if [ "${cmd##* }" = "$(pid)" ]; then
+          down
+          [ "${FAKE_RESTART:-}" = android ] && up
+        fi ;;
+      *"ShellNet fetch"*)
+        if [ -f "$st/tun" ]; then
+          echo $(($(cat "$FAKE_HITS") + 1)) > "$FAKE_HITS"
+          echo "RESULT found"
+        else
+          echo "RESULT none"
+        fi ;;
+      *) echo "stand-in adb: no answer for: $cmd" >&2; exit 1 ;;
+    esac ;;
+  *) echo "stand-in adb: no answer for: $*" >&2; exit 1 ;;
+esac
+EOF
+real_sleep=$(command -v sleep)
+printf '#!/bin/sh\nexec %s 0.05\n' "$real_sleep" > "$tmp/fake/sleep"
+chmod +x "$tmp/fake/adb" "$tmp/fake/sleep"
+
+# A package of one class, and two legs: one whose Android does not restart the service, one whose does.
+k3root="$tmp/k3root"
+mkdir -p "$k3root/androidApp/src/androidTestRustcore/kotlin/org/olcbox/app" "$tmp/apks"
+printf 'package org.olcbox.app\n\nclass StandInE2ETest {\n    @Test fun x() {}\n}\n' \
+  > "$k3root/androidApp/src/androidTestRustcore/kotlin/org/olcbox/app/StandInE2ETest.kt"
+: > "$tmp/apks/app.apk"
+: > "$tmp/apks/app-androidTest.apk"
+kill_leg() {
+  local leg=$1 restart=$2 d="$k3root/out/k3/k3-$1" rc
+  mkdir -p "$d/e2e" "$tmp/state-$leg"
+  printf 'INSTRUMENTATION_STATUS: class=org.olcbox.app.StandInE2ETest\nINSTRUMENTATION_STATUS: test=x\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS: class=org.olcbox.app.StandInE2ETest\nINSTRUMENTATION_STATUS: test=x\nINSTRUMENTATION_STATUS_CODE: 0\n' > "$d/e2e/am.txt"
+  rc=0
+  PATH="$tmp/fake:$PATH" FAKE_STATE="$tmp/state-$leg" FAKE_RESTART="$restart" FAKE_HITS="$d/kill/host/hits" \
+    XRAY_SERVER="$tmp/xray" timeout 150 bash "$root/scripts/rust-core-android-kill.sh" "$tmp/apks" "$d/kill" > "$tmp/kill-$leg.log" 2>&1 || rc=$?
+  echo "$rc"
+}
+rc=$(kill_leg norestart none)
+[ "$rc" -ne 0 ] && ok "the kill is red where Android does not restart the service" \
+  || bad "the kill passed where Android did not restart the service: $(grep '^RESULT' "$k3root/out/k3/k3-norestart/kill/results.txt" | tail -n 4 | tr '\n' ' ')"
+rc=$(kill_leg restart android)
+[ "$rc" -eq 0 ] && ok "the kill passes where Android restarts the service" \
+  || bad "the kill was red where Android restarted the service: $(grep '^RESULT' "$k3root/out/k3/k3-restart/kill/results.txt" | tail -n 4 | tr '\n' ' ')"
+
+# K3's table, the k3 job's own script, on those two legs.
+python3 - "$wf" "$tmp/table.py" << 'EOF' || fail=1
+import re, sys, textwrap
+text = open(sys.argv[1]).read()
+m = re.search(r"^  k3:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text, re.S | re.M)
+script = re.search(r"python3 - <<'EOF'\n(.*?)\n[ \t]*EOF\n", m.group(1) if m else "", re.S)
+if not script:
+    print("FAIL the k3 job holds no table script")
+    sys.exit(1)
+open(sys.argv[2], "w").write(textwrap.dedent(script.group(1)) + "\n")
+EOF
+if [ -f "$tmp/table.py" ]; then
+  table_rc=0
+  (cd "$k3root" && LEGS="norestart restart" GITHUB_STEP_SUMMARY="$tmp/summary.md" python3 "$tmp/table.py") > "$tmp/table.txt" 2>&1 || table_rc=$?
+  python3 - "$tmp/table.txt" "$table_rc" << 'EOF' || fail=1
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+rows = {}
+for line in lines:
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    if line.startswith("| ") and len(cells) == 3:
+        rows[cells[0]] = cells[1:]
+problems = []
+down = rows.get("kill -9, down and back")
+android = rows.get("kill -9, Android's restart")
+if not down:
+    problems.append("the table has no row of the session going down with the process and coming back")
+elif down != ["pass, back by the next start", "pass, back by Android"]:
+    problems.append("the down-and-back row is %r, not a pass by the next start and a pass by Android" % down)
+if not android:
+    problems.append("the table has no row of Android's restart of the service")
+else:
+    if not android[0].startswith("FAIL") or "Android did not restart" not in android[0]:
+        problems.append("where Android did not restart the service its cell is %r, not a FAIL that says so" % android[0])
+    if android[1] != "pass":
+        problems.append("where Android restarted the service its cell is %r, not a pass" % android[1])
+if rows.get("StandInE2ETest") != ["pass 1", "pass 1"]:
+    problems.append("the class's row is %r" % rows.get("StandInE2ETest"))
+if sys.argv[2] == "0" or "1 cell(s) did not pass" not in lines:
+    problems.append("the table did not fail on the one cell of Android's restart (exit %s)" % sys.argv[2])
+for p in problems:
+    print("FAIL " + p)
+if problems:
+    print("\n".join("     " + l for l in lines))
+else:
+    print("ok   K3's table: Android's restart is a cell of its own, red where it did not happen; down and back is another")
+sys.exit(1 if problems else 0)
+EOF
 fi
 
 old_meminfo='Applications Memory Usage (in Kilobytes):
