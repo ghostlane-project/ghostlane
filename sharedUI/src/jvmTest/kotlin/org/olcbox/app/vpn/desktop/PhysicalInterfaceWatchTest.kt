@@ -167,7 +167,7 @@ class PhysicalInterfaceWatchTest {
         assertEquals(emptyList(), session.moved(), "one read is not yet a move")
         session.reads(1)
         assertEquals(listOf<String?>("eth0"), session.moved(), "a move held for two reads is told to the session")
-        assertEquals(1, session.line.stops, "what ran of the line was stopped")
+        assertTrue(session.line.stops >= 1, "what ran of the line was stopped before the tell")
         assertEquals(2, session.line.started.size, "and the line started again")
         assertEquals("eth0", session.line.lastBound(), "bound to the interface there now")
 
@@ -177,6 +177,70 @@ class PhysicalInterfaceWatchTest {
 
         session.engine.sessionDown()
         assertEquals(1, session.inner.downs, "the engine is told the session is stopped")
+    }
+
+    /**
+     * The manager drops a tell while a restart is running
+     * (`restartBehindTunOnNewWayOut`), and an attempt that runs only starts
+     * what is dead. The line then stays bound to the
+     * interface that went away. The watch must tell again until a start binds
+     * it to the one there now, and stop what runs before each tell so a
+     * running attempt sees the core dead.
+     */
+    @Test
+    fun aDroppedMoveIsToldAgainAndTheLineStartsOnTheNewInterface() {
+        val system = Machine()
+        val line = RecordingLine()
+        val inner = StandIn(line)
+        val moves = mutableListOf<String?>()
+        val dropped = AtomicInteger(1)
+        lateinit var lineRequest: LineRequest
+        lateinit var engine: WatchedEngine
+        val host = DesktopEngineHost(
+            log = {},
+            windowsTunOutput = {},
+            session = object : SessionHooks {
+                override fun lineDied(what: String) {
+                    error("no line dies in this test")
+                }
+
+                // As the manager's hook while a restart runs: the first tell
+                // is dropped, and the line is left where it is.
+                override fun wayOutChanged(interfaceName: String?) {
+                    synchronized(moves) { moves += interfaceName }
+                    if (dropped.getAndDecrement() > 0) return
+                    runBlocking {
+                        engine.line.stopNow()
+                        engine.line.start(lineRequest)
+                    }
+                }
+            },
+        )
+        lineRequest = request()
+        engine = PhysicalInterfaceWatch.around(
+            inner,
+            host,
+            read = system::read,
+            indexOf = system::indexOf,
+            intervalMs = HOUR,
+        )
+        runBlocking { engine.line.start(lineRequest) }
+        engine.sessionUp(DesktopMode.LinuxTun)
+        assertEquals("wlan0", line.lastBound())
+
+        system.default = "eth0"
+        repeat(PhysicalInterfaceWatch.SETTLE_READS) { engine.watch.tick() }
+        assertEquals(listOf<String?>("eth0"), synchronized(moves) { moves.toList() }, "the manager dropped the first tell")
+        assertEquals("wlan0", line.lastBound(), "the line is still bound to the interface that went away")
+        assertTrue(line.stops >= 1, "what ran of the line was stopped before the watch told")
+
+        repeat(PhysicalInterfaceWatch.SETTLE_READS) { engine.watch.tick() }
+        assertEquals(
+            listOf<String?>("eth0", "eth0"),
+            synchronized(moves) { moves.toList() },
+            "the watch tells again while the line is bound to the old interface",
+        )
+        assertEquals("eth0", line.lastBound(), "the line started again bound to the interface there now")
     }
 
     @Test
