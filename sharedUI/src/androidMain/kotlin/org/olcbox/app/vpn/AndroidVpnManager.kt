@@ -47,8 +47,11 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_PORT
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME
 import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME_INITIALIZED
 import org.olcbox.app.vpn.data.vpnPrefDataStore
+import org.olcbox.app.log.CorePin
+import org.olcbox.app.log.RustCoreSection
 import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
+import org.olcbox.app.vpn.service.RustCore
 import org.olcbox.app.vpn.service.engine.RustProbe
 import java.io.File
 import java.security.SecureRandom
@@ -311,7 +314,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid().orEmpty(),
-            dtlsProfile = olcrtcDtlsProfile()
+            dtlsProfile = olcrtcDtlsProfile(),
+            context = appContext
         )
     }
 
@@ -377,7 +381,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid().orEmpty(),
-            dtlsProfile = olcrtcDtlsProfile()
+            dtlsProfile = olcrtcDtlsProfile(),
+            context = appContext
         )
     }
 
@@ -388,7 +393,19 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
+    /** The switch as the next start would read it: a Rust core in the build and the setting on. */
+    private fun runsRust(): Boolean = RustCore.backend != null && RustCore.resolve(Intent(), appContext)
+
+    override suspend fun corePin(): String? =
+        withContext(Dispatchers.IO) { if (runsRust()) CorePin.COMMIT else null }
+
     override suspend fun diagnosticsLog(): String = withContext(Dispatchers.IO) { buildString {
+        // A session the Rust core ran leaves no Go core files: its section is the
+        // pin and the core's own lines, which the session wrote through addLog.
+        if (runsRust()) {
+            RustCoreSection.lines(CorePin.COMMIT, OlcboxVpnState.logs.value).forEach(::appendLine)
+            return@buildString
+        }
         val verbose = locationsDataSource.loadLocationBundle()?.routing?.verboseDebugLogs == true
         // Android core stdout lives in app-private cache files. Include only a
         // bounded tail in the ordinary scrubbed Export/Share path so no ADB is required.
