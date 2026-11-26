@@ -170,6 +170,41 @@ class LineSupervisionTest {
     }
 
     @Test
+    fun aLanChangeRestartsTheEngineThatHoldsTheInboundAndOnlyThat() {
+        val sharing = socks.copy(
+            shareOnLan = true, lanAddress = "192.168.1.5", lanNetworkId = "gw",
+            lanUsername = "guest", lanPassword = "guest-password"
+        )
+        val changes = listOf(
+            sharing.copy(shareOnLan = false),
+            sharing.copy(lanAddress = "192.168.2.5", lanNetworkId = "other-gw"),
+            sharing.copy(lanNetworkId = "another-gateway"),
+            sharing.copy(lanUsername = "other-guest"),
+            sharing.copy(lanPassword = "new-password"),
+            sharing.copy(lanPort = 10999)
+        )
+        for (now in changes) {
+            assertTrue(
+                LineSupervision.lanChangeRestartsEngine(now, sharing, engineRunsLan = true),
+                "$now revokes or moves the engine's own LAN inbound"
+            )
+            assertFalse(
+                LineSupervision.lanChangeRestartsEngine(now, sharing, engineRunsLan = false),
+                "$now is a Go listener the LAN proxy restarts on its own"
+            )
+        }
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing, sharing, engineRunsLan = true))
+        // The listener is a different question: its save is still a full
+        // restart, and its change never turns a behind-the-tunnel move into one.
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing.copy(port = 10900), sharing, true))
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing.copy(username = "other"), sharing, true))
+        assertEquals(
+            LineChange.BehindTun,
+            LineSupervision.changeOfLine(built(DesktopMode.LinuxTun), DesktopMode.LinuxTun, routing, changes[3], true)
+        )
+    }
+
+    @Test
     fun aTunThatIsNotRunningIsRebuilt() {
         for (mode in listOf(DesktopMode.LinuxTun, DesktopMode.WindowsTun, DesktopMode.MacTun)) {
             assertEquals(
