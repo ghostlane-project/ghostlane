@@ -1,1 +1,1 @@
-android | not-proven | - | -
+android | proven | androidApp/src/androidTest/kotlin/org/olcbox/app/CorePackagingTest.kt::apkShipsTheRustCoreAndNoGoCores, .github/workflows/release.yml::No Go in the Android assets | The release asks CorePackagingTest about the finished APK and K1 reads it for Go; the Rust core is packed per ABI and the native libraries are 16 KiB aligned

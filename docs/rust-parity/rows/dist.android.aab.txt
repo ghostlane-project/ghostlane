@@ -1,1 +1,1 @@
-android | not-proven | - | -
+android | proven | androidApp/src/androidTest/kotlin/org/olcbox/app/CorePackagingTest.kt::bundleShipsTheRustCoreAndNoGoCores, .github/workflows/release.yml::No Go in the Android assets | The Play bundle carries libghostlane_core.so on every ABI, no Go core, and passes K1 beside the APKs
