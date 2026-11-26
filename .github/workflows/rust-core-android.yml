@@ -12,11 +12,29 @@ name: Rust core for Android
 # Phase 2 (the app's VpnService on this core, behind a switch that is off by
 # default): job `app` builds the app's debug APK with the core and the UniFFI
 # bindings packed in (-PghostlaneCoreDir) plus its androidTest APK, and reports
-# the core's size inside the APK per ABI; job `e2e` runs RustCoreVpnE2ETest on
-# the x86_64 emulator with the switch ON: VPN consent by appops, the service
-# started on a profile whose core.json redirects a TEST-NET address to a
-# loopback server the test runs, a fetch from the shell uid through the tun,
-# then stop and the service, the core and the tun fd gone.
+# the core's size inside the APK per ABI.
+#
+# K3, the emulator matrix: job `e2e` runs on x86_64 emulators of API 23, 24,
+# 29, 34 and 35, and 35 with 16 KiB pages, one leg each:
+#   - scripts/rust-core-android-e2e.sh: every test class of the app's
+#     androidTestRustcore package, found in the package itself (a class added
+#     there runs with no edit here), with the Rust switch on; a class that
+#     fails or did not run fails the leg;
+#   - scripts/rust-core-android-kill.sh: a session started outside any
+#     instrumentation on a VLESS REALITY line to an official Xray server on the
+#     runner (scripts/xray-servers.txt, by hash), SIGKILL to the app's process,
+#     the session down with the process and back in a new one by the app's next
+#     start (or by Android if it restarted the service), a fetch through the tun
+#     before and after; whether Android restarted it is stated as a fact, not
+#     asked (D16: the core is a library in the app's process).
+# Job `k3` puts every class, the kill's down-and-back cell and the Android's
+# restart fact on every leg in one table and fails on any class or down-and-back
+# cell that did not pass, a leg that left no result included.
+#
+# The soak (job `soak`, only by workflow_dispatch with soak=true): one session
+# on that line for soak_minutes (120) on API 35 under traffic, `dumpsys
+# meminfo` every minute; the curve and its verdict in the job summary
+# (scripts/rust-core-android-soak.sh).
 #
 # Emulator only: no device, no store track, no live carrier room. The one
 # secret is the crypt1 client key of the lab APK step.
@@ -32,6 +50,9 @@ on:
       - scripts/ghostlane-core-resolve.sh
       - scripts/build-ghostlane-core-android.sh
       - 'scripts/rust-core-android-*.sh'
+      - scripts/rust-core-android-host.py
+      - scripts/xray-servers.txt
+      - scripts/fetch-xray-servers.sh
       - scripts/olcrtc-pin.sh
       - scripts/cores-pins.sh
       - 'lab/rust-core-android/**'
@@ -49,6 +70,9 @@ on:
       - scripts/ghostlane-core-resolve.sh
       - scripts/build-ghostlane-core-android.sh
       - 'scripts/rust-core-android-*.sh'
+      - scripts/rust-core-android-host.py
+      - scripts/xray-servers.txt
+      - scripts/fetch-xray-servers.sh
       - scripts/olcrtc-pin.sh
       - scripts/cores-pins.sh
       - 'lab/rust-core-android/**'
@@ -63,6 +87,14 @@ on:
         description: Build this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
         type: string
         default: ''
+      soak:
+        description: Also run the soak (one session on the Rust core under traffic, meminfo every minute)
+        type: boolean
+        default: false
+      soak_minutes:
+        description: How long the soak runs, in minutes
+        type: string
+        default: '120'
 
 permissions:
   contents: read
@@ -320,8 +352,17 @@ jobs:
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
-            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace 2>&1 | tail -120
+          # The whole log in a file: a stack trace alone would fill any tail, and the
+          # compiler's own lines (e: and w:) are what a red build is read by.
+          log="$RUNNER_TEMP/gradle-app.log"
+          if ./gradlew :androidApp:assembleGithubDebug :androidApp:assembleGithubDebugAndroidTest \
+            -PghostlaneCoreDir="$GITHUB_WORKSPACE/olcbox/out/core" --stacktrace > "$log" 2>&1; then
+            tail -60 "$log"
+          else
+            grep -E '^(e|w): |What went wrong|^> ' "$log" | head -120 || true
+            grep -v -E '^\s+at |^\s+\.\.\. [0-9]+ more' "$log" | tail -60
+            exit 1
+          fi
 
       # The Rust path's parts that need no device, on the JVM: the olcRTC room keeper (list,
       # refusal, fetch, timing, memory), the core's config with the user's own rules, hev's.
@@ -421,10 +462,24 @@ jobs:
           retention-days: 14
 
   e2e:
-    name: The service on the Rust core, on the x86_64 emulator
+    name: "K3: API ${{ matrix.leg.api }}, ${{ matrix.leg.pages }} pages (x86_64)"
     needs: app
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # K3's legs. A leg is one emulator: every class of the e2e package, then the kill.
+        # API 23 and 24 boot with 2 GiB of RAM: with 4 GiB their app_process commands
+        # (am, pm, input) aborted (SIGABRT, 23) or hung (24). API 23's own data partition
+        # is too small for the app (INSTALL_FAILED_INSUFFICIENT_STORAGE): 2 GiB.
+        leg:
+          - { api: 23, target: google_apis, pages: 4k, ram: 2048M, disk: 2048M }
+          - { api: 24, target: google_apis, pages: 4k, ram: 2048M, disk: '' }
+          - { api: 29, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 34, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 35, target: google_apis, pages: 4k, ram: 4096M, disk: 4096M }
+          - { api: 35, target: google_apis_ps16k, pages: 16k, ram: 4096M, disk: 4096M }
     steps:
       - uses: actions/checkout@v7
 
@@ -450,8 +505,199 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: End-to-end (x86_64, 4 KiB pages)
+      # What a red start is read by: the line's port on the host's loopback (the
+      # session script captures it when SESSION_DIAG=1).
+      - name: tcpdump for the line's capture
+        run: command -v tcpdump > /dev/null || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends tcpdump; }
+
+      # The kill's line: the first official Xray server of scripts/xray-servers.txt
+      # (the exits' release), checked against its pinned hash.
+      - name: The Xray server for the kill, by hash
+        run: |
+          set -euo pipefail
+          servers="$(bash scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          first="${servers%% *}"
+          echo "XRAY_SERVER=${first#*=}" >> "$GITHUB_ENV"
+          echo "the kill's server: ${first}"
+
+      # One line: the kill runs whatever the classes did, and the leg fails if either failed.
+      - name: "Every class of the e2e package, then kill -9 and restart (API ${{ matrix.leg.api }}, ${{ matrix.leg.pages }})"
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SESSION_DIAG: '1'
+        with:
+          api-level: ${{ matrix.leg.api }}
+          arch: x86_64
+          target: ${{ matrix.leg.target }}
+          disable-animations: true
+          emulator-boot-timeout: 900
+          ram-size: ${{ matrix.leg.ram }}
+          disk-size: ${{ matrix.leg.disk }}
+          # adbd as the shell (uid 2000) where the image starts it as root (API 23): the
+          # app lists name the shell's package, and root is in none of them.
+          script: adb unroot > /dev/null 2>&1; sleep 5; adb wait-for-device; adb shell id; bash scripts/rust-core-android-e2e.sh out/apks out/leg/e2e; e=$?; bash scripts/rust-core-android-kill.sh out/apks out/leg/kill; k=$?; echo "e2e=$e kill=$k" | tee out/leg/exit.txt; [ "$e" -eq 0 ] && [ "$k" -eq 0 ]
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### K3: API ${{ matrix.leg.api }}, ${{ matrix.leg.pages }} pages"
+            echo '```'
+            cat out/leg/e2e/device.txt 2> /dev/null || echo "no device line"
+            cat out/leg/e2e/classes.txt 2> /dev/null || echo "no class ran"
+            grep -E '^(OK|FAILURES|Tests run)' out/leg/e2e/am.txt 2> /dev/null | tr -d '\r'
+            grep '^RESULT' out/leg/kill/results.txt 2> /dev/null || echo "no kill result"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: k3-api${{ matrix.leg.api }}-${{ matrix.leg.pages }}
+          path: out/leg/
+          retention-days: 14
+
+  k3:
+    name: "K3: every class and the kill on every leg"
+    needs: [app, e2e]
+    if: ${{ !cancelled() && needs.app.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: k3-*
+          path: out/k3
+
+      # The classes are the package's, by the rule the e2e script reads them with, so a
+      # class no leg ran is a row of its own; the legs are the matrix's, so a leg that
+      # left nothing is a column of its own.
+      - name: The table
+        env:
+          LEGS: 'api23-4k api24-4k api29-4k api34-4k api35-4k api35-16k'
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
+          src = "androidApp/src/androidTestRustcore"
+          classes = []
+          for root, _, files in os.walk(src):
+              for name in sorted(files):
+                  if not name.endswith(".kt"):
+                      continue
+                  text = open(os.path.join(root, name)).read()
+                  if "@Test" not in text:
+                      continue
+                  m = re.search(r"^package\s+([A-Za-z0-9_.]+)", text, re.M)
+                  classes.append((m.group(1) + "." if m else "") + name[:-3])
+          classes.sort()
+          legs = os.environ["LEGS"].split()
+          KILL_BACK, KILL_RESTART = "kill -9, down and back", "kill -9, Android's restart"
+          cells, bad = {}, 0
+          for leg in legs:
+              d = os.path.join("out/k3", "k3-" + leg)
+              am = os.path.join(d, "e2e", "am.txt")
+              counts = {}
+              if os.path.exists(am):
+                  cls = test = None
+                  for line in open(am, errors="replace"):
+                      line = line.rstrip("\r\n")
+                      if line.startswith("INSTRUMENTATION_STATUS: class="):
+                          cls = line.split("=", 1)[1]
+                      elif line.startswith("INSTRUMENTATION_STATUS: test="):
+                          test = line.split("=", 1)[1]
+                      elif line.startswith("INSTRUMENTATION_STATUS_CODE: ") and cls:
+                          code = line.split(": ", 1)[1].strip()
+                          if code == "1":
+                              continue
+                          c = counts.setdefault(cls, {"pass": 0, "fail": 0, "skip": 0})
+                          c["pass" if code == "0" else "skip" if code in ("-3", "-4") else "fail"] += 1
+              for k in classes:
+                  c = counts.get(k)
+                  if c is None:
+                      cells[(k, leg)] = "not run" if os.path.isdir(d) else "no result"
+                      bad += 1
+                  elif c["fail"] or not c["pass"]:
+                      cells[(k, leg)] = "FAIL %d of %d" % (c["fail"], c["pass"] + c["fail"])
+                      bad += 1
+                  else:
+                      cells[(k, leg)] = "pass %d" % c["pass"] + (" (%d skipped)" % c["skip"] if c["skip"] else "")
+              kill = os.path.join(d, "kill", "results.txt")
+              text = open(kill, errors="replace").read() if os.path.exists(kill) else ""
+              fails = [l[len("RESULT FAIL "):] for l in text.splitlines() if l.startswith("RESULT FAIL ")]
+              first = ("FAIL: " + fails[0][:60]) if fails else "not finished" if text else "no result"
+              # The session goes down with the process and comes back in a new one on the
+              # Rust core: by Android, or by the next start when Android did not.
+              m = re.search(r"^RESULT down-and-back: ok, back (by Android|by the next start)", text, re.M)
+              cells[(KILL_BACK, leg)] = ("pass, back " + m.group(1)) if m else first
+              bad += 0 if m else 1
+              # D16: Android's own restart of the service (START_REDELIVER_INTENT)
+              # within 90 s is a fact in the table, not a cell that can fail.
+              if re.search(r"^RESULT android-restart: yes", text, re.M):
+                  cells[(KILL_RESTART, leg)] = "yes (fact)"
+              elif re.search(r"^RESULT android-restart: none", text, re.M):
+                  cells[(KILL_RESTART, leg)] = "none (fact)"
+              else:
+                  # No verdict was reached about it (the session may not have
+                  # started at all): still a fact, never a failing cell.
+                  cells[(KILL_RESTART, leg)] = "not observed (fact)"
+          rows = classes + [KILL_BACK, KILL_RESTART]
+          out = ["### K3: every class of the e2e package and the kill, on every leg", "",
+                 "| | " + " | ".join(legs) + " |", "|---|" + "---|" * len(legs)]
+          for r in rows:
+              out.append("| " + r.rsplit(".", 1)[-1] + " | " + " | ".join(cells[(r, l)] for l in legs) + " |")
+          out += ["", "%d cell(s) did not pass" % bad if bad else "every cell passed"]
+          text = "\n".join(out)
+          print(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(text + "\n")
+          sys.exit(1 if bad else 0)
+          EOF
+
+  soak:
+    name: "Soak: one session on the Rust core, API 35 (x86_64)"
+    needs: app
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.soak }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-core-app-apks
+          path: out/apks
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: The Xray server for the soak, by hash
+        run: |
+          set -euo pipefail
+          servers="$(bash scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          first="${servers%% *}"
+          echo "XRAY_SERVER=${first#*=}" >> "$GITHUB_ENV"
+
+      - name: The soak (x86_64, API 35, 4 KiB pages)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SOAK_MINUTES: ${{ inputs.soak_minutes }}
         with:
           api-level: ${{ env.EMULATOR_API }}
           arch: x86_64
@@ -459,32 +705,12 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 900
           ram-size: 4096M
-          script: bash scripts/rust-core-android-e2e.sh out/apks out/e2e-4k
-
-      - name: End-to-end (x86_64, 16 KiB pages)
-        if: ${{ !cancelled() }}
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ env.EMULATOR_API }}
-          arch: x86_64
-          target: google_apis_ps16k
-          disable-animations: true
-          emulator-boot-timeout: 900
-          ram-size: 4096M
-          script: bash scripts/rust-core-android-e2e.sh out/apks out/e2e-16k
-
-      - name: Summary
-        if: always()
-        run: |
-          for d in e2e-4k e2e-16k; do
-            [ -f "out/$d/results.txt" ] || { echo "### $d: no results" >> "$GITHUB_STEP_SUMMARY"; continue; }
-            { echo "### End-to-end ($d)"; echo '```'; cat "out/$d/results.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          done
-          exit 0
+          disk-size: 4096M
+          script: bash scripts/rust-core-android-soak.sh out/apks out/soak "$SOAK_MINUTES"
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: rust-core-android-e2e
-          path: out/e2e-*
-          retention-days: 14
+          name: rust-core-android-soak
+          path: out/soak/
+          retention-days: 30

@@ -80,15 +80,9 @@ class RustProbeE2ETest {
         return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
     }
 
-    /** Shell's `nc` with a request on stdin, through the tun (only the shell's uid is in it). */
-    private fun shellFetch(path: String): String {
-        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("toybox nc -w 8 192.0.2.1 80")
-        ParcelFileDescriptor.AutoCloseOutputStream(input).use {
-            it.write("GET /$path HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n".toByteArray())
-            it.flush()
-        }
-        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
-    }
+    /** The shell's GET through the tun (ShellNet, uid 2000), true when the answer held [needle]. */
+    private fun shellFetch(path: String, needle: String): Boolean =
+        RustE2eDevice.shellFetch(RustE2eDevice.UNREACHABLE, 80, path, needle)
 
     private fun tunFds(): List<String> =
         File("/proc/self/fd").listFiles().orEmpty()
@@ -251,9 +245,9 @@ class RustProbeE2ETest {
         // for a build whose default is the Rust core.
         devSwitch(true)
         try {
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the session to connect", 90_000) { connected() }
-            assertTrue("the session carries the tun", shellFetch("before").contains(web.nonce))
+            assertTrue("the session carries the tun", shellFetch("before", web.nonce))
             val sessionStarts = logCount("Rust core ready on")
             val probesBefore = logCount(PROBE_MARK)
             val manager = AndroidVpnManager(context)
@@ -270,9 +264,9 @@ class RustProbeE2ETest {
             assertTrue("the probe's core dialled the line's server", hole.accepted.get() > 0)
             assertEquals("the probe runs on a core handle of its own", 1, handles)
             assertTrue("the session's core runs beside it", sessionRuns)
-            val during = shellFetch("during")
-            say("RESULT a fetch through the tun while the probe held its handle: ${during.takeLast(24)}; still held after it: ${RustCoreEngine.probeHandles() == 1}")
-            assertTrue("the session carries the tun while the probe runs: '$during'", during.contains(web.nonce))
+            val during = shellFetch("during", web.nonce)
+            say("RESULT a fetch through the tun while the probe held its handle: $during; still held after it: ${RustCoreEngine.probeHandles() == 1}")
+            assertTrue("the session carries the tun while the probe runs", during)
             probing.join(60_000)
             assertFalse("the probe ended", probing.isAlive)
             say("RESULT the probe of a line that never answers: ${verdict.get()}")
@@ -291,8 +285,8 @@ class RustProbeE2ETest {
             assertEquals("the session's core was not restarted", sessionStarts, logCount("Rust core ready on"))
             assertTrue("the session's core runs", RustCoreEngine.isCoreRunning())
             assertTrue("still connected", connected())
-            val after = shellFetch("after")
-            assertTrue("the session carries the tun after the probes: '$after'", after.contains(web.nonce))
+            val after = shellFetch("after", web.nonce)
+            assertTrue("the session carries the tun after the probes", after)
             say("RESULT the session stayed up: connected, its core not restarted, the tun carries")
         } finally {
             RustCoreEngine.testProbeConfig = null
@@ -332,16 +326,16 @@ class RustProbeE2ETest {
         )
         save(LocationBundleV4(activeLocationId = "line", locations = listOf(line, room)))
         try {
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the session to connect on the line", 90_000) { connected() }
-            assertTrue("the line carries the tun", shellFetch("line").contains(web.nonce))
+            assertTrue("the line carries the tun", shellFetch("line", web.nonce))
 
             // The user picks the room; the app restarts the session for it, behind the tun.
             val failedBefore = logCount("Rust core start failed")
             val movedBefore = logCount(MOVED_MARK)
             val probesBefore = logCount(PROBE_MARK)
             save(LocationBundleV4(activeLocationId = "room", locations = listOf(line, room)))
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the room's start to fail", 90_000) { logCount("Rust core start failed") > failedBefore }
             say("RESULT the dead room's start failed: ${OlcboxVpnState.logs.value.lastOrNull { it.contains("Rust core start failed") }}")
             waitFor("the session to move to another line of the same country", 240_000) { logCount(MOVED_MARK) > movedBefore }
@@ -352,8 +346,8 @@ class RustProbeE2ETest {
             assertEquals("no probe handle is left", 0, RustCoreEngine.probeHandles())
             assertEquals("the store names the line the session moved to", "line", storedActiveId())
             assertTrue("the session's core runs", RustCoreEngine.isCoreRunning())
-            val after = shellFetch("moved")
-            assertTrue("the line carries the tun after the move: '$after'", after.contains(web.nonce))
+            val after = shellFetch("moved", web.nonce)
+            assertTrue("the line carries the tun after the move", after)
             say("RESULT a dead room failed over to a line of its country, probed on a second handle")
         } finally {
             RustCoreEngine.testCarrier = null

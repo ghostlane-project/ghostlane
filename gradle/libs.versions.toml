@@ -23,6 +23,7 @@ kstore = "1.1.0"
 materialKolor = "5.0.1"
 zxing = "3.5.4"
 jna = "5.19.1"
+desugarJdkLibs = "2.1.5"
 
 [libraries]
 
@@ -68,6 +69,7 @@ kstore-file = { module = "io.github.xxfast:kstore-file", version.ref = "kstore" 
 materialKolor = { module = "com.materialkolor:material-kolor", version.ref = "materialKolor" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 
 [plugins]
 
