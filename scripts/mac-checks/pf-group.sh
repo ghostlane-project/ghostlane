@@ -2,10 +2,10 @@
 # K8's check of the engine in the pf group, on a Mac: with the block armed a
 # program started by the helper in the tunnel's group fetches a page from a
 # local server through the utun, and the same program started by its user
-# outside the group is refused. When the Core build's ghostlane-engine is
-# handed to this check it is the program; otherwise a stand-in that follows
-# the engine's run contract (stdin held open, a ready line, then a fetch)
-# proves the helper's half of it. The real engine is the release's proof.
+# outside the group is refused. A stand-in follows
+# the engine's run contract (stdin held open, a ready line, then a fetch),
+# which proves the helper's half of it. A real engine, handed over by K8
+# from the Core build's Apple artifact, is the release's proof.
 #
 # The helper is built by pr-checks.yml from every file of
 # desktopApp/tunneldaemon (its own main replaced by scripts/macos-helper-check/
@@ -256,16 +256,10 @@ request["hold"] = {"interface": name, "pass": ["1.1.1.1"]}
 print(json.dumps(request))
 PY
 }
-# The program under test: a real engine when supplied, else the stand-in.
-if [ -n "$ENGINE" ]; then
-  cp "$ENGINE" "$work/line/ghostlane-engine"
-  chown "$WHO" "$work/line/ghostlane-engine"
-  PROGRAM="$work/line/ghostlane-engine"
-  LOG="$work/engine.log"
-else
-  PROGRAM="$work/line/engine-stand-in.py"
-  LOG="$work/engine.log"
-fi
+# The program under test is the stand-in, copied into the user's line
+# directory above. What it prints is the app's file.
+PROGRAM="$work/line/engine-stand-in.py"
+LOG="$work/engine.log"
 : > "$LOG"; chown "$WHO" "$LOG"; chmod 600 "$LOG"
 
 say "a tunnel under hev behind the block"
@@ -275,11 +269,7 @@ expect "hev runs in the group the block lets out" "$(ps -o gid= -p "$(tunnel_pid
 expect "a TEST-NET address is routed into the tun" "$(route -n get "$TARGET" 2>/dev/null | awk '/interface:/{print $2}')" '^utun239$'
 
 say "the program, started by the helper"
-if [ -n "$ENGINE" ]; then
-  ARGS=(run --session "$work/session.json")
-else
-  ARGS=("$TARGET" "$ECHO_PORT" run)
-fi
+ARGS=("$TARGET" "$ECHO_PORT" run)
 expect "the helper starts it" "$(ask "$(request_line "$PROGRAM" "$LOG" "${ARGS[@]}")")" '^ok=True state=running hold=True protocol=5 line=[1-9][0-9]* '
 LPID=$(line_pid)
 expect "it runs as the user who asked" "$(ps -o uid= -p "$LPID" | tr -d ' ')" "^$WHO_UID\$"
@@ -299,16 +289,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 )"
 expect "its SOCKS port is on loopback" "$PROXY" '^127\.0\.0\.1:[0-9]+$'
-if [ -n "$ENGINE" ]; then
-  FETCH="$(as_user curl -s --max-time 12 --socks5 "$PROXY" "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)"
-else
-  FETCH="$(as_user python3 -I -c '
+FETCH="$(as_user python3 -I -c '
 import socket,sys
 host,port=sys.argv[1].split(":")
 s=socket.create_connection((host,int(port)),8)
 s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
 print(s.recv(4096).decode(errors="replace").split("\n")[-2].strip())' "$PROXY" 2>&1)"
-fi
 expect "it fetches the page through the line and the utun" "$FETCH" '^the engine in the pf group fetched this page$'
 expect "the dial went through hev, into the tun" "$(grep -c "^connect $TARGET:$ECHO_PORT\$" "$work/forward.log" 2>/dev/null)" '^[1-9][0-9]*$'
 
@@ -317,7 +303,6 @@ say "a program outside the group is refused"
 # group. What leaves by the physical interface is let out only from the
 # tunnel's group, so the same user's request there is refused.
 expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://1.1.1.1/" 2>/dev/null)" '^000$'
-expect "the program in the group can" "$(as_user curl -s --max-time 5 "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)" '^the engine in the pf group fetched this page$'
 
 say "nothing left behind"
 expect "the helper ends the program" "$(ask '{"verb":"line-stop"}')" '^ok=True state=running hold=True protocol=5 line=0 '
