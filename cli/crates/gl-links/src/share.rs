@@ -1,6 +1,8 @@
 //! Share links: `vless://` (TCP or XHTTP) and `hysteria2://` / `hy2://`, as
 //! the CLI's Go `share.go` reads them.
 
+use std::fmt;
+
 use serde::Serialize;
 
 use crate::text::{parse_query, query_value, truthy, url_decode};
@@ -107,6 +109,12 @@ fn split_link(s: &str, scheme: &str) -> Result<Parts, String> {
         query,
         tag,
     })
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text())
+    }
 }
 
 pub fn parse_vless(line: &str) -> Result<VlessLine, Refusal> {

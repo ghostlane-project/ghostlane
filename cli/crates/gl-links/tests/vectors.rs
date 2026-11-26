@@ -214,13 +214,16 @@ fn every_body_case_is_decoded_as_the_vector_says() {
         let expect = &case["expect"];
         let body = expect["body"].as_str().unwrap_or("").as_bytes();
         let got = if let Some(plain) = expect["decryptorPayload"].as_str() {
-            list::decode_body_with(body, |blob| {
-                if blob == plain {
-                    Some(plain.as_bytes().to_vec())
-                } else {
-                    None
-                }
-            })
+            list::decode_body_with(
+                body,
+                Some(|blob| {
+                    if blob == plain {
+                        Some(plain.as_bytes().to_vec())
+                    } else {
+                        None
+                    }
+                }),
+            )
         } else {
             list::decode_body(body)
         };
@@ -568,7 +571,7 @@ fn fetch_device_fields_are_the_vectors() {
 }
 
 /// The digests are in sha256sum's order, not the order of the files above.
-fn listing(v: &Value) -> String {
+fn listing() -> String {
     let mut files: BTreeSet<String> = BTreeSet::new();
     files.insert(LINKS.to_string());
     files.insert(CRYPT1.to_string());
@@ -586,12 +589,11 @@ fn listing(v: &Value) -> String {
 
 #[test]
 fn the_digests_name_every_vector_file_as_it_is() {
-    let v = vector(LINKS);
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("vectors.sha256");
     let held = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
         .replace("\r\n", "\n");
-    let wanted = listing(&v);
+    let wanted = listing();
     assert!(
         held == wanted,
         "cli/crates/gl-links/vectors.sha256 is not the vectors as they are; it should read:\n{wanted}"

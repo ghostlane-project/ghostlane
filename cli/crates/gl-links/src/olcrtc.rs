@@ -1,6 +1,8 @@
 //! olcRTC room links, as the CLI's Go `olcrtc.go` reads them:
 //! `olcrtc://<provider>?<transport>[&k=v…]@<room>#<key>[%<client>][$<label>]`.
 
+use std::fmt;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -37,6 +39,12 @@ impl Refusal {
             Refusal::UnknownCarrier(c) => format!("olcrtc line: unknown carrier \"{c}\""),
             Refusal::UnknownTransport(t) => format!("olcrtc line: unknown transport \"{t}\""),
         }
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text())
     }
 }
 

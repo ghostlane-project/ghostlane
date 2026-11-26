@@ -67,14 +67,14 @@ fn expand_key(key: &[u8; 32]) -> [u8; 240] {
             w[(i - 1) * 4 + 2],
             w[(i - 1) * 4 + 3],
         ];
-        if i % 8 == 0 {
+        if i.is_multiple_of(8) {
             t.rotate_left(1);
             for b in t.iter_mut() {
                 *b = SBOX[*b as usize];
             }
             t[0] ^= rcon;
             rcon = xtime(rcon);
-        } else if i % 8 == 4 {
+        } else if (i - 4).is_multiple_of(8) {
             for b in t.iter_mut() {
                 *b = SBOX[*b as usize];
             }
@@ -144,7 +144,7 @@ fn decrypt_block(w: &[u8; 240], inv: &[u8; 256], block: &mut [u8; 16]) {
 }
 
 fn cbc_decrypt(key: &[u8; 32], iv: &[u8], ct: &[u8]) -> Option<Vec<u8>> {
-    if ct.len() % 16 != 0 || iv.len() != 16 {
+    if !ct.len().is_multiple_of(16) || iv.len() != 16 {
         return None;
     }
     let w = expand_key(key);
@@ -253,7 +253,7 @@ pub fn decrypt(master: &[u8; 32], blob: &str) -> Option<Vec<u8>> {
     }
     let (iv, rest) = raw.split_at(16);
     let (ct, tag) = rest.split_at(rest.len() - 32);
-    if ct.len() % 16 != 0 {
+    if !ct.len().is_multiple_of(16) {
         return None;
     }
     let (enc_key, mac_key) = keys(master);
