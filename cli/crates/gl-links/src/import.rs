@@ -7,7 +7,7 @@ pub fn import_payload(s: &str) -> String {
     let s = s.trim();
     let lower = s.to_lowercase();
     let rest = match lower.strip_prefix("ghostlane://") {
-        Some(rest) => &s["ghostlane://".len()..],
+        Some(_) => &s["ghostlane://".len()..],
         None => return s.to_string(),
     };
     let lower_rest = lower.strip_prefix("ghostlane://").unwrap_or("");

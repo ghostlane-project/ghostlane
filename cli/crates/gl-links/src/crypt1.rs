@@ -6,7 +6,7 @@
 //! table-driven block cipher so the CLI's lock needs no checksummed crypto
 //! crate: sha2 provides the two hashes, base64 provides the wire form.
 
-use sha2::{Digest, Hmac, Sha256};
+use sha2::{Digest, Sha256};
 
 pub const LINK_PREFIX: &str = "olcrtc://crypt1/";
 
@@ -215,6 +215,35 @@ pub fn decrypt_link(master: &[u8; 32], link: &str) -> Option<Vec<u8>> {
     decrypt(master, link.strip_prefix(LINK_PREFIX)?)
 }
 
+/// HMAC-SHA256, written on sha2 because the `hmac` crate is not in the CLI
+/// lock and no new checksummed dependency is needed for one primitive.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let block = if key.len() > 64 {
+        let mut hashed = [0u8; 32];
+        hashed.copy_from_slice(&Sha256::digest(key));
+        let mut b = [0u8; 64];
+        b[..32].copy_from_slice(&hashed);
+        b
+    } else {
+        let mut b = [0u8; 64];
+        b[..key.len()].copy_from_slice(key);
+        b
+    };
+    let inner: Vec<u8> = block
+        .iter()
+        .map(|b| b ^ 0x36)
+        .chain(message.iter().copied())
+        .collect();
+    let outer: Vec<u8> = block
+        .iter()
+        .map(|b| b ^ 0x5c)
+        .chain(Sha256::digest(&inner).iter().copied())
+        .collect();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(&outer));
+    out
+}
+
 /// Verify and decrypt one blob. A short blob, a bad MAC, a wrong key or bad
 /// padding all return `None`.
 pub fn decrypt(master: &[u8; 32], blob: &str) -> Option<Vec<u8>> {
@@ -228,10 +257,8 @@ pub fn decrypt(master: &[u8; 32], blob: &str) -> Option<Vec<u8>> {
         return None;
     }
     let (enc_key, mac_key) = keys(master);
-    let mut mac = Hmac::<Sha256>::new_from_slice(&mac_key).ok()?;
-    mac.update(iv);
-    mac.update(ct);
-    if mac.verify_slice(tag).is_err() {
+    let expected = hmac_sha256(&mac_key, &[iv, ct].concat());
+    if expected != tag {
         return None;
     }
     let plain = cbc_decrypt(&enc_key, iv, ct)?;

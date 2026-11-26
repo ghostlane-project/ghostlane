@@ -50,7 +50,7 @@ impl Entry {
 /// plaintext stays plaintext. A crypt1 blob is offered to the decryptor only
 /// when the body has no scheme in it (its MAC, so a base64 list never passes).
 pub fn decode_body(body: &[u8]) -> Vec<String> {
-    decode_body_with(body, None)
+    decode_body_with::<fn(&str) -> Option<Vec<u8>>>(body, None)
 }
 
 pub fn decode_body_with<F>(body: &[u8], decrypt: Option<F>) -> Vec<String>
@@ -233,7 +233,7 @@ pub fn entries(sub_url: &str, lines: &[String]) -> Vec<Entry> {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut out = Vec::with_capacity(lines.len());
     for raw in lines {
-        let (kind, problem, mut label) = if raw.starts_with("olcrtc://") {
+        let (kind, problem, label) = if raw.starts_with("olcrtc://") {
             match olcrtc::parse_olcrtc(raw) {
                 Ok(l) => (Kind::Olcrtc, String::new(), l.label),
                 Err(e) => (Kind::Unsupported, e.text(), raw.clone()),
