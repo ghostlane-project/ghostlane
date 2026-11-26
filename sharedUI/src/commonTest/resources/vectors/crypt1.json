@@ -38,9 +38,9 @@
     },
     {
       "accept": true,
-      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7++UcTSYBJ8hOkfuV/gPtnl8VXwwcgEJv+hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrL",
+      "blob": "GhoaGhoaGhoaGhoaGhoaGo21GXyIQxuRqiLOWB1Uk7HZhxTt640Vw1Aayxy328X9NTeWyi9glNlGB2ExRrKIn97e3HRztmi69Z0Nub2u3tngXCqevXxrQwRjPplk0eJD",
       "group": "roundtrip",
-      "iv": "01010101010101010101010101010101",
+      "iv": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
       "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
       "name": "padded-standard-base64",
       "note": "a padded standard-base64 blob is accepted",

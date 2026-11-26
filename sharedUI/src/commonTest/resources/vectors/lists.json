@@ -587,7 +587,9 @@
         "want": "This list has no place for this device. Ask your provider."
       },
       "group": "refusal-text",
-      "name": "none-53"
+      "name": "none-53",
+      "note": "the Go case sends invalid UTF-8 bytes, which JSON cannot carry",
+      "skipPort": true
     },
     {
       "expect": {

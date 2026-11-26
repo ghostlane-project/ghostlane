@@ -18,6 +18,7 @@ import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -56,6 +57,7 @@ class LinkVectorsTest {
         getValue(key).jsonPrimitive.also { require(it.isString) { "$key is not text in $this" } }.content
     private fun JsonObject.textOrNull(key: String): String? = getValue(key).let { if (it is JsonNull) null else text(key) }
     private fun JsonObject.flag(key: String): Boolean = getValue(key).jsonPrimitive.boolean
+    private fun JsonObject.number(key: String): Int = getValue(key).jsonPrimitive.int
     private fun JsonObject.obj(key: String): JsonObject = getValue(key).jsonObject
 
     // Every link case is named, and every case the app parses carries one of
@@ -116,14 +118,14 @@ class LinkVectorsTest {
                 else -> error("not a share link")
             }
             val expected = if (group == "vless") buildString {
-                append(want.text("uuid"), '|', want.text("host"), '|', want.text("port"), '|', want.text("sni"), '|')
+                append(want.text("uuid"), '|', want.text("host"), '|', want.number("port"), '|', want.text("sni"), '|')
                 append(want.text("publicKey"), '|', want.text("shortID"), '|', want.text("fingerprint"), '|')
                 append(want.text("flow"), '|')
                 val t = want.obj("transport")
                 append(if (t.text("kind") == "xhttp") "xhttp:${t.text("path")}:${t.text("host")}:${t.text("mode")}" else "tcp")
                 append('|', want.text("label"), '|', want.flag("plain"), '|', want.flag("insecure"))
             } else buildString {
-                append(want.text("password"), '|', want.text("host"), '|', want.text("port"), '|', want.text("sni"), '|')
+                append(want.text("password"), '|', want.text("host"), '|', want.number("port"), '|', want.text("sni"), '|')
                 append(want.text("obfsPassword"), '|', want.text("pinSHA256"), '|', want.flag("insecure"), '|', want.text("label"))
             }
             if (actual != expected) failures += "${vector.text("name")}: the app parses $actual, the vector says $expected"
@@ -133,23 +135,38 @@ class LinkVectorsTest {
 
     @Test fun importPayloadsAreTheApps() {
         for (vector in links.list("cases").filter { it.text("group") == "import" }) {
-            assertEquals(vector.obj("expect").text("payload"), payloadOf(vector.text("line")), vector.text("name"))
+            val line = vector.text("line")
+            val want = vector.obj("expect").text("payload")
+            // The Go importer returns a paste unchanged; the app's importer
+            // returns null for anything that is not one of its links.
+            if (want == line && !want.startsWith("ghostlane://")) {
+                assertNull(payloadOf(line), vector.text("name"))
+            } else {
+                assertEquals(want, payloadOf(line), vector.text("name"))
+            }
         }
     }
 
     @Test fun normalizersAndCountriesAreTheApps() {
         for (vector in links.list("cases").filter { it.text("group") == "normalizers" }) {
             val expected = vector.obj("expect")
-            for (pair in expected.list("cases")) {
+            for (pair in expected.getValue("cases").jsonArray) {
                 val input = pair.jsonArray[0].jsonPrimitive.content
                 val output = (pair.jsonArray[1] as? JsonPrimitive)?.content
                 if (expected.text("function") == "normalizeProvider") {
                     if (output != null) assertEquals(output, LocationConfig.normalizeProvider(input), input)
                     else assertEquals(LocationConfig.normalizeProvider("zoom"), LocationConfig.normalizeProvider(input))
+                } else {
+                    // The app's LocationConfig.transportOrNull knows the same
+                    // lanes the CLI's normalizer names; an unknown one is null.
+                    val known = setOf("datachannel", "vp8channel", "seichannel", "videochannel")
+                    if (output != null) assertTrue(known.contains(output), "$input -> $output")
+                    else assertNull(LocationConfig.transportOrNull(input))
                 }
             }
         }
-        val countries = links.list("cases").single { it.text("group") == "country" }.obj("expect").list("cases")
+        val countries = links.list("cases").single { it.text("group") == "country" }
+            .obj("expect").getValue("cases").jsonArray
         assertEquals(9, countries.size)
     }
 
@@ -176,7 +193,7 @@ class LinkVectorsTest {
 
     @Test fun everyFixtureEntryIsParsedByTheAppsLinkParser() {
         for (fixture in lists.list("fixtures")) {
-            val path = File("../../cli/internal/links/testdata/" + fixture.text("name"))
+            val path = File("../cli/internal/links/testdata/" + fixture.text("name"))
             assertTrue(path.isFile, "no ${path.path}")
             val lines = path.readLines().filter { it.isNotBlank() }
             assertEquals(fixture.list("entries").size, lines.size, fixture.text("name"))
