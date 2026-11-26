@@ -264,5 +264,8 @@ tasks.withType<Test>().configureEach {
 }
 
 // Every ordinary Android build checks the flip, including PR Checks' assembleDebug.
-tasks.named("assembleGithubDebug") { finalizedBy("testGithubDebugUnitTest") }
-tasks.named("assemblePlayDebug") { finalizedBy("testPlayDebugUnitTest") }
+// AGP creates the variant tasks after configuration, so match rather than name.
+tasks.matching { it.name == "assembleGithubDebug" || it.name == "assemblePlayDebug" }
+    .configureEach {
+        finalizedBy("test${name.removePrefix("assemble")}UnitTest")
+    }
