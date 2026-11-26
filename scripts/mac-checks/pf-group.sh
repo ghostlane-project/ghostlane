@@ -21,13 +21,13 @@
 # pf block and points the system's resolver at a tun. A trap takes all of it
 # away, whatever happens.
 set -uo pipefail
-HELPER="${1:?the helper built as the app builds it}"
-HEV="${2:?hev-socks5-tunnel built from the app's tree}"
-WHO="${3:?the user who asks}"
-STAND_IN_BUILT="${4:?a stand-in for a line's program}"
+HELPER="$1"
+HEV="$2"
+ASKER="$3"
+STAND_IN_BUILT="$4"
 ENGINE="${5:-${GHOSTLANE_ENGINE:-}}"
-WHO_UID="$(id -u "$WHO")"
-WHO_GID="$(id -g "$WHO")"
+ASKER_UID="$(id -u "$ASKER")"
+ASKER_GID="$(id -g "$ASKER")"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 ANCHOR='com.apple/100.org.olcbox.app.hold'
@@ -52,7 +52,7 @@ expect() {
     failed=1
   fi
 }
-as_user() { python3 -c 'import os,sys; os.setgid(int(sys.argv[2])); os.setuid(int(sys.argv[1])); os.execvp(sys.argv[3], sys.argv[3:])' "$WHO_UID" "$WHO_GID" "$@"; }
+as_user() { python3 -c 'import os,sys; os.setgid(int(sys.argv[2])); os.setuid(int(sys.argv[1])); os.execvp(sys.argv[3], sys.argv[3:])' "$ASKER_UID" "$ASKER_GID" "$@"; }
 alive() { kill -0 "$1" 2>/dev/null && echo there || echo gone; }
 leave() {
   exec 3>&- 2>/dev/null
@@ -215,11 +215,11 @@ while True:
 PY
 cp "$work/engine-stand-in.py" "$work/line/engine-stand-in.py"
 chmod 755 "$work/line/engine-stand-in.py"
-chown -R "$WHO" "$work/line"
+chown -R "$ASKER" "$work/line"
 
 # The helper, asked over a pipe as in the other Mac checks.
 mkfifo "$work/ask"
-"$HELPER" /nonexistent/sing-box "$WHO_UID" "$HEV" <"$work/ask" >"$work/said" 2>"$work/helper.err" &
+"$HELPER" /nonexistent/sing-box "$ASKER_UID" "$HEV" <"$work/ask" >"$work/said" 2>"$work/helper.err" &
 DAEMON=$!
 exec 3>"$work/ask"
 ask() {
@@ -260,7 +260,7 @@ PY
 # directory above. What it prints is the app's file.
 PROGRAM="$work/line/engine-stand-in.py"
 LOG="$work/engine.log"
-: > "$LOG"; chown "$WHO" "$LOG"; chmod 600 "$LOG"
+: > "$LOG"; chown "$ASKER" "$LOG"; chmod 600 "$LOG"
 
 say "a tunnel under hev behind the block"
 expect "the helper speaks the fifth protocol" "$(ask '{"verb":"status"}')" '^ok=True state=idle hold=False protocol=5 '
@@ -272,7 +272,7 @@ say "the program, started by the helper"
 ARGS=("$TARGET" "$ECHO_PORT" run)
 expect "the helper starts it" "$(ask "$(request_line "$PROGRAM" "$LOG" "${ARGS[@]}")")" '^ok=True state=running hold=True protocol=5 line=[1-9][0-9]* '
 LPID=$(line_pid)
-expect "it runs as the user who asked" "$(ps -o uid= -p "$LPID" | tr -d ' ')" "^$WHO_UID\$"
+expect "it runs as the user who asked" "$(ps -o uid= -p "$LPID" | tr -d ' ')" "^$ASKER_UID\$"
 expect "in the group the block lets out" "$(ps -o gid= -p "$LPID" | tr -d ' ')" "^$GROUP\$"
 expect "and stays there: stdin is held for the program's lifetime" "$(sleep 2; alive "$LPID")" '^there$'
 expect "it says it is ready" "$(grep -c '"event"[[:space:]]*:[[:space:]]*"ready"' "$LOG" 2>/dev/null)" '^[1-9][0-9]*$'
