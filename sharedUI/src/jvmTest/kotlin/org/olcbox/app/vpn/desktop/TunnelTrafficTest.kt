@@ -274,7 +274,7 @@ class TunnelTrafficTest {
         assertEquals(TrafficCounters(bytesIn = 2_600_000_000L, bytesOut = 516_000_000L), counted)
     }
 
-    @Test fun aTunThatIsNotThereIsNoReadingAndNotAZero() = runTest {
+    @Test fun aMacTunThatIsNotThereIsNoReadingAndNotAZero() = runTest {
         assertNull(MacTunTraffic("utun9") { netstat }.read())
         assertNull(MacTunTraffic("utun231") { "" }.read())
     }
