@@ -1,3 +1,9 @@
 # The size of each shipped artefact beside today's Go build, in bytes, filled in as the Rust builds appear.
 # A dash is not measured yet.
 artefact | go build (bytes) | rust build (bytes) | note
+Ghostlane-android-release.apk | 132563575 | - | Go: release v1.0.472 asset size; Rust: the dry run of the flip fills this in
+Ghostlane-android-armeabi-v7a-release.apk | 46979902 | - | Go: release v1.0.472 asset size; Rust: the dry run of the flip fills this in
+Ghostlane-android-play.aab | 203344691 | - | Go: release v1.0.472 asset size; Rust: the dry run of the flip fills this in
+libghostlane_core.so arm64-v8a | - | 30878560 | stripped at pin 8b8abe9e (K3 green); 62292528 bytes with symbols, 14291089 gzip -9
+libghostlane_core.so armeabi-v7a | - | 21224124 | stripped at pin 8b8abe9e; 47318484 bytes with symbols, 12480653 gzip -9
+libghostlane_core.so x86_64 | - | 36043320 | stripped at pin 8b8abe9e; 64532816 bytes with symbols, 15362914 gzip -9

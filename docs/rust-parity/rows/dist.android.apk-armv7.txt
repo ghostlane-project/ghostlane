@@ -1,1 +1,1 @@
-android | not-proven | - | -
+android | proven | androidApp/src/androidTest/kotlin/org/olcbox/app/CorePackagingTest.kt::apkShipsTheRustCoreAndNoGoCores, .github/workflows/release.yml::No Go in the Android assets | The 32-bit APK is built separately and checked for libghostlane_core.so and the absence of Go cores like the universal one

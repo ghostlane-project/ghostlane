@@ -24,15 +24,17 @@ val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
     .map { it.toInt() }
     .orElse(1)
-// The Rust core (phase 2 of the Android move; scripts/build-ghostlane-core-android.sh):
+// The Rust core (scripts/build-ghostlane-core-android.sh):
 // -PghostlaneCoreDir=<its output dir> packs libghostlane_core.so for each ABI and
-// compiles the UniFFI bindings and RustCoreEngine into the app. Without it the app is
-// what it was: no class, no library, and the developer switch has nothing to select.
-// -Polcbox.rustCoreDefault=true would turn the switch on by default; it is off.
+// compiles the UniFFI bindings and RustCoreEngine into the app. A release never
+// omits it. The Go engines are still in the tree for A7 to delete, but no Go
+// library is packaged and the tunnel starts on the Rust core.
+// -Polcbox.rustCoreDefault=false is only for an instrumented Go test; a normal
+// build, including every release, has the switch on.
 val ghostlaneCoreDir: File? = providers.gradleProperty("ghostlaneCoreDir").orNull
     ?.let { file(it) }
     ?.takeIf { it.resolve("jniLibs").isDirectory && it.resolve("kotlin").isDirectory }
-val rustCoreDefault = providers.gradleProperty("olcbox.rustCoreDefault").map { it.toBoolean() }.getOrElse(false)
+val rustCoreDefault = providers.gradleProperty("olcbox.rustCoreDefault").map { it.toBoolean() }.getOrElse(true)
 val defaultAndroidAbiFilters = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
     .map { value ->
@@ -218,6 +220,12 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // The engines remain in source until A7. Their native libraries
+            // must not ride along: K1 reads every shipped file at any nesting,
+            // and a Go core here would fail the APK, the AAB and the release.
+            excludes.add("**/libgojni.so")
+            excludes.add("**/libsingboxcore.so")
+            excludes.add("**/libxraycore.so")
         }
     }
 }
