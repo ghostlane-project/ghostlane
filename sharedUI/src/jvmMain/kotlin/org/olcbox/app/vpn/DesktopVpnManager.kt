@@ -147,7 +147,7 @@ class DesktopVpnManager private constructor(
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
     // The line's core writes its LAN inbound from these settings when it is the
     // Rust engine; the proxy keeps the same settings for its Go listener.
-    private val lanProxy = DesktopLanProxy(::addLog, settings = { _socksProxySettings.value })
+    private val lanProxy = DesktopLanProxy(::addLog)
     private var lanWatchJob: Job? = null
     private var lanControlJob: Job? = null
     private val _lanProxyEndpoint = MutableStateFlow<String?>(null)
