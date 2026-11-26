@@ -1283,10 +1283,10 @@ jobs:
           done
 
       # A 16 KiB-page device dies before executing a 4 KiB-aligned library.
-      # Read the LOAD alignment out of the packaged bytes with Python: no
-      # unzip glob, no temporary extraction and no shell arithmetic on a
-      # readelf line. The core's report checks all three ABIs at build time;
-      # armv7 is 32-bit and outside the page-size requirement.
+      # Read the LOAD alignment out of the packaged bytes with Python's zip
+      # module: no unzip wildcard, no temporary extraction and no shell
+      # arithmetic on a reader's output. The core's report checks all three
+      # ABIs at build time; armv7 is 32-bit and outside the page-size rule.
       - name: Verify the native libraries in the APK are 16 KiB aligned
         working-directory: olcbox
         run: |
