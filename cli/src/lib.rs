@@ -8,5 +8,6 @@
 //! state machine, the list parser) comes in its own crates under `crates/`.
 
 pub mod commands;
+pub mod daemon;
 pub mod ipc;
 pub mod store;
