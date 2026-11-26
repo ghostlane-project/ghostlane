@@ -275,7 +275,7 @@ LPID=$(line_pid)
 expect "it runs as the user who asked" "$(ps -o uid= -p "$LPID" | tr -d ' ')" "^$WHO_UID\$"
 expect "in the group the block lets out" "$(ps -o gid= -p "$LPID" | tr -d ' ')" "^$GROUP\$"
 expect "and stays there: stdin is held for the program's lifetime" "$(sleep 2; alive "$LPID")" '^there$'
-expect "it says it is ready" "$(grep -c '"event":"ready"' "$LOG" 2>/dev/null)" '^[1-9][0-9]*$'
+expect "it says it is ready" "$(grep -c '"event"[[:space:]]*:[[:space:]]*"ready"' "$LOG" 2>/dev/null)" '^[1-9][0-9]*$'
 PROXY="$(python3 -I - "$LOG" <<'PY'
 import json, sys
 for line in open(sys.argv[1], encoding="utf-8"):
