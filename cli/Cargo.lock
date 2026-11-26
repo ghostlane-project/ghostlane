@@ -97,6 +97,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghostlane-links"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ghostlane-coreconfig"
 version = "0.0.0"
 dependencies = [
