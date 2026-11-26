@@ -214,7 +214,9 @@ class DesktopLanProxyRustTest {
             val lan = CoreInbound.Lan(localPrivate, heldPort, SocksLogin(settings.lanUsername, settings.lanPassword))
             try {
                 LanCores.lineStarted(lan)
-                assertEquals("$localPrivate:$heldPort", proxy.start(settings, upstream))
+                val held = runCatching { proxy.start(settings, upstream) }
+                assertTrue(held.isSuccess, "${held.exceptionOrNull()?.message}")
+                assertEquals("$localPrivate:$heldPort", held.getOrThrow())
                 assertTrue(proxy.isRunning())
 
                 proxy.stop()

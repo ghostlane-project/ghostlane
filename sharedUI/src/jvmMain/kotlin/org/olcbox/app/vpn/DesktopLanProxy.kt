@@ -81,8 +81,14 @@ internal object LanCores {
 
     fun currentLine(): LineState = lineState
 
-    /** Whether the running line's core holds exactly these LAN settings. */
-    fun lineHolds(lan: CoreInbound.Lan): Boolean = lineState.lan == lan
+    /**
+     * Whether the running line's core holds exactly these LAN settings. Lan is
+     * not a data class, so its three values are compared here, not its object.
+     */
+    fun lineHolds(lan: CoreInbound.Lan): Boolean {
+        val held = lineState.lan ?: return false
+        return held.address == lan.address && held.port == lan.port && held.login == lan.login
+    }
 
     /** sing-box, as LAN sharing has always run. */
     fun go(onOutput: (String) -> Unit): LanCore = GoLanCore(onOutput)
