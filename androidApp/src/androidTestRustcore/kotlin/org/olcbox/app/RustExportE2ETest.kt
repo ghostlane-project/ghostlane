@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.log.CorePin
 import org.olcbox.app.vpn.AndroidVpnManager
+import org.olcbox.app.vpn.OlcRtcConnectionChecker
 import org.olcbox.app.vpn.data.vpnPrefDataStore
 import org.olcbox.app.vpn.service.OlcboxVpnState
 import org.olcbox.app.vpn.service.RustCore
@@ -70,39 +71,48 @@ class RustExportE2ETest {
     }
 
     /**
-     * A room nobody answers is refused by the engine that joined it (RustCheckE2ETest
-     * a1, a2). The carrier `none` reaches the loopback hub only through the Rust core;
-     * a Go dial that fails fast joins nothing. The rooms the hub saw name the engine,
-     * the time a call took does not. The app's own call passes its context, so the
-     * stored switch decides which engine answers.
+     * The manager's check and ping must pass its context: only then can the stored
+     * switch pick the Rust core over the build default. A refused carrier is null
+     * on either engine, so the test watches the Go runtime instead of the clock.
+     * Touching the checker's private runtime marks a file and throws before any
+     * dial: RustCheckE2ETest a4 already shows the Rust core refuses this carrier
+     * at home, and a4 to a6 cover the real engines. No network, no time limit.
      */
     @Test
     fun theProductsRoomCheckAndPingFollowTheDeveloperSwitch() {
-        val hub = PipeHub()
+        val goUsed = File(context.cacheDir, "olcbox-go-room-check-used")
+        goUsed.delete()
+        val delegate = OlcRtcConnectionChecker::class.java.declaredFields
+            .first { it.type == Lazy::class.java }
+        delegate.isAccessible = true
+        val original = delegate.get(null)
+        val tripwire = object : Lazy<Any?> {
+            override val value: Any?
+                get() {
+                    goUsed.writeText("the Go runtime answered")
+                    throw IllegalStateException("the Go runtime answered")
+                }
+            override fun isInitialized(): Boolean = false
+        }
         val manager = AndroidVpnManager(context)
-        fun line(room: String) = LocationConfig(
-            id = hub.url(room),
-            key = "0123456789abcdef".repeat(4),
-            bypassProvider = "none",
-        )
+        val line = LocationConfig(id = "room-x", key = "0123456789abcdef".repeat(4), bypassProvider = "telemost")
+        delegate.set(null, tripwire)
         try {
-            hub.reset(PipeHub.Room.Ends("export check: nobody here"))
-            assertNull("a room with nobody here has no time", runBlocking { manager.checkConnection(line("check")) })
-            assertEquals("only the Rust core joins the room", listOf("check", "check"), hub.joined)
-
-            hub.reset(PipeHub.Room.Ends("export ping: nobody here"))
-            assertNull("a room with nobody here has no time", runBlocking { manager.ping(line("ping")) })
-            assertEquals("only the Rust core joins the room", listOf("ping"), hub.joined)
+            assertNull("a refused room has no time", runBlocking { manager.checkConnection(line) })
+            assertFalse("the check used the Go runtime", goUsed.exists())
+            goUsed.delete()
+            assertNull("a refused room has no time", runBlocking { manager.ping(line) })
+            assertFalse("the ping used the Go runtime", goUsed.exists())
 
             runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = false } }
-            hub.reset(PipeHub.Room.Ends("export check with the switch off: unused"))
-            runBlocking { manager.checkConnection(line("off-check")) }
-            assertEquals("with the switch off the Go runtime answers", emptyList<String>(), hub.joined)
-            hub.reset(PipeHub.Room.Ends("export ping with the switch off: unused"))
-            runBlocking { manager.ping(line("off-ping")) }
-            assertEquals("with the switch off the Go runtime answers", emptyList<String>(), hub.joined)
+            assertNull("a refused room has no time", runBlocking { manager.checkConnection(line) })
+            assertTrue("with the switch off the check uses the Go runtime", goUsed.exists())
+            goUsed.delete()
+            assertNull("a refused room has no time", runBlocking { manager.ping(line) })
+            assertTrue("with the switch off the ping uses the Go runtime", goUsed.exists())
         } finally {
-            hub.stop()
+            delegate.set(null, original)
+            goUsed.delete()
         }
     }
 }
