@@ -128,8 +128,8 @@ pub fn one_line(s: &str, limit: usize) -> String {
 pub fn ascii_header(s: &str) -> String {
     let kept: String = s
         .bytes()
-        .take(64)
         .filter(|b| (b' '..=b'~').contains(b))
+        .take(64)
         .map(|b| b as char)
         .collect();
     kept.trim().to_string()
