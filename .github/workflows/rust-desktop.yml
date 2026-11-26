@@ -50,6 +50,9 @@ on:
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
+      - sharedUI/src/commonMain/composeResources/files/xray/**
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
       - androidApp/src/main/jni/hev-socks5-tunnel/**
@@ -75,6 +78,9 @@ on:
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
+      - sharedUI/src/commonMain/composeResources/files/xray/**
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
       - androidApp/src/main/jni/hev-socks5-tunnel/**
