@@ -967,6 +967,10 @@ jobs:
       # The Rust core is built from scripts/ghostlane-core-pin.sh by
       # scripts/build-ghostlane-core-android.sh. No Go engine is built here:
       # the Go code left in the tree for A7 is neither packaged nor started.
+      # The two version markers stay until the CLI's flip: cli/internal/pins
+      # reads SINGBOX_VERSION from this file to hold cli/go.mod to the pin.
+      SINGBOX_VERSION: "1.13.14"
+      XRAY_VERSION: "26.7.11"
       # The five below are empty in a dry run. The signing step then takes its
       # branch for a checkout without the secrets (a throw-away keystore, so
       # the APK installs and the bundle is whole), and nothing goes to Play.
