@@ -36,13 +36,18 @@ import java.net.NetworkInterface
  * answer [SETTLE_READS] times in a row, [onMove] is called with its name.
  * That is [org.olcbox.app.vpn.desktop.engine.SessionHooks.wayOutChanged]: the
  * session stops the line and starts it again behind the tun it holds, which
- * is not touched, and the new start is bound to what is there now.
+ * is not touched, and the new start is bound to what is there now. While the
+ * line is still bound to another interface the move is told again every
+ * [SETTLE_READS] reads: a tell a session drops, because a restart is running,
+ * must not leave the line on an interface that carries nothing. What runs of
+ * the line is stopped before each tell, so a restart that is already running
+ * finds a dead core and starts one bound to the interface there now.
  *
  * An answer is held to what the session's line was bound to, which every
  * start of a line tells the watch ([bound]), and not to the watch's own last
- * answer: a line started again for any other reason, bound to what is there
- * by then, is not started once more. A line that is not bound (in proxy mode)
- * is not watched, and nothing is asked of the system for it.
+ * answer or its last tell: a line started again for any other reason, bound
+ * to what is there by then, is not started once more. A line that is not bound
+ * (in proxy mode) is not watched, and nothing is asked of the system for it.
  *
  * Two answers are not acted on. No default route at all: a line bound to the
  * old interface carries nothing either way, and one started now would be
@@ -78,8 +83,11 @@ internal class PhysicalInterfaceWatch(
     /** Between [start] and [stop]. */
     private var up = false
 
-    /** What the session's line is bound to, or null when it is bound to nothing. */
+    /** What the session's line is bound to: only [bound] and [stop] change it. */
     private var expected: WayOut? = null
+
+    /** The move last told to the session, held apart from [expected]. */
+    private var told: WayOut? = null
 
     /** Another interface the system named, and how many reads in a row it has. */
     private var candidate: WayOut? = null
@@ -95,6 +103,7 @@ internal class PhysicalInterfaceWatch(
         val way = name?.let { WayOut(it, indexOf(it)) }
         synchronized(lock) {
             expected = way
+            told = null
             candidate = null
             seen = 0
         }
@@ -129,6 +138,7 @@ internal class PhysicalInterfaceWatch(
         val running = synchronized(lock) {
             up = false
             expected = null
+            told = null
             candidate = null
             seen = 0
             job.also { job = null }
@@ -145,6 +155,9 @@ internal class PhysicalInterfaceWatch(
             // the answer is to a question nobody asks any more.
             if (!up || expected != from) return
             if (now == null || now.sameAs(from)) {
+                // Back on its binding, the line carries again: no move left
+                // to repeat, even if one was told while it was away.
+                if (told != null) told = null
                 candidate = null
                 seen = 0
                 return
@@ -152,8 +165,11 @@ internal class PhysicalInterfaceWatch(
             seen = if (candidate?.sameAs(now) == true) seen + 1 else 1
             candidate = now
             if (seen < SETTLE_READS) return
-            // Told once. The start that follows says what it was bound to.
-            expected = now
+            // [expected] stays what [bound] said: the start that follows the
+            // tell may never happen, or may bind to something else. A tell is
+            // held apart so one the session drops is told again while the
+            // mismatch lasts.
+            told = now
             candidate = null
             seen = 0
             now
@@ -174,6 +190,9 @@ internal class PhysicalInterfaceWatch(
          * the watch then holds the system to, and from the session's Connected
          * to its stop a move is told to [host]'s session. One reader for both,
          * so a line is never bound to one answer and watched against another.
+         * What runs of the line is stopped before each tell: a session whose
+         * restart is already running drops the tell, but its next attempt
+         * starts a core bound anew because the old one is dead.
          */
         fun around(
             engine: DesktopEngine,
@@ -183,7 +202,10 @@ internal class PhysicalInterfaceWatch(
             intervalMs: Long = INTERVAL_MS,
         ): WatchedEngine {
             val watch = PhysicalInterfaceWatch(
-                onMove = { name -> host.session.wayOutChanged(name) },
+                onMove = { name ->
+                    engine.line.stopNow()
+                    host.session.wayOutChanged(name)
+                },
                 read = read,
                 indexOf = indexOf,
                 intervalMs = intervalMs,

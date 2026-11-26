@@ -11,9 +11,10 @@
 #     leaves by the first network;
 #   - right after it nothing passes: the line is still bound to the network
 #     that went away;
-#   - the watch sees the move, told once, and the line is started again bound
-#     to the second network; a fetch through the same tun (the same device
-#     under the same hev process) is carried again, from the second network.
+#   - the watch sees the move, tells it until the line is bound to the second
+#     network, and the line is started again bound there; a fetch through the
+#     same tun (the same device under the same hev process) is carried again,
+#     from the second network.
 #
 # Two namespaces joined by two veth pairs, one per network:
 #   machine  neta0 10.241.1.2/24 (the first network) and netb0 10.241.2.2/24

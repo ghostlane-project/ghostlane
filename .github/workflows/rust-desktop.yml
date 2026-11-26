@@ -43,6 +43,9 @@ on:
       - sharedUI/build.gradle.kts
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopDnsResolver.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
   pull_request:
@@ -60,6 +63,9 @@ on:
       - sharedUI/build.gradle.kts
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopDnsResolver.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
   workflow_dispatch:

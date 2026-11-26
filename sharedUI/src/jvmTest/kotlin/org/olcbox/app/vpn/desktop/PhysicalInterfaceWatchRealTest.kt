@@ -32,6 +32,7 @@ import java.net.Socket
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -136,6 +137,7 @@ class PhysicalInterfaceWatchRealTest {
             anotherPort = { error("a line of one process asks for no second port") },
         )
         val moves = mutableListOf<String?>()
+        val restarting = AtomicBoolean(false)
         val restarted = AtomicReference<Result<LineStarted>?>(null)
         lateinit var engine: WatchedEngine
         val host = DesktopEngineHost(
@@ -150,19 +152,26 @@ class PhysicalInterfaceWatchRealTest {
                 // runs of the line is stopped, and the line is started again
                 // behind what the session holds, which is not touched; an
                 // attempt that fails is followed by another, as the manager's
-                // attempts are.
+                // attempts are. A tell while one restart runs is dropped, as
+                // the manager drops it: the attempt starts a dead core bound
+                // anew, so it needs no second restart of its own.
                 override fun wayOutChanged(interfaceName: String?) {
                     synchronized(moves) { moves += interfaceName }
+                    if (!restarting.compareAndSet(false, true)) return
                     restarts.launch {
-                        engine.line.stopNow()
-                        var result = runCatching { engine.line.start(request) }
-                        repeat(4) {
-                            if (result.isSuccess) return@repeat
-                            synchronized(log) { log += "a restart attempt failed: ${result.exceptionOrNull()?.message}" }
-                            delay(1_000)
-                            result = runCatching { engine.line.start(request) }
+                        try {
+                            engine.line.stopNow()
+                            var result = runCatching { engine.line.start(request) }
+                            repeat(4) {
+                                if (result.isSuccess) return@repeat
+                                synchronized(log) { log += "a restart attempt failed: ${result.exceptionOrNull()?.message}" }
+                                delay(1_000)
+                                result = runCatching { engine.line.start(request) }
+                            }
+                            restarted.set(result)
+                        } finally {
+                            restarting.set(false)
                         }
-                        restarted.set(result)
                     }
                 }
             },
@@ -203,7 +212,11 @@ class PhysicalInterfaceWatchRealTest {
                 ?: fail("the restart did not return\n${logTail()}")
             val second = again.getOrElse { fail("the restart failed: ${it.message}\n${logTail()}", it) }
             assertTrue(waitForPort(check.port, second.alive), "the restarted engine's port did not open\n${logTail()}")
-            assertEquals(listOf<String?>(check.second), synchronized(moves) { moves.toList() }, "one move, told once")
+            val told = synchronized(moves) { moves.toList() }
+            assertTrue(
+                told.isNotEmpty() && told.all { it == check.second },
+                "every tell named the interface there now: $told",
+            )
             check.outcomes.appendText(
                 "The watch told the move to ${check.second} in ${(System.currentTimeMillis() - movedAt) / 1000} s or less; " +
                     "the line was started again bound to it\n"
