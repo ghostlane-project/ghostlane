@@ -1349,7 +1349,8 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64; do
             f="${GITHUB_WORKSPACE}/olcbox/out/core/symbols/${abi}/libghostlane_core.so"
             [ -s "$f" ] || { echo "no symbols for ${abi}" >&2; exit 1; }
-            cp "$f" "dist/symbols/${abi}/"
+            mkdir -p "dist/symbols/${abi}"
+            cp "$f" "dist/symbols/${abi}/libghostlane_core.so"
           done
           ls -l dist/symbols/*/*.so
 
