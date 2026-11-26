@@ -196,6 +196,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // JNA 5.19.1's UniFFI bindings use Java 8 library classes that Android 6
+        // (minSdk 23) does not have: every call failed with
+        // NoClassDefFoundError: com.sun.jna.Structure$$ExternalSyntheticLambda1.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     externalNativeBuild {
@@ -222,6 +226,7 @@ dependencies {
     implementation(project(":sharedUI"))
     implementation(libs.androidx.activityCompose)
     implementation(libs.androidx.datastore.preferences)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     // The Rust core's JNA (UniFFI bindings and the xray-ffi calls): the AAR carries
     // libjnidispatch.so for each ABI.
     if (ghostlaneCoreDir != null) {
