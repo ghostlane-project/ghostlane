@@ -191,6 +191,13 @@ android {
             java.srcDirs("src/androidTest/kotlin")
             if (ghostlaneCoreDir != null) kotlin.srcDir("src/androidTestRustcore/kotlin")
         }
+        // CorePackagingTest answers the flip's questions on the JVM: what the
+        // build defaults to, and what an APK/AAB handed to it actually carries.
+        // PR Checks runs assembleDebug, not a device, so a test that needs an
+        // emulator could not fail a red commit.
+        getByName("test") {
+            kotlin.srcDir("src/androidTest/kotlin")
+        }
     }
 
     compileOptions {
@@ -235,6 +242,8 @@ dependencies {
         androidTestImplementation(libs.kotlinx.coroutines.android)
     }
 
+    testImplementation("junit:junit:4.13.2")
+
     // Instrumented tests: the only way to exercise the packaged core binary the way
     // the app does — extracted into nativeLibraryDir and exec'd on a real Android.
     androidTestImplementation("androidx.test:runner:1.7.0")
@@ -243,3 +252,17 @@ dependencies {
     // pin what its liveness check reports when olcRTC was never started.
     androidTestImplementation(project(":sharedUI:olcrtc-bin"))
 }
+
+// The packaging test reads the build's own answers, not a copy kept in prose.
+// A release can also point it at the APK and the AAB it is about to ship.
+tasks.withType<Test>().configureEach {
+    systemProperty("ghostlane.rustCoreDefault", rustCoreDefault.toString())
+    systemProperty("ghostlane.abis", androidAbiFilters.joinToString(","))
+    listOf("apk", "aab", "symbols").forEach { key ->
+        providers.gradleProperty("ghostlane.$key").orNull?.let { systemProperty("ghostlane.$key", it) }
+    }
+}
+
+// Every ordinary Android build checks the flip, including PR Checks' assembleDebug.
+tasks.named("assembleGithubDebug") { finalizedBy("testGithubDebugUnitTest") }
+tasks.named("assemblePlayDebug") { finalizedBy("testPlayDebugUnitTest") }
