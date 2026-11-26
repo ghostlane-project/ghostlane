@@ -165,7 +165,7 @@ class DesktopLanProxyRustTest {
         val repository = LocationsRepositoryImpl(object : LocationsDataSource {
             private var bundle = LocationBundleV4()
             override suspend fun loadLocationBundle(): LocationBundleV4 = bundle
-            override suspend fun saveLocationBundle(value: LocationBundleV4) { bundle = value }
+            override suspend fun saveLocationBundle(bundle: LocationBundleV4) { this.bundle = bundle }
             override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
             override suspend fun loadLegacyActiveLocationId(): String? = null
         })
@@ -206,7 +206,11 @@ class DesktopLanProxyRustTest {
             if (heldPort == PacServerPort || heldPort == upstream.port) return@runTest
 
             val settings = sharing(address = localPrivate, port = heldPort)
-            val proxy = DesktopLanProxy(onOutput = {}, settings = { settings })
+            val proxy = DesktopLanProxy(
+                onOutput = {},
+                settings = { settings },
+                readNetworkIdentity = { networkId },
+            )
             val lan = CoreInbound.Lan(localPrivate, heldPort, SocksLogin(settings.lanUsername, settings.lanPassword))
             try {
                 LanCores.lineStarted(lan)
