@@ -174,6 +174,7 @@ fn every_crypt1_case_is_decrypted_or_refused_as_the_vector_says() {
             .unwrap_or_else(|| panic!("{name}: the master key is not a key"));
         let got = if text(case, "group") == "link" {
             let link = format!("{}{}", crypt1::LINK_PREFIX, text(case, "blob"));
+            let link = link.as_str();
             if !crypt1::is_link(link) {
                 failures.push(format!("{name}: not named a crypt link"));
                 continue;
