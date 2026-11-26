@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # desktop-check-os: linux
+# desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
+# desktop-check-paths: sharedUI/src/commonMain/composeResources/files/xray/**
+# desktop-check-paths: sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
 #
 # A room behind its front on ghostlane-engine: the core half the app writes
 # for a room (CoreRoomFront, through RoomFrontDumpTest, which this script runs

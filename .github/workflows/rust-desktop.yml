@@ -45,6 +45,9 @@ on:
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
+      - sharedUI/src/commonMain/composeResources/files/xray/**
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
   pull_request:
     branches:
       - rust/all
@@ -62,6 +65,9 @@ on:
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
+      - sharedUI/src/commonMain/composeResources/files/xray/**
+      - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
   workflow_dispatch:
     inputs:
       pin:
