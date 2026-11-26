@@ -74,10 +74,10 @@ internal class LinuxTunTraffic(
  */
 internal class MacTunTraffic(
     private val interfaceName: String,
-    private val read: () -> String = ::readNetstatInterfaces,
+    private val readInterfaces: () -> String = ::readNetstatInterfaces,
 ) : TunnelTraffic {
     override suspend fun read(): TrafficCounters? = withContext(Dispatchers.IO) {
-        counters(read(), interfaceName)
+        counters(readInterfaces(), interfaceName)
     }
 
     internal companion object {
