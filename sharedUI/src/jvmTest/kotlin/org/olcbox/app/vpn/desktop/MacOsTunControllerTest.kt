@@ -551,7 +551,12 @@ class MacOsTunControllerTest {
     // And when the one on disk is no newer, it is what there is: it holds, and
     // a room's engine is not its to run.
     @Test fun aHelperThatCannotRunALineIsNotAskedTo() = withFakeDaemon(
-        listOf(idleHeldBeforeLines, idleHeldBeforeLines)
+        listOf(
+            idleHeldBeforeLines,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
+            idleHeldBeforeLines,
+            idleHeldBeforeLines
+        )
     ) { daemon ->
         val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
         assertEquals(
@@ -571,7 +576,7 @@ class MacOsTunControllerTest {
             assertTrue(controller.runsLineUnder(killSwitch = true))
             assertFalse(controller.runsLineUnder(killSwitch = false))
         }
-        withFakeDaemon(listOf(idleHeld)) { daemon ->
+        withFakeDaemon(listOf(idleHeld5)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
             runBlocking { controller.helperNow() }
             assertTrue(controller.runsLineUnder(killSwitch = false))
