@@ -35,6 +35,10 @@ final class LineChild {
 
     private let isTrusted: (URL) -> Bool
     private var process: Process?
+    /// Held open for the child's whole life: a real engine reads stdin to its
+    /// end and treats EOF as the stop that is asked for (HostProcess in the
+    /// app). The null device would end it before it ever served a line.
+    private var stdin: Pipe?
     private var said: [String] = []
     private let lock = NSLock()
 
@@ -79,7 +83,8 @@ final class LineChild {
             "no_proxy": "127.0.0.1,localhost",
         ]
         task.currentDirectoryURL = URL(fileURLWithPath: "/")
-        task.standardInput = FileHandle.nullDevice
+        let input = Pipe()
+        task.standardInput = input
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
@@ -94,11 +99,22 @@ final class LineChild {
             }
         }
         task.terminationHandler = { [weak self] ended in
-            self?.locked { if self?.process === ended { self?.process = nil } }
+            self?.locked {
+                guard self?.process === ended else { return }
+                self?.process = nil
+                if let held = self?.stdin {
+                    held.fileHandleForWriting.closeFile()
+                    self?.stdin = nil
+                }
+            }
         }
         locked { said = [] }
         try task.run()
-        locked { process = task }
+        locked {
+            process = task
+            // Only now: a failed run must not leave a pipe with a dead writer.
+            stdin = input
+        }
         return target.path
     }
 
@@ -108,9 +124,19 @@ final class LineChild {
             return process?.isRunning == true ? process : nil
         }
         guard let task = running else { return }
-        task.terminate()
+        // Closing the pipe is the stop a real engine expects: it prints its
+        // `ended` line and goes within two seconds. A term and a kill are
+        // still there for a line that does not honour it (the stand-in).
+        let input: Pipe? = locked {
+            defer { stdin = nil }
+            return stdin
+        }
+        input?.fileHandleForWriting.closeFile()
         let deadline = Date().addingTimeInterval(3)
         while task.isRunning && Date() < deadline { usleep(100_000) }
+        if task.isRunning { task.terminate() }
+        let termDeadline = Date().addingTimeInterval(1)
+        while task.isRunning && Date() < termDeadline { usleep(100_000) }
         if task.isRunning { kill(task.processIdentifier, SIGKILL) }
     }
 
