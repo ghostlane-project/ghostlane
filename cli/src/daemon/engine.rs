@@ -95,7 +95,7 @@ pub fn logged(world: &World, part: &str) -> bool {
 
 pub fn fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../internal/links/testdata")
+        .join("internal/links/testdata")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
@@ -237,6 +237,7 @@ pub fn fetch(world: &World) -> super::Fetch {
             return Err(FetchError::Refused {
                 kind: headers.refusal.clone(),
                 announce: headers.announce.clone(),
+                headers: Box::new(headers),
             });
         }
         Ok((body, headers))
@@ -341,7 +342,11 @@ pub fn deps(
             ))
         })
     };
-    let clock: Clock = clock.handle();
+    let clock_handle: Clock = clock.handle();
+    let advance = {
+        let clock = Arc::clone(clock);
+        Box::new(move |ms: i64| clock.advance(ms))
+    };
     Deps {
         config_path: state_dir.join("config.yaml"),
         state_dir,
@@ -362,7 +367,8 @@ pub fn deps(
         }),
         probe,
         probe_inbound,
-        clock,
+        clock: clock_handle,
+        advance,
         logf,
         uid: 977,
         fetch_delay_ms: 0,

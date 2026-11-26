@@ -241,6 +241,7 @@ pub struct Rig {
     pub d: Daemon,
     pub dir: PathBuf,
     pub clock: Arc<FakeClock>,
+    pub logs: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Rig {
@@ -271,6 +272,7 @@ impl Rig {
             d: Daemon::new(deps),
             dir,
             clock,
+            logs,
         }
     }
 
@@ -363,8 +365,7 @@ impl Rig {
 
     /// A daemon starting again on the same state directory and world.
     pub fn restart(&mut self) {
-        let logs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let for_log = Arc::clone(&logs);
+        let for_log = Arc::clone(&self.logs);
         let deps = engine::deps(
             &self.world,
             self.dir.clone(),
@@ -386,7 +387,7 @@ impl Rig {
     }
 
     pub fn logs(&self) -> Vec<String> {
-        self.world.lock().expect("world").logs.clone()
+        self.logs.lock().expect("log").clone()
     }
 }
 

@@ -108,7 +108,11 @@ pub fn refusal_text(kind: &str, announce: &str) -> String {
 /// the daemon keeps an empty record with the host's headers.
 #[derive(Debug)]
 pub enum FetchError {
-    Refused { kind: String, announce: String },
+    Refused {
+        kind: String,
+        announce: String,
+        headers: Box<Headers>,
+    },
     Other(String),
 }
 
@@ -121,7 +125,7 @@ impl FetchError {
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchError::Refused { kind, announce } => {
+            FetchError::Refused { kind, announce, .. } => {
                 write!(f, "device refused: {}", refusal_text(kind, announce))
             }
             FetchError::Other(why) => f.write_str(why),
@@ -217,6 +221,14 @@ pub fn entries(sub_url: &str, lines: &[String]) -> Vec<Entry> {
                 room.label.clone(),
                 Parsed::Olcrtc(room),
                 String::new(),
+            )
+        } else if raw.starts_with("olcrtc://crypt1/") {
+            (
+                Kind::Unsupported,
+                raw.clone(),
+                Parsed::None,
+                "olcrtc://crypt1 lists need a build secret and are not supported by this version"
+                    .to_string(),
             )
         } else if raw.starts_with("vless://") {
             match parse_vless(raw) {

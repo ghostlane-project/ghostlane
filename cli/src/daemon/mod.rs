@@ -12,6 +12,7 @@ pub mod device;
 pub mod engine;
 pub mod links;
 pub mod scrub;
+mod state;
 
 #[cfg(test)]
 pub mod cases;
@@ -21,7 +22,7 @@ use std::path::PathBuf;
 
 use gocompat::time::Timestamp;
 
-use crate::ipc::{self, Request, Response, Status, VersionInfo};
+use crate::ipc::{Request, Response, Status, VersionInfo};
 use crate::store::{Config, Headers, Selection};
 
 use clock::Clock;
@@ -129,6 +130,9 @@ pub struct Deps {
     pub probe: Probe,
     pub probe_inbound: ProbeInbound,
     pub clock: Clock,
+    /// The cases move the clock themselves; the program's clock moves on its
+    /// own. Refresh moves it by the longest fetch of a parallel round.
+    pub advance: Box<dyn Fn(i64)>,
     pub logf: Box<dyn Fn(&str)>,
     pub uid: i32,
     /// A case can move the clock by the longest fetch instead of by each one:
@@ -144,16 +148,18 @@ pub struct Deps {
     pub version: VersionInfo,
 }
 
-#[derive(Clone, Debug)]
 pub struct Live {
     pub entry: Entry,
     pub mode: String,
     pub probe_addr: String,
     pub own_rules: bool,
     pub watcher: Option<usize>,
+    pub probe_user: String,
+    pub probe_pass: String,
+    pub engine: Option<Box<dyn Engine>>,
+    pub front: Option<Box<dyn Front>>,
 }
 
-#[allow(dead_code)]
 pub struct Daemon {
     pub(crate) deps: Deps,
     pub(crate) cfg: Config,
@@ -171,15 +177,16 @@ pub struct Daemon {
     pub(crate) next_at: Option<i64>,
     pub(crate) stop_until: Option<i64>,
     pub(crate) pending_start: Option<Selection>,
+    pub(crate) pending_forget: bool,
     pub(crate) dev_id: Option<String>,
     pub(crate) dev_err: String,
     pub(crate) run_active: bool,
     pub(crate) next_watcher: usize,
+    pub(crate) configured: bool,
+    pub(crate) probe_failures: usize,
 }
 
 /// One connection attempt, from resolving the selection to the next round.
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
 pub struct LoopState {
     pub sel: Selection,
     pub phase: Phase,
@@ -188,10 +195,10 @@ pub struct LoopState {
     pub last_tried: String,
     pub candidates: Vec<Entry>,
     pub at: usize,
+    pub any_up: bool,
     pub bringing: Option<BringUp>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Resolve,
@@ -201,14 +208,12 @@ pub enum Phase {
     Backoff(i64),
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
 pub struct BringUp {
     pub entry: Entry,
     pub mode: String,
     pub stage: BringUpStage,
-    pub engine: bool,
-    pub front: bool,
+    pub engine_obj: Option<Box<dyn Engine>>,
+    pub front_obj: Option<Box<dyn Front>>,
     pub probe_addr: String,
     pub probe_user: String,
     pub probe_pass: String,
@@ -217,7 +222,6 @@ pub struct BringUp {
     pub retry_at: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BringUpStage {
     Start,
@@ -248,10 +252,13 @@ impl Daemon {
             next_at: None,
             stop_until: None,
             pending_start: None,
+            pending_forget: false,
             dev_id: None,
             dev_err: String::new(),
             run_active: false,
             next_watcher: 0,
+            configured: false,
+            probe_failures: 0,
         }
     }
 
@@ -292,15 +299,13 @@ impl Daemon {
     }
 
     pub fn handle(&mut self, request: Request) -> Response {
-        // RED: the state machine is filled in by the next commit.
-        let _ = request;
-        ipc::fail("no_engine", "the daemon's state is not connected yet")
+        self.dispatch(request)
     }
 
     /// One step at the current instant. Cases advance the clock to
     /// `next_deadline()` and step again until the state they want is reached.
     pub fn tick(&mut self) {
-        // RED: the state machine is filled in by the next commit.
+        self.step();
     }
 
     pub fn next_deadline(&self) -> Option<i64> {
@@ -308,19 +313,14 @@ impl Daemon {
     }
 
     pub fn run(&mut self) {
-        // RED: the state machine is filled in by the next commit.
-        let _ = self.device();
-        self.run_active = true;
+        self.start_run();
     }
 
     pub fn stop(&mut self) {
-        // RED: the state machine is filled in by the next commit.
+        self.stop_all(false);
     }
 
     pub fn status(&self) -> Status {
-        Status {
-            state: self.state.clone(),
-            ..Status::default()
-        }
+        self.make_status()
     }
 }

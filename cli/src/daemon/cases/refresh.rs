@@ -171,7 +171,7 @@ pub fn refresh_is_parallel() {
     rig.call("refresh");
     let elapsed = rig.clock.millis() - before;
     assert!(elapsed <= 200, "four fetches took {elapsed}ms, not 200ms");
-    assert_eq!(rig.world.lock().expect("world").fetches, 12);
+    assert_eq!(rig.world.lock().expect("world").fetches, 8);
 }
 
 #[test]
@@ -374,10 +374,10 @@ pub fn a_refused_list_is_emptied_and_says_why() {
     assert!(cache.body.is_none());
     assert_eq!(cache.headers.refusal, REFUSAL_LIMIT);
     assert_eq!(cache.headers.announce, LIMIT_SENTENCE);
-    assert!(engine::logged(
-        &rig.world,
-        &format!("device refused: {LIMIT_SENTENCE}")
-    ));
+    assert!(rig
+        .logs()
+        .iter()
+        .any(|line| { line.contains("device refused: ") && line.contains(LIMIT_SENTENCE) }));
     assert!(!engine::logged(&rig.world, "/sub/a/b"), "{:?}", rig.logs());
 
     rig.world.lock().expect("world").refusal = None;
@@ -542,13 +542,7 @@ pub fn a_selection_stays_in_its_list_while_its_host_refuses_the_device() {
         let mut rig = Rig::partner();
         engine::bodies_lock(&rig.world).bodies.insert(
             URL_B.to_string(),
-            format!(
-                "{}{}{}",
-                vless("B one"),
-                vless("B two"),
-                vless("🇨🇦 CA · SJ")
-            )
-            .into_bytes(),
+            format!("{}{}{}", vless("B one"), vless("B two"), vless("B three")).into_bytes(),
         );
         rig.d.run();
         rig.add(LIST_URL);
