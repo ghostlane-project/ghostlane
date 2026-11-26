@@ -96,13 +96,14 @@ class PhysicalInterfaceWatchTest {
     }
 
     /** An engine of one line; its tun and probes are not to be touched. */
-    private class StandIn(override val line: LineEngine, room: RoomEngine? = null) : DesktopEngine {
+    private class StandIn(
+        override val line: LineEngine,
+        override val room: RoomEngine = RecordingRoom(),
+    ) : DesktopEngine {
         val ups = mutableListOf<DesktopMode>()
         var downs = 0
-        private val recordingRoom = room
 
         override val windowsTun: TunCore get() = error("the Windows tun is not the watch's")
-        override val room: RoomEngine get() = recordingRoom ?: error("a room is not the watch's")
         override val probes: ProbeEngine get() = error("a probe is not the watch's")
 
         override fun sessionUp(mode: DesktopMode) {
