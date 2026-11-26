@@ -70,24 +70,39 @@ class RustExportE2ETest {
     }
 
     /**
-     * A check of a carrier the Rust core does not carry is refused at once, naming the
-     * carrier, with no network (RustCheckE2ETest a4). The Go runtime would dial the
-     * carrier's API instead. The app's own call passes its context, so the stored
-     * switch decides: the refusal is the Rust core's.
+     * A room nobody answers is refused by the engine that joined it (RustCheckE2ETest
+     * a1, a2). The carrier `none` reaches the loopback hub only through the Rust core;
+     * a Go dial that fails fast joins nothing. The rooms the hub saw name the engine,
+     * the time a call took does not. The app's own call passes its context, so the
+     * stored switch decides which engine answers.
      */
     @Test
     fun theProductsRoomCheckAndPingFollowTheDeveloperSwitch() {
-        val line = LocationConfig(id = "room-x", key = "0123456789abcdef".repeat(4), bypassProvider = "telemost")
+        val hub = PipeHub()
         val manager = AndroidVpnManager(context)
-        for ((what, call) in listOf<Pair<String, suspend () -> Long?>>(
-            "check" to { manager.checkConnection(line) },
-            "ping" to { manager.ping(line) }
-        )) {
-            val t0 = System.nanoTime()
-            val millis = runBlocking { call() }
-            val ms = (System.nanoTime() - t0) / 1_000_000
-            assertNull("$what of a carrier the core does not carry", millis)
-            assertTrue("$what was refused by the Rust core at once, not dialed by Go ($ms ms)", ms < 3_000)
+        fun line(room: String) = LocationConfig(
+            id = hub.url(room),
+            key = "0123456789abcdef".repeat(4),
+            bypassProvider = "none",
+        )
+        try {
+            hub.reset(PipeHub.Room.Ends("export check: nobody here"))
+            assertNull("a room with nobody here has no time", runBlocking { manager.checkConnection(line("check")) })
+            assertEquals("only the Rust core joins the room", listOf("check", "check"), hub.joined)
+
+            hub.reset(PipeHub.Room.Ends("export ping: nobody here"))
+            assertNull("a room with nobody here has no time", runBlocking { manager.ping(line("ping")) })
+            assertEquals("only the Rust core joins the room", listOf("ping"), hub.joined)
+
+            runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = false } }
+            hub.reset(PipeHub.Room.Ends("export check with the switch off: unused"))
+            runBlocking { manager.checkConnection(line("off-check")) }
+            assertEquals("with the switch off the Go runtime answers", emptyList<String>(), hub.joined)
+            hub.reset(PipeHub.Room.Ends("export ping with the switch off: unused"))
+            runBlocking { manager.ping(line("off-ping")) }
+            assertEquals("with the switch off the Go runtime answers", emptyList<String>(), hub.joined)
+        } finally {
+            hub.stop()
         }
     }
 }
