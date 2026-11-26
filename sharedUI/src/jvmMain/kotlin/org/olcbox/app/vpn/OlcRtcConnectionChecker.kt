@@ -17,6 +17,7 @@ import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
+import org.olcbox.app.vpn.desktop.engine.host.HostProbe
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -30,6 +31,16 @@ import java.util.concurrent.TimeUnit
 
 internal object OlcRtcConnectionChecker {
 
+    /**
+     * The room check on ghostlane-engine ([HostProbe]), or null for the Go
+     * engines' (olcrtc's library, else its binary), which is the default until
+     * the desktop's flip. One place, as
+     * [org.olcbox.app.vpn.desktop.engine.DesktopEngines.factory] is, so that
+     * the manager's calls name no engine.
+     */
+    @Volatile
+    internal var rooms: HostProbe? = null
+
     suspend fun check(
         locationConfig: LocationConfig,
         deviceId: String = DEFAULT_DEVICE_ID,
@@ -39,6 +50,13 @@ internal object OlcRtcConnectionChecker {
         return withContext(Dispatchers.IO) {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
+
+            rooms?.let { engine ->
+                return@withContext viaEngine(CONNECTION_CHECK_ATTEMPTS) {
+                    engine.check(HostProbe.Room.of(config, deviceId, dtlsProfile), OLC_READY_TIMEOUT_MS)
+                        .let { if (it.millis != null) it.copy(millis = it.millis.coerceAtLeast(1L)) else it }
+                }
+            }
 
             val nativeLib = nativeLibFor(dtlsProfile)
             if (nativeLib != null) {
@@ -94,6 +112,16 @@ internal object OlcRtcConnectionChecker {
             val config = locationConfig.normalized()
             if (!config.isComplete()) return@withContext null
 
+            rooms?.let { engine ->
+                return@withContext viaEngine(HTTP_PING_ATTEMPTS) {
+                    engine.ping(
+                        HostProbe.Room.of(config, deviceId, dtlsProfile),
+                        OLC_READY_TIMEOUT_MS + HTTP_PING_TIMEOUT_MS,
+                        HTTP_PING_URL
+                    )
+                }
+            }
+
             val nativeLib = nativeLibFor(dtlsProfile)
             if (nativeLib != null) {
                 repeat(HTTP_PING_ATTEMPTS) {
@@ -141,6 +169,19 @@ internal object OlcRtcConnectionChecker {
 
             null
         }
+    }
+
+    /**
+     * [attempts] asks of the engine, each joining the room for real: the first
+     * yes, or null when none was one. A no is logged with the engine's reason.
+     */
+    private fun viaEngine(attempts: Int, ask: () -> HostProbe.Result): Long? {
+        repeat(attempts) {
+            val result = ask()
+            result.millis?.let { return it }
+            println("OlcRtcConnectionChecker: ghostlane-engine: ${result.reason}")
+        }
+        return null
     }
 
     private suspend fun checkOnce(

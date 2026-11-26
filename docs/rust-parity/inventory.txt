@@ -90,11 +90,11 @@ carry.vless.reality.tcp              | a,i,m,l,w,c | docs/protocols.md::VLESS + 
 carry.vless.reality.grpc             | a,i,m,l,w | docs/protocols.md::VLESS + Reality, over TCP, gRPC or HTTP/2 | VLESS Reality over gRPC
 carry.vless.reality.http             | a,m,l,w | docs/protocols.md::HTTP/2 (`type=http`) | VLESS Reality over HTTP/2
 carry.vless.reality.xhttp            | a,i,m,l,w,c | README.MD::XHTTP | VLESS Reality over XHTTP (packet-up)
-carry.vless.tls.tcp | a,m,l,w,c | docs/protocols.md::VLESS over TLS, incl. behind a CDN | VLESS over ordinary TLS on TCP
+carry.vless.tls.tcp | a,i,m,l,w,c | docs/protocols.md::VLESS over TLS, incl. behind a CDN | VLESS over ordinary TLS on TCP
 carry.vless.tls.ws                   | a,i,m,l,w | docs/protocols.md::WebSocket | VLESS over TLS and WebSocket (WebTunnel, behind a CDN)
 carry.vless.tls.httpupgrade          | a,i,m,l,w | docs/protocols.md::HTTPUpgrade | VLESS over TLS and HTTPUpgrade (WebTunnel)
 carry.vless.tls.http                 | a,m,l,w | docs/protocols.md::HTTP/2 | VLESS over TLS and HTTP/2
-carry.vless.none | a,m,l,w,c | docs/protocols.md::`security=none` is VLESS with no TLS | VLESS with no TLS at all
+carry.vless.none | a,i,m,l,w,c | docs/protocols.md::`security=none` is VLESS with no TLS | VLESS with no TLS at all
 carry.vless.allowinsecure | a,m,l,w,c | docs/protocols.md::`allowInsecure` is | A link's allowInsecure is honoured on ordinary TLS
 carry.reality.fingerprints           | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality ClientHello fingerprints by name
 carry.reality.fp-android-360 | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::fingerprint | Reality with fp=android or fp=360
@@ -103,11 +103,11 @@ carry.hysteria2.salamander           | a,i,m,l,w,c | docs/protocols.md::Salamand
 carry.hysteria2.pin                  | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::pinSHA256 | Hysteria2 verified by a pinned certificate fingerprint
 carry.hysteria2.insecure | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::insecure | Hysteria2 with insecure=1 and no pin
 carry.hysteria2.udp-blocked-failover | i | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/UdpBlockedFailover.kt::UdpBlockedFailover | On iOS a Hysteria2 that carries nothing moves to the same exit over a TCP transport, once per connect
-carry.trojan                         | a,m,l,w | README.MD::Trojan | Trojan, over TCP, WebSocket, gRPC and the other transports its link names
-carry.shadowsocks                    | a,m,l,w | docs/protocols.md::Shadowsocks, AEAD and 2022 | Shadowsocks, AEAD methods
-carry.shadowsocks.2022               | a,m,l,w | docs/protocols.md::Shadowsocks, AEAD and 2022 | Shadowsocks 2022 methods
-carry.vmess                          | a,m,l,w | README.MD::VMess | VMess, with TLS and its transports
-carry.hostname-servers               | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/XrayConfig.kt::isIpLiteral | A server named by a hostname, resolved on the network underneath
+carry.trojan                         | a,i,m,l,w | README.MD::Trojan | Trojan, over TCP, WebSocket, gRPC and the other transports its link names
+carry.shadowsocks                    | a,i,m,l,w | docs/protocols.md::Shadowsocks, AEAD and 2022 | Shadowsocks, AEAD methods
+carry.shadowsocks.2022               | a,i,m,l,w | docs/protocols.md::Shadowsocks, AEAD and 2022 | Shadowsocks 2022 methods
+carry.vmess                          | a,i,m,l,w | README.MD::VMess | VMess, with TLS and its transports
+carry.hostname-servers               | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/XrayConfig.kt::isIpLiteral | A server named by a hostname, resolved on the network underneath
 carry.dns-in-tunnel                  | a,i,m,l,w,c | docs/routing.md::name resolution included | Names are resolved through the tunnel in a mode that tunnels the rest
 carry.udp                            | a,i,m,l,w,c | docs/protocols.md::UDP | UDP through the line
 mode.tun                             | a,m,l,w | docs/building.md::TUN, proxy | TUN mode: the whole device or machine through the tunnel
@@ -284,30 +284,30 @@ cell.vless.reality.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/
 cell.vless.reality.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and HTTPUpgrade
 cell.vless.reality.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and HTTP/2
 cell.vless.reality.xhttp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and XHTTP
-cell.vless.tls.tcp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and TCP
-cell.vless.tls.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and gRPC
+cell.vless.tls.tcp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and TCP
+cell.vless.tls.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and gRPC
 cell.vless.tls.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and WebSocket
 cell.vless.tls.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and HTTPUpgrade
 cell.vless.tls.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and HTTP/2
-cell.vless.tls.xhttp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and XHTTP
-cell.vless.none.tcp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and TCP
-cell.vless.none.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and gRPC
-cell.vless.none.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and WebSocket
-cell.vless.none.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and HTTPUpgrade
+cell.vless.tls.xhttp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over ordinary TLS and XHTTP
+cell.vless.none.tcp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and TCP
+cell.vless.none.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and gRPC
+cell.vless.none.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and WebSocket
+cell.vless.none.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and HTTPUpgrade
 cell.vless.none.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and HTTP/2
-cell.vless.none.xhttp | a,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and XHTTP
-cell.trojan.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and TCP
-cell.trojan.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and gRPC
-cell.trojan.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and WebSocket
-cell.trojan.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and HTTPUpgrade
+cell.vless.none.xhttp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over no TLS and XHTTP
+cell.trojan.tcp | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and TCP
+cell.trojan.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and gRPC
+cell.trojan.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and WebSocket
+cell.trojan.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and HTTPUpgrade
 cell.trojan.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseTrojan | Trojan over TLS and HTTP/2
-cell.vmess.tls.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and TCP
-cell.vmess.tls.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and gRPC
-cell.vmess.tls.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and WebSocket
-cell.vmess.tls.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and HTTPUpgrade
+cell.vmess.tls.tcp | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and TCP
+cell.vmess.tls.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and gRPC
+cell.vmess.tls.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and WebSocket
+cell.vmess.tls.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and HTTPUpgrade
 cell.vmess.tls.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with ordinary TLS and HTTP/2
-cell.vmess.none.tcp | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and TCP
-cell.vmess.none.grpc | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and gRPC
-cell.vmess.none.ws | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and WebSocket
-cell.vmess.none.httpupgrade | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and HTTPUpgrade
+cell.vmess.none.tcp | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and TCP
+cell.vmess.none.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and gRPC
+cell.vmess.none.ws | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and WebSocket
+cell.vmess.none.httpupgrade | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and HTTPUpgrade
 cell.vmess.none.http | a,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVmess | VMess with no TLS and HTTP/2
