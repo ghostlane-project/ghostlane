@@ -71,12 +71,9 @@ class RustRecoveryE2ETest {
         return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
     }
 
-    /** Shell's `nc` with a request on stdin; what the server sent back. */
-    private fun shellFetch(host: String, port: Int, request: String): String {
-        val (out, input) = instrumentation.uiAutomation.executeShellCommandRw("toybox nc -w 8 $host $port")
-        ParcelFileDescriptor.AutoCloseOutputStream(input).use { it.write(request.toByteArray()); it.flush() }
-        return ParcelFileDescriptor.AutoCloseInputStream(out).use { it.readBytes().toString(Charsets.UTF_8) }
-    }
+    /** The shell's GET through the tun (ShellNet, uid 2000), true when the answer held [needle]. */
+    private fun shellFetch(host: String, port: Int, path: String, needle: String): Boolean =
+        RustE2eDevice.shellFetch(host, port, path, needle)
 
     private fun tunFds(): List<String> =
         File("/proc/self/fd").listFiles().orEmpty()
@@ -276,10 +273,10 @@ class RustRecoveryE2ETest {
         saveProfile()
         val interval = watchdogIntervalMs()
         try {
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
-            val first = shellFetch("192.0.2.1", 80, "GET /before HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            assertTrue("the line carries before the stop: '$first'", first.contains(server.nonce))
+            val first = shellFetch("192.0.2.1", 80, "before", server.nonce)
+            assertTrue("the line carries before the stop", first)
 
             val readyBefore = logCount("Rust core ready on")
             val seenBefore = logCount("Watchdog: core transport stopped")
@@ -301,8 +298,8 @@ class RustRecoveryE2ETest {
             assertTrue("a tun fd is still held", tunFds().isNotEmpty())
 
             val hitsBefore = server.hits.get()
-            val again = shellFetch("192.0.2.1", 80, "GET /after HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            assertTrue("the line carries after the recovery: '$again'", again.contains(server.nonce))
+            val again = shellFetch("192.0.2.1", 80, "after", server.nonce)
+            assertTrue("the line carries after the recovery", again)
             assertEquals("the server saw the request after the recovery", hitsBefore + 1, server.hits.get())
             say("RESULT a core stopped behind its handle: seen by the watchdog after $seenMs ms (interval $interval ms), carrying again after $backMs ms")
         } finally {
@@ -329,7 +326,7 @@ class RustRecoveryE2ETest {
         val unverified = "is up but no traffic reached the internet through it"
         val unverifiedBefore = logCount(unverified)
         try {
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the tunnel check to fail", 90_000) {
                 (OlcboxVpnState.status.value as? VpnStatus.Error)?.message?.contains("No traffic reached") == true
             }
@@ -375,11 +372,11 @@ class RustRecoveryE2ETest {
         val interval = watchdogIntervalMs()
         val held = "closed it without a reply"
         try {
-            context.startForegroundService(startIntent(user, pass))
+            RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the tunnel to connect", 90_000) { OlcboxVpnState.status.value is VpnStatus.Connected }
             val cap = checkNotNull(front.get()) { "the session never asked for its core config" }
-            val first = shellFetch("192.0.2.1", 80, "GET /before HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            assertTrue("the line carries through the front before it is full: '$first'", first.contains(server.nonce))
+            val first = shellFetch("192.0.2.1", 80, "before", server.nonce)
+            assertTrue("the line carries through the front before it is full", first)
 
             val readyBefore = logCount("Rust core ready on")
             val seenBefore = logCount("Watchdog: core transport stopped")
@@ -407,8 +404,8 @@ class RustRecoveryE2ETest {
             assertEquals("the log said once that the port closed a greeting unanswered; log tail:\n$tail", 1, said)
 
             val hitsBefore = server.hits.get()
-            val again = shellFetch("192.0.2.1", 80, "GET /after HTTP/1.0\r\nHost: 192.0.2.1\r\n\r\n")
-            assertTrue("the same line carries once the port has room again: '$again'", again.contains(server.nonce))
+            val again = shellFetch("192.0.2.1", 80, "after", server.nonce)
+            assertTrue("the same line carries once the port has room again", again)
             assertEquals("the server saw the request", hitsBefore + 1, server.hits.get())
             say("RESULT a port at its connection cap: $dropped greeting(s) dropped, the line kept (interval $interval ms)")
         } finally {
