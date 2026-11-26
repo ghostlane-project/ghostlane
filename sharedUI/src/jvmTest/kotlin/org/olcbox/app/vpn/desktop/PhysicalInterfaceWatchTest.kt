@@ -517,7 +517,7 @@ class PhysicalInterfaceWatchTest {
         session.connect(request())
         session.system.default = null
         session.reads(4)
-        assertEquals(emptyList(), session.moved(), "a line started with no default route would be bound to nothing")
+        assertEquals(emptyList(), session.moved(), "no way out at all moves a line bound to wlan0")
         session.system.default = "wlan0"
         session.reads(3)
         assertEquals(emptyList(), session.moved(), "back on the same interface, the line carries as it was")
