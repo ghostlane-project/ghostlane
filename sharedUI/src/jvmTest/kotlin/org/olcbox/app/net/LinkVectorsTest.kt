@@ -101,7 +101,7 @@ class LinkVectorsTest {
     @Test fun normalizersAndCountriesAreReadable() {
         for (vector in links.list("cases").filter { it.str("group") == "normalizers" }) {
             val expected = vector.getValue("expect").jsonObject
-            assertTrue(expected.list("cases").isNotEmpty(), vector.str("name"))
+            assertTrue(expected.getValue("cases").jsonArray.isNotEmpty(), vector.str("name"))
             if (expected.str("function") == "normalizeProvider") {
                 assertEquals("telemost", LocationConfig.normalizeProvider("yandex_telemost"))
                 assertEquals("wbstream", LocationConfig.normalizeProvider("wildberries"))
@@ -123,7 +123,9 @@ class LinkVectorsTest {
         val link = cases.first { it.str("name") == "link-payload" }.str("blob")
         assertTrue(CryptCodec.isCryptLink("olcrtc://crypt1/$link"))
         for (case in cases.filter { it.flag("accept").not() }) {
-            assertNull(codec.decryptBody(case.str("blob")), case.str("name"))
+            val caseMaster = CryptCodec.decodeMaster(case.str("master"))
+            assertNotNull(caseMaster, case.str("name"))
+            assertNull(CryptCodec(caseMaster).decryptBody(case.str("blob")), case.str("name"))
         }
     }
 
