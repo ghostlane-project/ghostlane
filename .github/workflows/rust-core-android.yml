@@ -640,7 +640,9 @@ jobs:
               elif re.search(r"^RESULT android-restart: none", text, re.M):
                   cells[(KILL_RESTART, leg)] = "none (fact)"
               else:
-                  cells[(KILL_RESTART, leg)] = first
+                  # No verdict was reached about it (the session may not have
+                  # started at all): still a fact, never a failing cell.
+                  cells[(KILL_RESTART, leg)] = "not observed (fact)"
           rows = classes + [KILL_BACK, KILL_RESTART]
           out = ["### K3: every class of the e2e package and the kill, on every leg", "",
                  "| | " + " | ".join(legs) + " |", "|---|" + "---|" * len(legs)]
