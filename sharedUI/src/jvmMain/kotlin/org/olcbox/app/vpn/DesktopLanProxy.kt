@@ -6,20 +6,15 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
@@ -28,42 +23,29 @@ import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.net.core.CoreInbound
-import org.olcbox.app.net.core.addInbounds
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.engine.host.HostAssets
-import org.olcbox.app.vpn.desktop.engine.host.HostEvent
-import org.olcbox.app.vpn.desktop.engine.host.HostEvents
-import org.olcbox.app.vpn.desktop.engine.host.HostProcess
-import org.olcbox.app.vpn.desktop.engine.host.HostSession
 import java.nio.file.Path
 
 /**
- * What runs LAN sharing's listener: a core with a SOCKS5 inbound on the
- * private address and a loopback one of its own, chained to the session's
- * port. One core belongs to one [DesktopLanProxy].
+ * What runs LAN sharing's listener, or stands for it when the session's own
+ * core holds it. Only the Go core owns a process and a port of its own; on the
+ * Rust engine the listener is CoreInbound.Lan in the line's core, written by
+ * HostEngine, and this core is only the app's way to reach its settings.
  */
 internal interface LanCore {
     /** The program's name, for the log. */
     val name: String
 
-    /** What the core is given: the LAN listener, the ownership listener and the chain to [upstream]. */
-    fun config(
-        host: String,
-        port: Int,
-        username: String,
-        password: String,
-        upstream: SubscriptionFetchProxy,
-        ownershipPort: Int,
-        ownershipUsername: String,
-        ownershipPassword: String
-    ): String
+    /** Whether this core binds the LAN port in a process of its own. */
+    val ownsListener: Boolean
 
-    /** Starts the core on [config] and returns once it is started; whether it serves is the caller's to prove. */
+    /** Starts what this core owns; the session's core is started elsewhere. */
     suspend fun start(config: String)
 
     fun isRunning(): Boolean
 
-    /** Ends the core and returns when it is gone. May be called more than once. */
+    /** Ends what this core owns. May be called more than once. */
     fun stopNow()
 
     /** The program, for the rule the Windows firewall is given. */
@@ -72,36 +54,41 @@ internal interface LanCore {
 
 /**
  * The cores LAN sharing can run on. Go stays the default; the engine is
- * chosen by setting [factory], beside the desktop engine's own.
+ * chosen by setting [factory], beside the desktop engine's own. Both read the
+ * manager's settings through [settings], which the line's core reads too when
+ * it is the Rust engine.
  */
 internal object LanCores {
     @Volatile
     var factory: (onOutput: (String) -> Unit) -> LanCore = { out -> go(out) }
+
+    /** The manager's current settings, registered by [DesktopLanProxy]. */
+    @Volatile
+    var settings: () -> DesktopSocksProxySettings = { DesktopSocksProxySettings() }
+
+    fun currentSettings(): DesktopSocksProxySettings = settings()
 
     fun create(onOutput: (String) -> Unit): LanCore = factory(onOutput)
 
     /** sing-box, as LAN sharing has always run. */
     fun go(onOutput: (String) -> Unit): LanCore = GoLanCore(onOutput)
 
-    /** ghostlane-engine, the program of the Core build, as a child of the app. */
+    /**
+     * ghostlane-engine, whose LAN inbound is in the session's own core: no
+     * second program is started and no port is bound here. [binary] names the
+     * program for the Windows firewall rule; it is never run by this core.
+     */
     fun rust(
-        onOutput: (String) -> Unit,
+        onOutput: (String) -> Unit = {},
         binary: () -> Path = HostAssets::resolve,
-        sessionParent: Path? = null
-    ): LanCore = RustLanCore(onOutput, binary, sessionParent)
+    ): LanCore = RustLanCore(onOutput, binary)
 }
 
 private class GoLanCore(onOutput: (String) -> Unit) : LanCore {
     private val controller = DesktopSingBoxController(onOutput = onOutput)
 
     override val name = "sing-box"
-
-    override fun config(
-        host: String, port: Int, username: String, password: String, upstream: SubscriptionFetchProxy,
-        ownershipPort: Int, ownershipUsername: String, ownershipPassword: String
-    ) = DesktopLanProxy.config(
-        host, port, username, password, upstream, ownershipPort, ownershipUsername, ownershipPassword
-    )
+    override val ownsListener = true
 
     override suspend fun start(config: String) = controller.start(config)
     override fun isRunning() = controller.isRunning()
@@ -110,127 +97,112 @@ private class GoLanCore(onOutput: (String) -> Unit) : LanCore {
 }
 
 private class RustLanCore(
-    private val onOutput: (String) -> Unit,
+    @Suppress("UNUSED_PARAMETER") private val onOutput: (String) -> Unit,
     private val binary: () -> Path,
-    private val sessionParent: Path?
 ) : LanCore {
-    @Volatile private var current: HostProcess? = null
-    @Volatile private var checked: Path? = null
+    @Volatile private var active = false
 
     override val name = "ghostlane-engine"
+    override val ownsListener = false
 
-    override fun config(
-        host: String, port: Int, username: String, password: String, upstream: SubscriptionFetchProxy,
-        ownershipPort: Int, ownershipUsername: String, ownershipPassword: String
-    ) = DesktopLanProxy.rustConfig(
-        host, port, username, password, upstream, ownershipPort, ownershipUsername, ownershipPassword
-    )
-
-    override suspend fun start(config: String): Unit = withContext(Dispatchers.IO) {
-        stopNow()
-        val program = binary()
-        if (checked != program) {
-            val version = HostAssets.version(program)
-                ?: error("$name printed no version: $program is not a program this app runs")
-            HostAssets.refusal(version)?.let { error(it) }
-            onOutput(HostAssets.describe(version))
-            checked = program
-        }
-        val run = HostProcess.run(
-            program,
-            HostSession.text(config),
-            onEvent = { event -> HostEvents.logLine(event)?.let { onOutput("$name (LAN): $it") } },
-            onStderr = { text -> onOutput("$name (LAN): $text") },
-            parent = sessionParent
-        )
-        current = run
-        when (val start = run.awaitStart(START_WAIT_MS)) {
-            is HostProcess.Start.Ended -> {
-                run.stop()
-                current = null
-                val why = start.ended?.let { ended: HostEvent.Ended ->
-                    listOfNotNull(ended.code?.word, ended.message).joinToString(": ").ifEmpty { ended.reason.word }
-                } ?: "it exited with code ${start.exitCode}"
-                error("LAN SOCKS listener exited; check the port and interface ($why)")
-            }
-            is HostProcess.Start.Ready, HostProcess.Start.Waiting -> Unit
-        }
+    override suspend fun start(config: String) {
+        // The line's core bound the LAN port and is already serving. There is
+        // no second process to start, and nothing here may bind that port.
+        active = true
     }
 
-    override fun isRunning() = current?.isAlive() == true
+    override fun isRunning() = active
 
     override fun stopNow() {
-        current?.stop()
-        current = null
+        active = false
     }
 
     override fun program(): Path = binary()
-
-    private companion object {
-        /** How long a start waits for the engine to say it serves or failed; past it the caller's own wait decides. */
-        const val START_WAIT_MS = 10_000L
-    }
 }
 
 /** A credentialed SOCKS5 listener bound to one explicitly selected private adapter. */
 internal class DesktopLanProxy(
     private val onOutput: (String) -> Unit,
-    private val core: LanCore = LanCores.create(onOutput)
+    private val core: LanCore = LanCores.create(onOutput),
+    settings: () -> DesktopSocksProxySettings = LanCores.settings,
+    private val availableAddresses: () -> List<String> = Companion::privateAddresses,
+    private val readNetworkIdentity: (String) -> String? = Companion::networkIdentity,
 ) {
     private var firewallRule: String? = null
+
+    init {
+        // The line's core reads the same settings when it writes its plan.
+        LanCores.settings = settings
+    }
 
     suspend fun start(settings: DesktopSocksProxySettings, upstream: SubscriptionFetchProxy): String {
         val normalized = settings.normalized()
         require(normalized.lanUsername.isNotBlank() && normalized.lanPassword.isNotBlank()) {
             "LAN sharing credentials are missing"
         }
-        val available = privateAddresses()
+        val available = availableAddresses()
         val host = normalized.lanAddress.takeIf { it in available }
             ?: error("The selected private network interface is no longer available")
-        val currentNetworkId = networkIdentity(host)
+        val currentNetworkId = readNetworkIdentity(host)
             ?: error("The selected LAN gateway could not be identified")
         require(normalized.lanNetworkId.isNotBlank() && normalized.lanNetworkId == currentNetworkId) {
             "This is a different local network; select the LAN interface again before sharing"
         }
-        requirePortFree(host, normalized.lanPort)
-        val ownershipPort = allocateLoopbackPort()
-        val ownershipUsername = DesktopSocksProxySettings.randomToken(16)
-        val ownershipPassword = DesktopSocksProxySettings.randomToken(32)
+        // Both the Go listener and the Rust line's plan refuse the same shape.
+        val plan = CoreInbound.Plan(
+            CoreInbound.Proxy(upstream.port),
+            CoreInbound.Lan(
+                normalized.lanAddress, normalized.lanPort,
+                SocksLogin(normalized.lanUsername, normalized.lanPassword),
+            ),
+        )
+        CoreInbound.refusal(plan)?.let { throw IllegalArgumentException(it) }
 
         try {
-            if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
-            core.start(
-                core.config(
-                    host, normalized.lanPort, normalized.lanUsername, normalized.lanPassword, upstream,
-                    ownershipPort, ownershipUsername, ownershipPassword
+            if (DesktopPaths.os == DesktopOs.Windows && core.ownsListener) cleanupStaleWindowsFirewallRules()
+            if (core.ownsListener) {
+                requirePortFree(host, normalized.lanPort)
+                val ownershipPort = allocateLoopbackPort()
+                val ownershipUsername = DesktopSocksProxySettings.randomToken(16)
+                val ownershipPassword = DesktopSocksProxySettings.randomToken(32)
+                core.start(
+                    config(
+                        host, normalized.lanPort, normalized.lanUsername, normalized.lanPassword, upstream,
+                        ownershipPort, ownershipUsername, ownershipPassword
+                    )
                 )
-            )
-            // Not withTimeout: its timeout is a CancellationException, and the
-            // callers read that as "the start was superseded". A connect with LAN
-            // sharing on was then taken down without a word and its status left
-            // at Stopping, because a listener was slow to open. As an ordinary
-            // failure it costs LAN sharing and nothing else.
-            withTimeoutOrNull(5_000) {
-                while (true) {
-                    check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
-                    if (runCatching {
-                            Socket().use { it.connect(InetSocketAddress("127.0.0.1", ownershipPort), 200) }
-                        }.isSuccess
-                    ) break
-                    delay(100)
-                }
-            } ?: error("LAN SOCKS listener did not open in time; check the port and interface")
-            // This private, random loopback inbound exists in the same config as
-            // the LAN listener. If the requested LAN port belonged to another
-            // process, the core could not bind the config and this check cannot pass.
-            TunnelVerifier.verify(
-                socksHost = "127.0.0.1",
-                socksPort = ownershipPort,
-                username = ownershipUsername,
-                password = ownershipPassword,
-                timeoutMs = 5_000
-            ) ?: error("LAN SOCKS ownership check did not reach the VPN")
-            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort)
+                // Not withTimeout: its timeout is a CancellationException, and the
+                // callers read that as "the start was superseded". A connect with LAN
+                // sharing on was then taken down without a word and its status left
+                // at Stopping, because a listener was slow to open. As an ordinary
+                // failure it costs LAN sharing and nothing else.
+                withTimeoutOrNull(5_000) {
+                    while (true) {
+                        check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
+                        if (runCatching {
+                                Socket().use { it.connect(InetSocketAddress("127.0.0.1", ownershipPort), 200) }
+                            }.isSuccess
+                        ) break
+                        delay(100)
+                    }
+                } ?: error("LAN SOCKS listener did not open in time; check the port and interface")
+                // This private, random loopback inbound exists in the same config as
+                // the LAN listener. If the requested LAN port belonged to another
+                // process, the core could not bind the config and this check cannot pass.
+                TunnelVerifier.verify(
+                    socksHost = "127.0.0.1",
+                    socksPort = ownershipPort,
+                    username = ownershipUsername,
+                    password = ownershipPassword,
+                    timeoutMs = 5_000
+                ) ?: error("LAN SOCKS ownership check did not reach the VPN")
+            } else {
+                // The line's core is already listening on this port. Binding it
+                // here too, or starting a second engine chained by SOCKS, is the
+                // design D5 dropped: it would race the session's own core.
+                core.start("")
+            }
+            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort, core.program())
             return "$host:${normalized.lanPort}"
         } catch (e: Exception) {
             stop()
@@ -253,12 +225,12 @@ internal class DesktopLanProxy(
         if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
     }
 
-    private fun addWindowsFirewallRule(host: String, port: Int) {
+    private fun addWindowsFirewallRule(host: String, port: Int, program: Path) {
         val rule = "Ghostlane-LAN-${java.util.UUID.randomUUID()}"
-        val program = core.program().toAbsolutePath().normalize().toString()
+        val path = program.toAbsolutePath().normalize().toString()
         val script = "New-NetFirewallRule -Name '$rule' -DisplayName 'Ghostlane LAN SOCKS5' " +
             "-Direction Inbound -Action Allow -Protocol TCP -LocalAddress '$host' -LocalPort $port " +
-            "-RemoteAddress LocalSubnet -Profile Private -Program '${program.replace("'", "''")}' | Out-Null"
+            "-RemoteAddress LocalSubnet -Profile Private -Program '${path.replace("'", "''")}' | Out-Null"
         // Keep the name before executing: PowerShell may create the rule and time out afterwards.
         firewallRule = rule
         firewall(script)
@@ -337,6 +309,28 @@ internal class DesktopLanProxy(
                 .lowercase().takeIf { it.contains('|') && !it.endsWith('|') }
         }.getOrNull()
 
+        /**
+         * Why a line's core must leave LAN sharing out of its plan, or null
+         * when the network the settings name is still the one the machine is
+         * on. A line with no sharing asks nothing of the network.
+         */
+        fun networkProblem(
+            settings: DesktopSocksProxySettings,
+            availableAddresses: () -> List<String> = ::privateAddresses,
+            readNetworkIdentity: (String) -> String? = ::networkIdentity,
+        ): String? {
+            if (!settings.shareOnLan) return null
+            if (settings.lanAddress !in availableAddresses()) {
+                return "The selected private network interface is no longer available"
+            }
+            val identity = readNetworkIdentity(settings.lanAddress)
+                ?: return "The selected LAN gateway could not be identified"
+            if (settings.lanNetworkId.isBlank() || settings.lanNetworkId != identity) {
+                return "This is a different local network; select the LAN interface again before sharing"
+            }
+            return null
+        }
+
         internal fun isVirtualAdapter(name: String): Boolean = name.contains(
             Regex(
                 "(?i)wintun|wireguard|tun2socks|tap-windows|ghostlane|olcbox|" +
@@ -348,75 +342,7 @@ internal class DesktopLanProxy(
         private fun ipv4SortKey(address: String): Long = address.split('.')
             .fold(0L) { value, octet -> value * 256 + (octet.toLongOrNull() ?: 0L) }
 
-        /**
-         * What ghostlane-engine is given for LAN sharing (the core half of its
-         * session file): the listener on [host], demanding the login, and one
-         * on loopback demanding the ownership login, both leading to the
-         * session's port. Throws IllegalArgumentException for a listener the
-         * core would refuse ([CoreInbound.refusal]) and for a port that clashes.
-         *
-         * The inbounds are the ones the app's builder writes for the core
-         * (`CoreInbound`), with the sniffing off: the session's own core
-         * names a connection for its rules, and a second one here would only
-         * hold a server that speaks first waiting for the client.
-         */
-        fun rustConfig(
-            host: String,
-            port: Int,
-            username: String,
-            password: String,
-            upstream: SubscriptionFetchProxy,
-            ownershipPort: Int,
-            ownershipUsername: String,
-            ownershipPassword: String
-        ): String {
-            require(port != upstream.port && port != ownershipPort) { "LAN port must differ from the core port" }
-            require(ownershipPort != upstream.port) { "the ownership port must differ from the core port" }
-            val plan = CoreInbound.Plan(
-                CoreInbound.Proxy(ownershipPort, SocksLogin(ownershipUsername, ownershipPassword)),
-                CoreInbound.Lan(host, port, SocksLogin(username, password))
-            )
-            CoreInbound.refusal(plan)?.let { throw IllegalArgumentException("the Rust core cannot listen so: $it") }
-            val inbounds = buildJsonArray { addInbounds(plan) }.map { inbound ->
-                JsonObject(inbound.jsonObject + ("sniffing" to buildJsonObject { put("enabled", false) }))
-            }
-            return buildJsonObject {
-                putJsonObject("log") {
-                    put("loglevel", "warning")
-                    put("access", "none")
-                }
-                putJsonArray("inbounds") { inbounds.forEach { add(it) } }
-                putJsonArray("outbounds") {
-                    addJsonObject {
-                        put("tag", CHAIN)
-                        put("protocol", "socks")
-                        putJsonObject("settings") {
-                            put("address", upstream.host)
-                            put("port", upstream.port)
-                            if (upstream.username.isNotEmpty() && upstream.password.isNotEmpty()) {
-                                put("user", upstream.username)
-                                put("pass", upstream.password)
-                            }
-                        }
-                    }
-                }
-                putJsonObject("routing") {
-                    put("domainStrategy", "AsIs")
-                    putJsonArray("rules") {
-                        addJsonObject {
-                            putJsonArray("inboundTag") {
-                                add(CoreInbound.LAN_TAG)
-                                add(CoreInbound.TAG)
-                            }
-                            put("outboundTag", CHAIN)
-                        }
-                    }
-                }
-            }.toString()
-        }
-
-        private const val CHAIN = "session"
-
+        /** What the Go cores' listener is given; the Rust line's core writes CoreInbound itself. */
         fun config(
             host: String,
             port: Int,
@@ -427,7 +353,9 @@ internal class DesktopLanProxy(
             ownershipUsername: String = "",
             ownershipPassword: String = ""
         ): String {
-            require(port in 1024..65535 && port != upstream.port) { "LAN port must differ from the core port" }
+            require(port in DesktopSocksProxySettings.MIN_PORT..DesktopSocksProxySettings.MAX_PORT && port != upstream.port) {
+                "LAN port must differ from the core port"
+            }
             require(username.isNotBlank() && password.isNotBlank()) { "LAN credentials are required" }
             require(username.length <= DesktopSocksProxySettings.MAX_CREDENTIAL_LENGTH)
             require(password.length <= DesktopSocksProxySettings.MAX_CREDENTIAL_LENGTH)
