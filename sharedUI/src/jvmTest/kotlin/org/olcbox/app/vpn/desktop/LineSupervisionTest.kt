@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.desktop
 
+import java.io.File
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.RoutingMode
@@ -147,6 +148,27 @@ class LineSupervisionTest {
 
     // Its routes went with it, so the machine's traffic already leaves
     // directly: there is nothing to change a line behind.
+    /**
+     * The precondition of the desktop flip. On ghostlane-engine the LAN
+     * listener is an inbound of the line's own core: switching sharing off,
+     * moving it to another interface or replacing the credentials has to
+     * reach a line that is already running. The Go listener owns its port and
+     * is still stopped and started on its own. The manager cannot be started
+     * in a test (it owns the system proxy, a tunnel and child processes), so
+     * the wiring is read from its source here.
+     */
+    @Test
+    fun aLanChangeOnAnEngineLineRestartsItBehindTheTunnel() {
+        val source = File("src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopVpnManager.kt").readText()
+        val apply = source.substringAfter("fun applyLanSharingSettings(", "")
+            .substringBefore("\n    }\n")
+        assertTrue("restartOnLanChange(" in apply, "a LAN change does not restart the line")
+        val restart = source.substringAfter("private fun restartOnLanChange(", "")
+            .substringBefore("\n    }\n")
+        assertTrue("stopDesktopCores()" in restart, "the old core still holds the old LAN inbound")
+        assertTrue("restartLineBehindTun(" in restart, "the LAN restart does not go behind the standing tunnel")
+    }
+
     @Test
     fun aTunThatIsNotRunningIsRebuilt() {
         for (mode in listOf(DesktopMode.LinuxTun, DesktopMode.WindowsTun, DesktopMode.MacTun)) {
