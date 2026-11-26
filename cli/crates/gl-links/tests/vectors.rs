@@ -216,7 +216,7 @@ fn every_body_case_is_decoded_as_the_vector_says() {
         let got = if let Some(plain) = expect["decryptorPayload"].as_str() {
             list::decode_body_with(
                 body,
-                Some(|blob| {
+                Some(&|blob: &str| {
                     if blob == plain {
                         Some(plain.as_bytes().to_vec())
                     } else {

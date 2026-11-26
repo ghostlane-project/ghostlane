@@ -50,13 +50,13 @@ impl Entry {
 /// plaintext stays plaintext. A crypt1 blob is offered to the decryptor only
 /// when the body has no scheme in it (its MAC, so a base64 list never passes).
 pub fn decode_body(body: &[u8]) -> Vec<String> {
-    decode_body_with::<fn(&str) -> Option<Vec<u8>>>(body, None)
+    decode_body_with(body, None)
 }
 
-pub fn decode_body_with<F>(body: &[u8], decrypt: Option<F>) -> Vec<String>
-where
-    F: Fn(&str) -> Option<Vec<u8>>,
-{
+pub fn decode_body_with(
+    body: &[u8],
+    decrypt: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
+) -> Vec<String> {
     let text = String::from_utf8_lossy(body).into_owned();
     let compact: String = text
         .chars()
