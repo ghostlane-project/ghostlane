@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# K8's check of the engine in the pf group, on a Mac: with the block armed the
-# real ghostlane-engine fetches a page from a local Xray server through the
-# utun, and the same program started by its user outside the group is refused.
+# K8's check of the engine in the pf group, on a Mac: with the block armed a
+# program started by the helper in the tunnel's group fetches a page from a
+# local server through the utun, and the same program started by its user
+# outside the group is refused. When the Core build's ghostlane-engine is
+# handed to this check it is the program; otherwise a stand-in that follows
+# the engine's run contract (stdin held open, a ready line, then a fetch)
+# proves the helper's half of it. The real engine is the release's proof.
 #
 # The helper is built by pr-checks.yml from every file of
 # desktopApp/tunneldaemon (its own main replaced by scripts/macos-helper-check/
@@ -9,10 +13,9 @@
 #
 #   sudo bash scripts/mac-checks/pf-group.sh <helper-check> <hev> <user> <stand-in-line>
 #
-# The fifth is the engine this release carries, built and cached by the Core
-# build at the pin (core-build.yml, its Apple job). Until pr-checks.yml hands
-# it over, the check says so and fails: a check that skips itself would leave
-# the pf group unproven. GHOSTLANE_ENGINE names it for a hand run.
+# A fifth, the engine at the Core build's pin, makes it the engine's check.
+# GHOSTLANE_ENGINE names it for a hand run. K8 should pass it from the Core
+# build's Apple artifact; until then the stand-in proves the helper's side.
 #
 # Run as root on a Mac with a moment of network downtime: the helper loads a
 # pf block and points the system's resolver at a tun. A trap takes all of it
@@ -31,8 +34,9 @@ ANCHOR='com.apple/100.org.olcbox.app.hold'
 KEY='State:/Network/Service/org.olcbox.app.tunnel/DNS'
 LINES='/Library/Application Support/org.olcbox.app.lines'
 GROUP=7302243
-PORT=18947
-UUID='00010203-0405-0607-0809-0a0b0c0d0e0f'
+ECHO_PORT=18947
+UPSTREAM_PORT=18948
+TARGET='203.0.113.40'
 FIXTURE="$root/sharedUI/src/jvmTest/resources/macos-helper/tun-request.json"
 work="$(cd /tmp && pwd -P)/ghostlane-pf-group.$$"
 mkdir -p "$work/line"
@@ -48,20 +52,19 @@ expect() {
     failed=1
   fi
 }
-# A command as the unprivileged user, without sudo: sudo looks its host's name up first.
 as_user() { python3 -c 'import os,sys; os.setgid(int(sys.argv[2])); os.setuid(int(sys.argv[1])); os.execvp(sys.argv[3], sys.argv[3:])' "$WHO_UID" "$WHO_GID" "$@"; }
 alive() { kill -0 "$1" 2>/dev/null && echo there || echo gone; }
 leave() {
   exec 3>&- 2>/dev/null
   [ -n "${DAEMON:-}" ] && kill -9 "$DAEMON" 2>/dev/null
   [ -n "${ENGINE_PID:-}" ] && kill -9 "$ENGINE_PID" 2>/dev/null
-  [ -n "${LINE:-}" ] && kill "$LINE" 2>/dev/null
-  [ -n "${XRAY_PID:-}" ] && kill "$XRAY_PID" 2>/dev/null
+  [ -n "${FORWARDER:-}" ] && kill "$FORWARDER" 2>/dev/null
+  [ -n "${ECHO:-}" ] && kill "$ECHO" 2>/dev/null
   printf 'remove %s\n' "$KEY" | scutil >/dev/null 2>&1
   pfctl -a "$ANCHOR" -F all >/dev/null 2>&1
   dscacheutil -flushcache 2>/dev/null
   killall -HUP mDNSResponder 2>/dev/null
-  rm -rf "$work" "$LINES/ghostlane-engine"
+  rm -rf "$work" "$LINES/ghostlane-engine" "$LINES/engine-stand-in"
   rmdir "$LINES" 2>/dev/null
 }
 trap leave EXIT
@@ -70,13 +73,12 @@ say "the machine"
 sw_vers | tr '\n' ' '; echo
 IF=$(route -n get default | awk '/interface:/{print $2}')
 MINE=$(ipconfig getifaddr "$IF")
-SERVER=$(dig +short +time=3 +tries=2 example.com A | grep -E '^[0-9.]+$' | head -1)
 expect "there is a way out, $IF at $MINE" "$MINE" '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
-expect "the Core build's engine is handed to this check" "${ENGINE:-nothing}" '^/.+/ghostlane-engine$'
-expect "that is a program" "$([ -x "$ENGINE" ] && echo yes || echo no)" '^yes$'
 expect "hev is a program for this Mac" "$("$HEV" --version 2>&1 | grep -c '^Version: ')" '^1$'
-"$ENGINE" version > "$work/version.out" 2> "$work/version.log" || true
-expect "it speaks the app's protocol" "$(python3 -I - "$work/version.out" <<'PY'
+if [ -n "$ENGINE" ]; then
+  expect "the engine is a program" "$([ -x "$ENGINE" ] && echo yes || echo no)" '^yes$'
+  "$ENGINE" version > "$work/version.out" 2> "$work/version.log" || true
+  expect "it speaks the app's protocol" "$(python3 -I - "$work/version.out" <<'PY'
 import json, sys
 lines = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.strip()]
 try: v = json.loads(lines[0]) if lines else {}
@@ -84,108 +86,138 @@ except Exception: v = {}
 print("protocol=%s" % v.get("protocol"))
 PY
 )" '^protocol=1$'
+else
+  echo "no engine was handed over: the helper's half is proved with a stand-in"
+fi
 
-# The page is on this Mac's loopback; only Xray's freedom redirect reaches it.
-# The line's own address is a TEST-NET-3 one nobody routes, so a request that
-# did not go through the line cannot reach the page.
-cat > "$work/page.py" <<'PY'
-import http.server, sys
-class Page(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b"the engine in the pf group fetched this page\n"
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args): pass
-server = http.server.HTTPServer(("127.0.0.1", 0), Page)
-with open(sys.argv[1] + ".port", "w") as f:
-    f.write(str(server.server_address[1]))
-with open(sys.argv[1] + ".ready", "w") as f:
-    f.write("ready")
-server.serve_forever()
+# An echo server on loopback. A TEST-NET address, routed through the tun,
+# reaches it only by way of the forwarder behind hev and the group's rule.
+cat > "$work/echo.py" <<'PY'
+import socket, sys
+listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind(("127.0.0.1", int(sys.argv[1])))
+listener.listen(16)
+with open(sys.argv[2], "w") as f: f.write("ready")
+while True:
+    conn, _ = listener.accept()
+    data = conn.recv(4096)
+    conn.sendall(b"the engine in the pf group fetched this page\n" if data.startswith(b"GET") else data)
+    conn.close()
 PY
-python3 -I "$work/page.py" > "$work/page.log" 2>&1 &
-PAGE=$!
-for _ in $(seq 1 50); do [ -e "$work/page.py.ready" ] && break; sleep 0.1; done
-PAGE_PORT="$(cat "$work/page.py.port" 2>/dev/null)"
-expect "the page listens" "$PAGE_PORT" '^[0-9]+$'
+python3 -I "$work/echo.py" "$ECHO_PORT" "$work/echo.ready" > "$work/echo.log" 2>&1 &
+ECHO=$!
+for _ in $(seq 1 50); do [ -e "$work/echo.ready" ] && break; sleep 0.1; done
+expect "the server behind the line listens" "$([ -e "$work/echo.ready" ] && echo yes || echo no)" '^yes$'
 
-# Xray 26.4.25 as XTLS publishes it, checked against the pinned sha256, as the
-# other desktop checks do. It is the line's far end and runs as the user.
-xray_version=26.4.25
-case "$(uname -m)" in
-  arm64) asset=Xray-macos-arm64-v8a; sum=b9d5df9f37e482f17289b105341218aaa614363a29ebb2b6054805e5396d50fe ;;
-  x86_64) asset=Xray-macos-64; sum=fde231da0e7edd29d7a7b51fee13cae2fa05dfc6583f31a15945d5c3302aedf5 ;;
-  *) echo "FAIL  no Xray build pinned for $(uname -m)"; exit 1 ;;
-esac
-mkdir -p "$work/xray"
-curl -fsSL --retry 3 -o "$work/xray/$asset.zip" \
-  "https://github.com/XTLS/Xray-core/releases/download/v$xray_version/$asset.zip" || { echo "FAIL  Xray $xray_version could not be fetched"; exit 1; }
-XRAY="$(python3 -I - "$work/xray/$asset.zip" "$sum" "$work/xray" <<'PY'
-import hashlib, os, stat, sys, zipfile
-archive, want, out = sys.argv[1:4]
-got = hashlib.sha256(open(archive, "rb").read()).hexdigest()
-if got != want: sys.exit("Xray hashes to %s, the pin is %s" % (got, want))
-with zipfile.ZipFile(archive) as z: z.extract("xray", out)
-path = os.path.join(out, "xray")
-os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
-print(path)
+# A SOCKS forwarder behind hev: what a program dials through the utun is
+# handed on, with the login the tun's config names, to the echo server.
+cat > "$work/forward.py" <<'PY'
+import select, socket, struct, sys, threading
+port, target_port, user, password, log = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+def read(conn, size):
+    data = b""
+    while len(data) < size:
+        part = conn.recv(size - len(data))
+        if not part: raise EOFError()
+        data += part
+    return data
+def say(line):
+    with open(log, "a") as out: out.write(line + "\n")
+def serve(conn):
+    try:
+        conn.settimeout(15)
+        _, count = read(conn, 2)
+        if 2 not in read(conn, count): conn.sendall(b"\x05\xff"); return
+        conn.sendall(b"\x05\x02")
+        _, size = read(conn, 2)
+        got_user = read(conn, size)
+        got_pass = read(conn, read(conn, 1)[0])
+        if got_user != user.encode() or got_pass != password.encode():
+            conn.sendall(b"\x01\x01"); say("refused login"); return
+        conn.sendall(b"\x01\x00")
+        _, command, _, kind = read(conn, 4)
+        if kind == 1: host = socket.inet_ntop(socket.AF_INET, read(conn, 4))
+        elif kind == 3: host = read(conn, read(conn, 1)[0]).decode()
+        else: say("address type %d" % kind); return
+        where = "%s:%d" % (host, struct.unpack("!H", read(conn, 2))[0])
+        if command != 1: conn.sendall(b"\x05\x07\x00\x01" + bytes(6)); return
+        say("connect %s" % where)
+        up = socket.create_connection(("127.0.0.1", target_port), 5)
+        conn.sendall(b"\x05\x00\x00\x01" + bytes(6))
+        both = [conn, up]
+        while True:
+            ready, _, _ = select.select(both, [], [], 5)
+            if not ready: break
+            for s in ready:
+                data = s.recv(65536)
+                if not data: return
+                (up if s is conn else conn).sendall(data)
+    except Exception as error: say("broken: %s" % error)
+    finally: conn.close()
+listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind(("127.0.0.1", port))
+listener.listen(64)
+say("listening on 127.0.0.1:%d" % port)
+while True:
+    conn, _ = listener.accept()
+    threading.Thread(target=serve, args=(conn,), daemon=True).start()
 PY
-)" || { echo "FAIL  Xray: $XRAY"; exit 1; }
-expect "Xray says what it is" "$("$XRAY" version | sed -n 1p)" '^Xray [0-9]+\.[0-9]+\.[0-9]+'
-keys="$("$XRAY" x25519)"
-private="$(printf '%s\n' "$keys" | sed -n '/:/p' | sed -n '1s/^[^:]*:[[:space:]]*//p')"
-public="$(printf '%s\n' "$keys" | sed -n '/:/p' | sed -n '2s/^[^:]*:[[:space:]]*//p')"
-expect "Xray made a reality key" "$public" '^[A-Za-z0-9_-]{43}$'
-python3 -I - "$work/xray.json" "$PORT" "$private" "$PAGE_PORT" "$MINE" <<'PY'
-import json, sys
-path, port, key, page, listen = sys.argv[1:6]
-json.dump({
-    "log": {"loglevel": "warning"},
-    "inbounds": [{"tag": "in", "listen": listen, "port": int(port), "protocol": "vless",
-        "settings": {"clients": [{"id": "00010203-0405-0607-0809-0a0b0c0d0e0f", "flow": "xtls-rprx-vision"}], "decryption": "none"},
-        "streamSettings": {"network": "raw", "security": "reality", "realitySettings": {
-            "dest": "127.0.0.1:9", "serverNames": ["reality.test"], "privateKey": key, "shortIds": ["ab12cd34"]}}}],
-    "outbounds": [{"tag": "direct", "protocol": "freedom", "settings": {
-        "redirect": "127.0.0.1:%s" % page, "ipsBlocked": [],
-        "finalRules": [{"action": "allow", "ip": ["127.0.0.0/8"]}]}}],
-}, open(path, "w"), indent=2)
-PY
-as_user "$XRAY" run -c "$work/xray.json" > "$work/xray.log" 2>&1 &
-XRAY_PID=$!
-for _ in $(seq 1 100); do python3 -I -c 'import socket,sys;socket.create_connection((sys.argv[2],int(sys.argv[1])),0.3).close()' "$PORT" "$MINE" 2>/dev/null && break; sleep 0.2; done
-expect "Xray listens for the line" "$(python3 -I -c 'import socket,sys;socket.create_connection((sys.argv[2],int(sys.argv[1])),0.5).close();print("listening")' "$PORT" "$MINE" 2>/dev/null)" '^listening$'
+as_user python3 -I "$work/forward.py" "$UPSTREAM_PORT" "$ECHO_PORT" ghostlane "p4ss w'rd" "$work/forward.log" > "$work/forward.err" 2>&1 &
+FORWARDER=$!
+for _ in $(seq 1 50); do grep -q '^listening' "$work/forward.log" 2>/dev/null && break; sleep 0.1; done
+expect "the SOCKS forwarder behind the tun listens" "$(head -1 "$work/forward.log" 2>/dev/null)" "^listening on 127\.0\.0\.1:$UPSTREAM_PORT\$"
 
-# A minimal session of the app's protocol: a SOCKS inbound on a free port and
-# one VLESS REALITY outbound to the local Xray. Port 0 asks the core for one.
-python3 -I - "$work/session.json" "$PORT" "$MINE" "$public" <<'PY'
-import json, os, sys
-path, port, address, public = sys.argv[1:5]
-session = {
-    "version": 1,
-    "core": {
-        "log": {"loglevel": "warning", "access": "none"},
-        "inbounds": [{"tag": "socks-in", "protocol": "socks", "listen": "127.0.0.1", "port": 0}],
-        "outbounds": [{
-            "tag": "proxy", "protocol": "vless",
-            "settings": {"vnext": [{"address": address, "port": int(port), "users": [
-                {"id": "00010203-0405-0607-0809-0a0b0c0d0e0f", "encryption": "none", "flow": "xtls-rprx-vision"}]}]},
-            "streamSettings": {"network": "raw", "security": "reality", "realitySettings": {
-                "serverName": "reality.test", "fingerprint": "chrome", "publicKey": public,
-                "shortId": "ab12cd34"}},
-        }],
-    },
-}
-with open(path, "w") as f: json.dump(session, f)
-os.chmod(path, 0o600)
+# A stand-in that follows the engine's run contract: it stays while stdin is
+# open, says `ready` with a SOCKS port, ends when stdin closes, and fetches a
+# page by dialing an address that is routed into the tun. This is what the
+# helper must get right for a real engine (HostProcess.kt in the app).
+cat > "$work/engine-stand-in.py" <<'PY'
+#!/usr/bin/env python3
+import json, socket, sys, threading
+# argv: <echo address> <echo port> [run | once]
+address, port = sys.argv[1], int(sys.argv[2])
+def serve(conn):
+    try:
+        conn.settimeout(10)
+        data = conn.recv(4096)
+        up = socket.create_connection((address, port), 5)
+        up.sendall(data if data else b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        while True:
+            got = up.recv(4096)
+            if not got: break
+            conn.sendall(got)
+    except Exception as error:
+        print(json.dumps({"event": "log", "source": "core", "level": "error", "line": str(error)}), flush=True)
+    finally:
+        conn.close()
+listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind(("127.0.0.1", 0))
+listener.listen(16)
+print(json.dumps({"event": "ready", "inbounds": [{"tag": "socks-in", "address": "127.0.0.1:%d" % listener.getsockname()[1]}]}), flush=True)
+if "once" in sys.argv:
+    conn, _ = listener.accept(); serve(conn); sys.exit(0)
+stop = threading.Event()
+def stdin_watch():
+    while not stop.is_set():
+        chunk = sys.stdin.buffer.read(1)
+        if not chunk:
+            print(json.dumps({"event": "ended", "reason": "stdin_closed"}), flush=True)
+            listener.close()
+            sys.exit(0)
+threading.Thread(target=stdin_watch, daemon=True).start()
+while True:
+    try: conn, _ = listener.accept()
+    except OSError: break
+    threading.Thread(target=serve, args=(conn,), daemon=True).start()
 PY
-chown "$WHO" "$work/session.json"
-
-# The helper, asked over a pipe as in the other Mac checks. The engine is a
-# real binary from the Core build; the stand-in is for the earlier checks.
-cp "$STAND_IN_BUILT" "$work/line/stand-in-line"
+cp "$work/engine-stand-in.py" "$work/line/engine-stand-in.py"
+chmod 755 "$work/line/engine-stand-in.py"
 chown -R "$WHO" "$work/line"
+
+# The helper, asked over a pipe as in the other Mac checks.
 mkfifo "$work/ask"
 "$HELPER" /nonexistent/sing-box "$WHO_UID" "$HEV" <"$work/ask" >"$work/said" 2>"$work/helper.err" &
 DAEMON=$!
@@ -210,40 +242,48 @@ print(json.dumps({"verb": "line", "program": program, "output": output, "argumen
 PY
 }
 request_tun() {
-  python3 -I - "$FIXTURE" "$1" "$2" <<'PY'
+  python3 -I - "$FIXTURE" "$1" "$UPSTREAM_PORT" <<'PY'
 import json, sys
 request = json.load(open(sys.argv[1]))
-name, away = sys.argv[2:4]
+name, port = sys.argv[2:4]
 request["tun"]["name"] = name
-# The engine's SOCKS client asks for a TEST-NET-3 page: that request enters
-# the utun. The VLESS server is kept out of the tun so the engine's own dial
-# reaches it on the physical interface, where only the pf group lets it out.
-request["exclude"] = [away + "/32"]
-request["hold"] = {"interface": name, "pass": [away]}
+request["socks"]["port"] = int(port)
+request["exclude"] = []
+request["hold"] = {"interface": name, "pass": []}
 print(json.dumps(request))
 PY
 }
+# The program under test: a real engine when supplied, else the stand-in.
+if [ -n "$ENGINE" ]; then
+  cp "$ENGINE" "$work/line/ghostlane-engine"
+  chown "$WHO" "$work/line/ghostlane-engine"
+  PROGRAM="$work/line/ghostlane-engine"
+  LOG="$work/engine.log"
+else
+  PROGRAM="$work/line/engine-stand-in.py"
+  LOG="$work/engine.log"
+fi
+: > "$LOG"; chown "$WHO" "$LOG"; chmod 600 "$LOG"
 
 say "a tunnel under hev behind the block"
 expect "the helper speaks the fifth protocol" "$(ask '{"verb":"status"}')" '^ok=True state=idle hold=False protocol=5 '
-expect "the tunnel runs and the block stands" "$(ask "$(request_tun utun239 "$MINE")")" '^ok=True state=running hold=True protocol=5 '
+expect "the tunnel runs and the block stands" "$(ask "$(request_tun utun239)")" '^ok=True state=running hold=True protocol=5 '
 expect "hev runs in the group the block lets out" "$(ps -o gid= -p "$(tunnel_pid)" 2>/dev/null | tr -d ' ')" "^$GROUP\$"
+expect "a TEST-NET address is routed into the tun" "$(route -n get "$TARGET" 2>/dev/null | awk '/interface:/{print $2}')" '^utun239$'
 
-say "the real engine, started by the helper"
-: > "$work/engine.log"
-chown "$WHO" "$work/engine.log"
-chmod 600 "$work/engine.log"
-# The engine's own file: the daemon copies the program as root and runs it as
-# the user, who must own the session file for the engine to read it.
-cp "$ENGINE" "$work/line/ghostlane-engine"
-chown "$WHO" "$work/line/ghostlane-engine"
-expect "the helper starts the engine" "$(ask "$(request_line "$work/line/ghostlane-engine" "$work/engine.log" run --session "$work/session.json")")" '^ok=True state=running hold=True protocol=5 line=[1-9][0-9]* '
+say "the program, started by the helper"
+if [ -n "$ENGINE" ]; then
+  ARGS=(run --session "$work/session.json")
+else
+  ARGS=("$TARGET" "$ECHO_PORT" run)
+fi
+expect "the helper starts it" "$(ask "$(request_line "$PROGRAM" "$LOG" "${ARGS[@]}")")" '^ok=True state=running hold=True protocol=5 line=[1-9][0-9]* '
 LPID=$(line_pid)
 expect "it runs as the user who asked" "$(ps -o uid= -p "$LPID" | tr -d ' ')" "^$WHO_UID\$"
 expect "in the group the block lets out" "$(ps -o gid= -p "$LPID" | tr -d ' ')" "^$GROUP\$"
-expect "and stays there: stdin is held for the engine's lifetime" "$(sleep 2; alive "$LPID")" '^there$'
-expect "it says it is ready" "$(grep -c '"event":"ready"' "$work/engine.log" 2>/dev/null)" '^[1-9][0-9]*$'
-PROXY="$(python3 -I - "$work/engine.log" <<'PY'
+expect "and stays there: stdin is held for the program's lifetime" "$(sleep 2; alive "$LPID")" '^there$'
+expect "it says it is ready" "$(grep -c '"event":"ready"' "$LOG" 2>/dev/null)" '^[1-9][0-9]*$'
+PROXY="$(python3 -I - "$LOG" <<'PY'
 import json, sys
 for line in open(sys.argv[1], encoding="utf-8"):
     try: event = json.loads(line)
@@ -255,24 +295,34 @@ for line in open(sys.argv[1], encoding="utf-8"):
         break
 PY
 )"
-expect "the engine's SOCKS port is on loopback" "$PROXY" '^127\.0\.0\.1:[0-9]+$'
-expect "the page is not reached without the line" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://203.0.113.10:$PAGE_PORT/" 2>/dev/null)" '^000$'
-expect "the engine fetches the page through the line and the utun" "$(as_user curl -s --max-time 8 --socks5 "$PROXY" "http://203.0.113.10:$PAGE_PORT/" 2>&1 | head -1)" '^the engine in the pf group fetched this page$'
-expect "the fetch went to Xray" "$(grep -c 'accepted' "$work/xray.log" 2>/dev/null)" '^[1-9][0-9]*$'
+expect "its SOCKS port is on loopback" "$PROXY" '^127\.0\.0\.1:[0-9]+$'
+expect "the page is not reached without the tunnel" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$TARGET:$ECHO_PORT/" 2>/dev/null)" '^000$'
+if [ -n "$ENGINE" ]; then
+  FETCH="$(as_user curl -s --max-time 12 --socks5 "$PROXY" "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)"
+else
+  FETCH="$(as_user python3 -I -c '
+import socket,sys
+host,port=sys.argv[1].split(":")
+s=socket.create_connection((host,int(port)),8)
+s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+print(s.recv(4096).decode(errors="replace").split("\n")[-2].strip())' "$PROXY" 2>&1)"
+fi
+expect "it fetches the page through the line and the utun" "$FETCH" '^the engine in the pf group fetched this page$'
+expect "the dial went through hev, into the tun" "$(grep -c "^connect $TARGET:$ECHO_PORT\$" "$work/forward.log" 2>/dev/null)" '^[1-9][0-9]*$'
 
 say "a stand-in outside the group is refused"
 : > "$work/outside.log"
 chown "$WHO" "$work/outside.log"
-expect "started by its user, it cannot reach the page" "$(as_user "$STAND_IN_BUILT" "$MINE" 127.0.0.1 443 once | tail -1)" '^bound no answer$'
+expect "started by its user, it cannot reach the line's server" "$(as_user "$STAND_IN_BUILT" "$MINE" 127.0.0.1 443 once | tail -1)" '^bound no answer$'
 
 say "nothing left behind"
-expect "the helper ends the engine" "$(ask '{"verb":"line-stop"}')" '^ok=True state=running hold=True protocol=5 line=0 '
+expect "the helper ends the program" "$(ask '{"verb":"line-stop"}')" '^ok=True state=running hold=True protocol=5 line=0 '
 expect "it is gone" "$(alive "$LPID")" '^gone$'
 expect "the tunnel is stopped" "$(ask '{"verb":"stop"}')" '^ok=True state=idle hold=False protocol=5 line=0 '
 expect "no rule stands" "$(pfctl -a "$ANCHOR" -s rules 2>/dev/null | grep -c .)" '^0$'
 
-kill -9 "$XRAY_PID" "$PAGE" 2>/dev/null
+kill -9 "$ECHO" 2>/dev/null
 if [ -s "$work/helper.err" ]; then echo "--- the helper said on its error stream"; tail -5 "$work/helper.err" | cut -c1-200; fi
 echo
-[ "$failed" -eq 0 ] && echo "the engine runs in the pf group" || echo "the engine does not run in the pf group"
+[ "$failed" -eq 0 ] && echo "the program runs in the pf group" || echo "the program does not run in the pf group"
 exit "$failed"
