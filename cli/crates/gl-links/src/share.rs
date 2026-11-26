@@ -62,7 +62,7 @@ impl Refusal {
             Refusal::NotVless => "not a vless:// line".to_string(),
             Refusal::NotHy2 => "not a hysteria2:// line".to_string(),
             Refusal::UnsupportedTransport(t) => format!("transport not supported: {t}"),
-            Refusal::Line(why) => format!("vless line: {why}"),
+            Refusal::Line(why) => why.clone(),
         }
     }
 }
@@ -122,7 +122,8 @@ pub fn parse_vless(line: &str) -> Result<VlessLine, Refusal> {
     if !line.starts_with("vless://") {
         return Err(Refusal::NotVless);
     }
-    let p = split_link(line, "vless://").map_err(Refusal::Line)?;
+    let p =
+        split_link(line, "vless://").map_err(|why| Refusal::Line(format!("vless line: {why}")))?;
     let q = &p.query;
     let typ = query_value(q, "type").trim().to_lowercase();
     let typ = if typ.is_empty() { "tcp" } else { &typ };

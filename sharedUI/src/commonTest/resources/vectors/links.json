@@ -69,7 +69,7 @@
         "uuid": "00000000-0000-4000-8000-000000000000"
       },
       "group": "vless",
-      "line": "vless://00000000-0000-4000-8000-000000000000@45.153.230.44:8444?type=xhttp&security=reality&encryption=none&pbk=P&sid=S&fp=chrome&sni=yandex.ru&path=/pk&host=yandex.ru&mode=packet-up&flow=xtls-rprx-vision#8J-Ht_Cfh7ogRUtCIMK3IFhIVFRQ",
+      "line": "vless://00000000-0000-4000-8000-000000000000@45.153.230.44:8444?type=xhttp&security=reality&encryption=none&pbk=P&sid=S&fp=chrome&sni=yandex.ru&path=/pk&host=yandex.ru&mode=packet-up&flow=xtls-rprx-vision#%F0%9F%87%B7%F0%9F%87%BA%20EKB%20%C2%B7%20XHTTP",
       "name": "xhttp-packet-up",
       "note": "flow is dropped for xhttp"
     },
@@ -306,7 +306,7 @@
     },
     {
       "expect": {
-        "refusal": "vless line: empty host or credentials"
+        "refusal": "vless line: no host:port"
       },
       "group": "vless",
       "line": "vless://00000000-0000-4000-8000-000000000000@:443",
@@ -342,7 +342,7 @@
         "sni": "s.example"
       },
       "group": "hy2",
-      "line": "hysteria2://3b8cdf3e-061c-4230-8e47-28a838ec91e0@45.153.230.44:38443?sni=s.example&obfs=salamander&obfs-password=470b5651&insecure=0&pinSHA256=abcd#8J-Ht_Cfh7ogRUtCIMK3IEh5Mg",
+      "line": "hysteria2://3b8cdf3e-061c-4230-8e47-28a838ec91e0@45.153.230.44:38443?sni=s.example&obfs=salamander&obfs-password=470b5651&insecure=0&pinSHA256=abcd#%F0%9F%87%B7%F0%9F%87%BA%20EKB%20%C2%B7%20Hy2",
       "name": "hy2-full"
     },
     {

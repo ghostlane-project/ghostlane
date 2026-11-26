@@ -89,181 +89,155 @@
     },
     {
       "expect": {
-        "expect": {
-          "announce": "hello",
-          "refusal": "",
-          "supportURL": "https://t.me/x",
-          "title": "@Xrayvlesspaymentbot",
-          "updateIntervalHours": 1,
-          "userInfo": {
-            "download": 12,
-            "expire": 1854106383,
-            "total": 107373108658176,
-            "upload": 0
-          }
-        },
-        "headers": {
-          "Announce": "base64:aGVsbG8=",
-          "Profile-Title": "base64:QFhyYXl2bGVzc3BheW1lbnRib3Q=",
-          "Profile-Update-Interval": "1",
-          "Subscription-Userinfo": "upload=0; download=12; total=107373108658176; expire=1854106383",
-          "Support-Url": "https://t.me/x"
+        "announce": "hello",
+        "refusal": "",
+        "supportURL": "https://t.me/x",
+        "title": "@Xrayvlesspaymentbot",
+        "updateIntervalHours": 1,
+        "userInfo": {
+          "download": 12,
+          "expire": 1854106383,
+          "total": 107373108658176,
+          "upload": 0
         }
       },
       "group": "headers",
+      "headers": {
+        "Announce": "base64:aGVsbG8=",
+        "Profile-Title": "base64:QFhyYXl2bGVzc3BheW1lbnRib3Q=",
+        "Profile-Update-Interval": "1",
+        "Subscription-Userinfo": "upload=0; download=12; total=107373108658176; expire=1854106383",
+        "Support-Url": "https://t.me/x"
+      },
       "name": "full"
     },
     {
       "expect": {
-        "expect": {
-          "announce": "",
-          "refusal": "",
-          "supportURL": "",
-          "title": "",
-          "updateIntervalHours": 24,
-          "userInfo": null,
-          "webPageURL": ""
-        },
-        "headers": {}
+        "announce": "",
+        "refusal": "",
+        "supportURL": "",
+        "title": "",
+        "updateIntervalHours": 24,
+        "userInfo": null,
+        "webPageURL": ""
       },
       "group": "headers",
+      "headers": {},
       "name": "defaults"
     },
     {
       "expect": {
-        "expect": {
-          "title": "Acme [2J VPN"
-        },
-        "headers": {
-          "Profile-Title": "Acme\u001b[2J\nVPN"
-        }
+        "title": "Acme [2J VPN"
       },
       "group": "headers",
+      "headers": {
+        "Profile-Title": "Acme\u001b[2J\nVPN"
+      },
       "name": "title-control"
     },
     {
       "expect": {
-        "expect": {
-          "title": "NPV emcA"
-        },
-        "headers": {
-          "Profile-Title": "‮NPV emcA"
-        }
+        "title": "NPV emcA"
       },
       "group": "headers",
+      "headers": {
+        "Profile-Title": "‮NPV emcA"
+      },
       "name": "title-direction"
     },
     {
       "expect": {
-        "expect": {
-          "title": "Acme VPN"
-        },
-        "headers": {
-          "Profile-Title": "BASE64:QWNtZQlWUE4="
-        }
+        "title": "Acme VPN"
       },
       "group": "headers",
+      "headers": {
+        "Profile-Title": "BASE64:QWNtZQlWUE4="
+      },
       "name": "title-base64-tabs"
     },
     {
       "expect": {
-        "expect": {
-          "title": "Acme"
-        },
-        "headers": {
-          "Profile-Title": "Base64: QWNtZQ== "
-        }
+        "title": "Acme"
       },
       "group": "headers",
+      "headers": {
+        "Profile-Title": "Base64: QWNtZQ== "
+      },
       "name": "title-base64-case-space"
     },
     {
       "expect": {
-        "expect": {
-          "title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
-        },
-        "headers": {
-          "Profile-Title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
-        }
+        "title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
       },
       "group": "headers",
+      "headers": {
+        "Profile-Title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
+      },
       "name": "title-length"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": ""
-        },
-        "headers": {
-          "subscription-always-hwid-enable": "1",
-          "x-hwid-active": "true",
-          "x-hwid-limit": "true"
-        }
+        "refusal": ""
       },
       "group": "headers",
+      "headers": {
+        "subscription-always-hwid-enable": "1",
+        "x-hwid-active": "true",
+        "x-hwid-limit": "true"
+      },
       "name": "refusal-none"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": "limit"
-        },
-        "headers": {
-          "x-hwid-active": "true",
-          "x-hwid-max-devices-reached": "true"
-        }
+        "refusal": "limit"
       },
       "group": "headers",
+      "headers": {
+        "x-hwid-active": "true",
+        "x-hwid-max-devices-reached": "true"
+      },
       "name": "refusal-max-devices"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": "no-device"
-        },
-        "headers": {
-          "x-hwid-not-supported": "true"
-        }
+        "refusal": "no-device"
       },
       "group": "headers",
+      "headers": {
+        "x-hwid-not-supported": "true"
+      },
       "name": "refusal-not-supported"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": "limit"
-        },
-        "headers": {
-          "X-HWID-MAX-DEVICES-REACHED": " True "
-        }
+        "refusal": "limit"
       },
       "group": "headers",
+      "headers": {
+        "X-HWID-MAX-DEVICES-REACHED": " True "
+      },
       "name": "refusal-case-and-space"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": ""
-        },
-        "headers": {
-          "x-hwid-max-devices-reached": "false",
-          "x-hwid-not-supported": "1"
-        }
+        "refusal": ""
       },
       "group": "headers",
+      "headers": {
+        "x-hwid-max-devices-reached": "false",
+        "x-hwid-not-supported": "1"
+      },
       "name": "refusal-only-true"
     },
     {
       "expect": {
-        "expect": {
-          "refusal": "limit"
-        },
-        "headers": {
-          "x-hwid-max-devices-reached": "true",
-          "x-hwid-not-supported": "true"
-        }
+        "refusal": "limit"
       },
       "group": "headers",
+      "headers": {
+        "x-hwid-max-devices-reached": "true",
+        "x-hwid-not-supported": "true"
+      },
       "name": "refusal-both"
     },
     {

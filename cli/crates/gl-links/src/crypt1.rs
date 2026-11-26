@@ -107,7 +107,7 @@ fn decrypt_block(w: &[u8; 240], inv: &[u8; 256], block: &mut [u8; 16]) {
         let mut shifted = [0u8; 16];
         for c in 0..4 {
             for row in 0..4 {
-                shifted[c * 4 + row] = block[((c + row) % 4) * 4 + row];
+                shifted[c * 4 + row] = block[((c + 4 - row) % 4) * 4 + row];
             }
         }
         *block = shifted;
@@ -133,7 +133,7 @@ fn decrypt_block(w: &[u8; 240], inv: &[u8; 256], block: &mut [u8; 16]) {
     let mut shifted = [0u8; 16];
     for c in 0..4 {
         for row in 0..4 {
-            shifted[c * 4 + row] = block[((c + row) % 4) * 4 + row];
+            shifted[c * 4 + row] = block[((c + 4 - row) % 4) * 4 + row];
         }
     }
     *block = shifted;
