@@ -18,7 +18,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -235,7 +234,6 @@ class DesktopLanProxyRustTest {
     fun goStaysTheDefaultAndOwnsItsListenerWhileRustUsesTheSessionsCore() {
         val go = LanCores.go {}
         val rust = LanCores.rust()
-        assertEquals("sing-box", LanCores.create {}.name)
         assertEquals("sing-box", go.name)
         assertEquals("ghostlane-engine", rust.name)
         assertTrue(go.ownsListener)

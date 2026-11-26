@@ -61,8 +61,9 @@ import javax.naming.directory.InitialDirContext
  * Linux tun is bound to; [sessionParent] where the session files go (the
  * system's temporary directory when null). [lanSettings] is the manager's
  * current LAN sharing settings, and [lanNetworkProblem] says when the network
- * they name is no longer the one the machine is on; a line whose LAN must be
- * left out is written and logged without it.
+ * they name is no longer the one the machine is on; [lanPortHeld] probes the
+ * LAN port before the run. A line whose LAN must be left out for any of these
+ * reasons, or whose plan the core refuses, is written and logged without it.
  */
 internal class HostEngine(
     host: DesktopEngineHost,
@@ -235,15 +236,45 @@ private class HostLine(
     @Volatile private var current: HostProcess? = null
     @Volatile private var checked: Path? = null
 
-    override suspend fun start(request: LineRequest): LineStarted = withContext(Dispatchers.IO) {
-        val sharing = lanSettings()
-        val effective = if (!sharing.shareOnLan) sharing else {
-            val problem = lanNetworkProblem()
-            if (problem == null) sharing else {
-                log("$NAME: LAN sharing was left out: $problem")
-                sharing.copy(shareOnLan = false)
+    /**
+     * What the line can be given without losing it. LAN sharing is one inbound
+     * of the core: a port another program holds, or a plan the core refuses,
+     * costs that inbound and nothing else. The reason is kept for the proxy,
+     * which otherwise binds the port itself.
+     */
+    private fun withoutLan(
+        request: LineRequest,
+        sharing: DesktopSocksProxySettings,
+    ): Pair<DesktopSocksProxySettings, String?> {
+        if (!sharing.shareOnLan) return sharing to null
+        val problem = lanNetworkProblem()
+        if (problem != null) {
+            log("$NAME: LAN sharing was left out: $problem")
+            return sharing.copy(shareOnLan = false) to problem
+        }
+        val own = CoreInbound.Proxy(request.port, request.login)
+        // A line the core refuses for its own sake is still refused below:
+        // only what the LAN inbound adds is left out here.
+        if (CoreInbound.refusal(CoreInbound.Plan(own)) == null) {
+            val lan = CoreInbound.Lan(
+                sharing.lanAddress, sharing.lanPort, SocksLogin(sharing.lanUsername, sharing.lanPassword)
+            )
+            CoreInbound.refusal(CoreInbound.Plan(own, lan))?.let { refused ->
+                log("$NAME: LAN sharing was left out: $refused")
+                return sharing.copy(shareOnLan = false) to refused
+            }
+            if (lanPortHeld(lan)) {
+                val reason = "LAN port ${lan.address}:${lan.port} is already in use"
+                log("$NAME: LAN sharing was left out: $reason")
+                return sharing.copy(shareOnLan = false) to reason
             }
         }
+        return sharing to null
+    }
+
+    override suspend fun start(request: LineRequest): LineStarted = withContext(Dispatchers.IO) {
+        LanCores.lineStopped()
+        val (effective, lanProblem) = withoutLan(request, lanSettings())
         val line = HostSession.line(request, serverAddress, effective, defaultInterface)
         stopEngine()
         val program = binary()
@@ -263,6 +294,7 @@ private class HostLine(
         when (val start = run.awaitStart(START_WAIT_MS)) {
             is HostProcess.Start.Ended -> {
                 run.stop()
+                LanCores.lineStopped()
                 val why = start.ended?.let { ended ->
                     listOfNotNull(ended.code?.word, ended.message).joinToString(": ").ifEmpty { ended.reason.word }
                 } ?: "it exited with code ${start.exitCode}"
@@ -270,6 +302,7 @@ private class HostLine(
             }
             is HostProcess.Start.Ready, HostProcess.Start.Waiting -> Unit
         }
+        LanCores.lineStarted(line.lan, lanProblem)
         LineStarted(
             said = "$NAME (${request.kind}) starting on 127.0.0.1:${request.port}" +
                 (line.bind?.let { ", its sockets bound to $it" }.orEmpty()),
@@ -289,6 +322,8 @@ private class HostLine(
 
     private fun stopEngine() {
         current?.stop()
+        current = null
+        LanCores.lineStopped()
     }
 
     override suspend fun startFront(request: FrontRequest) = go.startFront(request)

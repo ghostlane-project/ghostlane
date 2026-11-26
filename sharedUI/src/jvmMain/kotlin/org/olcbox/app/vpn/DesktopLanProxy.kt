@@ -53,10 +53,10 @@ internal interface LanCore {
 }
 
 /**
- * The cores LAN sharing can run on. Go stays the default; the engine is
- * chosen by setting [factory], beside the desktop engine's own. Both read the
- * manager's settings through [settings], which the line's core reads too when
- * it is the Rust engine.
+ * What LAN sharing reads: the manager's settings, and the LAN inbound the
+ * running line's core actually holds. Go's listener is the default; a line's
+ * core is used only when it holds these exact settings, so the two engines
+ * cannot disagree about who binds the port.
  */
 internal object LanCores {
     /** What the running line's core holds: its LAN inbound, or why it holds none. */
@@ -83,8 +83,6 @@ internal object LanCores {
 
     /** Whether the running line's core holds exactly these LAN settings. */
     fun lineHolds(lan: CoreInbound.Lan): Boolean = lineState.lan == lan
-
-    fun create(onOutput: (String) -> Unit): LanCore = go(onOutput)
 
     /** sing-box, as LAN sharing has always run. */
     fun go(onOutput: (String) -> Unit): LanCore = GoLanCore(onOutput)
@@ -139,11 +137,14 @@ private class RustLanCore(
 /** A credentialed SOCKS5 listener bound to one explicitly selected private adapter. */
 internal class DesktopLanProxy(
     private val onOutput: (String) -> Unit,
-    private val core: LanCore = LanCores.create(onOutput),
+    private val core: LanCore = LanCores.go(onOutput),
     settings: () -> DesktopSocksProxySettings = LanCores.settings,
     private val availableAddresses: () -> List<String> = Companion::privateAddresses,
     private val readNetworkIdentity: (String) -> String? = Companion::networkIdentity,
 ) {
+    /** Stands for the session's own core when that core holds the LAN inbound. */
+    private val lineCore: LanCore = LanCores.rust(onOutput)
+    private var active: LanCore = core
     private var firewallRule: String? = null
 
     init {
@@ -165,23 +166,26 @@ internal class DesktopLanProxy(
             "This is a different local network; select the LAN interface again before sharing"
         }
         // Both the Go listener and the Rust line's plan refuse the same shape.
-        val plan = CoreInbound.Plan(
-            CoreInbound.Proxy(upstream.port),
-            CoreInbound.Lan(
-                normalized.lanAddress, normalized.lanPort,
-                SocksLogin(normalized.lanUsername, normalized.lanPassword),
-            ),
+        val lan = CoreInbound.Lan(
+            normalized.lanAddress, normalized.lanPort,
+            SocksLogin(normalized.lanUsername, normalized.lanPassword),
         )
-        CoreInbound.refusal(plan)?.let { throw IllegalArgumentException(it) }
+        CoreInbound.refusal(CoreInbound.Plan(CoreInbound.Proxy(upstream.port), lan))
+            ?.let { throw IllegalArgumentException(it) }
+        // The running session, not a switch set elsewhere, owns the port. A
+        // line that left LAN out, a Go line and a room's front all keep the
+        // listener the app has always started here.
+        val listener = if (LanCores.lineHolds(lan)) lineCore else core
+        active = listener
 
         try {
-            if (DesktopPaths.os == DesktopOs.Windows && core.ownsListener) cleanupStaleWindowsFirewallRules()
-            if (core.ownsListener) {
+            if (DesktopPaths.os == DesktopOs.Windows && listener.ownsListener) cleanupStaleWindowsFirewallRules()
+            if (listener.ownsListener) {
                 requirePortFree(host, normalized.lanPort)
                 val ownershipPort = allocateLoopbackPort()
                 val ownershipUsername = DesktopSocksProxySettings.randomToken(16)
                 val ownershipPassword = DesktopSocksProxySettings.randomToken(32)
-                core.start(
+                listener.start(
                     config(
                         host, normalized.lanPort, normalized.lanUsername, normalized.lanPassword, upstream,
                         ownershipPort, ownershipUsername, ownershipPassword
@@ -194,7 +198,7 @@ internal class DesktopLanProxy(
                 // failure it costs LAN sharing and nothing else.
                 withTimeoutOrNull(5_000) {
                     while (true) {
-                        check(core.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
+                        check(listener.isRunning()) { "LAN SOCKS listener exited; check the port and interface" }
                         if (runCatching {
                                 Socket().use { it.connect(InetSocketAddress("127.0.0.1", ownershipPort), 200) }
                             }.isSuccess
@@ -216,9 +220,9 @@ internal class DesktopLanProxy(
                 // The line's core is already listening on this port. Binding it
                 // here too, or starting a second engine chained by SOCKS, is the
                 // design D5 dropped: it would race the session's own core.
-                core.start("")
+                listener.start("")
             }
-            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort, core.program())
+            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort, listener.program())
             return "$host:${normalized.lanPort}"
         } catch (e: Exception) {
             stop()
@@ -227,7 +231,7 @@ internal class DesktopLanProxy(
     }
 
     fun stop() {
-        core.stopNow()
+        active.stopNow()
         firewallRule?.let { rule ->
             runCatching { firewall("Remove-NetFirewallRule -Name '$rule' -ErrorAction SilentlyContinue") }
                 .onFailure { onOutput("LAN sharing: could not remove its Windows firewall rule") }
@@ -235,7 +239,7 @@ internal class DesktopLanProxy(
         }
     }
 
-    fun isRunning(): Boolean = core.isRunning()
+    fun isRunning(): Boolean = active.isRunning()
 
     fun cleanupStaleFirewallRules() {
         if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
