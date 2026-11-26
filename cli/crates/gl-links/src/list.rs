@@ -46,6 +46,9 @@ impl Entry {
     }
 }
 
+/// A decryptor for crypt1 blobs, borrowed for one decode.
+pub type Decryptor<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
+
 /// A base64 body is decoded only when the decode names a scheme; base64-shaped
 /// plaintext stays plaintext. A crypt1 blob is offered to the decryptor only
 /// when the body has no scheme in it (its MAC, so a base64 list never passes).
@@ -53,10 +56,7 @@ pub fn decode_body(body: &[u8]) -> Vec<String> {
     decode_body_with(body, None)
 }
 
-pub fn decode_body_with(
-    body: &[u8],
-    decrypt: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
-) -> Vec<String> {
+pub fn decode_body_with(body: &[u8], decrypt: Option<Decryptor<'_>>) -> Vec<String> {
     let text = String::from_utf8_lossy(body).into_owned();
     let compact: String = text
         .chars()
@@ -64,13 +64,18 @@ pub fn decode_body_with(
         .collect();
     let mut text = text;
     if !text.contains("://") {
-        if let Some(ref dec) = decrypt {
+        let mut decrypted = false;
+        if let Some(dec) = decrypt {
             if let Some(plain) = dec(&compact) {
                 text = String::from_utf8_lossy(&plain).into_owned();
+                decrypted = true;
             }
-        } else if let Some(decoded) = try_base64(&compact) {
-            if decoded.contains("://") {
-                text = decoded;
+        }
+        if !decrypted {
+            if let Some(decoded) = try_base64(&compact) {
+                if decoded.contains("://") {
+                    text = decoded;
+                }
             }
         }
     }
@@ -188,7 +193,10 @@ fn maybe_base64(v: &str) -> String {
         }
     }
     // Mixed case, as the app reads it.
-    if v.len() >= 7 && v[..7].eq_ignore_ascii_case("base64:") {
+    if v.get(..7)
+        .map(|p| p.eq_ignore_ascii_case("base64:"))
+        .unwrap_or(false)
+    {
         if let Some(decoded) = try_base64(v[7..].trim()) {
             return decoded.trim().to_string();
         }
@@ -199,7 +207,10 @@ fn maybe_base64(v: &str) -> String {
 /// The words a device refusal is told with, in the app's words.
 pub fn refusal_text(kind: &str, announce: &str) -> String {
     let a = announce.trim();
-    let has_prefix = a.len() >= 7 && a[..7].eq_ignore_ascii_case("base64:");
+    let has_prefix = a
+        .get(..7)
+        .map(|p| p.eq_ignore_ascii_case("base64:"))
+        .unwrap_or(false);
     if !a.is_empty() && a != "0" && !has_prefix {
         let one = one_line(a, 200);
         if !one.is_empty() {

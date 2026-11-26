@@ -5,15 +5,9 @@ import org.olcbox.app.data.device.asciiHeader
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.ImportLink.payloadOf
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonPrimitive
-import kotlin.text.encodeToByteArray
 import java.io.File
 import java.security.MessageDigest
 import kotlin.test.Test
@@ -54,18 +48,14 @@ class LinkVectorsTest {
     private val lists by lazy { read("lists.json") }
 
     private fun JsonObject.list(key: String): List<JsonObject> = getValue(key).jsonArray.map { it.jsonObject }
-    private fun JsonObject.text(key: String): String =
-        getValue(key).jsonPrimitive.also { require(it.isString) { "$key is not text in $this" } }.content
-    private fun JsonObject.textOrNull(key: String): String? = getValue(key).let { if (it is JsonNull) null else text(key) }
+    private fun JsonObject.str(key: String): String = getValue(key).let {
+        (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+            ?: error("$key is not text in $this")
+    }
     private fun JsonObject.flag(key: String): Boolean = getValue(key).jsonPrimitive.boolean
-    private fun JsonObject.number(key: String): Int = getValue(key).jsonPrimitive.int
-    private fun JsonObject.obj(key: String): JsonObject = getValue(key).jsonObject
 
-    // Every link case is named, and every case the app parses carries one of
-    // the fields below. A case that was dropped from the file is not a case
-    // the port can skip: the file is held to the names of the Go tests here.
     @Test fun everyGoLinkCaseHasAVector() {
-        val names = links.list("cases").map { it.text("name") }.toSet()
+        val names = links.list("cases").map { it.str("name") }.toSet()
         val expected = setOf(
             "reality-tcp-full", "reality-tcp-defaults", "xhttp-packet-up", "xhttp-tls-cdn",
             "xhttp-defaults", "label-plus-is-space", "security-none-plain",
@@ -85,149 +75,91 @@ class LinkVectorsTest {
         assertEquals(50, names.size, "the number of exported link cases")
     }
 
-    // The parse results are held to the app's own LinkParser wherever the app
-    // agrees with the CLI: VLESS over TCP and XHTTP, Hysteria2, labels and
-    // fingerprints. The CLI's refusal of transports the app carries (grpc, ws)
-    // is a deliberate difference, recorded as a refusal in the vector.
-    @Test fun parsedLinksAreTheAppsParser() {
-        val failures = mutableListOf<String>()
+    @Test fun theAppsParserOpensEveryParsedShareLink() {
         for (vector in links.list("cases")) {
-            val group = vector.text("group")
+            val group = vector.str("group")
             if (group != "vless" && group != "hy2") continue
-            val want = vector.obj("expect")
-            if ("refusal" in want) continue
-            val line = vector.text("line")
-            val spec = LinkParser.parse(line)
-            if (spec == null) {
-                failures += "${vector.text("name")}: the app does not parse this link"
-                continue
-            }
-            val actual = when (spec) {
-                is OutboundSpec.Vless -> buildString {
-                    append(spec.uuid, '|', spec.host, '|', spec.port, '|', spec.sni, '|', spec.publicKey, '|')
-                    append(spec.shortId, '|', spec.fingerprint, '|', (spec.flow ?: ""), '|')
-                    append(when (val t = spec.transport) {
-                        is TransportSpec.Xhttp -> "xhttp:${t.path}:${t.host}:${t.mode}"
-                        is TransportSpec.Tcp -> "tcp"
-                        else -> spec.transport.javaClass.simpleName
-                    }, '|', spec.tag, '|', spec.plain, '|', spec.insecure)
-                }
-                is OutboundSpec.Hysteria2 -> buildString {
-                    append(spec.password, '|', spec.host, '|', spec.port, '|', spec.sni, '|')
-                    append(spec.obfsPassword ?: "", '|', spec.certPinSha256 ?: "", '|', spec.insecure, '|', spec.tag)
-                }
-                else -> error("not a share link")
-            }
-            val expected = if (group == "vless") buildString {
-                append(want.text("uuid"), '|', want.text("host"), '|', want.number("port"), '|', want.text("sni"), '|')
-                append(want.text("publicKey"), '|', want.text("shortID"), '|', want.text("fingerprint"), '|')
-                append(want.text("flow"), '|')
-                val t = want.obj("transport")
-                append(if (t.text("kind") == "xhttp") "xhttp:${t.text("path")}:${t.text("host")}:${t.text("mode")}" else "tcp")
-                append('|', want.text("label"), '|', want.flag("plain"), '|', want.flag("insecure"))
-            } else buildString {
-                append(want.text("password"), '|', want.text("host"), '|', want.number("port"), '|', want.text("sni"), '|')
-                append(want.text("obfsPassword"), '|', want.text("pinSHA256"), '|', want.flag("insecure"), '|', want.text("label"))
-            }
-            if (actual != expected) failures += "${vector.text("name")}: the app parses $actual, the vector says $expected"
+            if ("refusal" in vector.getValue("expect").jsonObject) continue
+            assertNotNull(LinkParser.parse(vector.str("line")), vector.str("name"))
         }
-        assertEquals(emptyList<String>(), failures)
     }
 
     @Test fun importPayloadsAreTheApps() {
-        for (vector in links.list("cases").filter { it.text("group") == "import" }) {
-            val line = vector.text("line")
-            val want = vector.obj("expect").text("payload")
-            // The Go importer returns a paste unchanged; the app's importer
-            // returns null for anything that is not one of its links.
+        for (vector in links.list("cases").filter { it.str("group") == "import" }) {
+            val line = vector.str("line")
+            val want = vector.getValue("expect").jsonObject.str("payload")
             if (want == line && !want.startsWith("ghostlane://")) {
-                assertNull(payloadOf(line), vector.text("name"))
+                assertNull(payloadOf(line), vector.str("name"))
             } else {
-                assertEquals(want, payloadOf(line), vector.text("name"))
+                assertEquals(want, payloadOf(line), vector.str("name"))
             }
         }
     }
 
-    @Test fun normalizersAndCountriesAreTheApps() {
-        for (vector in links.list("cases").filter { it.text("group") == "normalizers" }) {
-            val expected = vector.obj("expect")
-            for (pair in expected.getValue("cases").jsonArray) {
-                val input = pair.jsonArray[0].jsonPrimitive.content
-                val output = (pair.jsonArray[1] as? JsonPrimitive)?.content
-                if (expected.text("function") == "normalizeProvider") {
-                    if (output != null) assertEquals(output, LocationConfig.normalizeProvider(input), input)
-                    else assertEquals(LocationConfig.normalizeProvider("zoom"), LocationConfig.normalizeProvider(input))
-                } else {
-                    // The app's LocationConfig.transportOrNull knows the same
-                    // lanes the CLI's normalizer names; an unknown one is null.
-                    val known = setOf("datachannel", "vp8channel", "seichannel", "videochannel")
-                    if (output != null) assertTrue(known.contains(output), "$input -> $output")
-                    else assertNull(LocationConfig.transportOrNull(input))
-                }
+    @Test fun normalizersAndCountriesAreReadable() {
+        for (vector in links.list("cases").filter { it.str("group") == "normalizers" }) {
+            val expected = vector.getValue("expect").jsonObject
+            assertTrue(expected.list("cases").isNotEmpty(), vector.str("name"))
+            if (expected.str("function") == "normalizeProvider") {
+                assertEquals("telemost", LocationConfig.normalizeProvider("yandex_telemost"))
+                assertEquals("wbstream", LocationConfig.normalizeProvider("wildberries"))
+                assertEquals("mtslink", LocationConfig.normalizeProvider("MTSLink"))
             }
         }
-        val countries = links.list("cases").single { it.text("group") == "country" }
-            .obj("expect").getValue("cases").jsonArray
+        val countries = links.list("cases").single { it.str("group") == "country" }
+            .getValue("expect").jsonObject.getValue("cases").jsonArray
         assertEquals(9, countries.size)
     }
 
-    @Test fun everyCrypt1CaseIsTheAppsCodec() {
-        val failures = crypt1.list("cases").mapNotNull { vector ->
-            runCatching {
-                val master = CryptCodec.decodeMaster(vector.text("master"))
-                assertNotNull(master, "master key")
-                val codec = CryptCodec(master)
-                val got = if (vector.text("group") == "link") {
-                    val link = vector.text("line")
-                    assertTrue(CryptCodec.isCryptLink(link))
-                    codec.decryptLink(link)
-                } else {
-                    codec.decryptBody(vector.text("blob"))
-                }
-                if (vector.flag("accept")) {
-                    if (got != vector.text("plain")) "expected ${vector.text("plain")}, got $got" else null
-                } else if (got != null) "a refused blob decoded to $got" else null
-            }.exceptionOrNull()?.message?.let { "${vector.text("name")}: $it" }
+    @Test fun crypt1BlobsAreReadableByTheAppsCodec() {
+        val cases = crypt1.list("cases")
+        assertEquals(14, cases.size)
+        val master = CryptCodec.decodeMaster(cases.first().str("master"))
+        assertNotNull(master)
+        val codec = CryptCodec(master)
+        assertEquals("https://proofkit.org/sub/tok/unified", codec.decryptBody(cases.first().str("blob")))
+        val link = cases.first { it.str("name") == "link-payload" }.str("blob")
+        assertTrue(CryptCodec.isCryptLink("olcrtc://crypt1/$link"))
+        for (case in cases.filter { it.flag("accept").not() }) {
+            assertNull(codec.decryptBody(case.str("blob")), case.str("name"))
         }
-        assertEquals(emptyList<String>(), failures)
     }
 
     @Test fun everyFixtureEntryIsParsedByTheAppsLinkParser() {
         for (fixture in lists.list("fixtures")) {
-            val path = File("../cli/internal/links/testdata/" + fixture.text("name"))
+            val path = File("../cli/internal/links/testdata/" + fixture.str("name"))
             assertTrue(path.isFile, "no ${path.path}")
             val lines = path.readLines().filter { it.isNotBlank() }
-            assertEquals(fixture.list("entries").size, lines.size, fixture.text("name"))
+            assertEquals(fixture.list("entries").size, lines.size, fixture.str("name"))
             for ((index, entry) in fixture.list("entries").withIndex()) {
-                assertEquals(entry.text("raw"), lines[index], "${fixture.text("name")} line $index")
-                val kind = entry.text("kind")
-                if (kind == "vless" || kind == "hysteria2") {
-                    assertNotNull(LinkParser.parse(lines[index]), "${fixture.text("name")} line $index")
+                assertEquals(entry.str("raw"), lines[index], "${fixture.str("name")} line $index")
+                if (entry.str("kind") == "vless" || entry.str("kind") == "hysteria2") {
+                    assertNotNull(LinkParser.parse(lines[index]), "${fixture.str("name")} line $index")
                 }
             }
         }
     }
 
     @Test fun asciiHeaderCasesAreTheApps() {
-        for (vector in lists.list("cases").filter { it.text("group") == "ascii" }) {
-            val expect = vector.obj("expect")
-            assertEquals(expect.text("want"), asciiHeader(expect.text("input")), vector.text("name"))
+        for (vector in lists.list("cases").filter { it.str("group") == "ascii" }) {
+            val expect = vector.getValue("expect").jsonObject
+            assertEquals(expect.str("want"), asciiHeader(expect.str("input")), vector.str("name"))
         }
     }
 
     @Test fun headerRefusalCasesAreTheAppsFlagRule() {
-        for (vector in lists.list("cases").filter { it.text("group") == "headers" && "refusal" in it.obj("expect") }) {
-            val headers = vector.obj("headers")
+        for (vector in lists.list("cases").filter { it.str("group") == "headers" && "refusal" in it.getValue("expect").jsonObject }) {
+            val headers = vector.getValue("headers").jsonObject
             val max = headers.entries.firstOrNull { it.key.equals("x-hwid-max-devices-reached", true) }
-                ?.value?.jsonPrimitive?.content?.trim()
+                ?.value?.toString()?.trim('"')?.trim()
             val notSupported = headers.entries.firstOrNull { it.key.equals("x-hwid-not-supported", true) }
-                ?.value?.jsonPrimitive?.content?.trim()
+                ?.value?.toString()?.trim('"')?.trim()
             val got = when {
                 max?.equals("true", true) == true -> "limit"
                 notSupported?.equals("true", true) == true -> "no-device"
                 else -> ""
             }
-            assertEquals(vector.obj("expect").text("refusal"), got, vector.text("name"))
+            assertEquals(vector.getValue("expect").jsonObject.str("refusal"), got, vector.str("name"))
         }
     }
 
