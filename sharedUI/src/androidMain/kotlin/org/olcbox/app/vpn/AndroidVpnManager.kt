@@ -314,7 +314,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid().orEmpty(),
-            dtlsProfile = olcrtcDtlsProfile()
+            dtlsProfile = olcrtcDtlsProfile(),
+            context = appContext
         )
     }
 
@@ -380,7 +381,8 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
             deviceId = deviceIdentityProvider.hwid().orEmpty(),
-            dtlsProfile = olcrtcDtlsProfile()
+            dtlsProfile = olcrtcDtlsProfile(),
+            context = appContext
         )
     }
 
