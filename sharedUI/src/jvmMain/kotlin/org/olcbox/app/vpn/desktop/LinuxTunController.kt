@@ -15,12 +15,37 @@ internal class LinuxTunController(
     /**
      * What every olcRTC engine of this app carries on its command line: the
      * directory and the beginning of the file name of the config it is
-     * started with. In the Linux tunnel the engine runs as root, like hev,
+     * started with. In the Linux tunnel the Go engine runs as root, like hev,
      * and what this controller runs as root at a stop ends it by that name
      * ([engineEndLines]). Null where there is nothing to name.
+     * ghostlane-engine runs as the user with its sockets bound to the
+     * physical interface, rooms too: the app stops it, and no session file of
+     * it is named here.
      */
     private val enginesNaming: () -> String? = { null }
 ) {
+    /**
+     * How hev hands the tun's datagrams to the SOCKS server behind it, which
+     * is the engine's: the two kinds of engine take different ones.
+     */
+    internal enum class Udp(val word: String) {
+        /**
+         * Standard UDP ASSOCIATE. The Go engines on the port (sing-box, Xray
+         * and the olcRTC engine) take it and refuse anything else.
+         */
+        Associate("udp"),
+
+        /**
+         * hev's own FWD UDP command (0x05): each flow carried inside a TCP
+         * connection to the same port, under the same login.
+         * ghostlane-engine's SOCKS inbound with a login refuses an association
+         * that names no port, and hev's names none; it takes this one. The
+         * Rust core's tunnels on Android and the iPhone ride it too.
+         */
+        InTcp("tcp")
+    }
+
+
     @Volatile private var routesInstalled = false
 
     /**
@@ -61,7 +86,9 @@ internal class LinuxTunController(
         killSwitch: Boolean = false,
         /** The login the server on [socksPort] demands; blank when it demands none. */
         username: String = "",
-        password: String = ""
+        password: String = "",
+        /** How that server takes datagrams: [Udp.Associate] for a Go engine, [Udp.InTcp] for ghostlane-engine. */
+        udp: Udp = Udp.Associate
     ): Process {
         // Over a block that is being held the scripts are the kill switch's,
         // whatever the setting says by now (it may have been switched off and
@@ -119,7 +146,7 @@ internal class LinuxTunController(
         }
         val upScript = writeUpScript(withSwitch)
         val downScript = writeDownScript(withSwitch)
-        val config = writeConfig(socksPort, upScript, downScript, username, password)
+        val config = writeConfig(socksPort, upScript, downScript, username, password, udp)
         startedWithKillSwitch = withSwitch
         val process = startPrivilegedProcess(listOf(hevBinary.toString(), config.toString()))
         // Not over one that is still alive: a hev that could not be ended holds
@@ -286,7 +313,8 @@ internal class LinuxTunController(
         upScript: Path,
         downScript: Path,
         username: String,
-        password: String
+        password: String,
+        udp: Udp
     ): Path {
         val config = configPath()
         Files.writeString(
@@ -296,7 +324,8 @@ internal class LinuxTunController(
                 postUpScript = upScript.toString(),
                 preDownScript = downScript.toString(),
                 username = username,
-                password = password
+                password = password,
+                udp = udp
             )
         )
         // It may carry the SOCKS login now, and hev reads it as root: nobody
@@ -591,7 +620,8 @@ internal class LinuxTunController(
             postUpScript: String? = null,
             preDownScript: String? = null,
             username: String = "",
-            password: String = ""
+            password: String = "",
+            udp: Udp = Udp.Associate
         ): String {
             return buildString {
                 appendLine("tunnel:")
@@ -620,11 +650,12 @@ internal class LinuxTunController(
                     appendLine("  username: '${yamlSingleQuoted(username)}'")
                     appendLine("  password: '${yamlSingleQuoted(password)}'")
                 }
-                // Standard UDP ASSOCIATE. 'tcp' is hev's own UDP-in-TCP command (0x05),
-                // which none of the servers on this port speaks: sing-box, Xray and the
-                // olcRTC engine refuse it, so every UDP flow died at its first packet
-                // (the Android fix, HevTunnelConfig, has the details).
-                appendLine("  udp: 'udp'")
+                // Standard UDP ASSOCIATE for a Go engine. 'tcp' is hev's own UDP-in-TCP
+                // command (0x05), which none of the Go servers on this port speaks:
+                // sing-box, Xray and the olcRTC engine refuse it, so every UDP flow died
+                // at its first packet (the Android fix, HevTunnelConfig, has the
+                // details). ghostlane-engine is the other way round ([Udp.InTcp]).
+                appendLine("  udp: '${udp.word}'")
                 appendLine("  pipeline: false")
                 appendLine()
                 appendLine("mapdns:")
