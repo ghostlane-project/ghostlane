@@ -213,14 +213,21 @@ class PhysicalInterfaceWatchRealTest {
             val second = again.getOrElse { fail("the restart failed: ${it.message}\n${logTail()}", it) }
             assertTrue(waitForPort(check.port, second.alive), "the restarted engine's port did not open\n${logTail()}")
             val told = synchronized(moves) { moves.toList() }
-            assertTrue(
-                told.isNotEmpty() && told.all { it == check.second },
-                "every tell named the interface there now: $told",
-            )
+            assertEquals(listOf<String?>(check.second), told, "one move, told once")
             check.outcomes.appendText(
                 "The watch told the move to ${check.second} in ${(System.currentTimeMillis() - movedAt) / 1000} s or less; " +
                     "the line was started again bound to it\n"
             )
+
+            // The start bound the line to the interface there now: three reads
+            // later there is no second tell and the engine still runs.
+            delay(3 * PhysicalInterfaceWatch.INTERVAL_MS)
+            assertEquals(
+                listOf<String?>(check.second),
+                synchronized(moves) { moves.toList() },
+                "no move was told after the restart",
+            )
+            assertTrue(second.alive(), "the restarted engine did not stay alive")
 
             val after = eventually(10) { fetch() }
             assertEquals(check.body, after, "the page through the tun after the move")

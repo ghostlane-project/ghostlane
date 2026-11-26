@@ -1,6 +1,8 @@
 package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.runBlocking
+import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
@@ -14,9 +16,12 @@ import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.LineStarted
 import org.olcbox.app.vpn.desktop.engine.ProbeEngine
 import org.olcbox.app.vpn.desktop.engine.RoomEngine
+import org.olcbox.app.vpn.desktop.engine.RoomLaunch
+import org.olcbox.app.vpn.desktop.engine.RoomRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
 import org.olcbox.app.vpn.desktop.engine.TunCore
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,39 +43,66 @@ import kotlin.test.assertTrue
 class PhysicalInterfaceWatchTest {
     private class RecordingLine : LineEngine {
         val started = mutableListOf<LineRequest>()
+        val fronts = mutableListOf<FrontRequest>()
         var stops = 0
+
+        /** What the manager's checks see: a start brings the line up, a stop takes it down. */
+        @Volatile var aliveNow = false
 
         override suspend fun start(request: LineRequest): LineStarted {
             synchronized(started) { started += request }
-            return LineStarted(said = "a stand-in line", alive = { true }, exitCode = { null })
+            aliveNow = true
+            return LineStarted(said = "a stand-in line", alive = { aliveNow }, exitCode = { null })
         }
 
         override suspend fun startFront(request: FrontRequest) {
-            error("no room in these tests")
+            synchronized(fronts) { fronts += request }
         }
 
-        override fun alive(spec: OutboundSpec, routing: Routing): () -> Boolean = { true }
+        override fun alive(spec: OutboundSpec, routing: Routing): () -> Boolean = { aliveNow }
         override val frontAlive: () -> Boolean = { false }
         override fun frontExitCode(): Int? = null
-        override fun anyRunning(): Boolean = synchronized(started) { started.isNotEmpty() }
+        override fun anyRunning(): Boolean = aliveNow
         override fun exitCodeOrNull(): Int? = null
         override fun runningProcesses(): List<Process> = emptyList()
         override fun binaries(): List<Path> = emptyList()
 
         override fun stopNow() {
             synchronized(started) { stops += 1 }
+            aliveNow = false
         }
 
         fun lastBound(): String? = synchronized(started) { started.last().bindInterface }
     }
 
-    /** An engine of one line; its tun, rooms and probes are not to be touched. */
-    private class StandIn(override val line: LineEngine) : DesktopEngine {
+    /** A room the test launches through the engine, as the manager does. */
+    private class RecordingRoom : RoomEngine {
+        val launches = mutableListOf<RoomRequest>()
+
+        override fun binaries(): List<Path> = emptyList()
+
+        override fun launch(binary: Path, request: RoomRequest): RoomLaunch {
+            synchronized(launches) { launches += request }
+            return object : RoomLaunch {
+                override val provider = "a stand-in room"
+                override fun config() = "a stand-in room"
+                override fun args(configPath: Path) = listOf("a stand-in room")
+                override fun saysReady(line: String) = false
+                override fun saysFailed(line: String) = false
+            }
+        }
+
+        override val rootBesideLinuxTun = false
+    }
+
+    /** An engine of one line; its tun and probes are not to be touched. */
+    private class StandIn(override val line: LineEngine, room: RoomEngine? = null) : DesktopEngine {
         val ups = mutableListOf<DesktopMode>()
         var downs = 0
+        private val recordingRoom = room
 
         override val windowsTun: TunCore get() = error("the Windows tun is not the watch's")
-        override val room: RoomEngine get() = error("a room is not the watch's")
+        override val room: RoomEngine get() = recordingRoom ?: error("a room is not the watch's")
         override val probes: ProbeEngine get() = error("a probe is not the watch's")
 
         override fun sessionUp(mode: DesktopMode) {
@@ -94,6 +126,41 @@ class PhysicalInterfaceWatchTest {
         }
 
         fun indexOf(name: String): Int? = synchronized(indexes) { indexes[name] }
+    }
+
+    /**
+     * The manager's answer to a way-out change, as `restartBehindTunOnNewWayOut`
+     * does it: one restart at a time, every tell dropped while it runs, and an
+     * attempt that starts only what is dead. Its first check can be held by a
+     * test, so the way out can change again before the attempt reads it.
+     */
+    private class RestartingManager(
+        val line: RecordingLine,
+        val start: (LineRequest) -> Unit,
+    ) {
+        val moves = mutableListOf<String?>()
+        val restarting = AtomicBoolean(false)
+        var heldCheck = false
+        var checkFails = false
+        var checks = 0
+        var requestForAttempt: () -> LineRequest = { error("no attempt was expected") }
+
+        fun wayOutChanged(interfaceName: String?) {
+            synchronized(moves) { moves += interfaceName }
+            if (!restarting.compareAndSet(false, true)) return
+            if (heldCheck) return
+            finishCheck()
+        }
+
+        /** The held first check ends; only a dead line is started by its attempt. */
+        fun finishCheck(attemptRequest: () -> LineRequest = requestForAttempt) {
+            heldCheck = false
+            checks++
+            if (!line.aliveNow) start(attemptRequest())
+            if (!checkFails) restarting.set(false)
+        }
+
+        fun moved(): List<String?> = synchronized(moves) { moves.toList() }
     }
 
     private class Session(val system: Machine, intervalMs: Long = HOUR) {
@@ -154,6 +221,27 @@ class PhysicalInterfaceWatchTest {
         anotherPort = { error("a line of one process asks for no second port") },
     )
 
+    private fun roomRequest() = RoomRequest(
+        location = LocationConfig(),
+        socksHost = "127.0.0.1",
+        socksPort = 10808,
+        socksUser = "desktop-user",
+        socksPass = "desktop-pass",
+        dnsServer = "127.0.0.1",
+        directRulesFile = null,
+        dtlsProfile = "off",
+    )
+
+    private fun frontRequest() = FrontRequest(
+        enginePort = 10808,
+        engineUsername = "desktop-user",
+        enginePassword = "desktop-pass",
+        port = 10809,
+        routing = Routing.Rules("rules", DirectDns.System, Routing.Policy.Tunnel),
+        verboseLogs = false,
+        login = SocksLogin("desktop-user", "desktop-pass"),
+    )
+
     /** The row's case: the default interface changes, and the line is started again bound to the new one. */
     @Test
     fun aMoveTheSystemHoldsStartsTheLineAgainBoundToTheNewInterface() {
@@ -167,7 +255,11 @@ class PhysicalInterfaceWatchTest {
         assertEquals(emptyList(), session.moved(), "one read is not yet a move")
         session.reads(1)
         assertEquals(listOf<String?>("eth0"), session.moved(), "a move held for two reads is told to the session")
-        assertTrue(session.line.stops >= 1, "what ran of the line was stopped before the tell")
+        assertEquals(
+            2,
+            session.line.stops,
+            "the watch stopped what ran before the tell, and the restart stopped it again",
+        )
         assertEquals(2, session.line.started.size, "and the line started again")
         assertEquals("eth0", session.line.lastBound(), "bound to the interface there now")
 
@@ -179,68 +271,114 @@ class PhysicalInterfaceWatchTest {
         assertEquals(1, session.inner.downs, "the engine is told the session is stopped")
     }
 
+    /** A session whose manager drops every tell while one restart runs. */
+    private class ManagedSession(val system: Machine) {
+        val line = RecordingLine()
+        val manager = RestartingManager(line, { runBlocking { engine.line.start(it) } })
+        val engine: WatchedEngine
+
+        init {
+            val host = DesktopEngineHost(
+                log = {},
+                windowsTunOutput = {},
+                session = object : SessionHooks {
+                    override fun lineDied(what: String) {
+                        error("no line dies in these tests")
+                    }
+
+                    override fun wayOutChanged(interfaceName: String?) = manager.wayOutChanged(interfaceName)
+                },
+            )
+            engine = PhysicalInterfaceWatch.around(
+                StandIn(line),
+                host,
+                read = system::read,
+                indexOf = system::indexOf,
+                intervalMs = HOUR,
+            )
+        }
+
+        fun connect() {
+            runBlocking { engine.line.start(request()) }
+            engine.sessionUp(DesktopMode.LinuxTun)
+            assertEquals("wlan0", line.lastBound())
+        }
+
+        fun reads(n: Int) = repeat(n) { engine.watch.tick() }
+    }
+
     /**
-     * The manager drops a tell while a restart is running
-     * (`restartBehindTunOnNewWayOut`), and an attempt that runs only starts
-     * what is dead. The line then stays bound to the
-     * interface that went away. The watch must tell again until a start binds
-     * it to the one there now, and stop what runs before each tell so a
-     * running attempt sees the core dead.
+     * A tell dropped while the restart's first check runs, then Wi-Fi going
+     * off: the attempt starts the dead line with no default route. The watch
+     * must keep watching that line and tell when the way out comes back.
      */
     @Test
-    fun aDroppedMoveIsToldAgainAndTheLineStartsOnTheNewInterface() {
+    fun aTellDroppedDuringTheFirstCheckIsFollowedWhenTheWayOutComesBack() {
         val system = Machine()
-        val line = RecordingLine()
-        val inner = StandIn(line)
-        val moves = mutableListOf<String?>()
-        val dropped = AtomicInteger(1)
-        lateinit var lineRequest: LineRequest
-        lateinit var engine: WatchedEngine
-        val host = DesktopEngineHost(
-            log = {},
-            windowsTunOutput = {},
-            session = object : SessionHooks {
-                override fun lineDied(what: String) {
-                    error("no line dies in this test")
-                }
+        val session = ManagedSession(system)
+        session.connect()
 
-                // As the manager's hook while a restart runs: the first tell
-                // is dropped, and the line is left where it is.
-                override fun wayOutChanged(interfaceName: String?) {
-                    synchronized(moves) { moves += interfaceName }
-                    if (dropped.getAndDecrement() > 0) return
-                    runBlocking {
-                        engine.line.stopNow()
-                        engine.line.start(lineRequest)
-                    }
-                }
-            },
-        )
-        lineRequest = request()
-        engine = PhysicalInterfaceWatch.around(
-            inner,
-            host,
-            read = system::read,
-            indexOf = system::indexOf,
-            intervalMs = HOUR,
-        )
-        runBlocking { engine.line.start(lineRequest) }
-        engine.sessionUp(DesktopMode.LinuxTun)
-        assertEquals("wlan0", line.lastBound())
-
+        session.manager.heldCheck = true
         system.default = "eth0"
-        repeat(PhysicalInterfaceWatch.SETTLE_READS) { engine.watch.tick() }
-        assertEquals(listOf<String?>("eth0"), synchronized(moves) { moves.toList() }, "the manager dropped the first tell")
-        assertEquals("wlan0", line.lastBound(), "the line is still bound to the interface that went away")
-        assertTrue(line.stops >= 1, "what ran of the line was stopped before the watch told")
-
-        repeat(PhysicalInterfaceWatch.SETTLE_READS) { engine.watch.tick() }
+        session.reads(2)
+        assertEquals(listOf<String?>("eth0"), session.manager.moved(), "the first tell set the restart running")
+        session.reads(2)
         assertEquals(
             listOf<String?>("eth0", "eth0"),
-            synchronized(moves) { moves.toList() },
-            "the watch tells again while the line is bound to the old interface",
+            session.manager.moved(),
+            "every tell while the restart runs is dropped",
         )
-        assertEquals("eth0", line.lastBound(), "the line started again bound to the interface there now")
+        assertEquals("wlan0", session.line.lastBound(), "no start has bound the line anew")
+
+        system.default = null
+        session.manager.finishCheck { request() }
+        assertEquals(1, session.manager.checks, "the held first check ran")
+        assertEquals(null, session.line.lastBound(), "the attempt started the dead line with no default route")
+
+        system.default = "eth0"
+        session.reads(2)
+        assertEquals(
+            listOf<String?>("eth0", "eth0", "eth0"),
+            session.manager.moved(),
+            "the watch tells the way out that came back",
+        )
+        assertEquals("eth0", session.line.lastBound(), "the restart's attempt bound the dead line to it")
+        val tells = session.manager.moved().size
+        val stops = session.line.stops
+        session.reads(6)
+        assertEquals(tells, session.manager.moved().size, "no move is told once the line is bound there")
+        assertEquals(stops, session.line.stops, "and nothing of the line is stopped again")
+    }
+
+    /**
+     * A restart bound to an interface that never passes its check: the manager
+     * goes on dropping tells. A start bound to the interface there now ends it.
+     */
+    @Test
+    fun aRestartBoundToAnInterfaceThatFailsItsCheckStopsTellingAfterABind() {
+        val system = Machine()
+        val session = ManagedSession(system)
+        session.connect()
+        session.manager.checkFails = true
+        session.manager.requestForAttempt = { request(bind = "wlan1") }
+
+        system.default = "eth0"
+        session.reads(2)
+        assertEquals(listOf<String?>("eth0"), session.manager.moved(), "the manager began one restart")
+        assertEquals("wlan1", session.line.lastBound(), "its attempt bound an interface that never passes its check")
+        session.reads(2)
+        assertEquals(listOf<String?>("eth0", "eth0"), session.manager.moved(), "the later tell was dropped")
+        assertEquals(2, session.line.stops, "the watch stopped what ran before each tell")
+
+        // A start that binds the line to the way out there now ends the telling.
+        session.engine.watch.bound("eth0")
+        val tells = session.manager.moved().size
+        val stops = session.line.stops
+        session.reads(6)
+        assertEquals(tells, session.manager.moved().size, "no further tell follows a start bound to eth0")
+        assertEquals(stops, session.line.stops, "no further stop follows it either")
+        runBlocking { session.engine.line.start(request(bind = "eth0")) }
+        assertTrue(session.line.aliveNow, "the line started again is alive")
     }
 
     @Test
@@ -253,6 +391,124 @@ class PhysicalInterfaceWatchTest {
         }
         assertEquals(emptyList(), session.moved(), "another interface for one read at a time is no move")
         assertEquals(1, session.line.started.size)
+    }
+
+    /**
+     * The user changes a session to a room behind the standing tun. The room
+     * does not bind sockets to the way out, so the watch must not go on
+     * comparing the system to the core line that was there before: that
+     * would restart the room every two reads.
+     */
+    @Test
+    fun aRoomLaunchedInASessionIsNotWatchedAgainstTheOldLine() {
+        val system = Machine()
+        val line = RecordingLine()
+        val room = RecordingRoom()
+        val moves = mutableListOf<String?>()
+        val host = DesktopEngineHost(
+            log = {},
+            windowsTunOutput = {},
+            session = object : SessionHooks {
+                override fun lineDied(what: String) = error("no line dies in this test")
+                override fun wayOutChanged(interfaceName: String?) {
+                    synchronized(moves) { moves += interfaceName }
+                }
+            },
+        )
+        val engine = PhysicalInterfaceWatch.around(
+            StandIn(line, room),
+            host,
+            read = system::read,
+            indexOf = system::indexOf,
+            intervalMs = HOUR,
+        )
+        runBlocking { engine.line.start(request()) }
+        engine.sessionUp(DesktopMode.LinuxTun)
+        assertEquals("wlan0", line.lastBound())
+
+        runBlocking { engine.room.launch(Path.of("room"), roomRequest()) }
+        assertEquals(1, room.launches.size, "the room was launched")
+        assertEquals(1, system.reads.get(), "the old core line was bound by one read")
+
+        system.default = "eth0"
+        repeat(6) { engine.watch.tick() }
+        assertEquals(emptyList(), synchronized(moves) { moves.toList() }, "the room is not the old core line bound to wlan0")
+        assertEquals(1, system.reads.get(), "nothing is asked of the system for the room")
+    }
+
+    /** The front before a room is the session's line too, and reports that it binds to nothing. */
+    @Test
+    fun aFrontStartedInASessionIsNotWatchedAgainstTheOldLine() {
+        val system = Machine()
+        val line = RecordingLine()
+        val moves = mutableListOf<String?>()
+        val host = DesktopEngineHost(
+            log = {},
+            windowsTunOutput = {},
+            session = object : SessionHooks {
+                override fun lineDied(what: String) = error("no line dies in this test")
+                override fun wayOutChanged(interfaceName: String?) {
+                    synchronized(moves) { moves += interfaceName }
+                }
+            },
+        )
+        val engine = PhysicalInterfaceWatch.around(
+            StandIn(line),
+            host,
+            read = system::read,
+            indexOf = system::indexOf,
+            intervalMs = HOUR,
+        )
+        runBlocking { engine.line.start(request()) }
+        engine.sessionUp(DesktopMode.LinuxTun)
+        assertEquals("wlan0", line.lastBound())
+
+        runBlocking { engine.line.startFront(frontRequest()) }
+        assertEquals(1, synchronized(line.fronts) { line.fronts.size }, "the front was started")
+        system.default = "eth0"
+        repeat(6) { engine.watch.tick() }
+        assertEquals(emptyList(), synchronized(moves) { moves.toList() }, "the front is not the old core line bound to wlan0")
+        assertEquals(1, system.reads.get(), "nothing is asked of the system for the front")
+    }
+
+    /**
+     * A line that asked to find its way out while there was no default route
+     * has no binding yet. It is still watched: an interface that has been the
+     * answer for two reads is told to the session.
+     */
+    @Test
+    fun aLineStartedWithNoDefaultRouteIsWatchedUntilOneComesBack() {
+        val system = Machine()
+        system.default = null
+        val session = Session(system)
+        session.connect(request())
+        assertEquals(null, session.line.lastBound(), "the line was bound to nothing")
+        session.reads(2)
+        assertEquals(emptyList(), session.moved(), "there is still no way out")
+
+        system.default = "eth0"
+        session.reads(1)
+        assertEquals(emptyList(), session.moved(), "one read is not a move")
+        session.reads(1)
+        assertEquals(listOf<String?>("eth0"), session.moved(), "a way out that came back is told")
+        assertEquals("eth0", session.line.lastBound(), "the line started again bound to it")
+
+        session.reads(5)
+        assertEquals(listOf<String?>("eth0"), session.moved(), "and told no more")
+        assertEquals(2, session.line.started.size)
+    }
+
+    /** A line that asked for no binding stays unwatched even with no default route. */
+    @Test
+    fun aProxyLineWithNoDefaultRouteIsNotWatched() {
+        val system = Machine()
+        system.default = null
+        val session = Session(system)
+        session.connect(request(autoDetect = false), DesktopMode.SystemProxy)
+        system.default = "eth0"
+        session.reads(4)
+        assertEquals(emptyList(), session.moved())
+        assertEquals(0, system.reads.get(), "nothing is asked of the system for a line that binds to nothing")
     }
 
     @Test
