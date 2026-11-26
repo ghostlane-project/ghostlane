@@ -248,8 +248,11 @@ request = json.load(open(sys.argv[1]))
 name, port = sys.argv[2:4]
 request["tun"]["name"] = name
 request["socks"]["port"] = int(port)
-request["exclude"] = []
-request["hold"] = {"interface": name, "pass": []}
+# The tun keeps this address out of itself (as it keeps the line's server):
+# a caller beside the tun reaches it by the physical interface, where the
+# block refuses anybody but the tunnel's group.
+request["exclude"] = ["1.1.1.1/32"]
+request["hold"] = {"interface": name, "pass": ["1.1.1.1"]}
 print(json.dumps(request))
 PY
 }
@@ -313,7 +316,7 @@ say "a program outside the group is refused"
 # Traffic routed into the tun is let out by pf's first rule whatever its
 # group. What leaves by the physical interface is let out only from the
 # tunnel's group, so the same user's request there is refused.
-expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$MINE:$ECHO_PORT/" 2>/dev/null)" '^000$'
+expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://1.1.1.1/" 2>/dev/null)" '^000$'
 expect "the program in the group can" "$(as_user curl -s --max-time 5 "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)" '^the engine in the pf group fetched this page$'
 
 say "nothing left behind"
