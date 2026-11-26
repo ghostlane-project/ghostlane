@@ -119,6 +119,13 @@ interface VpnManager {
      * in-process and its lines already reach [logs].
      */
     suspend fun diagnosticsLog(): String = ""
+
+    /**
+     * The commit of the Rust core the session ran on, or null when it ran none (a Go
+     * core, or a build with no Rust core). The exported log's head names a core only
+     * from this; a manager that says nothing says no Rust core.
+     */
+    suspend fun corePin(): String? = null
 }
 
 /** [VpnManager.hold] of a platform that never holds. */

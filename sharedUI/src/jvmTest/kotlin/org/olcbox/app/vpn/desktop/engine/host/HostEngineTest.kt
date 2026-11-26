@@ -2,6 +2,7 @@ package org.olcbox.app.vpn.desktop.engine.host
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -14,6 +15,8 @@ import org.olcbox.app.net.core.CoreConfig
 import org.olcbox.app.net.core.CoreFixtures
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.net.core.CoreLines
+import org.olcbox.app.vpn.DesktopSocksProxySettings
+import org.olcbox.app.vpn.LanCores
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
@@ -120,6 +123,180 @@ class HostEngineTest {
         val account = settings.getValue("accounts").jsonArray.single().jsonObject
         assertEquals("session-user", account.getValue("user").jsonPrimitive.content)
         assertEquals("session-pass", account.getValue("pass").jsonPrimitive.content)
+    }
+
+    @Test
+    fun lanSharingWritesTheLanInboundWithItsLoginIntoTheLinesCoreAndNoneWhenOff() = runTest {
+        val sharing = DesktopSocksProxySettings(
+            shareOnLan = true,
+            lanAddress = "192.168.50.10",
+            lanNetworkId = "192.168.50.1|aa:bb:cc:dd:ee:ff",
+            lanPort = 10818,
+            lanUsername = "ghostlane-guest",
+            lanPassword = "generated-lan-password",
+        )
+        val asked = request(reality)
+
+        val off = HostSession.line(asked, noName, sharing.copy(shareOnLan = false)) { null }
+        assertNull(off.lan)
+        assertEquals(CoreInbound.build(asked.spec, CoreInbound.Plan(CoreInbound.Proxy(10808))), off.core)
+        val offInbounds = Json.parseToJsonElement(off.core).jsonObject.getValue("inbounds").jsonArray.map { it.jsonObject }
+        assertEquals(listOf(CoreInbound.TAG), offInbounds.map { it.getValue("tag").jsonPrimitive.content })
+        assertFalse("ghostlane-guest" in off.core)
+        assertFalse("generated-lan-password" in off.core)
+
+        val on = HostSession.line(asked, noName, sharing) { null }
+        assertEquals(
+            CoreInbound.build(
+                asked.spec,
+                CoreInbound.Plan(
+                    CoreInbound.Proxy(10808),
+                    CoreInbound.Lan("192.168.50.10", 10818, SocksLogin("ghostlane-guest", "generated-lan-password")),
+                ),
+            ),
+            on.core,
+        )
+        val inbounds = Json.parseToJsonElement(on.core).jsonObject.getValue("inbounds").jsonArray.map { it.jsonObject }
+        assertEquals(listOf(CoreInbound.TAG, CoreInbound.LAN_TAG), inbounds.map { it.getValue("tag").jsonPrimitive.content })
+        val lan = inbounds.last()
+        assertEquals("socks", lan.getValue("protocol").jsonPrimitive.content)
+        assertEquals("192.168.50.10", lan.getValue("listen").jsonPrimitive.content)
+        assertEquals(10818, lan.getValue("port").jsonPrimitive.int)
+        val settings = lan.getValue("settings").jsonObject
+        assertEquals("password", settings.getValue("auth").jsonPrimitive.content)
+        assertTrue(settings.getValue("udp").jsonPrimitive.boolean)
+        assertTrue(settings.getValue("allowUnauthenticatedLan").jsonPrimitive.boolean)
+        val account = settings.getValue("accounts").jsonArray.single().jsonObject
+        assertEquals("ghostlane-guest", account.getValue("user").jsonPrimitive.content)
+        assertEquals("generated-lan-password", account.getValue("pass").jsonPrimitive.content)
+
+        val badAddress = assertFailsWith<IllegalStateException> {
+            HostSession.line(asked, noName, sharing.copy(lanAddress = "0.0.0.0")) { null }
+        }
+        assertEquals("${HostSession.REFUSED}: ${CoreInbound.LAN_ADDRESS_REFUSAL}", badAddress.message)
+        val blankLogin = assertFailsWith<IllegalStateException> {
+            HostSession.line(asked, noName, sharing.copy(lanPassword = " ")) { null }
+        }
+        assertEquals("${HostSession.REFUSED}: ${CoreInbound.LAN_LOGIN_REFUSAL}", blankLogin.message)
+        val clash = assertFailsWith<IllegalStateException> {
+            HostSession.line(request(reality, port = 10818), noName, sharing) { null }
+        }
+        assertEquals("${HostSession.REFUSED}: ${CoreInbound.LAN_PORT_REFUSAL}", clash.message)
+    }
+
+    @Test
+    fun theEngineReadsTheSessionsLanSettingsAndSkipsAnUntrustedNetwork() = runTest {
+        if (!posix()) return@runTest
+        val program = standIn(protocol = 1, run = SERVES)
+        val sharing = DesktopSocksProxySettings(
+            shareOnLan = true,
+            lanAddress = "192.168.50.10",
+            lanNetworkId = "192.168.50.1|aa:bb:cc:dd:ee:ff",
+            lanPort = 10818,
+            lanUsername = "ghostlane-guest",
+            lanPassword = "generated-lan-password",
+        )
+        val trusted = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing },
+            lanNetworkProblem = { null },
+            lanPortHeld = { false },
+        )
+        val started = trusted.line.start(request(reality, port = 41080))
+        try {
+            val written = sessions.toFile().listFiles()!!.single().resolve(HostProcess.SESSION_FILE).readText()
+            val tags = Json.parseToJsonElement(written).jsonObject.getValue("core").jsonObject
+                .getValue("inbounds").jsonArray.map { it.jsonObject.getValue("tag").jsonPrimitive.content }
+            assertEquals(listOf(CoreInbound.TAG, CoreInbound.LAN_TAG), tags)
+        } finally {
+            trusted.line.stopNow()
+        }
+        assertFalse(started.alive())
+
+        val untrusted = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing },
+            lanNetworkProblem = { "This is a different local network; select the LAN interface again before sharing" },
+            lanPortHeld = { false },
+        )
+        val withoutLan = untrusted.line.start(request(reality, port = 41080))
+        try {
+            val written = sessions.toFile().listFiles()!!.single().resolve(HostProcess.SESSION_FILE).readText()
+            val tags = Json.parseToJsonElement(written).jsonObject.getValue("core").jsonObject
+                .getValue("inbounds").jsonArray.map { it.jsonObject.getValue("tag").jsonPrimitive.content }
+            assertEquals(listOf(CoreInbound.TAG), tags)
+        } finally {
+            untrusted.line.stopNow()
+        }
+        assertFalse(withoutLan.alive())
+        assertTrue("different local network" in logText(), logText())
+    }
+
+    /**
+     * A LAN port held by another program, or a LAN plan the core refuses, costs
+     * LAN sharing alone. The line still starts, and the session says why there
+     * is no LAN inbound for the proxy to bind.
+     */
+    @Test
+    fun aHeldOrRefusedLanPortLeavesTheLineRunningWithoutLan() = runTest {
+        if (!posix()) return@runTest
+        val program = standIn(protocol = 1, run = SERVES)
+        val sharing = DesktopSocksProxySettings(
+            shareOnLan = true,
+            lanAddress = "192.168.50.10",
+            lanNetworkId = "192.168.50.1|aa:bb:cc:dd:ee:ff",
+            lanPort = 10818,
+            lanUsername = "ghostlane-guest",
+            lanPassword = "generated-lan-password",
+        )
+        fun writtenTags(): List<String> = sessions.toFile().listFiles()!!.single()
+            .resolve(HostProcess.SESSION_FILE).readText()
+            .let { Json.parseToJsonElement(it).jsonObject.getValue("core").jsonObject }
+            .getValue("inbounds").jsonArray.map { it.jsonObject.getValue("tag").jsonPrimitive.content }
+
+        val held = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing },
+            lanNetworkProblem = { null },
+            lanPortHeld = { true },
+        )
+        val withHeldPort = held.line.start(request(reality, port = 41080))
+        try {
+            assertEquals(listOf(CoreInbound.TAG), writtenTags(), "the line is written without the LAN inbound")
+            assertNull(LanCores.currentLine().lan)
+            assertTrue("already in use" in LanCores.currentLine().reason.orEmpty(), "the reason is kept for the proxy")
+            assertTrue("LAN sharing was left out" in logText(), logText())
+        } finally {
+            held.line.stopNow()
+        }
+        assertFalse(withHeldPort.alive())
+
+        val refused = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing.copy(lanPort = 41080) },
+            lanNetworkProblem = { null },
+            lanPortHeld = { false },
+        )
+        val withRefusedPlan = refused.line.start(request(reality, port = 41080))
+        try {
+            assertEquals(listOf(CoreInbound.TAG), writtenTags(), "the line is written without the LAN inbound")
+            assertEquals(CoreInbound.LAN_PORT_REFUSAL, LanCores.currentLine().reason)
+        } finally {
+            refused.line.stopNow()
+        }
+        assertFalse(withRefusedPlan.alive())
     }
 
     /**
