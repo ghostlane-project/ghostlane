@@ -43,11 +43,17 @@ on:
       - sharedUI/build.gradle.kts
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopDnsResolver.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
       - sharedUI/src/commonMain/composeResources/files/xray/**
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
+      - androidApp/src/main/jni/hev-socks5-tunnel/**
   pull_request:
     branches:
       - rust/all
@@ -63,11 +69,17 @@ on:
       - sharedUI/build.gradle.kts
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopDnsResolver.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
       - sharedUI/src/commonMain/composeResources/files/xray/**
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/RoutingSettings.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
+      - androidApp/src/main/jni/hev-socks5-tunnel/**
   workflow_dispatch:
     inputs:
       pin:

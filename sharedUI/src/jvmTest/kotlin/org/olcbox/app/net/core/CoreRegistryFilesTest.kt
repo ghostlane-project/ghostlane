@@ -53,7 +53,7 @@ class CoreRegistryFilesTest {
         for (fragment in CoreRegistry.fragments) assertEquals("${CoreRegistry.name(fragment.line)}Surface", fragment::class.simpleName)
     }
 
-    /** The iPhone's six lines are shapes of the kinds here, each with the case and the references the iPhone's own tests read. */
+    /** The iPhone's lines (every shape of every kind) are shapes of the kinds here, each with the case and the references the iPhone's own tests read. */
     @Test fun theIphonesLinesAreAmongTheShapes() {
         val shapes = CoreLines.all.flatMap { it.shapes }
         for (line in IosCoreLine.entries) {
