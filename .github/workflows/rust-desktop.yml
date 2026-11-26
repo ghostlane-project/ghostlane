@@ -45,6 +45,9 @@ on:
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
+      - androidApp/src/main/jni/hev-socks5-tunnel/**
   pull_request:
     branches:
       - rust/all
@@ -62,6 +65,9 @@ on:
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/LinuxTunController.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxTunRealTest.kt
+      - androidApp/src/main/jni/hev-socks5-tunnel/**
   workflow_dispatch:
     inputs:
       pin:
