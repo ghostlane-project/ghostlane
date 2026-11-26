@@ -320,6 +320,7 @@ class PhysicalInterfaceWatchTest {
         session.connect()
 
         session.manager.heldCheck = true
+        session.manager.requestForAttempt = { request() }
         system.default = "eth0"
         session.reads(2)
         assertEquals(listOf<String?>("eth0"), session.manager.moved(), "the first tell set the restart running")
