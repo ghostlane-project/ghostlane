@@ -164,6 +164,8 @@ while True:
     conn, _ = listener.accept()
     threading.Thread(target=serve, args=(conn,), daemon=True).start()
 PY
+: > "$work/forward.log"
+chown "$ASKER" "$work/forward.log"
 as_user python3 -I "$work/forward.py" "$UPSTREAM_PORT" "$ECHO_PORT" ghostlane "p4ss w'rd" "$work/forward.log" > "$work/forward.err" 2>&1 &
 FORWARDER=$!
 for _ in $(seq 1 50); do grep -q '^listening' "$work/forward.log" 2>/dev/null && break; sleep 0.1; done
@@ -248,11 +250,11 @@ request = json.load(open(sys.argv[1]))
 name, port = sys.argv[2:4]
 request["tun"]["name"] = name
 request["socks"]["port"] = int(port)
-# The tun keeps this address out of itself (as it keeps the line's server):
-# a caller beside the tun reaches it by the physical interface, where the
-# block refuses anybody but the tunnel's group.
-request["exclude"] = ["1.1.1.1/32"]
-request["hold"] = {"interface": name, "pass": ["1.1.1.1"]}
+# The tun keeps this address out of itself, but the block does not let it
+# out by name: a caller beside the tun reaches it by the physical interface,
+# where only the tunnel's group is let out.
+request["exclude"] = ["8.8.8.8/32"]
+request["hold"] = {"interface": name, "pass": []}
 print(json.dumps(request))
 PY
 }
@@ -302,7 +304,7 @@ say "a program outside the group is refused"
 # Traffic routed into the tun is let out by pf's first rule whatever its
 # group. What leaves by the physical interface is let out only from the
 # tunnel's group, so the same user's request there is refused.
-expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://1.1.1.1/" 2>/dev/null)" '^000$'
+expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://8.8.8.8/" 2>/dev/null)" '^000$'
 
 say "nothing left behind"
 expect "the helper ends the program" "$(ask '{"verb":"line-stop"}')" '^ok=True state=running hold=True protocol=5 line=0 '
