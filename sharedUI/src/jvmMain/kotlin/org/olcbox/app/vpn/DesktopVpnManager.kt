@@ -655,11 +655,11 @@ class DesktopVpnManager private constructor(
      * A change of the LAN half on a line whose core holds the LAN inbound.
      *
      * The tunnel or the system's proxy setting is not touched: what changes
-     * is the plan of the line behind it. The old core, its front and the
-     * engine's own process are stopped, the line is remembered with the new
-     * LAN settings, and the ordinary restart behind the tunnel builds a new
-     * plan from them. The health check of that restart starts the LAN proxy
-     * again, once the core with its new inbound answers.
+     * is the plan of the line behind it. What holds the old LAN inbound is
+     * stopped, the line is remembered with the new LAN settings, and the
+     * ordinary restart behind the tunnel builds a new plan from them. The
+     * health check of that restart starts the LAN proxy again, once the core
+     * with its new inbound answers.
      *
      * On a Go line none of this is needed: its listener is a separate process
      * the LAN proxy stops and starts, and [applyLanSharingSettings] keeps the
