@@ -272,7 +272,7 @@ class PhysicalInterfaceWatchTest {
     }
 
     /** A session whose manager drops every tell while one restart runs. */
-    private class ManagedSession(val system: Machine) {
+    private class ManagedSession(val system: Machine, val lineRequest: LineRequest) {
         val line = RecordingLine()
         val manager = RestartingManager(line, { runBlocking { engine.line.start(it) } })
         val engine: WatchedEngine
@@ -299,7 +299,7 @@ class PhysicalInterfaceWatchTest {
         }
 
         fun connect() {
-            runBlocking { engine.line.start(request()) }
+            runBlocking { engine.line.start(lineRequest) }
             engine.sessionUp(DesktopMode.LinuxTun)
             assertEquals("wlan0", line.lastBound())
         }
@@ -315,7 +315,7 @@ class PhysicalInterfaceWatchTest {
     @Test
     fun aTellDroppedDuringTheFirstCheckIsFollowedWhenTheWayOutComesBack() {
         val system = Machine()
-        val session = ManagedSession(system)
+        val session = ManagedSession(system, request())
         session.connect()
 
         session.manager.heldCheck = true
@@ -357,7 +357,7 @@ class PhysicalInterfaceWatchTest {
     @Test
     fun aRestartBoundToAnInterfaceThatFailsItsCheckStopsTellingAfterABind() {
         val system = Machine()
-        val session = ManagedSession(system)
+        val session = ManagedSession(system, request())
         session.connect()
         session.manager.checkFails = true
         session.manager.requestForAttempt = { request(bind = "wlan1") }
