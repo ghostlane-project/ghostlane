@@ -253,6 +253,9 @@ class MacOsTunControllerTest {
 
     private val idle3 = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":false}"""
     private val running3 = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":3,"hold":false}"""
+
+    /** The helper the app ships now: it runs hev from a `tun` request (protocol 5). */
+    private val idle5 = """{"ok":true,"state":"idle","logTail":"","protocol":5,"hold":false}"""
     private val runningHeld = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":4,"hold":true}"""
     private val idleHeld = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":true}"""
 
@@ -478,6 +481,29 @@ class MacOsTunControllerTest {
             {}, TunnelDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")), { emptyList() }, { "en0" }
         )
         assertEquals(MacOsTunController.Helper(blockStands = false, canHold = false), runBlocking { absent.helperNow() })
+    }
+
+    // A helper from the build before hev cannot be asked for an engine's
+    // tunnel: it knows a sing-box config and no `tun`. It makes way for the
+    // one on disk before a connect chooses what it can be asked for. Its
+    // block is the kernel's and outlives the process, so the stop keeps it.
+    @Test fun aHelperFromBeforeHevMakesWayForTheCurrentOne() = withFakeDaemon(
+        listOf(
+            idleHeld,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
+            idle5,
+            idle5
+        )
+    ) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(
+            MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
+            runBlocking { controller.helperNow() }
+        )
+        assertEquals(listOf("status", "stop", "status", "status"), daemon.verbs)
+        assertEquals("\"keep\"", daemon.request(1)["hold"].toString())
+        assertTrue(log.any { "the tunnel helper was updated" in it }, log.toString())
     }
 
     // The first connect after an update of the app: the previous build's
