@@ -1283,31 +1283,61 @@ jobs:
           done
 
       # A 16 KiB-page device dies before executing a 4 KiB-aligned library.
-      # The core's report checks the unstripped build on all three ABIs; this
-      # checks the files the finished APK actually carries, including JNA's,
-      # on the two 64-bit ABIs (armv7 is 32-bit and outside that requirement).
+      # Read the LOAD alignment out of the packaged bytes with Python: no
+      # unzip glob, no temporary extraction and no shell arithmetic on a
+      # readelf line. The core's report checks all three ABIs at build time;
+      # armv7 is 32-bit and outside the page-size requirement.
       - name: Verify the native libraries in the APK are 16 KiB aligned
         working-directory: olcbox
         run: |
           set -euo pipefail
           apk="dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk"
-          ndk_bin="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          tmp="$(mktemp -d)"
-          unzip -q "$apk" 'lib/*/*.so' -d "$tmp"
-          bad=0
-          for abi in arm64-v8a x86_64; do
-            for lib in libghostlane_core.so libjnidispatch.so; do
-              f="$tmp/lib/$abi/$lib"
-              [ -f "$f" ] || { echo "MISSING ${abi}/${lib}" >&2; bad=1; continue; }
-              align="$("$ndk_bin/llvm-readelf" -lW "$f" | awk '$1 == "LOAD" {print $NF; exit}')"
-              if [ $(( align % 16384 )) -ne 0 ]; then
-                echo "MISALIGNED ${abi}/${lib} (${align})" >&2; bad=1
-              else
-                echo "ok         ${abi}/${lib} (${align})"
-              fi
-            done
-          done
-          [ "$bad" -eq 0 ] || { echo "A library cannot be mapped on a 16 KiB-page phone." >&2; exit 1; }
+          python3 - "$apk" <<'PY'
+          import struct
+          import sys
+          import zipfile
+
+          apk = sys.argv[1]
+          bad = []
+          with zipfile.ZipFile(apk) as z:
+              names = set(z.namelist())
+              for abi in ("arm64-v8a", "x86_64"):
+                  for lib in ("libghostlane_core.so", "libjnidispatch.so"):
+                      name = "lib/%s/%s" % (abi, lib)
+                      if name not in names:
+                          bad.append("MISSING " + name)
+                          continue
+                      data = z.read(name)
+                      if data[:4] != b"\x7fELF":
+                          bad.append("not an ELF: " + name)
+                          continue
+                      elf_class = data[4]
+                      if elf_class == 2:
+                          phoff, = struct.unpack_from("<Q", data, 32)
+                          phentsize, phnum = struct.unpack_from("<HH", data, 54)
+                          p_align = lambda at: struct.unpack_from("<Q", data, at + 48)[0]
+                      elif elf_class == 1:
+                          phoff, = struct.unpack_from("<I", data, 28)
+                          phentsize, phnum = struct.unpack_from("<HH", data, 42)
+                          p_align = lambda at: struct.unpack_from("<I", data, at + 28)[0]
+                      else:
+                          bad.append("unknown ELF class %d: %s" % (elf_class, name))
+                          continue
+                      aligns = []
+                      for i in range(phnum):
+                          at = phoff + i * phentsize
+                          if struct.unpack_from("<I", data, at)[0] == 1:  # PT_LOAD
+                              aligns.append(p_align(at))
+                      if not aligns:
+                          bad.append("no LOAD segment in " + name)
+                      elif any(a % 16384 for a in aligns):
+                          bad.append("MISALIGNED %s: %s" % (name, aligns))
+                      else:
+                          print("ok         %s: %s" % (name, aligns))
+          if bad:
+              print("\n".join(bad), file=sys.stderr)
+              sys.exit(1)
+          PY
 
       # The symbols are not shipped inside the APK: they sit beside it in the
       # artifact, one file per ABI, for a reader of a native stack trace.
