@@ -253,6 +253,10 @@ class MacOsTunControllerTest {
 
     private val idle3 = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":false}"""
     private val running3 = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":3,"hold":false}"""
+
+    /** The helper the app ships now: it runs hev from a `tun` request (protocol 5). */
+    private val idle5 = """{"ok":true,"state":"idle","logTail":"","protocol":5,"hold":false}"""
+    private val idleHeld5 = """{"ok":true,"state":"idle","logTail":"","protocol":5,"hold":true}"""
     private val runningHeld = """{"ok":true,"state":"running","pid":5,"logTail":"","protocol":4,"hold":true}"""
     private val idleHeld = """{"ok":true,"state":"idle","logTail":"","protocol":4,"hold":true}"""
 
@@ -458,7 +462,7 @@ class MacOsTunControllerTest {
     // that stands the tunnel has to come first, and a helper that can hold
     // none is not asked for one.
     @Test fun aConnectLearnsWhetherABlockStandsAndWhetherTheHelperCanHoldOne() {
-        withFakeDaemon(listOf(idleHeld)) { daemon ->
+        withFakeDaemon(listOf(idleHeld5)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
             assertEquals(
                 MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
@@ -480,6 +484,29 @@ class MacOsTunControllerTest {
         assertEquals(MacOsTunController.Helper(blockStands = false, canHold = false), runBlocking { absent.helperNow() })
     }
 
+    // A helper from the build before hev cannot be asked for an engine's
+    // tunnel: it knows a sing-box config and no `tun`. It makes way for the
+    // one on disk before a connect chooses what it can be asked for. Its
+    // block is the kernel's and outlives the process, so the stop keeps it.
+    @Test fun aHelperFromBeforeHevMakesWayForTheCurrentOne() = withFakeDaemon(
+        listOf(
+            idleHeld,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
+            idle5,
+            idleHeld5
+        )
+    ) { daemon ->
+        val log = mutableListOf<String>()
+        val controller = MacOsTunController(log::add, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
+        assertEquals(
+            MacOsTunController.Helper(blockStands = true, canHold = true, runsLines = true),
+            runBlocking { controller.helperNow() }
+        )
+        assertEquals(listOf("status", "stop", "status", "status"), daemon.verbs)
+        assertEquals("\"keep\"", daemon.request(1)["hold"].toString())
+        assertTrue(log.any { "the tunnel helper was updated" in it }, log.toString())
+    }
+
     // The first connect after an update of the app: the previous build's
     // helper is still the one running. It makes way when it is told to stop,
     // and the connect then chooses its order by what the new one can do.
@@ -487,8 +514,8 @@ class MacOsTunControllerTest {
         listOf(
             idle,
             """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":""}""",
-            idle3,
-            idleHeld
+            idle5,
+            idleHeld5
         )
     ) { daemon ->
         val log = mutableListOf<String>()
@@ -508,8 +535,8 @@ class MacOsTunControllerTest {
         listOf(
             idleHeldBeforeLines,
             """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
-            idleHeld,
-            idleHeld
+            idleHeld5,
+            idleHeld5
         )
     ) { daemon ->
         val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
@@ -524,7 +551,12 @@ class MacOsTunControllerTest {
     // And when the one on disk is no newer, it is what there is: it holds, and
     // a room's engine is not its to run.
     @Test fun aHelperThatCannotRunALineIsNotAskedTo() = withFakeDaemon(
-        listOf(idleHeldBeforeLines, idleHeldBeforeLines)
+        listOf(
+            idleHeldBeforeLines,
+            """{"ok":false,"error":"the tunnel helper was updated and is restarting","restarting":true,"logTail":"","hold":true}""",
+            idleHeldBeforeLines,
+            idleHeldBeforeLines
+        )
     ) { daemon ->
         val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
         assertEquals(
@@ -537,14 +569,14 @@ class MacOsTunControllerTest {
     // A room's engine is the helper's to run under the switch, and where its
     // block stands; with neither it is the app's own child, as ever.
     @Test fun aRoomsEngineIsTheHelpersUnderTheSwitchAndBehindABlock() {
-        withFakeDaemon(listOf(idle3)) { daemon ->
+        withFakeDaemon(listOf(idle5)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
             assertFalse(controller.runsLineUnder(killSwitch = true), "not before the helper has been asked")
             runBlocking { controller.helperNow() }
             assertTrue(controller.runsLineUnder(killSwitch = true))
             assertFalse(controller.runsLineUnder(killSwitch = false))
         }
-        withFakeDaemon(listOf(idleHeld)) { daemon ->
+        withFakeDaemon(listOf(idleHeld5)) { daemon ->
             val controller = MacOsTunController({}, TunnelDaemonClient(daemon.path), { emptyList() }, { "en0" })
             runBlocking { controller.helperNow() }
             assertTrue(controller.runsLineUnder(killSwitch = false))
