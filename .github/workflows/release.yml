@@ -964,8 +964,11 @@ jobs:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
       ANDROID_NDK_VERSION: "28.2.13676358"
-      # Same pins as the desktop job and singbox-verify.yml. All three have to
-      # move together: a config this app writes is validated against one schema.
+      # The Rust core is built from scripts/ghostlane-core-pin.sh by
+      # scripts/build-ghostlane-core-android.sh. No Go engine is built here:
+      # the Go code left in the tree for A7 is neither packaged nor started.
+      # The two version markers stay until the CLI's flip: cli/internal/pins
+      # reads SINGBOX_VERSION from this file to hold cli/go.mod to the pin.
       SINGBOX_VERSION: "1.13.14"
       XRAY_VERSION: "26.7.11"
       # The five below are empty in a dry run. The signing step then takes its
@@ -1017,6 +1020,51 @@ jobs:
       - name: Install Android SDK packages
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+
+      # The core links BoringSSL through CMake and needs bindgen's libclang.
+      - name: Build tools for the Rust core
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang libclang-dev
+          cmake --version | head -1
+          clang --version | head -1
+
+      - name: Restore the cargo cache
+        id: core-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            olcbox/out/core/src/target
+          key: rust-core-android-${{ hashFiles('olcbox/scripts/ghostlane-core-pin.sh') }}
+          restore-keys: rust-core-android-
+
+      # One output directory: jniLibs (three ABIs, stripped), symbols (the same
+      # libraries before the strip), the UniFFI Kotlin bindings and the report
+      # that pins the commit, checks BoringSSL and every LOAD segment's page size.
+      - name: Build ghostlane-core for Android
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/build-ghostlane-core-android.sh "${GITHUB_WORKSPACE}/olcbox/out/core" 2>&1 \
+            | tee "$RUNNER_TEMP/core-build.log"
+          {
+            echo '### ghostlane-core for Android'
+            echo '```'
+            cat "$GITHUB_WORKSPACE/olcbox/out/core/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the cargo cache
+        if: always() && steps.core-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            olcbox/out/core/src/target
+          key: rust-core-android-${{ hashFiles('olcbox/scripts/ghostlane-core-pin.sh') }}
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -1092,144 +1140,19 @@ jobs:
           EOF
           fi
 
-      # Without this the APK ships olcRTC and nothing else. sing-box and Xray run
-      # as child processes on Android, exec'd out of the app's native library
-      # directory, so each core has to be packaged as a `lib*.so` per ABI — that
-      # is the only place an installed app is allowed to execute from.
-      #
-      # It was missing until 1.0.234, and the failure it produced pointed away
-      # from itself: the app imported subscriptions fine and reported
-      # "Cannot run program .../libsingboxcore.so: No such file or directory" only
-      # on connect, so every Reality, Hysteria2 and XHTTP location was dead in
-      # every release APK ever published while olcRTC kept working.
-      #
-      # singbox-verify.yml has staged these all along, which is why that workflow
-      # stayed green over a release that could not connect.
-      # Built here rather than downloaded, for one reason: every sing-box release
-      # binary — 1.13.14 and 1.14.0-beta.2 alike — has 4 KB LOAD alignment, and a
-      # device with 16 KB pages cannot map it. On a Pixel 10 the process died
-      # without executing a single instruction: its log was empty, not even the
-      # version banner Xray prints on its first line, while Xray (aligned to 64 KB)
-      # started normally. There is no upstream version to move to, so the choice is
-      # to align it ourselves or to ship Hysteria2 broken on every recent phone.
-      #
-      # The recipe is theirs, from SagerNet's own build.yml: same shared ldflags,
-      # same NDK triples, CGO through the NDK clang. The one addition is
-      # max-page-size. The tags are not theirs: Android's list in
-      # scripts/singbox-tags.sh, which says what each one is for. A tag missing
-      # from it drops a protocol without a word, so PR Checks checks every
-      # config the app writes with a binary built from the same list.
-      #
-      # The tree is the pinned module with Ghostlane's Reality hello patch
-      # (scripts/patched-singbox.sh; the patch says why), the tree every
-      # platform builds: unpatched, Reality lines do not open on Xray-core
-      # servers from v26.7 on.
-      - name: Build sing-box for Android with 16 KB page alignment
-        run: |
-          set -euo pipefail
-          bash "${GITHUB_WORKSPACE}/olcbox/scripts/patched-singbox.sh" "${RUNNER_TEMP}/sing-box"
-          # shellcheck source=scripts/singbox-tags.sh
-          . "${GITHUB_WORKSPACE}/olcbox/scripts/singbox-tags.sh"
-          cd "${RUNNER_TEMP}/sing-box"
-
-          TAGS="${SINGBOX_TAGS_ANDROID}"
-          LDFLAGS_SHARED="$(cat release/LDFLAGS)"
-          NDK_BIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          OUT="${GITHUB_WORKSPACE}/olcbox/androidApp/jniLibs"
-          echo "build tags: ${TAGS}"
-
-          build_singbox() {   # $1 = GOARCH, $2 = NDK triple, $3 = android ABI
-            mkdir -p "${OUT}/$3"
-            CGO_ENABLED=1 GOOS=android GOARCH="$1" GOARM=7 \
-            CC="${NDK_BIN}/$2-clang" CXX="${NDK_BIN}/$2-clang++" \
-            go build -v -trimpath -o "${OUT}/$3/libsingboxcore.so" -tags "${TAGS}" \
-              -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION}' ${LDFLAGS_SHARED} -s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384" \
-              ./cmd/sing-box
-          }
-
-          build_singbox arm64 aarch64-linux-android23    arm64-v8a
-          build_singbox arm   armv7a-linux-androideabi23 armeabi-v7a
-          build_singbox amd64 x86_64-linux-android23     x86_64
-
-      # Downloaded until 1.0.237, and the alignment check is what ended that. Xray
-      # publishes one Android asset, arm64; the other two ABIs were filled with its
-      # linux builds on the reasoning that Android is Linux and a static Go binary
-      # does not care. It does care about one thing: Go's linker rounds segments
-      # differently per GOOS, so the android asset came out at 64 KB while
-      # Xray-linux-64 came out at 4 KB — unusable on a 16 KB-page device, and
-      # shipped that way to x86_64 in the same release that fixed sing-box.
-      #
-      # Building all three from GOOS=android removes the substitution rather than
-      # patching around it, and max-page-size makes the result ours instead of a
-      # per-architecture default that can move under us. No build tags: that is
-      # XTLS's own release setting.
-      #
-      # Through the NDK, unlike XTLS's own CGO_ENABLED=0 — because
-      # `android/arm requires external (cgo) linking, but cgo is not enabled`.
-      # That is also why they publish an android asset for arm64 and none for
-      # arm32: without an NDK there is nothing to link it with. The toolchain is
-      # already here for gomobile and for sing-box, so the same shape serves both
-      # cores and there is one way this job builds a core rather than two.
-      #
-      # -checklinkname=0 is XTLS's own flag for Android: from 26.x a dependency
-      # (wlynxg/anet) links to net.zoneCache, and the linker refuses that
-      # without it ("invalid reference to net.zoneCache", measured 2026-11-11).
-      - name: Build Xray for Android with 16 KB page alignment
-        run: |
-          set -euo pipefail
-          git clone --depth 1 --branch "v${XRAY_VERSION}" \
-            https://github.com/XTLS/Xray-core.git "${RUNNER_TEMP}/xray"
-          cd "${RUNNER_TEMP}/xray"
-          NDK_BIN="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          OUT="${GITHUB_WORKSPACE}/olcbox/androidApp/jniLibs"
-
-          build_xray() {      # $1 = GOARCH, $2 = NDK triple, $3 = android ABI
-            mkdir -p "${OUT}/$3"
-            CGO_ENABLED=1 GOOS=android GOARCH="$1" GOARM=7 \
-            CC="${NDK_BIN}/$2-clang" CXX="${NDK_BIN}/$2-clang++" \
-            go build -v -trimpath -buildvcs=false -o "${OUT}/$3/libxraycore.so" \
-              -ldflags "-X github.com/xtls/xray-core/core.build=v${XRAY_VERSION} -s -w -buildid= -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384" \
-              ./main
-          }
-
-          build_xray arm64 aarch64-linux-android23    arm64-v8a
-          build_xray arm   armv7a-linux-androideabi23 armeabi-v7a
-          build_xray amd64 x86_64-linux-android23     x86_64
-
-          echo "== staged cores =="
-          ls -la "${OUT}"/*/
-
-      # The build flags above are requests, not guarantees: Go's linker passes its
-      # own -z max-page-size and whichever lands last wins, and its segment rounding
-      # defaults are per-architecture — arm and arm64 round to 64 KB, amd64 to 4 KB,
-      # which is how a 4 KB Xray reached x86_64 in the release that fixed sing-box.
-      # Checking the artifact is what makes the requests safe to make.
-      - name: Verify cores are 16 KB aligned
-        working-directory: olcbox
-        run: |
-          set -euo pipefail
-          bad=0
-          for f in androidApp/jniLibs/*/lib*core.so; do
-            align="$(readelf -lW "$f" | awk '/^  LOAD/{print $NF; exit}')"
-            if [ $(( align % 16384 )) -ne 0 ]; then
-              echo "MISALIGNED ${f} (${align})"; bad=1
-            else
-              echo "ok         ${f} (${align})"
-            fi
-          done
-          [ "$bad" -eq 0 ] || {
-            echo "A core with sub-16 KB LOAD alignment cannot be mapped on a" >&2
-            echo "16 KB-page device: it dies before executing anything, silently." >&2
-            exit 1
-          }
-
+      # The Android cores used to be sing-box and Xray children, exec'd from
+      # the app's native library directory. They are gone from this job: the
+      # Rust library is in the app process, and every ABI's LOAD segments were
+      # 16 KiB-aligned by build-ghostlane-core-android.sh before the APK was made.
       - name: Build production APK
         working-directory: olcbox
         run: |
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :sharedUI:jvmTest :androidApp:assembleGithubRelease :androidApp:bundlePlayRelease --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" \
+            -PghostlaneCoreDir="${GITHUB_WORKSPACE}/olcbox/out/core" \
+            :sharedUI:jvmTest :androidApp:assembleGithubRelease :androidApp:bundlePlayRelease --stacktrace
 
       - name: Prepare universal Android release asset
         working-directory: olcbox
@@ -1259,8 +1182,8 @@ jobs:
           cp "${bundle}" "$aab"
 
           # What makes this bundle the Play one: the two permissions Play refuses
-          # at upload are gone (src/play/AndroidManifest.xml), and the cores are
-          # in. The manifest inside a bundle is protobuf, but permission names
+          # at upload are gone (src/play/AndroidManifest.xml), and the Rust core
+          # is in. The manifest inside a bundle is protobuf, but permission names
           # are stored as plain strings, so grep sees them.
           manifest="$(mktemp)"
           unzip -p "$aab" base/manifest/AndroidManifest.xml > "$manifest"
@@ -1277,35 +1200,47 @@ jobs:
           # pipeline reports failure for a core that is there.
           listing="$(mktemp)"
           unzip -l "$aab" > "$listing"
-          for core in libsingboxcore.so libxraycore.so libgojni.so; do
-            grep -q "base/lib/arm64-v8a/${core}" "$listing" \
-              || { echo "MISSING arm64-v8a/${core} in the bundle" >&2; exit 1; }
-            echo "ok   arm64-v8a/${core}"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            for lib in libghostlane_core.so libjnidispatch.so; do
+              grep -q "base/lib/${abi}/${lib}" "$listing" \
+                || { echo "MISSING ${abi}/${lib} in the bundle" >&2; exit 1; }
+              echo "ok   ${abi}/${lib}"
+            done
+          done
+          for go in libgojni.so libsingboxcore.so libxraycore.so; do
+            if grep -q "$go" "$listing"; then
+              echo "Go core ${go} is in the bundle" >&2; exit 1
+            fi
           done
           ls -la dist/
 
       # Asserted against the finished artifact, not against the staging directory.
-      # The bug this catches was not a download that failed — the files were never
-      # fetched — but the next one could as easily be an ABI filter or a packaging
-      # rule that drops them on the way in, and only the APK can show that.
-      - name: Verify cores packaged in the universal APK
+      # An ABI filter or a packaging rule can drop the core on the way in, and
+      # only the APK can show that. K1 reads the same file for Go later in this job.
+      - name: Verify the Rust core packaged in the universal APK
         working-directory: olcbox
         run: |
           set -euo pipefail
           apk="dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk"
+          listing="$(mktemp)"
+          unzip -l "$apk" > "$listing"
           missing=0
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            for core in libsingboxcore.so libxraycore.so; do
-              if unzip -l "$apk" | grep -q "lib/${abi}/${core}"; then
-                echo "ok   ${abi}/${core}"
+            for lib in libghostlane_core.so libjnidispatch.so; do
+              if grep -q "lib/${abi}/${lib}" "$listing"; then
+                echo "ok   ${abi}/${lib}"
               else
-                echo "MISSING ${abi}/${core}"; missing=1
+                echo "MISSING ${abi}/${lib}"; missing=1
               fi
             done
           done
+          for go in libgojni.so libsingboxcore.so libxraycore.so; do
+            if grep -q "$go" "$listing"; then
+              echo "Go core ${go} is in the APK" >&2; missing=1
+            fi
+          done
           [ "$missing" -eq 0 ] || {
-            echo "Cores are missing from the APK — every Reality/Hysteria2/XHTTP" >&2
-            echo "location would fail to start. Refusing to publish." >&2
+            echo "The APK is not the Rust-core build. Refusing to publish." >&2
             exit 1
           }
 
@@ -1315,7 +1250,9 @@ jobs:
           export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" -Polcbox.android.abiFilters=armeabi-v7a :androidApp:clean :androidApp:assembleGithubRelease --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" \
+            -Polcbox.android.abiFilters=armeabi-v7a -PghostlaneCoreDir="${GITHUB_WORKSPACE}/olcbox/out/core" \
+            :androidApp:clean :androidApp:assembleGithubRelease --stacktrace
 
       - name: Prepare armeabi-v7a Android release asset
         working-directory: olcbox
@@ -1327,16 +1264,122 @@ jobs:
           fi
           cp "${release_apk}" "dist/Ghostlane-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
 
-      - name: Verify cores packaged in the armeabi-v7a APK
+      - name: Verify the Rust core packaged in the armeabi-v7a APK
         working-directory: olcbox
         run: |
           set -euo pipefail
           apk="dist/Ghostlane-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk"
-          for core in libsingboxcore.so libxraycore.so; do
-            unzip -l "$apk" | grep -q "lib/armeabi-v7a/${core}" \
-              || { echo "MISSING armeabi-v7a/${core}" >&2; exit 1; }
-            echo "ok   armeabi-v7a/${core}"
+          listing="$(mktemp)"
+          unzip -l "$apk" > "$listing"
+          for lib in libghostlane_core.so libjnidispatch.so; do
+            grep -q "lib/armeabi-v7a/${lib}" "$listing" \
+              || { echo "MISSING armeabi-v7a/${lib}" >&2; exit 1; }
+            echo "ok   armeabi-v7a/${lib}"
           done
+          for go in libgojni.so libsingboxcore.so libxraycore.so; do
+            if grep -q "$go" "$listing"; then
+              echo "Go core ${go} is in the APK" >&2; exit 1
+            fi
+          done
+
+      # A 16 KiB-page device dies before executing a 4 KiB-aligned library.
+      # Read the LOAD alignment out of the packaged bytes with Python's zip
+      # module: no unzip wildcard, no temporary extraction and no shell
+      # arithmetic on a reader's output. The core's report checks all three
+      # ABIs at build time; armv7 is 32-bit and outside the page-size rule.
+      - name: Verify the native libraries in the APK are 16 KiB aligned
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          apk="dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk"
+          python3 - "$apk" <<'PY'
+          import struct
+          import sys
+          import zipfile
+
+          apk = sys.argv[1]
+          bad = []
+          with zipfile.ZipFile(apk) as z:
+              names = set(z.namelist())
+              for abi in ("arm64-v8a", "x86_64"):
+                  for lib in ("libghostlane_core.so", "libjnidispatch.so"):
+                      name = "lib/%s/%s" % (abi, lib)
+                      if name not in names:
+                          bad.append("MISSING " + name)
+                          continue
+                      data = z.read(name)
+                      if data[:4] != b"\x7fELF":
+                          bad.append("not an ELF: " + name)
+                          continue
+                      elf_class = data[4]
+                      if elf_class == 2:
+                          phoff, = struct.unpack_from("<Q", data, 32)
+                          phentsize, phnum = struct.unpack_from("<HH", data, 54)
+                          p_align = lambda at: struct.unpack_from("<Q", data, at + 48)[0]
+                      elif elf_class == 1:
+                          phoff, = struct.unpack_from("<I", data, 28)
+                          phentsize, phnum = struct.unpack_from("<HH", data, 42)
+                          p_align = lambda at: struct.unpack_from("<I", data, at + 28)[0]
+                      else:
+                          bad.append("unknown ELF class %d: %s" % (elf_class, name))
+                          continue
+                      aligns = []
+                      for i in range(phnum):
+                          at = phoff + i * phentsize
+                          if struct.unpack_from("<I", data, at)[0] == 1:  # PT_LOAD
+                              aligns.append(p_align(at))
+                      if not aligns:
+                          bad.append("no LOAD segment in " + name)
+                      elif any(a % 16384 for a in aligns):
+                          bad.append("MISALIGNED %s: %s" % (name, aligns))
+                      else:
+                          print("ok         %s: %s" % (name, aligns))
+          if bad:
+              print("\n".join(bad), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      # The symbols are not shipped inside the APK: they sit beside it in the
+      # artifact, one file per ABI, for a reader of a native stack trace.
+      - name: Keep the native symbols per ABI
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          mkdir -p dist/symbols
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            f="${GITHUB_WORKSPACE}/olcbox/out/core/symbols/${abi}/libghostlane_core.so"
+            [ -s "$f" ] || { echo "no symbols for ${abi}" >&2; exit 1; }
+            mkdir -p "dist/symbols/${abi}"
+            cp "$f" "dist/symbols/${abi}/libghostlane_core.so"
+          done
+          ls -l dist/symbols/*/*.so
+
+      # K1 against the finished assets, with the Android allow-list entries
+      # removed by this flip. A Go core anywhere in the APK, the armv7 APK or
+      # the AAB fails the release before anything is uploaded.
+      - name: No Go in the Android assets
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-android-armeabi-v7a-release.apk" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab"
+
+      # The same questions the build asks about its default, and the finished
+      # APK/AAB and symbols, answered by CorePackagingTest on the JVM. AGP
+      # creates unit-test tasks for its test build type (debug), not for the
+      # release variant; the artifact paths are passed in as properties.
+      - name: CorePackagingTest against the finished Android assets
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" \
+            -PghostlaneCoreDir="${GITHUB_WORKSPACE}/olcbox/out/core" \
+            "-Pghostlane.apk=${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk" \
+            "-Pghostlane.aab=${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab" \
+            "-Pghostlane.symbols=${GITHUB_WORKSPACE}/olcbox/out/core/symbols" \
+            :androidApp:testGithubDebugUnitTest --stacktrace
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -1346,6 +1389,7 @@ jobs:
             olcbox/dist/Ghostlane-*-android-release.apk
             olcbox/dist/Ghostlane-*-android-armeabi-v7a-release.apk
             olcbox/dist/Ghostlane-*-android-play.aab
+            olcbox/dist/symbols/**
 
       # After the artifact, so a refusal from Play — the first bundle of an app
       # has to go through the console by hand, and a version code Play already

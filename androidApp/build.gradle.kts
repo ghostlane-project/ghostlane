@@ -24,15 +24,17 @@ val olcboxVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0")
 val olcboxVersionCode = providers.gradleProperty("olcbox.versionCode")
     .map { it.toInt() }
     .orElse(1)
-// The Rust core (phase 2 of the Android move; scripts/build-ghostlane-core-android.sh):
+// The Rust core (scripts/build-ghostlane-core-android.sh):
 // -PghostlaneCoreDir=<its output dir> packs libghostlane_core.so for each ABI and
-// compiles the UniFFI bindings and RustCoreEngine into the app. Without it the app is
-// what it was: no class, no library, and the developer switch has nothing to select.
-// -Polcbox.rustCoreDefault=true would turn the switch on by default; it is off.
+// compiles the UniFFI bindings and RustCoreEngine into the app. A release never
+// omits it. The Go engines are still in the tree for A7 to delete, but no Go
+// library is packaged and the tunnel starts on the Rust core.
+// -Polcbox.rustCoreDefault=false is only for an instrumented Go test; a normal
+// build, including every release, has the switch on.
 val ghostlaneCoreDir: File? = providers.gradleProperty("ghostlaneCoreDir").orNull
     ?.let { file(it) }
     ?.takeIf { it.resolve("jniLibs").isDirectory && it.resolve("kotlin").isDirectory }
-val rustCoreDefault = providers.gradleProperty("olcbox.rustCoreDefault").map { it.toBoolean() }.getOrElse(false)
+val rustCoreDefault = providers.gradleProperty("olcbox.rustCoreDefault").map { it.toBoolean() }.getOrElse(true)
 val defaultAndroidAbiFilters = listOf("armeabi-v7a", "arm64-v8a", "x86_64")
 val androidAbiFilters = providers.gradleProperty("olcbox.android.abiFilters")
     .map { value ->
@@ -191,6 +193,13 @@ android {
             java.srcDirs("src/androidTest/kotlin")
             if (ghostlaneCoreDir != null) kotlin.srcDir("src/androidTestRustcore/kotlin")
         }
+        // CorePackagingTest answers the flip's questions on the JVM: what the
+        // build defaults to, and what an APK/AAB handed to it actually carries.
+        // PR Checks runs assembleDebug, not a device, so a test that needs an
+        // emulator could not fail a red commit.
+        getByName("test") {
+            kotlin.srcDir("src/androidTest/kotlin")
+        }
     }
 
     compileOptions {
@@ -211,6 +220,12 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // The engines remain in source until A7. Their native libraries
+            // must not ride along: K1 reads every shipped file at any nesting,
+            // and a Go core here would fail the APK, the AAB and the release.
+            excludes.add("**/libgojni.so")
+            excludes.add("**/libsingboxcore.so")
+            excludes.add("**/libxraycore.so")
         }
     }
 }
@@ -235,6 +250,8 @@ dependencies {
         androidTestImplementation(libs.kotlinx.coroutines.android)
     }
 
+    testImplementation("junit:junit:4.13.2")
+
     // Instrumented tests: the only way to exercise the packaged core binary the way
     // the app does — extracted into nativeLibraryDir and exec'd on a real Android.
     androidTestImplementation("androidx.test:runner:1.7.0")
@@ -243,3 +260,20 @@ dependencies {
     // pin what its liveness check reports when olcRTC was never started.
     androidTestImplementation(project(":sharedUI:olcrtc-bin"))
 }
+
+// The packaging test reads the build's own answers, not a copy kept in prose.
+// A release can also point it at the APK and the AAB it is about to ship.
+tasks.withType<Test>().configureEach {
+    systemProperty("ghostlane.rustCoreDefault", rustCoreDefault.toString())
+    systemProperty("ghostlane.abis", androidAbiFilters.joinToString(","))
+    listOf("apk", "aab", "symbols").forEach { key ->
+        providers.gradleProperty("ghostlane.$key").orNull?.let { systemProperty("ghostlane.$key", it) }
+    }
+}
+
+// Every ordinary Android build checks the flip, including PR Checks' assembleDebug.
+// AGP creates the variant tasks after configuration, so match rather than name.
+tasks.matching { it.name == "assembleGithubDebug" || it.name == "assemblePlayDebug" }
+    .configureEach {
+        finalizedBy("test${name.removePrefix("assemble")}UnitTest")
+    }
