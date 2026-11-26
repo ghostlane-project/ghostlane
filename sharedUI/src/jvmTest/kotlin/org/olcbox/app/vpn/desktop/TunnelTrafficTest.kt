@@ -257,6 +257,37 @@ class TunnelTrafficTest {
         assertNull(SingBoxTunTraffic(free, "s3cr3t", ownBinaries = emptyList()).read())
     }
 
+    // ── macOS: the engine's tun, counted by the kernel ──────────────────────
+
+    /** `netstat -ib`, as a Mac writes it: the link row carries the byte counts. */
+    private val netstat = """
+        Name  Mtu   Network       Address            Ibytes    Ierrs  Idrop     Obytes Oerrs  Coll
+        lo0   16384 <Link#1>                       56336460        0      0   56336460     0     0
+        utun231 1500 <Link#21>                     2600000000      0      0    516000000     0     0
+        utun231 1500 198.19/16     198.19.0.1       1200000        0      0      300000     0     0
+    """.trimIndent()
+
+    @Test fun onMacTheCountIsTheTunDevicesOwn() = runTest {
+        // The link row, not the address row that follows it: the latter counts
+        // only what was addressed on that network, not all of the tunnel's.
+        val counted = MacTunTraffic("utun231") { netstat }.read()
+        assertEquals(TrafficCounters(bytesIn = 2_600_000_000L, bytesOut = 516_000_000L), counted)
+    }
+
+    @Test fun aTunThatIsNotThereIsNoReadingAndNotAZero() = runTest {
+        assertNull(MacTunTraffic("utun9") { netstat }.read())
+        assertNull(MacTunTraffic("utun231") { "" }.read())
+    }
+
+    @Test fun anAnswerWithoutByteColumnsIsNoReading() = runTest {
+        // A Mac that prints packets rather than bytes has no answer for a
+        // session's counter: reading those columns as bytes would be a lie.
+        val packets = netstat.replace("Ibytes", "Ipkts").replace("Obytes", "Opkts")
+        assertNull(MacTunTraffic("utun231") { packets }.read())
+        val broken = netstat.replace("2600000000", "not a number")
+        assertNull(MacTunTraffic("utun231") { broken }.read())
+    }
+
     private companion object {
         const val ENGINE = "/Users/a/Library/Application Support/Ghostlane/bin/olcrtc-darwin-arm64"
         const val BROWSER = "/Applications/Safari.app/Contents/MacOS/Safari"

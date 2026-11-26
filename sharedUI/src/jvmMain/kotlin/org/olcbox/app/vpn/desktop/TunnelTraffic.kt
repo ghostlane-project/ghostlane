@@ -59,9 +59,68 @@ internal class LinuxTunTraffic(
 }
 
 /**
- * Windows and macOS: the tun is a sing-box, and it keeps count for whoever asks
- * its local API with the secret it was started with
- * ([org.olcbox.app.net.SingBoxConfig.LocalApi]).
+ * macOS: the tun is hev's, and the kernel counts what crosses it, as it does
+ * for Linux. There is no sing-box behind an engine's tunnel to ask for flows,
+ * so the utun's own link counters are the count: what it received is on its
+ * way in, what it transmitted is on its way out. The lines behind it leave
+ * beside the tun, in the helper's group or bound to the physical interface,
+ * and are not in either.
+ *
+ * `netstat -ib` prints the link row of an interface with the byte counts the
+ * kernel keeps. The header is read for the columns, so an extra column on a
+ * newer Mac cannot shift a reading into the wrong one. A tun that is not up,
+ * or an answer that cannot be read, is no reading and never a zero: a zero
+ * here would say a tunnel that started again had carried nothing.
+ */
+internal class MacTunTraffic(
+    private val interfaceName: String,
+    private val read: () -> String = ::readNetstatInterfaces,
+) : TunnelTraffic {
+    override suspend fun read(): TrafficCounters? = withContext(Dispatchers.IO) {
+        counters(read(), interfaceName)
+    }
+
+    internal companion object {
+        internal fun counters(output: String, interfaceName: String): TrafficCounters? {
+            val lines = output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+            if (lines.size < 2) return null
+            val header = lines.first().split(WHITESPACE)
+            // The link row has no address, so the cell under "Address" is
+            // missing and the numbers shift left by one. Count the columns
+            // from the first number the header names, not from the name.
+            val columns = header.dropWhile { it in NON_NUMERIC_HEADERS }
+            val received = columns.indexOf("Ibytes").takeIf { it >= 0 } ?: return null
+            val sent = columns.indexOf("Obytes").takeIf { it >= 0 } ?: return null
+            val row = lines.firstOrNull { line ->
+                val cells = line.split(WHITESPACE)
+                cells.firstOrNull() == interfaceName && cells.any { it.startsWith("<Link#") }
+            }?.split(WHITESPACE) ?: return null
+            val marker = row.indexOfFirst { it.startsWith("<Link#") }.takeIf { it >= 0 } ?: return null
+            val numbers = row.drop(marker + 1)
+            if (received >= numbers.size || sent >= numbers.size) return null
+            val bytesIn = numbers[received].toLongOrNull() ?: return null
+            val bytesOut = numbers[sent].toLongOrNull() ?: return null
+            return TrafficCounters(bytesIn = bytesIn, bytesOut = bytesOut)
+        }
+
+        private val WHITESPACE = Regex("\\s+")
+        private val NON_NUMERIC_HEADERS = setOf("Name", "Mtu", "Network", "Address")
+
+        /** All of the machine's interfaces with their byte counts, as `netstat` writes them. */
+        internal fun readNetstatInterfaces(): String = runCatching {
+            val process = ProcessBuilder("netstat", "-ib").redirectErrorStream(true).start()
+            val text = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            text
+        }.getOrDefault("")
+    }
+}
+
+/**
+ * Windows, and a macOS tunnel that still runs sing-box: it keeps count for
+ * whoever asks its local API with the secret it was started with
+ * ([org.olcbox.app.net.SingBoxConfig.LocalApi]). An engine's tunnel on a Mac
+ * is hev's and is counted from the interface ([MacTunTraffic]).
  */
 internal class SingBoxTunTraffic(
     private val port: Int,
