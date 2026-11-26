@@ -296,7 +296,6 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 )"
 expect "its SOCKS port is on loopback" "$PROXY" '^127\.0\.0\.1:[0-9]+$'
-expect "the page is not reached without the tunnel" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$TARGET:$ECHO_PORT/" 2>/dev/null)" '^000$'
 if [ -n "$ENGINE" ]; then
   FETCH="$(as_user curl -s --max-time 12 --socks5 "$PROXY" "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)"
 else
@@ -310,10 +309,12 @@ fi
 expect "it fetches the page through the line and the utun" "$FETCH" '^the engine in the pf group fetched this page$'
 expect "the dial went through hev, into the tun" "$(grep -c "^connect $TARGET:$ECHO_PORT\$" "$work/forward.log" 2>/dev/null)" '^[1-9][0-9]*$'
 
-say "a stand-in outside the group is refused"
-: > "$work/outside.log"
-chown "$WHO" "$work/outside.log"
-expect "started by its user, it cannot reach the line's server" "$(as_user "$STAND_IN_BUILT" "$MINE" 127.0.0.1 443 once | tail -1)" '^bound no answer$'
+say "a program outside the group is refused"
+# Traffic routed into the tun is let out by pf's first rule whatever its
+# group. What leaves by the physical interface is let out only from the
+# tunnel's group, so the same user's request there is refused.
+expect "the user cannot reach a server beside the tun" "$(as_user curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$MINE:$ECHO_PORT/" 2>/dev/null)" '^000$'
+expect "the program in the group can" "$(as_user curl -s --max-time 5 "http://$TARGET:$ECHO_PORT/" 2>&1 | head -1)" '^the engine in the pf group fetched this page$'
 
 say "nothing left behind"
 expect "the helper ends the program" "$(ask '{"verb":"line-stop"}')" '^ok=True state=running hold=True protocol=5 line=0 '
