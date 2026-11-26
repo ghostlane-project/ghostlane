@@ -28,6 +28,22 @@ here names a line: a kind joins by its reference and its server's file.
       server must not let through, <line>.<refusal>.json, listed in
       <line>.refusals as `<refusal><TAB><what it changed>`; prints the
       transport the server listens on (tcp or udp).
+  lines.py named-lines
+      prints `<line> <server name>` for each line the host also runs as a line
+      named by a hostname.
+  lines.py named <line> <dir>
+      from <dir>/<line>.client.json and <line>.server.json (what `line`
+      wrote), the line as the app hands it over when its link names the
+      server by a hostname (IosCore.start, CoreLines.pinHost, IosCore.handOver):
+      the server's address is HostPin's placeholder, the name is the TLS
+      server name and the WebSocket Host, and the name and the sentence for a
+      name that does not resolve stand at the head of the file, in `meta`.
+      Writes <line>.named.client.json, the server that checks both
+      (<line>.named.server.json: the Host the line sends, an SNI the
+      certificate names), and the three variants the host must not let
+      through or must refuse: <line>.named-host.json (another Host),
+      <line>.named-sni.json (another server name), <line>.named-unknown.json
+      (a name the resolver does not know). Prints the name.
   lines.py selftest <reference-dir> <lines-dir> <work-dir>
       every line of the tree made with stand-in values and read back, and
       each refusal of a line or of a server that does not fit it, in copies
@@ -85,6 +101,22 @@ PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 # refusal changes, and the only ones of its stream this program writes.
 WAIVER = "allowInsecure"
 PIN = "pinnedPeerCertSha256"
+
+
+# The lines the host also runs as lines named by a hostname (a WebSocket over
+# TLS, which carries the name twice: the server name and the Host), and the
+# names it gives their servers: IosCore.start writes such a line for the
+# placeholder and the extension (HostPin.swift) resolves the name.
+NAMED_LINES = ("trojan-ws", "webtunnel-ws")
+NAME_SUFFIX = ".hostline.engine-host.test"
+# IosCore.HOST_PIN_PLACEHOLDER and IosCore.HOST_UNRESOLVED; selftest of
+# scripts/test-ios-engine-on-mac.sh holds them to the Kotlin.
+HOST_PIN_PLACEHOLDER = "198.51.100.54"
+HOST_UNRESOLVED = "the server's name did not resolve on the network underneath the tunnel"
+
+
+def hostname_of(line):
+    return line + NAME_SUFFIX
 
 
 class Problem(Exception):
@@ -322,7 +354,27 @@ def names(args):
                 seen.append(server_name)
     if not seen:
         raise Problem("no line names a server")
+    # The servers of the lines named by a hostname ask for their own names.
+    seen += [hostname_of(line) for line in NAMED_LINES]
     print(",".join("DNS:" + n for n in seen))
+    return 0
+
+
+def subject_names(ref_dir, lines_dir):
+    """What `names` prints."""
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        names([ref_dir, lines_dir])
+    return out.getvalue().strip().split(",")
+
+
+def named_lines(args):
+    if args:
+        raise SystemExit(__doc__)
+    for line in NAMED_LINES:
+        print(line, hostname_of(line))
     return 0
 
 
@@ -485,6 +537,75 @@ def line(args):
     return 0
 
 
+# ------------------------------------------------- a line named by a hostname
+
+def hand_over(config, name, sentence):
+    """core.json as IosCore.handOver gives it to the extension: the server's
+    name and the sentence at the head, in `meta`, ahead of everything else."""
+    body = json.dumps(config, separators=(",", ":"), ensure_ascii=False)
+    if not body.startswith('{"'):
+        raise Problem("core.json is not an object with members")
+    meta = json.dumps({"hostPin": {"server": name, "unresolved": sentence}}, separators=(",", ":"), ensure_ascii=False)
+    return '{"meta":' + meta + "," + body[1:]
+
+
+def named_line(line, directory):
+    """(name, files) of the line named by a hostname, written beside its address-given twin."""
+    if line not in NAMED_LINES:
+        raise Problem(f"{line} is not a line the host runs by its name ({', '.join(NAMED_LINES)})")
+    name = hostname_of(line)
+    sentence = f"Cannot start {line}: {HOST_UNRESOLVED}"
+    client = load(os.path.join(directory, f"{line}.client.json"))
+    server = load(os.path.join(directory, f"{line}.server.json"))
+    stream = outbound(client).get("streamSettings") or {}
+    if stream.get("security") != "tls" or network_of(stream) != "ws":
+        raise Problem(f"{line}: the host runs a hostname line over TLS and WebSocket, this one is {network_of(stream)} over {stream.get('security')}")
+
+    # The link names no server name and no Host: the app writes the name for both.
+    stream["tlsSettings"]["serverName"] = name
+    stream["wsSettings"]["host"] = name
+    # The address the server listens on is the resolver's answer; the port is the run's.
+    held = [d for d in leaves(outbound(client).get("settings") or {}, "address") if "port" in d]
+    if len(held) != 1:
+        raise Problem(f"{line}: {len(held)} server addresses in the line's settings, not one")
+    point(outbound(client), HOST_PIN_PLACEHOLDER, held[0]["port"])
+    if json.dumps(client).count(f'"{HOST_PIN_PLACEHOLDER}"') != 1:
+        raise Problem(f"{line}: the placeholder is not the server's address alone")
+    # The server checks what the name is for: the Host (Xray answers another
+    # with an error) and the server name (it refuses a handshake for one its
+    # certificate does not name).
+    inbound = inbound_of(server, f"{line}.server.json")
+    server_stream = inbound["streamSettings"]
+    server_stream["wsSettings"]["host"] = name
+    server_stream["tlsSettings"]["rejectUnknownSni"] = True
+
+    host = copy.deepcopy(client)
+    outbound(host)["streamSettings"]["wsSettings"]["host"] = "other-" + name
+    sni = copy.deepcopy(client)
+    outbound(sni)["streamSettings"]["tlsSettings"]["serverName"] = "other-" + name
+    files = {
+        f"{line}.named.client.json": hand_over(client, name, sentence),
+        f"{line}.named-host.json": hand_over(host, name, sentence),
+        f"{line}.named-sni.json": hand_over(sni, name, sentence),
+        # The head names a server the resolver does not know; the rest is as written.
+        f"{line}.named-unknown.json": hand_over(client, "unknown-" + name, sentence),
+    }
+    return name, server, files
+
+
+def named(args):
+    if len(args) != 2:
+        raise SystemExit(__doc__)
+    line, directory = args
+    name, server, files = named_line(line, directory)
+    save(os.path.join(directory, f"{line}.named.server.json"), server)
+    for file, text in files.items():
+        with open(os.path.join(directory, file), "w", encoding="utf-8") as f:
+            f.write(text)
+    print(name)
+    return 0
+
+
 # ---------------------------------------------------------------- selftest
 
 def differences(a, b, at_path=""):
@@ -598,6 +719,48 @@ def selftest(args):
         bad = [w for w, ok in got if not ok]
         check(f"{name} ({reference}) against {server_line}{SUFFIX}, {network}: {len(got)} checks"
               + (", failed: " + "; ".join(bad) if bad else f", refusals {' '.join(r for r, _, _ in refusals)}"), not bad)
+
+    # The lines named by a hostname: the line as the app hands it over.
+    for line_name in NAMED_LINES:
+        directory = os.path.join(work, "named-" + line_name)
+        os.makedirs(directory, exist_ok=True)
+        _, server, client, _ = make(line_name, ref_dir, lines_dir, *stand_in)
+        save(os.path.join(directory, f"{line_name}.server.json"), server)
+        save(os.path.join(directory, f"{line_name}.client.json"), client)
+        name, named_server, files = named_line(line_name, directory)
+        got = []
+        body = json.loads(files[f"{line_name}.named.client.json"])
+        meta = body.pop("meta")
+        text = files[f"{line_name}.named.client.json"]
+        got.append(("the name and the sentence are at the head, ahead of everything", text.startswith(
+            '{"meta":{"hostPin":{"server":' + json.dumps(name) + ',"unresolved":"Cannot start ' + line_name + ": ")))
+        got.append(("the sentence is the app's for a name that did not resolve", meta["hostPin"]["unresolved"].endswith(
+            ": " + HOST_UNRESOLVED)))
+        out = outbound(body)
+        stream_ = out["streamSettings"]
+        got.append(("the server's address is the placeholder, once", text.count(f'"{HOST_PIN_PLACEHOLDER}"') == 1
+                    and [d["address"] for d in leaves(out["settings"], "address")] == [HOST_PIN_PLACEHOLDER]))
+        got.append(("the name is the TLS server name and the Host", stream_["tlsSettings"]["serverName"] == name
+                    and stream_["wsSettings"]["host"] == name))
+        got.append(("the port, the pin and the credential are the line's", differences(client, body) == [
+            p for p in differences(client, body) if p.endswith(("/address", "/serverName", "/host"))]))
+        ws_server = named_server["inbounds"][0]["streamSettings"]
+        got.append(("the server checks the Host and refuses a server name its certificate does not name",
+                    ws_server["wsSettings"]["host"] == name and ws_server["tlsSettings"]["rejectUnknownSni"] is True))
+        host_variant = json.loads(files[f"{line_name}.named-host.json"])
+        sni_variant = json.loads(files[f"{line_name}.named-sni.json"])
+        unknown = json.loads(files[f"{line_name}.named-unknown.json"])
+        got.append(("the Host variant changes the Host alone", differences({"meta": meta, **body}, host_variant) == [
+            "/outbounds/0/streamSettings/wsSettings/host"]))
+        got.append(("the server name variant changes the server name alone", differences({"meta": meta, **body}, sni_variant) == [
+            "/outbounds/0/streamSettings/tlsSettings/serverName"]))
+        got.append(("the unknown name variant changes the head's name alone", differences({"meta": meta, **body}, unknown) == [
+            "/meta/hostPin/server"]))
+        got.append(("the certificate is asked to name it", f"DNS:{name}" in subject_names(ref_dir, lines_dir)))
+        bad = [w for w, ok in got if not ok]
+        check(f"{line_name} named by a hostname ({name}): {len(got)} checks" + (", failed: " + "; ".join(bad) if bad else ""), not bad)
+    refused("a line that is not one the host runs by its name",
+            lambda: named_line("trojan", os.path.join(work, "named-trojan-ws")), "not a line the host runs by its name")
 
     # Each refusal of this program can be had: copies of the tree, each with
     # one thing wrong.
@@ -713,7 +876,7 @@ def main(argv):
     if len(argv) < 2:
         raise SystemExit(__doc__)
     command, args = argv[1], argv[2:]
-    commands = {"lines": lines, "names": names, "line": line, "selftest": selftest, "socks": socks, "refuse": refuse, "rules": rules}
+    commands = {"lines": lines, "named-lines": named_lines, "named": named, "names": names, "line": line, "selftest": selftest, "socks": socks, "refuse": refuse, "rules": rules}
     try:
         if command in commands:
             return commands[command](args)

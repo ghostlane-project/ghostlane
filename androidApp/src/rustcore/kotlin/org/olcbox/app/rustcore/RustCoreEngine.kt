@@ -16,8 +16,10 @@ import org.ghostlane.olcrtc.setByteBudget as coreSetByteBudget
 import org.ghostlane.olcrtc.setLogWriter
 import org.ghostlane.olcrtc.trim as coreTrim
 import org.olcbox.app.BuildConfig
+import org.olcbox.app.vpn.olc.RustCarriers
 import org.olcbox.app.vpn.service.RustCoreBackend
 import org.olcbox.app.vpn.service.RustOlcParams
+import org.olcbox.app.vpn.service.engine.RustGeodataBackend
 import org.olcbox.app.vpn.service.engine.RustProbeBackend
 import org.olcbox.app.vpn.service.engine.RustProbeCore
 import java.util.concurrent.ConcurrentHashMap
@@ -32,9 +34,10 @@ import java.util.concurrent.ConcurrentHashMap
  * A core handle takes exactly one config, so every start makes a new handle and
  * every stop frees it (CoreEngine.swift). The session has one handle; each probe
  * (smart connect's, the failover's) has one of its own beside it, started and
- * freed by that probe ([startProbeCore]).
+ * freed by that probe ([startProbeCore]). A session's handle can be told the one directory its
+ * core reads geodata files from ([startCoreWithGeodata]), before its config is loaded.
  */
-object RustCoreEngine : RustCoreBackend, RustProbeBackend {
+object RustCoreEngine : RustCoreBackend, RustProbeBackend, RustGeodataBackend {
 
     /** xray-ffi's C ABI (crates/xray-ffi/include/xray_ffi.h), the part the engine uses. */
     interface XrayFfi : Library {
@@ -42,6 +45,7 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend {
         fun xray_core_new(error: PointerByReference): Pointer?
         fun xray_core_set_socket_protect_callback(core: Pointer, cb: ProtectCallback, user: Pointer?, error: PointerByReference): Int
         fun xray_core_set_log_callback(core: Pointer, cb: LogCallback, release: LogRelease, user: Pointer?, error: PointerByReference): Int
+        fun xray_core_set_geodata_search_dir_exclusive(core: Pointer, dir: String, error: PointerByReference): Int
         fun xray_core_load_config_json(core: Pointer, json: String, error: PointerByReference): Int
         fun xray_core_start(core: Pointer, error: PointerByReference): Int
         fun xray_core_stop(core: Pointer, error: PointerByReference): Int
@@ -163,10 +167,11 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend {
     }
 
     /**
-     * A new core handle running [configJson], with [cbs] installed first; freed again when
-     * any step fails. Whoever calls keeps [cbs] reachable for the handle's life.
+     * A new core handle running [configJson], with [cbs] installed first and, with [geodataDir],
+     * that directory as the only one the core reads geodata files from; freed again when any step
+     * fails. Whoever calls keeps [cbs] reachable for the handle's life.
      */
-    private fun open(configJson: String, cbs: Callbacks): Pointer {
+    private fun open(configJson: String, cbs: Callbacks, geodataDir: String? = null): Pointer {
         val error = PointerByReference()
         val core = ffi.xray_core_new(error) ?: throw failure("xray_core_new", error)
         // Before the config is loaded, as iOS: every socket the core opens is protected
@@ -180,6 +185,13 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend {
         if (ffi.xray_core_set_log_callback(core, cbs.log, cbs.release, null, error) != 0) {
             // Not fatal: a core without its log still carries the line.
             freeError(error)
+        }
+        // Before the config too: the core reads an `ext:` list while it loads the config, from
+        // here and nowhere else, so a list that is not here fails the load.
+        if (geodataDir != null && ffi.xray_core_set_geodata_search_dir_exclusive(core, geodataDir, error) != 0) {
+            val f = failure("geodata directory", error)
+            ffi.xray_core_free(core)
+            throw f
         }
         if (ffi.xray_core_load_config_json(core, configJson, error) != 0) {
             val f = failure("core.json", error)
@@ -201,12 +213,23 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend {
         ffi.xray_core_free(core)
     }
 
-    override fun startCore(configJson: String, protect: (Int) -> Boolean, log: (Int, String) -> Unit) = synchronized(lock) {
-        stopCore()
-        val cbs = Callbacks(protect, log)
-        callbacks = cbs
-        handle = open(configJson, cbs)
-    }
+    override fun startCore(configJson: String, protect: (Int) -> Boolean, log: (Int, String) -> Unit) =
+        startSession(configJson, null, protect, log)
+
+    override fun startCoreWithGeodata(
+        configJson: String,
+        geodataDir: String,
+        protect: (Int) -> Boolean,
+        log: (level: Int, line: String) -> Unit
+    ) = startSession(configJson, geodataDir, protect, log)
+
+    private fun startSession(configJson: String, geodataDir: String?, protect: (Int) -> Boolean, log: (Int, String) -> Unit) =
+        synchronized(lock) {
+            stopCore()
+            val cbs = Callbacks(protect, log)
+            callbacks = cbs
+            handle = open(configJson, cbs, geodataDir)
+        }
 
     override fun stopCore() = synchronized(lock) {
         val core = handle ?: return@synchronized
@@ -252,6 +275,9 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend {
         log: (String) -> Unit,
         onSessionOpened: (room: String) -> Unit
     ) {
+        // A carrier or a lane the Rust client does not carry is refused before the runtime is told
+        // anything, in the sentence the session and the iPhone give (OlcSession.refusal's rule).
+        RustCarriers.refusal(params.provider, params.transport)?.let { throw IllegalStateException(it) }
         val rt = runtime()
         val protectFd = protect
         val sessionOpened = onSessionOpened

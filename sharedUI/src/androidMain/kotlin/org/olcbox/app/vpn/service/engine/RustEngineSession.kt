@@ -26,10 +26,14 @@ import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.net.XrayGeodata
+import org.olcbox.app.net.core.CoreBlockedOnly
+import org.olcbox.app.net.core.CoreConfig
+import org.olcbox.app.net.core.lines.Reality
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.OlcRtcUdpRelay
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.olc.OlcSession
 import org.olcbox.app.vpn.rooms.OlcrtcRoomKeeper
 import org.olcbox.app.vpn.rooms.OlcrtcRoomList
 import org.olcbox.app.vpn.rooms.RoomFetchOutcome
@@ -40,6 +44,7 @@ import org.olcbox.app.vpn.service.RustCore
 import org.olcbox.app.vpn.service.RustCoreBackend
 import org.olcbox.app.vpn.service.RustOlcParams
 import java.io.File
+import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -127,6 +132,9 @@ internal class RustEngineSession(
         val tun = connectionMode == AndroidConnectionMode.Tun
         val port = if (isOlc) socksListenPort else if (tun) sessionCorePort.acquire() else socksListenPort
         return try {
+            // A room on a carrier or a lane the Rust client no longer carries is refused before any
+            // engine is asked or stopped, in the sentence the iPhone's start gives (IosCore.start).
+            if (isOlc) OlcSession.refusal(location.normalized())?.let { error(IosCore.refused(location, it)) }
             checkNotNull(backend) { "the Rust core is not packaged in this build" }
             backend.load()
             RustProxyMode.refusal(tun = tun, isOlc = isOlc, listenHost = socksListenHost)?.let { error(it) }
@@ -156,7 +164,12 @@ internal class RustEngineSession(
         }
     }
 
-    /** A VLESS / Hysteria2 line on the xray core (XrayConfig.buildIosCore, the config iOS runs). */
+    /**
+     * A line of any kind the core takes (VLESS, Reality, Hysteria 2, Trojan, Shadowsocks, VMess) on
+     * the xray core, from the config iOS runs (CoreConfig.build). In the tun's session the
+     * blocked-only mode is written too, with Re:filter's list in the core's geodata directory
+     * ([refilterDir]); proxy mode refuses it.
+     */
     private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int, tun: Boolean) {
         // A core binds no network of its own; see startTransport.
         unbindProcessFromNetwork()
@@ -165,6 +178,9 @@ internal class RustEngineSession(
         // Whether core.json names this network's resolver (the Bypass's direct side): such a
         // line is restarted on a network change rather than reset (resetRustCoreForNetwork).
         var namesNetworkResolver = false
+        // The one directory the core reads geodata files from, for a config that names one (the
+        // blocked-only mode's list); null for every other config, which names none.
+        var geodataDir: String? = null
         val json = RustCore.testConfig?.invoke(port, login) ?: run {
             val raw = location.rawLink ?: error("core location has no link")
             var spec = LinkParser.parse(raw) ?: error("unparseable core link")
@@ -176,35 +192,50 @@ internal class RustEngineSession(
                 spec = IosCore.pinHost(spec, address)
             }
             IosCore.refusal(spec)?.let { error("the Rust core refuses this line: $it") }
-            // What the core builds: Global or a region's Bypass with its lists inline (as iOS), each
-            // with the user's own direct and tunnel rules ahead of the lists (IosCore.effective: tunnel
-            // rules alone under Global are Global). The blocked-only mode is the Go path's for now.
+            // The hello the core sends in place of the one the link asks for, said where the start
+            // is decided, as the iPhone's start says it (IosStart.Core's notes).
+            Reality.helloNote(spec)?.let { addLog("Rust core: $it") }
+            // What the core builds: Global, a region's Bypass with its lists inline (as iOS), or only
+            // blocked sites with Re:filter's list read from a file (CoreBlockedOnly); each with the
+            // user's own direct and tunnel rules ahead of the lists (IosCore.effective: tunnel rules
+            // alone under Global are Global).
             val routing = IosCore.effective(routingFor(upstream))
             val rules = routing as? Routing.RuleBased
             namesNetworkResolver = rules != null
-            check(rules?.policy != Routing.Policy.BlockedOnly) { IosCore.BLOCKED_ONLY_REFUSAL }
+            val blockedOnly = rules?.policy == Routing.Policy.BlockedOnly
             val geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
             if (tun) {
-                XrayConfig.buildIosCore(
+                if (blockedOnly) geodataDir = refilterDir(backend)
+                CoreConfig.build(
                     spec,
                     login ?: error("the Rust core needs the tun's SOCKS login"),
                     routing = routing,
                     geodata = geodata,
+                    verboseLogs = verboseDebugLogs,
                     socksPort = port,
-                    verboseLogs = verboseDebugLogs
+                    refilterDat = geodataDir != null
                 )
             } else {
-                // Proxy mode: the phone's other apps use the port, open as on the Go core line (no login).
+                // Proxy mode: the phone's other apps use the port, open as on the Go core line (no
+                // login). Its config (RustProxyMode) is not handed the list's file yet.
+                check(!blockedOnly) { PROXY_BLOCKED_ONLY_REFUSAL }
                 RustProxyMode.config(spec, port, socksListenHost, routing, geodata, verboseDebugLogs)
             }
         }
         waitForSocksPortReleased(port, socksReleaseQuickTimeoutMs)
-        backend.startCore(
-            json,
-            // No tun in proxy mode: nothing of the core's is looped back into it, so no socket needs protecting.
-            protect = { fd -> !tun || host.protect(fd) },
-            log = { level, line -> addLog("core: $line"); if (level <= 2) Log.w("ghostlane-core", LogScrubber.default.scrub(line)) }
-        )
+        // No tun in proxy mode: nothing of the core's is looped back into it, so no socket needs protecting.
+        val protectFd: (Int) -> Boolean = { fd -> !tun || host.protect(fd) }
+        val coreLog: (Int, String) -> Unit = { level, line ->
+            addLog("core: $line")
+            if (level <= 2) Log.w("ghostlane-core", LogScrubber.default.scrub(line))
+        }
+        val dir = geodataDir
+        if (dir != null) {
+            // refilterDir has asked that the engine is one.
+            (backend as RustGeodataBackend).startCoreWithGeodata(json, dir, protectFd, coreLog)
+        } else {
+            backend.startCore(json, protectFd, coreLog)
+        }
         activeCorePort = port
         activeCoreLogin = login
         rustCoreBypass = namesNetworkResolver
@@ -213,6 +244,34 @@ internal class RustEngineSession(
         }
         addLog("Rust core ready on $socksListenHost:$port")
     }
+
+    /**
+     * The core's geodata directory for the blocked-only mode: one of the app's own, holding
+     * Re:filter's list exactly as the app bundles it ([CoreBlockedOnly.FILE], held to its hash),
+     * written there from the bundle when it is missing or not that file. The core is told to read
+     * geodata from it alone ([RustGeodataBackend]): a list it cannot find there fails the start.
+     */
+    private suspend fun refilterDir(backend: RustCoreBackend): String {
+        check(backend is RustGeodataBackend) { IosCore.BLOCKED_ONLY_REFUSAL }
+        return withContext(Dispatchers.IO) {
+            val file = CoreBlockedOnly.FILE
+            val dir = File(context.filesDir, RUST_GEODATA_DIR)
+            val target = File(dir, file.name)
+            if (!target.isFile || sha256Hex(target.readBytes()) != file.sha256) {
+                val bytes = XrayGeodata.bytes(file)
+                check(sha256Hex(bytes) == file.sha256) { "the app's copy of ${file.name} is not the one it was built with" }
+                check(dir.isDirectory || dir.mkdirs()) { "the core's geodata directory could not be made" }
+                val partial = File(dir, "${file.name}.partial")
+                partial.writeBytes(bytes)
+                check(partial.renameTo(target)) { "${file.name} could not be put in the core's geodata directory" }
+                addLog("Rust core: Re:filter's list written to the core's geodata directory")
+            }
+            dir.absolutePath
+        }
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     /** An IPv4 address of [host] from the upstream network's resolver (Android blocks IPv6 at the tun), else any. */
     private suspend fun resolveServerAddress(host: String, upstream: Network): String =
@@ -471,5 +530,29 @@ internal class RustEngineSession(
         /** RoomKeeper.swift's URLSession: 20 s without a byte, 30 s for the whole request. */
         private const val RUST_ROOMS_CONNECT_TIMEOUT_MS = 20_000L
         private const val RUST_ROOMS_REQUEST_TIMEOUT_MS = 30_000L
+
+        /** The core's geodata directory (refilterDir), in filesDir. */
+        private const val RUST_GEODATA_DIR = "xray-geodata"
+
+        /** Why proxy mode does not run the blocked-only mode on the Rust core yet. */
+        const val PROXY_BLOCKED_ONLY_REFUSAL =
+            "the Rust core runs the blocked-only mode only in VPN mode for now (proxy mode is not handed Re:filter's list): " +
+                "use VPN mode, another mode or the Go cores"
     }
+}
+
+/**
+ * A Rust core that can be told, before it reads its config, the one directory it reads geodata
+ * files from (xray-ffi's `xray_core_set_geodata_search_dir_exclusive`): where the session puts
+ * Re:filter's list for the blocked-only mode. Asked of [RustCore.backend] by a cast, as the
+ * other hooks are ([RustProbeBackend]); with an engine that is not one, the mode is refused.
+ */
+interface RustGeodataBackend {
+    /** [RustCoreBackend.startCore], with the core reading geodata files from [geodataDir] alone. */
+    fun startCoreWithGeodata(
+        configJson: String,
+        geodataDir: String,
+        protect: (Int) -> Boolean,
+        log: (level: Int, line: String) -> Unit
+    )
 }

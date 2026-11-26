@@ -22,8 +22,8 @@ import kotlin.test.fail
  * `build/rust-core-configs/`, and holds each to its reference config in
  * `src/jvmTest/resources/reference-configs/`, byte for byte. A case's
  * references are `<reference>.json` and `bypass-<reference>.json`:
- * `core-<case>` for a kind added since, `ios-core-<line>` for the six lines
- * the iPhone ships, whose own tests read those names; the last one is
+ * `core-<case>` for a case no shape is named after, `ios-core-<line>` for every
+ * shape of every kind (the iPhone's lines, whose own tests read those names); the last one is
  * `bypass-ios-core-bundled-lists.json`.
  *
  * The references are what `scripts/check-rust-core-configs.sh` hands to the
@@ -105,7 +105,7 @@ class RustCoreConfigDumpTest {
     }
 
     /**
-     * The iPhone's thirteen as its own entry point writes them
+     * The iPhone's lines (every shape of every kind) as its own entry point writes them
      * ([XrayConfig.buildIosCore]), under the names its own tests read: each is
      * its reference config byte for byte, and the shared writer's config for
      * the same case. The parity ledger names this test for the iPhone's lines.
