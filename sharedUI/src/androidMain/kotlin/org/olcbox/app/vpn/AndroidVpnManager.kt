@@ -393,10 +393,16 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
+    /** The switch as the next start would read it: a Rust core in the build and the setting on. */
+    private fun runsRust(): Boolean = RustCore.backend != null && RustCore.resolve(Intent(), appContext)
+
+    override suspend fun corePin(): String? =
+        withContext(Dispatchers.IO) { if (runsRust()) CorePin.COMMIT else null }
+
     override suspend fun diagnosticsLog(): String = withContext(Dispatchers.IO) { buildString {
         // A session the Rust core ran leaves no Go core files: its section is the
         // pin and the core's own lines, which the session wrote through addLog.
-        if (RustCore.backend != null && RustCore.resolve(Intent(), appContext)) {
+        if (runsRust()) {
             RustCoreSection.lines(CorePin.COMMIT, OlcboxVpnState.logs.value).forEach(::appendLine)
             return@buildString
         }

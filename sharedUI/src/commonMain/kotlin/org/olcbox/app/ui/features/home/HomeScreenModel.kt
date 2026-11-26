@@ -60,7 +60,6 @@ import org.olcbox.app.data.exporter.LogExporter
 import org.olcbox.app.data.importer.ConfigImporter
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.RoutingSettings
-import org.olcbox.app.log.CorePin
 import org.olcbox.app.log.LogsExport
 import org.olcbox.app.data.model.SubscriptionSettings
 import org.olcbox.app.util.nowMillis
@@ -998,7 +997,7 @@ class HomeScreenViewModel(
     }
 
     private suspend fun buildLogsExport(logs: List<String>): String =
-        LogsExport.build(logs, vpnManager.diagnosticsLog().lines(), CorePin.COMMIT)
+        LogsExport.build(vpnManager, logs)
 }
 
 data class HomeScreenState(

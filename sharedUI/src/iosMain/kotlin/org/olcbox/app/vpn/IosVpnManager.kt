@@ -58,6 +58,7 @@ import org.olcbox.app.ui.components.ApplicationSocksProxySettings
 import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.olc.OlcSession
 import platform.Foundation.NSUserDefaults
+import org.olcbox.app.log.CorePin
 import org.olcbox.app.log.LogScrubber
 
 class IosVpnManager(
@@ -148,6 +149,9 @@ class IosVpnManager(
     }
 
     override fun needsPermission(): Boolean = false
+
+    /** The extension starts every kind on the Rust core. */
+    override suspend fun corePin(): String? = CorePin.COMMIT
 
     override suspend fun diagnosticsLog(): String = packetTunnelBridge.engineLog(
         includeDetailedLogs = locationsRepository.getRoutingSettings().verboseDebugLogs

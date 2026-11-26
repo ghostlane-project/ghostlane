@@ -1,12 +1,23 @@
 package org.olcbox.app.log
 
+import org.olcbox.app.vpn.VpnManager
+
 /** The text of the exported log: the head, the entries, then the tunnel component's own lines. */
 object LogsExport {
     /**
+     * The product path: the manager says which core its session ran, and supplies
+     * the tunnel component's own lines. Ask it rather than naming a pin the build
+     * merely carries: a Go session, or a build with no Rust core, names none.
+     */
+    suspend fun build(vpn: VpnManager, logs: List<String>): String =
+        build(logs, vpn.diagnosticsLog().lines(), vpn.corePin())
+
+    /**
      * [logs] are the app's entries (already scrubbed once, at the top); [diagnostics]
      * are the tunnel component's own files and are scrubbed here. [corePin] is the
-     * commit of the Rust core the build carries, or null when it carries none.
+     * commit of the Rust core the session ran, or null when it ran none.
      */
+
     fun build(logs: List<String>, diagnostics: List<String>, corePin: String?): String = buildString {
         LogHead.lines(logs.size, corePin).forEach(::appendLine)
         appendLine()
