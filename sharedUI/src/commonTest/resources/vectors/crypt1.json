@@ -1,0 +1,131 @@
+{
+  "cases": [
+    {
+      "accept": true,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7--UcTSYBJ8hOkfuV_gPtnl8VXwwcgEJv-hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrL",
+      "group": "roundtrip",
+      "iv": "01010101010101010101010101010101",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "url",
+      "plain": "https://proofkit.org/sub/tok/unified"
+    },
+    {
+      "accept": true,
+      "blob": "AgICAgICAgICAgICAgICAqMATpU-FB81NO1aJblbriLWsUv_SbjNxYbS5W37FlqNH7i0S3kbDD3xyAx_5GzUSfIy-9WdSvfu-k2gksMCz_iZKON33DwT414A29OXUtsxoacQqbH7Rfkk3hwsyrGXow",
+      "group": "roundtrip",
+      "iv": "02020202020202020202020202020202",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "two-lines",
+      "plain": "olcrtc://a?vp8channel@r#k$x\nolcrtc://b?vp8channel@r#k$y\n"
+    },
+    {
+      "accept": true,
+      "blob": "AwMDAwMDAwMDAwMDAwMDAxjd6EOyGvq1uR4EGUzIkQZTpsEVb0rNqmAZg2-QlYaqs5lwQGjFXlRTSEyljLM5jw",
+      "group": "roundtrip",
+      "iv": "03030303030303030303030303030303",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "empty-plaintext",
+      "plain": ""
+    },
+    {
+      "accept": true,
+      "blob": "BAQEBAQEBAQEBAQEBAQEBFKMYFBcTzdir1Vs6JVb2k6jan6KLm3v4oSFllYVWfh3iJn8zljhicmShCyZab75rkA9pIFP3NSMcN1XF1RQIRXSmgSveh4BkKeA1DKTsKEcKM3C23cxkZJsU1GKReNXMuBVL2FLstEHm1thPOd53675MGI4AVV4wUYRwwawuFpQULnxGe4Rcy4yY7TrySIQYrW2jw9-pfqJCDAUh66cuAkPlQgI477jm92MWfDTvlaDPPOF5oGkYYU-7lw-biXZV6GBC1NlTetZ3MKEYrstCG2Te5LmkvSUEjQjbKC7DXMXtW_IjAwUvJ4Ezlv_f8J9uvvcm0XGExYNLR6DoVjR2pp20hRdQhG_ZnaA3pGgAIH1U2yqNpRSOl_EQ2fiod29BV6xGrd8dLgMffE_m1jsbfy0GwP6AijV-w5_zDerE3pIIUBjIiYOqKOmezPaDASBqg6bG4dbkUqoBkMYLeVHfc_ZKBeqDAzzIK3UyqakGbyQqA3f1AIEd4B-6rKO3xfWaHpPLm3VZ-j6LyxMiczgscEytzt89emdwIog9-TMtASoCv99JqsmEi1Vv7SnKk5IIJpYCXQOXREGKbZabJJfscyrgws2KYVVSAVUIoLAsSePinFMnIL69F1hQ4SPG__Uywo9a413AW2vxZnoX-L50TsuV9APQpsbb9cvFpZ84CkZRhNvJ8R7mQdV72ksnLBaeqOFYKvbmSSdV2TF66272WaReVhsnWQxbpvgoTL0UFOI8R1R6pOjwyBrjaAYML5Tc7X3bSIQa6EHEICU76HvN_d3IYLTPRoBru3n8qYDpP4ZleMfioezF64QiOzBAaN8ywr_eCahun7FG1vOtySuFjOBs8ctfCZv9am7FZ9ksvTOBf8Qx1B_XbuorqgpYmjybkGndwpnovaSzDl-aReBDNCnZBP3AEa5qAVsXVaTWiC_lZpO094ynhw7AjayCEIxc2UZLA5Jt8ThUn5p_g7L5pf8b0yMQ51PCoaV2Bd9u0Bzil0bQIw5EZPYSz16RoZ5VKf9IyUf4waDd1W4TWRBOt7W27z6EKgmePRo-dGgix94J3M3wiLu_gCtSS4Einv1ihF3nNPL-pdNhptgryr_8HKixpGL7AQx0xYSjuvJWcuoMiA0_2XUofxb2zoDLj6b20vTXSNrEhCNErQiKausFjjqdWC4Rlbal3pU3HPyGpTR0b15QnF9G2_E8560pP4lS0qboHHvngK-W_5SLJDSn67DAt86quD8KKHc3MZ0fQmMefQ0BBJ53Sv8O5MM2so7P9rVoUyaeSjahpe3uPtPdOOmxWKOJ50Qptc5d_ah9WkkejOy7pfOPR2apQTd2HPPO27LI9HAL_RzODoPTmPfAozdLQogDKZrQLEPhT7PHupO",
+      "group": "roundtrip",
+      "iv": "04040404040404040404040404040404",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "long",
+      "plain": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    },
+    {
+      "accept": true,
+      "blob": "GhoaGhoaGhoaGhoaGhoaGo21GXyIQxuRqiLOWB1Uk7HZhxTt640Vw1Aayxy328X9NTeWyi9glNlGB2ExRrKIn97e3HRztmi69Z0Nub2u3tngXCqevXxrQwRjPplk0eJD",
+      "group": "roundtrip",
+      "iv": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "padded-standard-base64",
+      "note": "a padded standard-base64 blob is accepted",
+      "plain": "https://proofkit.org/sub/tok/unified"
+    },
+    {
+      "accept": true,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7--UcTSYBJ8hOkfuV_gPtnl8VXwwcgEJv-hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrL",
+      "group": "link",
+      "iv": "01010101010101010101010101010101",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "link-payload",
+      "plain": "https://proofkit.org/sub/tok/unified"
+    },
+    {
+      "accept": false,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7--UcTSYBJ8hOkfuV_gPtnl8VXwwcgEJv-hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrK",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "tampered-mac",
+      "note": "bad MAC"
+    },
+    {
+      "accept": false,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpLVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7--UcTSYBJ8hOkfuV_gPtnl8VXwwcgEJv-hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrL",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "tampered-ciphertext",
+      "note": "the MAC catches it"
+    },
+    {
+      "accept": false,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Ya1T1Za7--UcTSYBJ8hOkfuV_gPtnl8VXwwcgEJv-hvmLg8T2BUjyzqTNKr9E1xDzES1S04uqovrL",
+      "group": "refusal",
+      "iv": "",
+      "master": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "name": "wrong-key",
+      "note": "the MAC catches it"
+    },
+    {
+      "accept": false,
+      "blob": "",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "empty-blob",
+      "note": "empty"
+    },
+    {
+      "accept": false,
+      "blob": "abc",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "short",
+      "note": "short"
+    },
+    {
+      "accept": false,
+      "blob": "AQEBAQEBAQEBAQEBAQEBAcVjbCpKVGHTUWBrKGZzOsC3YU6TTp4Yaw",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "truncated",
+      "note": "shorter than iv+block+tag"
+    },
+    {
+      "accept": false,
+      "blob": "!!!not-base64!!!",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "not-base64",
+      "note": "unparsable"
+    },
+    {
+      "accept": false,
+      "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "group": "refusal",
+      "iv": "",
+      "master": "AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk=",
+      "name": "all-a",
+      "note": "bad MAC/padding"
+    }
+  ]
+}
