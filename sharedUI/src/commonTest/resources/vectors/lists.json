@@ -1,0 +1,1597 @@
+{
+  "cases": [
+    {
+      "expect": {
+        "body": "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC\nvless://u@h:443?type=tcp#x\n",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC",
+          "vless://u@h:443?type=tcp#x"
+        ]
+      },
+      "group": "decode",
+      "name": "plain"
+    },
+    {
+      "expect": {
+        "body": "b2xjcnRjOi8vdGVsZW1vc3Q/dnA4Y2hhbm5lbEBy\nIzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYkREUgwrcgb2xjUlRDCnZsZXNzOi8vdUBoOjQ0Mz90eXBlPXRjcCN4Cg==\n",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC",
+          "vless://u@h:443?type=tcp#x"
+        ]
+      },
+      "group": "decode",
+      "name": "base64-wrapped"
+    },
+    {
+      "expect": {
+        "body": "b2xjcnRjOi8vdGVsZW1vc3Q/dnA4Y2hhbm5lbEByIzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYkREUgwrcgb2xjUlRDCnZsZXNzOi8vdUBoOjQ0Mz90eXBlPXRjcCN4Cg",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC",
+          "vless://u@h:443?type=tcp#x"
+        ]
+      },
+      "group": "decode",
+      "name": "base64-unpadded"
+    },
+    {
+      "expect": {
+        "body": "vless://abcdefabcdefabcdef@hostname:443",
+        "lines": [
+          "vless://abcdefabcdefabcdef@hostname:443"
+        ]
+      },
+      "group": "decode",
+      "name": "base64-shaped-plaintext"
+    },
+    {
+      "expect": {
+        "body": "QkxPQg\nQkxPQg",
+        "decryptorPayload": "QkxPQgQkxPQg",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC"
+        ],
+        "plain": "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC\n"
+      },
+      "group": "decode",
+      "name": "with-decryptor"
+    },
+    {
+      "expect": {
+        "body": "QkxPQg\nQkxPQg",
+        "lines": [
+          "QkxPQg",
+          "QkxPQg"
+        ]
+      },
+      "group": "decode",
+      "name": "without-decryptor"
+    },
+    {
+      "expect": {
+        "body": "b2xjcnRjOi8vdGVsZW1vc3Q/dnA4Y2hhbm5lbEByIzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYkREUgwrcgb2xjUlRDCg==",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC"
+        ]
+      },
+      "group": "decode",
+      "name": "base64-to-decryptor"
+    },
+    {
+      "expect": {
+        "body": "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC\nvless://u@h:443?type=tcp#x\n",
+        "lines": [
+          "olcrtc://telemost?vp8channel@r#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC",
+          "vless://u@h:443?type=tcp#x"
+        ]
+      },
+      "group": "decode",
+      "name": "plaintext-never-to-decryptor"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "hello",
+          "refusal": "",
+          "supportURL": "https://t.me/x",
+          "title": "@Xrayvlesspaymentbot",
+          "updateIntervalHours": 1,
+          "userInfo": {
+            "download": 12,
+            "expire": 1854106383,
+            "total": 107373108658176,
+            "upload": 0
+          }
+        },
+        "headers": {
+          "Announce": "base64:aGVsbG8=",
+          "Profile-Title": "base64:QFhyYXl2bGVzc3BheW1lbnRib3Q=",
+          "Profile-Update-Interval": "1",
+          "Subscription-Userinfo": "upload=0; download=12; total=107373108658176; expire=1854106383",
+          "Support-Url": "https://t.me/x"
+        }
+      },
+      "group": "headers",
+      "name": "full"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "",
+          "refusal": "",
+          "supportURL": "",
+          "title": "",
+          "updateIntervalHours": 24,
+          "userInfo": null,
+          "webPageURL": ""
+        },
+        "headers": {}
+      },
+      "group": "headers",
+      "name": "defaults"
+    },
+    {
+      "expect": {
+        "expect": {
+          "title": "Acme [2J VPN"
+        },
+        "headers": {
+          "Profile-Title": "Acme\u001b[2J\nVPN"
+        }
+      },
+      "group": "headers",
+      "name": "title-control"
+    },
+    {
+      "expect": {
+        "expect": {
+          "title": "NPV emcA"
+        },
+        "headers": {
+          "Profile-Title": "‮NPV emcA"
+        }
+      },
+      "group": "headers",
+      "name": "title-direction"
+    },
+    {
+      "expect": {
+        "expect": {
+          "title": "Acme VPN"
+        },
+        "headers": {
+          "Profile-Title": "BASE64:QWNtZQlWUE4="
+        }
+      },
+      "group": "headers",
+      "name": "title-base64-tabs"
+    },
+    {
+      "expect": {
+        "expect": {
+          "title": "Acme"
+        },
+        "headers": {
+          "Profile-Title": "Base64: QWNtZQ== "
+        }
+      },
+      "group": "headers",
+      "name": "title-base64-case-space"
+    },
+    {
+      "expect": {
+        "expect": {
+          "title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
+        },
+        "headers": {
+          "Profile-Title": "яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя"
+        }
+      },
+      "group": "headers",
+      "name": "title-length"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": ""
+        },
+        "headers": {
+          "subscription-always-hwid-enable": "1",
+          "x-hwid-active": "true",
+          "x-hwid-limit": "true"
+        }
+      },
+      "group": "headers",
+      "name": "refusal-none"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": "limit"
+        },
+        "headers": {
+          "x-hwid-active": "true",
+          "x-hwid-max-devices-reached": "true"
+        }
+      },
+      "group": "headers",
+      "name": "refusal-max-devices"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": "no-device"
+        },
+        "headers": {
+          "x-hwid-not-supported": "true"
+        }
+      },
+      "group": "headers",
+      "name": "refusal-not-supported"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": "limit"
+        },
+        "headers": {
+          "X-HWID-MAX-DEVICES-REACHED": " True "
+        }
+      },
+      "group": "headers",
+      "name": "refusal-case-and-space"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": ""
+        },
+        "headers": {
+          "x-hwid-max-devices-reached": "false",
+          "x-hwid-not-supported": "1"
+        }
+      },
+      "group": "headers",
+      "name": "refusal-only-true"
+    },
+    {
+      "expect": {
+        "expect": {
+          "refusal": "limit"
+        },
+        "headers": {
+          "x-hwid-max-devices-reached": "true",
+          "x-hwid-not-supported": "true"
+        }
+      },
+      "group": "headers",
+      "name": "refusal-both"
+    },
+    {
+      "expect": {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "group": "ascii",
+      "name": "case-0"
+    },
+    {
+      "expect": {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "group": "ascii",
+      "name": "case-1"
+    },
+    {
+      "expect": {
+        "input": "Café",
+        "want": "Caf"
+      },
+      "group": "ascii",
+      "name": "case-2"
+    },
+    {
+      "expect": {
+        "input": "Pixel\t 7é Pro",
+        "want": "Pixel 7 Pro"
+      },
+      "group": "ascii",
+      "name": "case-3"
+    },
+    {
+      "expect": {
+        "input": "a\nb\r\u0000cd\u001be",
+        "want": "abcde"
+      },
+      "group": "ascii",
+      "name": "case-4"
+    },
+    {
+      "expect": {
+        "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxéyyyyyyyyyy",
+        "want": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyy"
+      },
+      "group": "ascii",
+      "name": "case-5"
+    },
+    {
+      "expect": {
+        "input": "",
+        "want": ""
+      },
+      "group": "ascii",
+      "name": "case-6"
+    },
+    {
+      "expect": {
+        "input": "   ",
+        "want": ""
+      },
+      "group": "ascii",
+      "name": "case-7"
+    },
+    {
+      "expect": {
+        "input": "Тел",
+        "want": ""
+      },
+      "group": "ascii",
+      "name": "case-8"
+    },
+    {
+      "expect": {
+        "input": "  iPhone 13  ",
+        "want": "iPhone 13"
+      },
+      "group": "ascii",
+      "name": "case-9"
+    },
+    {
+      "expect": {
+        "input": "ÿþ",
+        "want": ""
+      },
+      "group": "ascii",
+      "name": "case-10"
+    },
+    {
+      "expect": {
+        "entries": "partner-olcbox.txt",
+        "firstCountry": "DE",
+        "selector": "de",
+        "wantLabels": 4
+      },
+      "group": "select",
+      "name": "country-de"
+    },
+    {
+      "expect": {
+        "count": 1,
+        "entries": "partner-olcbox.txt",
+        "selector": "🇩🇪 DE · SJ",
+        "wantProvider": "salutejazz"
+      },
+      "group": "select",
+      "name": "label"
+    },
+    {
+      "expect": {
+        "entries": "partner-olcbox.txt",
+        "selector": "6",
+        "wantIndex": 5
+      },
+      "group": "select",
+      "name": "index-6"
+    },
+    {
+      "expect": {
+        "entries": "partner-olcbox.txt",
+        "errorContains": "CA",
+        "selector": "D"
+      },
+      "group": "select",
+      "name": "unknown"
+    },
+    {
+      "expect": {
+        "entries": "partner-olcbox.txt",
+        "error": true,
+        "selector": "99"
+      },
+      "group": "select",
+      "name": "index-out-of-range"
+    },
+    {
+      "expect": {
+        "ambiguousErrorContains": "index",
+        "distinctIDs": true,
+        "lines": [
+          "olcrtc://telemost?vp8channel@a#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$VPN MOBL",
+          "olcrtc://telemost?vp8channel@b#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$VPN MOBL"
+        ]
+      },
+      "group": "select",
+      "name": "duplicate-labels"
+    },
+    {
+      "expect": {
+        "count": 64,
+        "firstCountry": "CA",
+        "firstGroupSize": 4,
+        "firstProviders": [
+          "telemost",
+          "wbstream",
+          "salutejazz",
+          "vkcalls"
+        ],
+        "fixture": "partner-olcbox.txt",
+        "groups": 16,
+        "uniqueIDs": true,
+        "url": "https://sub.example/sub/a/b?c=olcbox"
+      },
+      "group": "entries",
+      "name": "olcbox-count"
+    },
+    {
+      "expect": {
+        "allConnectable": true,
+        "count": 17,
+        "fixture": "partner-plain.txt",
+        "groups": 0,
+        "hy2": 8,
+        "noCountry": true,
+        "url": "https://sub.example/sub/a/b",
+        "vless": 9
+      },
+      "group": "entries",
+      "name": "plain-connectable"
+    },
+    {
+      "expect": {
+        "allConnectable": true,
+        "count": 4,
+        "country": "DE",
+        "fixture": "proofkit-unified.txt",
+        "groupSize": 4,
+        "groups": 1,
+        "kinds": [
+          "vless",
+          "hysteria2",
+          "vless",
+          "olcrtc"
+        ],
+        "transports": [
+          "tcp",
+          "xhttp"
+        ],
+        "url": "https://proofkit.org/sub/t/unified"
+      },
+      "group": "entries",
+      "name": "unified"
+    },
+    {
+      "expect": {
+        "connectable": false,
+        "hasProblem": true,
+        "kind": "vless",
+        "lines": [
+          "vless://00000000-0000-4000-8000-000000000000@h:443?type=grpc&serviceName=x"
+        ]
+      },
+      "group": "entries",
+      "name": "unsupported-transport"
+    },
+    {
+      "expect": {
+        "announce": "",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "limit"
+    },
+    {
+      "expect": {
+        "announce": "  ",
+        "kind": "no-device",
+        "wantContains": "could not read this device's id"
+      },
+      "group": "refusal-text",
+      "name": "no-device"
+    },
+    {
+      "expect": {
+        "announce": "Acme: this link is already in use on its 2 devices. Ask Acme to free one.",
+        "kind": "limit",
+        "want": "Acme: this link is already in use on its 2 devices. Ask Acme to free one."
+      },
+      "group": "refusal-text",
+      "name": "announce"
+    },
+    {
+      "expect": {
+        "announce": "пппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппппп",
+        "kind": "limit",
+        "runeCount": 200
+      },
+      "group": "refusal-text",
+      "name": "long"
+    },
+    {
+      "expect": {
+        "announce": "line one\n\u001b[2Jline\ttwo three",
+        "kind": "limit",
+        "want": "line one [2Jline two three"
+      },
+      "group": "refusal-text",
+      "name": "odd"
+    },
+    {
+      "expect": {
+        "announce": "\u0000\u001b",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "empty"
+    },
+    {
+      "expect": {
+        "announce": "Ask ‮Acme‬ to free one⁦.⁩﻿",
+        "kind": "limit",
+        "want": "Ask Acme to free one."
+      },
+      "group": "refusal-text",
+      "name": "direction"
+    },
+    {
+      "expect": {
+        "announce": "0",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-49"
+    },
+    {
+      "expect": {
+        "announce": " 0 ",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-50"
+    },
+    {
+      "expect": {
+        "announce": "base64:%%% not base64 %%%",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-51"
+    },
+    {
+      "expect": {
+        "announce": "BASE64:%%%",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-52"
+    },
+    {
+      "expect": {
+        "announce": "ÿþ Acme",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-53"
+    },
+    {
+      "expect": {
+        "announce": "‮",
+        "kind": "limit",
+        "want": "This list has no place for this device. Ask your provider."
+      },
+      "group": "refusal-text",
+      "name": "none-54"
+    },
+    {
+      "expect": {
+        "cases": [
+          [
+            "می‌شود",
+            "می‌شود"
+          ],
+          [
+            "👨‍👩‍👧",
+            "👨‍👩‍👧"
+          ],
+          [
+            "‮می‌شود‬",
+            "می‌شود"
+          ],
+          [
+            "a‎b‏c؜d﻿e⁦f⁩",
+            "abcdef"
+          ],
+          [
+            "‪‫‭👨‍👩‍👧",
+            "👨‍👩‍👧"
+          ]
+        ],
+        "family": "👨‍👩‍👧",
+        "persian": "می‌شود"
+      },
+      "group": "one-line",
+      "name": "joiners"
+    },
+    {
+      "expect": {
+        "body": "b2xjcnRjOi8vdGVsZW1vc3Q/dnA4Y2hhbm5lbEByIzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYkREUgwrcgb2xjUlRDCg==",
+        "expect": {
+          "lines": 1,
+          "query": "c=olcbox",
+          "ua": "Ghostlane-cli/0.0.1 (linux)",
+          "updateIntervalHours": 2
+        },
+        "headers": {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Profile-Update-Interval": "2"
+        },
+        "status": 200
+      },
+      "group": "fetch",
+      "name": "basic"
+    },
+    {
+      "expect": {
+        "expect": {
+          "error": true
+        },
+        "status": 404
+      },
+      "group": "fetch",
+      "name": "404"
+    },
+    {
+      "expect": {
+        "device": {
+          "ID": "4f0c1d2e-9a7b-4c3d-8e1f-0a1b2c3d4e5f",
+          "Model": "PC",
+          "OS": "Linux",
+          "OSVersion": "6.12.0-116.el10.x86_64"
+        },
+        "expect": {
+          "accept": "text/plain, */*",
+          "user-agent": "Ghostlane-cli/0.0.1 (linux)",
+          "x-device-model": "PC",
+          "x-device-os": "Linux",
+          "x-hwid": "4f0c1d2e-9a7b-4c3d-8e1f-0a1b2c3d4e5f",
+          "x-ver-os": "6.12.0-116.el10.x86_64"
+        }
+      },
+      "group": "fetch",
+      "name": "device-named"
+    },
+    {
+      "expect": {
+        "device": {
+          "Model": "PC",
+          "OS": "Linux",
+          "OSVersion": "6.12.0"
+        },
+        "expect": {
+          "no-hwid": true,
+          "x-device-model": "PC",
+          "x-device-os": "Linux",
+          "x-ver-os": "6.12.0"
+        }
+      },
+      "group": "fetch",
+      "name": "no-hwid"
+    },
+    {
+      "expect": {
+        "device": {},
+        "expect": {
+          "no-device-headers": [
+            "X-Hwid",
+            "X-Device-Os",
+            "X-Ver-Os",
+            "X-Device-Model"
+          ]
+        }
+      },
+      "group": "fetch",
+      "name": "empty-device"
+    },
+    {
+      "expect": {
+        "device": {
+          "ID": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "Model": "Тел",
+          "OS": "Linux\r\nX-Injected: 1",
+          "OSVersion": "6.12.0-éééééééééé9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "expect": {
+          "no-injected": true,
+          "no-model": true,
+          "x-device-os": "LinuxX-Injected: 1",
+          "x-hwid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "x-ver-os": "6.12.0-999999999999999999999999999999999999999999999999999999999"
+        }
+      },
+      "group": "fetch",
+      "name": "bounded-device"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "Acme: this link is already in use on its 2 devices. Ask Acme to free one.",
+          "download": 5,
+          "kind": "limit",
+          "messageHasSentence": true,
+          "messageNoURL": true,
+          "noBody": true,
+          "title": "Acme",
+          "updateIntervalHours": 1
+        },
+        "headers": {
+          "announce": "base64:QWNtZTogdGhpcyBsaW5rIGlzIGFscmVhZHkgaW4gdXNlIG9uIGl0cyAyIGRldmljZXMuIEFzayBBY21lIHRvIGZyZWUgb25lLg==",
+          "profile-title": "base64:QWNtZQ==",
+          "profile-update-interval": "1",
+          "subscription-userinfo": "upload=0; download=5; total=100; expire=1854106383",
+          "x-hwid-active": "true",
+          "x-hwid-limit": "true",
+          "x-hwid-max-devices-reached": "true"
+        }
+      },
+      "group": "fetch",
+      "name": "refusal-x-hwid-max-devices-reached"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "Acme: this link is already in use on its 2 devices. Ask Acme to free one.",
+          "download": 5,
+          "kind": "no-device",
+          "messageHasSentence": true,
+          "messageNoURL": true,
+          "noBody": true,
+          "title": "Acme",
+          "updateIntervalHours": 1
+        },
+        "headers": {
+          "announce": "base64:QWNtZTogdGhpcyBsaW5rIGlzIGFscmVhZHkgaW4gdXNlIG9uIGl0cyAyIGRldmljZXMuIEFzayBBY21lIHRvIGZyZWUgb25lLg==",
+          "profile-title": "base64:QWNtZQ==",
+          "profile-update-interval": "1",
+          "subscription-userinfo": "upload=0; download=5; total=100; expire=1854106383",
+          "x-hwid-active": "true",
+          "x-hwid-limit": "true",
+          "x-hwid-not-supported": "true"
+        }
+      },
+      "group": "fetch",
+      "name": "refusal-x-hwid-not-supported"
+    },
+    {
+      "expect": {
+        "expect": {
+          "runeCount": 200,
+          "starts": "first [2J second я"
+        },
+        "headers": {
+          "announce": "base64:Zmlyc3QbWzJKCnNlY29uZCDRj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rj9GP0Y/Rjw==",
+          "x-hwid-max-devices-reached": "true"
+        }
+      },
+      "group": "fetch",
+      "name": "refusal-bounded"
+    },
+    {
+      "expect": {
+        "expect": {
+          "lines": 1,
+          "refusal": ""
+        },
+        "headers": {
+          "subscription-always-hwid-enable": "1",
+          "x-hwid-active": "true",
+          "x-hwid-limit": "true",
+          "x-hwid-max-devices-reached": "false",
+          "x-hwid-not-supported": "0"
+        }
+      },
+      "group": "fetch",
+      "name": "flags-not-refusal"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "",
+          "noBody": true
+        },
+        "headers": {
+          "announce": "0",
+          "x-hwid-max-devices-reached": "true"
+        },
+        "status": 200
+      },
+      "group": "fetch",
+      "name": "2xx-refusal-200-66"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "Acme: this link is already in use on its 2 devices. Ask Acme to free one.",
+          "noBody": true
+        },
+        "headers": {
+          "announce": "base64:QWNtZTogdGhpcyBsaW5rIGlzIGFscmVhZHkgaW4gdXNlIG9uIGl0cyAyIGRldmljZXMuIEFzayBBY21lIHRvIGZyZWUgb25lLg==",
+          "x-hwid-max-devices-reached": "true"
+        },
+        "status": 203
+      },
+      "group": "fetch",
+      "name": "2xx-refusal-203-67"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "",
+          "noBody": true
+        },
+        "headers": {
+          "announce": "base64:@@@",
+          "x-hwid-max-devices-reached": "true"
+        },
+        "status": 202
+      },
+      "group": "fetch",
+      "name": "2xx-refusal-202-68"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "",
+          "noBody": true
+        },
+        "headers": {
+          "announce": "base64://54",
+          "x-hwid-max-devices-reached": "true"
+        },
+        "status": 200
+      },
+      "group": "fetch",
+      "name": "2xx-refusal-200-69"
+    },
+    {
+      "expect": {
+        "expect": {
+          "announce": "Ask Acme",
+          "noBody": true
+        },
+        "headers": {
+          "announce": "Ask ‮Acme",
+          "x-hwid-max-devices-reached": "true"
+        },
+        "status": 200
+      },
+      "group": "fetch",
+      "name": "2xx-refusal-200-70"
+    },
+    {
+      "expect": {
+        "expect": {
+          "errorContains": "HTTP 203"
+        },
+        "status": 203
+      },
+      "group": "fetch",
+      "name": "203-no-refusal"
+    }
+  ],
+  "fixtures": [
+    {
+      "entries": [
+        {
+          "connectable": true,
+          "country": "CA",
+          "id": "df58cf80beac",
+          "kind": "olcrtc",
+          "label": "🇨🇦 CA · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3305071026#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "CA",
+          "id": "60e3ea721b78",
+          "kind": "olcrtc",
+          "label": "🇨🇦 CA · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_z9dszi2t#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "CA",
+          "id": "dbe1e0416549",
+          "kind": "olcrtc",
+          "label": "🇨🇦 CA · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@53a942:cb3gjji2#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "CA",
+          "id": "46eefd5b784e",
+          "kind": "olcrtc",
+          "label": "🇨🇦 CA · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇨🇦 CA · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "be01e7b339d5",
+          "kind": "olcrtc",
+          "label": "🇩🇪 DE · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/5092358972#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "cc988af0c611",
+          "kind": "olcrtc",
+          "label": "🇩🇪 DE · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_iqrp1h3w#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "da42d2d98a59",
+          "kind": "olcrtc",
+          "label": "🇩🇪 DE · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@qaah9y:jbf5hgjx#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "e01644b6f738",
+          "kind": "olcrtc",
+          "label": "🇩🇪 DE · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇩🇪 DE · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "FR",
+          "id": "d5af1c8fc268",
+          "kind": "olcrtc",
+          "label": "🇫🇷 FR · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1479206118#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "FR",
+          "id": "970fcd90dd93",
+          "kind": "olcrtc",
+          "label": "🇫🇷 FR · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_1myx2a8q#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "FR",
+          "id": "1f354f909015",
+          "kind": "olcrtc",
+          "label": "🇫🇷 FR · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@kpbcjf:73mlmcj7#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "FR",
+          "id": "2d29044b2a9f",
+          "kind": "olcrtc",
+          "label": "🇫🇷 FR · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇫🇷 FR · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "GB",
+          "id": "eeac78d10e57",
+          "kind": "olcrtc",
+          "label": "🇬🇧 GB · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/7726573424#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "GB",
+          "id": "f2249a709f1a",
+          "kind": "olcrtc",
+          "label": "🇬🇧 GB · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_qezlm7nc#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "GB",
+          "id": "224afd758d33",
+          "kind": "olcrtc",
+          "label": "🇬🇧 GB · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@c7y2hq:k333gqoj#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "GB",
+          "id": "8b623ca1eb6d",
+          "kind": "olcrtc",
+          "label": "🇬🇧 GB · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇬🇧 GB · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IL",
+          "id": "f2eca54e32d7",
+          "kind": "olcrtc",
+          "label": "🇮🇱 IL · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/8284684651#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IL",
+          "id": "e659f3c72b80",
+          "kind": "olcrtc",
+          "label": "🇮🇱 IL · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_trg45t7l#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "IL",
+          "id": "476b915910dd",
+          "kind": "olcrtc",
+          "label": "🇮🇱 IL · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@xrofuo:w9mo3ku8#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "IL",
+          "id": "0b3bf00824b5",
+          "kind": "olcrtc",
+          "label": "🇮🇱 IL · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇱 IL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IN",
+          "id": "e13ad83014c3",
+          "kind": "olcrtc",
+          "label": "🇮🇳 IN · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/7860972460#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IN",
+          "id": "417e4fa73c44",
+          "kind": "olcrtc",
+          "label": "🇮🇳 IN · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_rqs59tre#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "IN",
+          "id": "e82336fa849f",
+          "kind": "olcrtc",
+          "label": "🇮🇳 IN · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@jq0wh5:570ux5e6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "IN",
+          "id": "81396c084ddc",
+          "kind": "olcrtc",
+          "label": "🇮🇳 IN · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇳 IN · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IT",
+          "id": "23966b396dbb",
+          "kind": "olcrtc",
+          "label": "🇮🇹 IT · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3124313155#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "IT",
+          "id": "d3ad9f66ab03",
+          "kind": "olcrtc",
+          "label": "🇮🇹 IT · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_qxagfn74#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "IT",
+          "id": "c8158647a06f",
+          "kind": "olcrtc",
+          "label": "🇮🇹 IT · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@ebs34z:5yg0e1s6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "IT",
+          "id": "8801e064cd16",
+          "kind": "olcrtc",
+          "label": "🇮🇹 IT · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇮🇹 IT · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "JP",
+          "id": "43c118c20f0b",
+          "kind": "olcrtc",
+          "label": "🇯🇵 JP · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3710284555#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "JP",
+          "id": "eaf69d3851fa",
+          "kind": "olcrtc",
+          "label": "🇯🇵 JP · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_tmtlkcr5#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "JP",
+          "id": "e391d7085496",
+          "kind": "olcrtc",
+          "label": "🇯🇵 JP · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@j4ypsw:f4ekbwp1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "JP",
+          "id": "e3564e8b0336",
+          "kind": "olcrtc",
+          "label": "🇯🇵 JP · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇯🇵 JP · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "KR",
+          "id": "b967939538ed",
+          "kind": "olcrtc",
+          "label": "🇰🇷 KR · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1433455317#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "KR",
+          "id": "98bde5accd22",
+          "kind": "olcrtc",
+          "label": "🇰🇷 KR · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_gmyv3ukc#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "KR",
+          "id": "93744f6b03af",
+          "kind": "olcrtc",
+          "label": "🇰🇷 KR · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@ve0zyr:ouhyzvoa#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "KR",
+          "id": "345f4ad24bdc",
+          "kind": "olcrtc",
+          "label": "🇰🇷 KR · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇰🇷 KR · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "MX",
+          "id": "07d871fe07ac",
+          "kind": "olcrtc",
+          "label": "🇲🇽 MX · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1362968118#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "MX",
+          "id": "8d87a6ed51e5",
+          "kind": "olcrtc",
+          "label": "🇲🇽 MX · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_dh2hol34#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "MX",
+          "id": "c110023d582a",
+          "kind": "olcrtc",
+          "label": "🇲🇽 MX · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@92pij0:xt23aw6k#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "MX",
+          "id": "586e44610d71",
+          "kind": "olcrtc",
+          "label": "🇲🇽 MX · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇲🇽 MX · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "NL",
+          "id": "e2922c39cf4c",
+          "kind": "olcrtc",
+          "label": "🇳🇱 NL · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/0148559242#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "NL",
+          "id": "3bae2e126c6d",
+          "kind": "olcrtc",
+          "label": "🇳🇱 NL · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_zir8rbka#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "NL",
+          "id": "e4b1cc8969a3",
+          "kind": "olcrtc",
+          "label": "🇳🇱 NL · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@344lkw:uyrec7fd#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "NL",
+          "id": "4e02e17d1c67",
+          "kind": "olcrtc",
+          "label": "🇳🇱 NL · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇳🇱 NL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "PL",
+          "id": "cffea2b2b994",
+          "kind": "olcrtc",
+          "label": "🇵🇱 PL · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/6896941565#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "PL",
+          "id": "f960d561ed72",
+          "kind": "olcrtc",
+          "label": "🇵🇱 PL · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_9oy42ukn#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "PL",
+          "id": "9b425de4adfd",
+          "kind": "olcrtc",
+          "label": "🇵🇱 PL · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@zhbtyi:e13j45nk#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "PL",
+          "id": "cf4b5035922f",
+          "kind": "olcrtc",
+          "label": "🇵🇱 PL · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇵🇱 PL · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "SE",
+          "id": "1d921155a100",
+          "kind": "olcrtc",
+          "label": "🇸🇪 SE · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/9590177866#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "SE",
+          "id": "75ff4c8015d1",
+          "kind": "olcrtc",
+          "label": "🇸🇪 SE · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_dnkuf16f#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "SE",
+          "id": "89d21ef9a464",
+          "kind": "olcrtc",
+          "label": "🇸🇪 SE · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@fqheke:l37860u6#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "SE",
+          "id": "0e6409ca4b7b",
+          "kind": "olcrtc",
+          "label": "🇸🇪 SE · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇸🇪 SE · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "US",
+          "id": "de90536daab2",
+          "kind": "olcrtc",
+          "label": "🇺🇸 US · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1226672126#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "US",
+          "id": "93b2de5f17e9",
+          "kind": "olcrtc",
+          "label": "🇺🇸 US · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_cy10kecr#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "US",
+          "id": "1355e1f4b680",
+          "kind": "olcrtc",
+          "label": "🇺🇸 US · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@xc21im:kd9xinc9#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "US",
+          "id": "23fe9ed19027",
+          "kind": "olcrtc",
+          "label": "🇺🇸 US · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇺🇸 US · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "ZA",
+          "id": "d842b3c305c9",
+          "kind": "olcrtc",
+          "label": "🇿🇦 ZA · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/1886803209#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "ZA",
+          "id": "0cb12735433c",
+          "kind": "olcrtc",
+          "label": "🇿🇦 ZA · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_vpk224hh#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "ZA",
+          "id": "40061a5e1b14",
+          "kind": "olcrtc",
+          "label": "🇿🇦 ZA · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@qshjmi:996r8vct#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "ZA",
+          "id": "d93d07fae67f",
+          "kind": "olcrtc",
+          "label": "🇿🇦 ZA · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇿🇦 ZA · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "ES",
+          "id": "298202c949cb",
+          "kind": "olcrtc",
+          "label": "🇪🇸 ES · VP8",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/3079190576#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8"
+        },
+        {
+          "connectable": true,
+          "country": "ES",
+          "id": "3c537f4689ef",
+          "kind": "olcrtc",
+          "label": "🇪🇸 ES · VP8 · WB",
+          "raw": "olcrtc://wbstream?vp8channel@room_arzfifyz#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8 · WB"
+        },
+        {
+          "connectable": true,
+          "country": "ES",
+          "id": "131499171748",
+          "kind": "olcrtc",
+          "label": "🇪🇸 ES · SJ",
+          "raw": "olcrtc://salutejazz?datachannel@sytusq:yhgkg8l4#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · SJ"
+        },
+        {
+          "connectable": true,
+          "country": "ES",
+          "id": "bdaaf1a6131a",
+          "kind": "olcrtc",
+          "label": "🇪🇸 ES · VP8",
+          "raw": "olcrtc://vkcalls?vp8channel@https://vk.ru/call/join/v60WGdYjZPINacNkuwrYiEVTVGBIZk8-XIZsCXbDpgg#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$🇪🇸 ES · VP8"
+        }
+      ],
+      "name": "partner-olcbox.txt",
+      "url": "https://sub.example/sub/a/b?c=olcbox"
+    },
+    {
+      "entries": [
+        {
+          "connectable": true,
+          "country": "",
+          "id": "f4fcecf2134b",
+          "kind": "hysteria2",
+          "label": "🇷🇺 EKB · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@45.153.230.44:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20EKB%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "3df9add4305a",
+          "kind": "hysteria2",
+          "label": "🇷🇺 KDR · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@189.74.125.103:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20KDR%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "208c524a85e0",
+          "kind": "hysteria2",
+          "label": "🇷🇺 MSK · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@194.87.254.190:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20MSK%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "32a78080509e",
+          "kind": "hysteria2",
+          "label": "🇷🇺 SPB · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@193.233.222.79:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20SPB%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "6df7743ff88d",
+          "kind": "hysteria2",
+          "label": "🇷🇺 NSK · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@185.21.142.99:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20NSK%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "288d2e1c629c",
+          "kind": "hysteria2",
+          "label": "🇷🇺 MSK2 · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@77.221.151.105:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20MSK2%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "5c0f2f2efb9f",
+          "kind": "hysteria2",
+          "label": "🇷🇺 MSK3 · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@195.133.145.123:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20MSK3%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "30e7bd4ed411",
+          "kind": "hysteria2",
+          "label": "🇷🇺 KZN · Hy2 → 🇪🇺",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@201.50.116.29:38443?sni=s.reviewassistant.org&obfs=salamander&obfs-password=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&insecure=0&pinSHA256=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#%F0%9F%87%B7%F0%9F%87%BA%20KZN%20%C2%B7%20Hy2%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "3dcdae168fb1",
+          "kind": "vless",
+          "label": "🇷🇺 EKB · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@45.153.230.44:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20EKB%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "e2edcb955593",
+          "kind": "vless",
+          "label": "🇷🇺 KDR · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@189.74.125.103:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20KDR%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "8043b594caf8",
+          "kind": "vless",
+          "label": "🇷🇺 MSK · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@194.87.254.190:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20MSK%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "11b9f630d40a",
+          "kind": "vless",
+          "label": "🇷🇺 SPB · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@193.233.222.79:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20SPB%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "c37df17396ab",
+          "kind": "vless",
+          "label": "🇷🇺 NSK · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@185.21.142.99:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20NSK%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "270872369b41",
+          "kind": "vless",
+          "label": "🇷🇺 MSK2 · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@77.221.151.105:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20MSK2%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "eb65535a54c9",
+          "kind": "vless",
+          "label": "🇷🇺 MSK3 · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@195.133.145.123:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20MSK3%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "b60615f84b23",
+          "kind": "vless",
+          "label": "🇷🇺 KZN · XHTTP → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@201.50.116.29:8444?type=xhttp&security=reality&encryption=none&pbk=xxxx&sid=xxxx&fp=chrome&sni=yandex.ru&path=%2Fpk&host=yandex.ru&mode=packet-up#%F0%9F%87%B7%F0%9F%87%BA%20KZN%20%C2%B7%20XHTTP%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        },
+        {
+          "connectable": true,
+          "country": "",
+          "id": "82ada31371f7",
+          "kind": "vless",
+          "label": "☁️ CDN → 🇪🇺",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@cdn.reviewassistant.org:443?type=xhttp&security=tls&path=%2Fxh-de%2F&mode=stream-one&sni=cdn.reviewassistant.org&host=cdn.reviewassistant.org&fp=chrome&alpn=h2#%E2%98%81%EF%B8%8F%20CDN%20%E2%86%92%20%F0%9F%87%AA%F0%9F%87%BA"
+        }
+      ],
+      "name": "partner-plain.txt",
+      "url": "https://sub.example/sub/a/b"
+    },
+    {
+      "entries": [
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "64ea3d1ca3b0",
+          "kind": "vless",
+          "label": "DE via RU | 0.13TON/GB",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@203.0.113.9:443?type=tcp&security=reality&sni=yandex.ru&fp=chrome&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12&flow=xtls-rprx-vision#DE via RU | 0.13TON/GB"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "4d4ad1d09ef2",
+          "kind": "hysteria2",
+          "label": "DE via RU | 0.13TON/GB · Hysteria2",
+          "raw": "hysteria2://00000000-0000-4000-8000-000000000000@203.0.113.9:38443?sni=www.cloudflare.com&obfs=salamander&obfs-password=0badf00d0badf00d&insecure=0&pinSHA256=0000000000000000000000000000000000000000000000000000000000000000#DE via RU | 0.13TON/GB · Hysteria2"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "2f8bc8013732",
+          "kind": "vless",
+          "label": "DE via RU | 0.13TON/GB · XHTTP",
+          "raw": "vless://00000000-0000-4000-8000-000000000000@203.0.113.9:8444?type=xhttp&security=reality&encryption=none&pbk=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA&sid=ab12&fp=chrome&sni=yandex.ru&path=/pk&host=yandex.ru&mode=packet-up#DE via RU | 0.13TON/GB · XHTTP"
+        },
+        {
+          "connectable": true,
+          "country": "DE",
+          "id": "882033524617",
+          "kind": "olcrtc",
+          "label": "DE · olcRTC",
+          "raw": "olcrtc://telemost?vp8channel@https://telemost.yandex.ru/j/99#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$DE · olcRTC"
+        }
+      ],
+      "name": "proofkit-unified.txt",
+      "url": "https://proofkit.org/sub/t/unified"
+    }
+  ]
+}
