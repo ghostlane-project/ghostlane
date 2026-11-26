@@ -1367,7 +1367,9 @@ jobs:
             "dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab"
 
       # The same questions the build asks about its default, and the finished
-      # APK/AAB and symbols, answered by CorePackagingTest on the JVM.
+      # APK/AAB and symbols, answered by CorePackagingTest on the JVM. AGP
+      # creates unit-test tasks for its test build type (debug), not for the
+      # release variant; the artifact paths are passed in as properties.
       - name: CorePackagingTest against the finished Android assets
         working-directory: olcbox
         run: |
@@ -1377,7 +1379,7 @@ jobs:
             "-Pghostlane.apk=${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-android-release.apk" \
             "-Pghostlane.aab=${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-android-play.aab" \
             "-Pghostlane.symbols=${GITHUB_WORKSPACE}/olcbox/out/core/symbols" \
-            :androidApp:testGithubReleaseUnitTest --stacktrace 2>&1 | tail -80
+            :androidApp:testGithubDebugUnitTest --stacktrace
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
