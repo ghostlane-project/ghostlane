@@ -358,8 +358,8 @@ def self_test(root):
             f.write("android | not-proven | - | -\n")
 
     def wrong_platform(tmp):
-        # ios has no Shadowsocks
-        path = os.path.join(tmp, ROWS, "carry.shadowsocks.txt")
+        # ios has no VLESS Reality over HTTP/2 (the core removed it)
+        path = os.path.join(tmp, ROWS, "carry.vless.reality.http.txt")
         with open(path, "a", encoding="utf-8") as f:
             f.write("\nios | not-proven | - | -\n")
 

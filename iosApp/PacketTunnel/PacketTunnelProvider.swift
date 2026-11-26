@@ -27,10 +27,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let log = Logger(subsystem: "org.proofkit.app", category: "tunnel")
 
-    /// Shared with the app, which writes the selected location's core config here.
-    /// Nothing reads it yet; it is checked now because a missing App Group is
-    /// invisible until the day the config matters, and then looks like a bug in
-    /// the tunnel.
+    /// Shared with the app, which writes here the one file a start is decided
+    /// by (core.json or olcrtc.json, read below) and the files the extension
+    /// keeps for the app (stage.txt, the memory record). Without it there is
+    /// nothing to start from, so a missing App Group fails the start.
     private static let appGroup = "group.org.proofkit.app"
 
     /// Watches for the device changing network underneath the tunnel.

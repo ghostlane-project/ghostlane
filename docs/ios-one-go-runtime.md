@@ -1,11 +1,18 @@
 # iOS: one Go runtime per tunnel extension
 
-Status: in progress. Proposed 2026-09-13 after the 1.0.423 speed-test deaths;
-part 1 (hev in front of Xray and olcRTC) landed 2026-09-14, unreleased and
-not yet run on a device. Parts 2 (Xray's h2 receive window) and 3 (Bypass
-Russia in Xray's rules) are separate branches. Since 2026-11-13 sing-box's
-own lines run behind hev too (below, "sing-box behind hev"), unreleased and
-not yet run on a device.
+Status: history, with the measurements that led to today's shape. Proposed
+2026-09-13 after the 1.0.423 speed-test deaths. What the iPhone runs now: the
+extension links no Go at all. `hev-socks5-tunnel` owns the tun on every line,
+and behind it runs `ghostlane-core` (the Rust core) from `core.json`, or the
+Rust olcRTC client from `olcrtc.json`; `TunArrangement.decide` reads those two
+files and nothing else. There is no sing-box, no Xray, no `config.json`
+and no `xray.json`, and no table that gives a transport to an engine: the
+app decides before the extension is asked (`IosCore.start`), refuses a line
+the core does not take with a sentence that names it, and writes one of the
+two files. A server named by a hostname is resolved in the extension before
+the tunnel's settings go on (`HostPin.swift`). The sections below say what
+was built and measured at each step; where they speak of sing-box, `config.json`,
+Xray or `IOS_ENGINES`, they describe a step that is gone.
 
 ## What landed (part 1)
 
@@ -137,6 +144,9 @@ bridge have no 50 MB limit; they keep sing-box), the link format, the
 coordinator, the fleet.
 
 ## sing-box behind hev (2026-11-13)
+
+*A step that is gone: the iPhone has no sing-box now. This section keeps the
+measurements that showed hev in front of an engine was the right shape.*
 
 Reality, Hysteria2 and WebTunnel (VLESS over ws or httpupgrade, with TLS)
 were the last lines on sing-box's own tun: sing-box owned the descriptor
@@ -324,14 +334,15 @@ the build that ships this.
 a line from `core.json` in the App Group, behind hev like the Go engines. This
 is the app's half: the app can write core.json, and writes it for no line yet.
 
-**Not live.** `IosVpnManager.IOS_ENGINES` gives every transport to GO. The
-packet tunnel on this branch reads only olcrtc.json, xray.json and
-config.json; a transport mapped to RUST would run sing-box from config.json
-under a log that says `engine=rust+hev`, and XHTTP would have no engine at
-all. A transport turns to RUST in the commit where this half meets the
-extension's, and Hysteria2 and XHTTP only once their lab rows pass (D5 gate
-2: Hysteria2 measured 19.8 MiB against Go's 16.4, XHTTP 48.9 against 32.9).
-No build of this branch changes what an iPhone runs.
+**Live since the extension lost its Go engines.** At the time of this
+section the app wrote core.json for no line, `IosVpnManager.IOS_ENGINES`
+gave every transport to Go, and the packet tunnel read olcrtc.json, xray.json
+and config.json. None of that stands: the table is gone, the extension reads
+core.json and olcrtc.json, and every line the core takes runs on it. The
+figures that gated Hysteria2 and XHTTP (D5 gate 2: Hysteria2 measured 19.8 MiB
+against Go's 16.4, XHTTP 48.9 against 32.9) are the lab's of that day; the
+extension's own engines are held under the phone's byte budget on a Mac
+(`scripts/test-ios-engine-on-mac.sh`).
 
 - `XrayConfig.buildIosCore` (shared Kotlin, `IosCore.kt`): sing-box's iOS
   shape in the Xray JSON xray-rust's parser accepts, which refuses a whole
@@ -364,13 +375,13 @@ No build of this branch changes what an iPhone runs.
   handshake like Chrome's and with it replaces the core's receive windows by
   Chrome's 6 and 15 MiB, while Salamander hides that handshake. Without
   Salamander the parrot stays on.
-- `IosVpnManager.IOS_ENGINES`: the engine per transport (D2), all GO for now
-  (above). A Rust line is to get core.json and no xray.json; config.json is
-  still Phase 0's. A line the core would refuse (`IosCore.refusal`: a server
-  named by a hostname, `allowInsecure`, a flow other than Vision, a
-  fingerprint with no REALITY hello, Hysteria2 waived with no pin, a pin not
-  in hex, a Salamander password outside 4 to 4096 bytes) goes to Go whole,
-  and the app's log says why.
+- A line the core would refuse (`IosCore.refusal`: `allowInsecure`, a flow
+  other than Vision, a fingerprint with no REALITY hello, Hysteria2 waived
+  with no pin, a pin not in hex, a Salamander password outside 4 to 4096
+  bytes) is refused before the tunnel is asked, with a sentence that names
+  the line. (At this step it went to Go whole, by `IosVpnManager.IOS_ENGINES`;
+  the table and the Go engines are gone.) A server named by a hostname is not
+  refused: see `HostPin.swift`.
 - Held by `XrayConfigIosCoreTest` (every field against the core's own field
   lists, `XrayRustSurface`, copied from the fork at 77f14eb8), the reference
   configs `ios-core-*.json` and `bypass-ios-core-*.json`
@@ -382,7 +393,10 @@ No build of this branch changes what an iPhone runs.
   reference: the core's parser reads each, and the core starts it, binds its
   SOCKS port and stops.
 
-What is not here yet, for the extension's half (a later branch):
+What was not here yet at this step, for the extension's half (it has landed:
+the extension reads core.json, `TunArrangement` and `DirectResolver` do what
+is listed, and the app writes the engine's file before it removes the stale
+one):
 
 - The packet tunnel reads core.json (after olcrtc.json and xray.json, before
   config.json) and starts the core from it behind hev, with hev's UDP mode
@@ -432,7 +446,10 @@ What does not match Phase 0, and why:
 - XHTTP: the connection window is fixed at 16 MiB in the core, against Go's
   1 MiB; only the stream window can be set.
 - The server's own name is resolved by the embedding, not by a resolver the
-  config names, so a line with a hostname stays on Go.
+  config names. At this step a line with a hostname stayed on Go; now the
+  extension resolves it before the tunnel's settings go on and writes the
+  address into core.json (`HostPin.swift`), and the name stays the TLS server
+  name and the Host.
 
 ## Why not Rust
 

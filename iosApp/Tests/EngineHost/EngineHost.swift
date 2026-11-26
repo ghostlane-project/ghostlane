@@ -50,6 +50,7 @@ enum EngineHost {
            engine-host refuse <core.json> <word>
            engine-host olcrtc <carrier> <direct-rules-file|-> <budget-bytes> joins|refused
            engine-host fetch  <core.json> <budget-bytes> <down-bytes> <up-bytes> reach|refused <label>
+           engine-host named  <core.json> <budget-bytes> <down-bytes> <up-bytes> <resolver-port> reach|refused|unresolved <label>
            engine-host x25519
            engine-host pinned-address
 
@@ -65,6 +66,7 @@ enum EngineHost {
             case "refuse": try refuse(rest)
             case "olcrtc": try olcrtc(rest)
             case "fetch": try fetch(rest)
+            case "named": try named(rest)
             case "x25519": x25519()
             case "pinned-address": print(try pinnedAddress())
             default:
@@ -226,8 +228,100 @@ enum EngineHost {
         let expect = a[4]
         let label = a[5]
         guard expect == "reach" || expect == "refused" else { throw HostFailure("expect reach or refused, not \(expect)") }
+        try fetchThroughCore(config: try read(a[0]), budget: budget, down: down, up: up, expect: expect, label: label)
+    }
 
-        let socks = try startCore(try read(a[0]))
+    /// A line whose server is named by a hostname, as the app hands it over
+    /// (`IosCore.handOver`: written for HostPin's placeholder, the name at
+    /// the head), taken through the provider's step before the tunnel's
+    /// settings: `HostPin.apply` with a lookup of `HostPin.lookup` from a
+    /// socket pinned to the physical interface, as `PacketTunnelProvider`
+    /// writes it, against the resolver this run stands up (the Mac's own
+    /// address in the name's answer, its port the sixth argument), then
+    /// `CoreEngine.start` and the same fetch as above.
+    ///
+    /// `reach` and `refused`: the name resolves; the address is written over
+    /// the placeholder and nothing else moves (the name stays as the head's
+    /// and the config's server name and Host where `reach` is told so), then
+    /// the page is fetched, or must not be reached. `unresolved`: the name is
+    /// one the resolver does not know, the step refuses with the sentence the
+    /// app wrote, which names the line, and no core is started.
+    static func named(_ arguments: [String]) throws {
+        let a = try want(arguments, "<core.json>", "<budget-bytes>", "<down-bytes>", "<up-bytes>", "<resolver-port>", "reach|refused|unresolved", "<label>")
+        let budget = try bytes(a[1])
+        let down = Int(try bytes(a[2]))
+        let up = Int(try bytes(a[3]))
+        guard let port = UInt16(a[4]), port > 0 else { throw HostFailure("not a port: \(a[4])") }
+        let expect = a[5]
+        let label = a[6]
+        guard ["reach", "refused", "unresolved"].contains(expect) else { throw HostFailure("expect reach, refused or unresolved, not \(expect)") }
+
+        let written = try read(a[0])
+        guard let request = HostPin.request(in: written) else {
+            throw HostFailure("\(label): the config names no server at its head: HostPin reads none")
+        }
+        guard written.contains("\"\(HostPin.placeholder)\"") else {
+            throw HostFailure("\(label): the config is not written for HostPin's placeholder")
+        }
+        // The resolver the provider asks is the first of the network's
+        // (`DirectResolver.pick(resolvers)`); here it is the one this run
+        // stands up, on the address the pin's interface holds.
+        let address = try pinnedAddress()
+        let resolver = DirectResolver.pick([address])
+        let pin: (Int32) -> Bool = { TunPlatform.pinToPhysicalInterface($0) }
+        var asked: [String] = []
+        let outcome = HostPin.apply(
+            to: written,
+            lookup: { name in
+                asked.append(name)
+                return HostPin.lookup(name, server: resolver, port: port, pin: pin)
+            },
+            routes: { HostPin.routes($0, pin: pin) }
+        )
+        guard asked == [request.server] else {
+            throw HostFailure("\(label): the resolver was asked \(asked), not the name the app wrote, \(request.server)")
+        }
+        switch (expect, outcome) {
+        case ("unresolved", .refused(let sentence)):
+            guard sentence == request.unresolved, sentence.hasPrefix("Cannot start ") else {
+                throw HostFailure("\(label): refused with \"\(sentence)\", not the app's sentence naming the line: \"\(request.unresolved)\"")
+            }
+            guard !CoreEngine.isRunning else { throw HostFailure("\(label): refused, and a core runs") }
+            print("ok   \(label): \(request.server) did not resolve, the start is refused with the line's own sentence, and no core started: \(sentence)")
+        case ("unresolved", _):
+            throw HostFailure("\(label): a name the resolver does not know was not refused: \(outcome)")
+        case (_, .pinned(let pinned, let ipv6)):
+            guard !ipv6 else { throw HostFailure("\(label): the address is IPv6, the resolver answers an IPv4 one") }
+            guard !pinned.contains("\"\(HostPin.placeholder)\"") else {
+                throw HostFailure("\(label): the placeholder is still in the config")
+            }
+            guard pinned.contains("\"\(address)\"") else {
+                throw HostFailure("\(label): the resolver's answer, \(address), is not in the config")
+            }
+            // Only the placeholder moved: the same config but for its quoted address.
+            guard pinned.replacingOccurrences(of: "\"\(address)\"", with: "\"\(HostPin.placeholder)\"") == written else {
+                throw HostFailure("\(label): the step changed more of the config than the server's address")
+            }
+            if expect == "reach" {
+                // The name the app kept stays the wire's: the TLS server name
+                // and the Host (`CoreLines.pinHost`), which the local server checks.
+                let kept = pinned.components(separatedBy: "\"\(request.server)\"").count - 1
+                guard kept >= 3 else {
+                    throw HostFailure("\(label): the name \(request.server) stands \(kept) times in the config; the head, the TLS server name and the Host make three")
+                }
+            }
+            try fetchThroughCore(config: pinned, budget: budget, down: down, up: up, expect: expect, label: label)
+        case (_, .refused(let sentence)):
+            throw HostFailure("\(label): the name did not resolve: \(sentence)")
+        case (_, .unchanged):
+            throw HostFailure("\(label): the step left the config as written")
+        }
+    }
+
+    /// `config` started as the provider starts it and fetched through, with
+    /// the footprint and the core's bytes read while the bytes flow.
+    static func fetchThroughCore(config: String, budget: UInt64, down: Int, up: Int, expect: String, label: String) throws {
+        let socks = try startCore(config)
         defer { CoreEngine.stop() }
         let sampler = HostSampler()
         sampler.start()
