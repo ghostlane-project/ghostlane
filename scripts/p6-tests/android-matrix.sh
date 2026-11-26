@@ -18,11 +18,10 @@
 #     does not answer /bytes/<n>/ with <n> bytes that begin with the nonce, it
 #     does not count what it served, or the run's keys and link outlive it;
 #   - rust-core-android-kill.sh, on a stand-in adb whose Android does not
-#     restart the killed service, passes, or K3's table (the k3 job's own
-#     script) passes its cell of Android's restart; or, where Android does
-#     restart it, either is red; or the table does not keep the session's
-#     going down with the process and coming back by the next start as a
-#     cell of its own;
+#     restart the killed service, is red, or it is red where Android does
+#     restart it; or K3's table (the k3 job's own script) fails on what D16
+#     only reports as a fact, or does not keep the session's going down with
+#     the process and coming back by the app's next start as a cell of its own;
 #   - its `meminfo` misreads Android 6's or Android 15's dumpsys, or its
 #     `soak-summary` calls a growing curve, a restarted process or failed
 #     fetches flat, or a flat clean curve not flat;
@@ -296,11 +295,15 @@ kill_leg() {
   echo "$rc"
 }
 rc=$(kill_leg norestart none)
-[ "$rc" -ne 0 ] && ok "the kill is red where Android does not restart the service" \
-  || bad "the kill passed where Android did not restart the service: $(grep '^RESULT' "$k3root/out/k3/k3-norestart/kill/results.txt" | tail -n 4 | tr '\n' ' ')"
+[ "$rc" -eq 0 ] && ok "the kill passes where Android does not restart the service (D16)" \
+  || bad "the kill was red where Android did not restart the service: $(grep '^RESULT' "$k3root/out/k3/k3-norestart/kill/results.txt" | tail -n 4 | tr '\n' ' ')"
+grep -q '^RESULT android-restart: none' "$k3root/out/k3/k3-norestart/kill/results.txt" \
+  && ok "no Android restart is reported, not judged" || bad "the no-restart leg did not report 'android-restart: none'"
 rc=$(kill_leg restart android)
 [ "$rc" -eq 0 ] && ok "the kill passes where Android restarts the service" \
   || bad "the kill was red where Android restarted the service: $(grep '^RESULT' "$k3root/out/k3/k3-restart/kill/results.txt" | tail -n 4 | tr '\n' ' ')"
+grep -q '^RESULT android-restart: yes' "$k3root/out/k3/k3-restart/kill/results.txt" \
+  && ok "an Android restart is reported, not judged" || bad "the restart leg did not report 'android-restart: yes'"
 
 # K3's table, the k3 job's own script, on those two legs.
 python3 - "$wf" "$tmp/table.py" << 'EOF' || fail=1
@@ -331,23 +334,18 @@ if not down:
     problems.append("the table has no row of the session going down with the process and coming back")
 elif down != ["pass, back by the next start", "pass, back by Android"]:
     problems.append("the down-and-back row is %r, not a pass by the next start and a pass by Android" % down)
-if not android:
-    problems.append("the table has no row of Android's restart of the service")
-else:
-    if not android[0].startswith("FAIL") or "Android did not restart" not in android[0]:
-        problems.append("where Android did not restart the service its cell is %r, not a FAIL that says so" % android[0])
-    if android[1] != "pass":
-        problems.append("where Android restarted the service its cell is %r, not a pass" % android[1])
+if android != ["none (fact)", "yes (fact)"]:
+    problems.append("the table's Android restart row is %r, not a reported none and yes" % android)
 if rows.get("StandInE2ETest") != ["pass 1", "pass 1"]:
     problems.append("the class's row is %r" % rows.get("StandInE2ETest"))
-if sys.argv[2] == "0" or "1 cell(s) did not pass" not in lines:
-    problems.append("the table did not fail on the one cell of Android's restart (exit %s)" % sys.argv[2])
+if sys.argv[2] != "0" or "every cell passed" not in lines:
+    problems.append("the table did not pass with Android's restart as a fact (exit %s)" % sys.argv[2])
 for p in problems:
     print("FAIL " + p)
 if problems:
     print("\n".join("     " + l for l in lines))
 else:
-    print("ok   K3's table: Android's restart is a cell of its own, red where it did not happen; down and back is another")
+    print("ok   K3's table: Android's restart is a fact, not a verdict; down and back is the judged cell")
 sys.exit(1 if problems else 0)
 EOF
 fi

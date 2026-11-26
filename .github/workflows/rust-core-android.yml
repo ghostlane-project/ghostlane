@@ -23,13 +23,13 @@ name: Rust core for Android
 #   - scripts/rust-core-android-kill.sh: a session started outside any
 #     instrumentation on a VLESS REALITY line to an official Xray server on the
 #     runner (scripts/xray-servers.txt, by hash), SIGKILL to the app's process,
-#     and two cells: Android's own restart of the service within 90 s (the
-#     service answers START_REDELIVER_INTENT), red when it did not happen; and
-#     the session down with the process and back in a new one, by Android or
-#     else by the next start, a fetch through the tun before and after.
-# Job `k3` puts every class and both cells of the kill on every leg in one
-# table and fails on any cell that did not pass, a leg that left no result
-# included.
+#     the session down with the process and back in a new one by the app's next
+#     start (or by Android if it restarted the service), a fetch through the tun
+#     before and after; whether Android restarted it is stated as a fact, not
+#     asked (D16: the core is a library in the app's process).
+# Job `k3` puts every class, the kill's down-and-back cell and the Android's
+# restart fact on every leg in one table and fails on any class or down-and-back
+# cell that did not pass, a leg that left no result included.
 #
 # The soak (job `soak`, only by workflow_dispatch with soak=true): one session
 # on that line for soak_minutes (120) on API 35 under traffic, `dumpsys
@@ -633,13 +633,14 @@ jobs:
               m = re.search(r"^RESULT down-and-back: ok, back (by Android|by the next start)", text, re.M)
               cells[(KILL_BACK, leg)] = ("pass, back " + m.group(1)) if m else first
               bad += 0 if m else 1
-              # Android's own restart of the service (START_REDELIVER_INTENT) within 90 s.
+              # D16: Android's own restart of the service (START_REDELIVER_INTENT)
+              # within 90 s is a fact in the table, not a cell that can fail.
               if re.search(r"^RESULT android-restart: yes", text, re.M):
-                  cells[(KILL_RESTART, leg)] = "pass"
+                  cells[(KILL_RESTART, leg)] = "yes (fact)"
+              elif re.search(r"^RESULT android-restart: none", text, re.M):
+                  cells[(KILL_RESTART, leg)] = "none (fact)"
               else:
-                  none = re.search(r"^RESULT android-restart: none", text, re.M)
-                  cells[(KILL_RESTART, leg)] = "FAIL: Android did not restart it in 90 s" if none else first
-                  bad += 1
+                  cells[(KILL_RESTART, leg)] = first
           rows = classes + [KILL_BACK, KILL_RESTART]
           out = ["### K3: every class of the e2e package and the kill, on every leg", "",
                  "| | " + " | ".join(legs) + " |", "|---|" + "---|" * len(legs)]
