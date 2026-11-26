@@ -1,9 +1,14 @@
 package org.olcbox.app.vpn
 
 import kotlinx.coroutines.test.runTest
+import org.olcbox.app.data.datasource.LocationsDataSource
+import org.olcbox.app.data.datasource.LocationsRepositoryImpl
+import org.olcbox.app.data.model.LocationBundleV4
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
+import org.olcbox.app.net.SocksLogin
+import org.olcbox.app.net.core.CoreInbound
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.file.Path
@@ -13,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -149,13 +155,80 @@ class DesktopLanProxyRustTest {
         )
     }
 
+    /**
+     * The manager is the only production place that hands its settings to the
+     * proxy, and so to the line's core. Built here with a store that asks no
+     * network, like the engine stand-ins of L4's watch tests: no session is
+     * started, so no engine runs.
+     */
     @Test
-    fun theManagerPassesItsSettingsThroughToLanCores() {
+    fun theManagerPassesItsLanSettingsToTheLinesCore() {
+        val repository = LocationsRepositoryImpl(object : LocationsDataSource {
+            private var bundle = LocationBundleV4()
+            override suspend fun loadLocationBundle(): LocationBundleV4 = bundle
+            override suspend fun saveLocationBundle(value: LocationBundleV4) { bundle = value }
+            override suspend fun loadLegacyLocations(): List<Pair<String, String>> = emptyList()
+            override suspend fun loadLegacyActiveLocationId(): String? = null
+        })
+        val manager = DesktopVpnManager(repository)
+        try {
+            assertFalse(LanCores.currentSettings().shareOnLan, "a new manager starts with sharing off")
+            val changed = sharing().copy(lanUsername = "new-guest", lanPassword = "new-password")
+            manager.updateSocksProxySettings(changed)
+            assertEquals(changed.normalized(), LanCores.currentSettings())
+        } finally {
+            runCatching { manager.close() }
+        }
+    }
+
+    /** What the proxy's own registration does, with no manager in the test. */
+    @Test
+    fun aProxyRegistersItsSettingsWithLanCores() {
         var current = DesktopSocksProxySettings()
         DesktopLanProxy(onOutput = {}, core = LanCores.rust(), settings = { current })
         assertFalse(LanCores.currentSettings().shareOnLan)
         current = sharing()
         assertEquals(current, LanCores.currentSettings())
+    }
+
+    /**
+     * The running line, not a switch set somewhere else, says whether the LAN
+     * listener belongs to the session's core. Any other case must keep the
+     * Go listener's own port check, including a line with different settings.
+     */
+    @Test
+    fun theProxyBindsOnlyWhenNoRunningLineHoldsTheseExactLanSettings() = runTest {
+        if (DesktopPaths.os == DesktopOs.Windows) return@runTest
+        val localPrivate = DesktopLanProxy.privateAddresses().firstOrNull() ?: return@runTest
+        ServerSocket().use { heldByStranger ->
+            heldByStranger.reuseAddress = false
+            heldByStranger.bind(InetSocketAddress(localPrivate, 0))
+            val heldPort = heldByStranger.localPort
+            if (heldPort == PacServerPort || heldPort == upstream.port) return@runTest
+
+            val settings = sharing(address = localPrivate, port = heldPort)
+            val proxy = DesktopLanProxy(onOutput = {}, settings = { settings })
+            val lan = CoreInbound.Lan(localPrivate, heldPort, SocksLogin(settings.lanUsername, settings.lanPassword))
+            try {
+                LanCores.lineStarted(lan)
+                assertEquals("$localPrivate:$heldPort", proxy.start(settings, upstream))
+                assertTrue(proxy.isRunning())
+
+                proxy.stop()
+                LanCores.lineStarted(
+                    CoreInbound.Lan(localPrivate, heldPort, SocksLogin("guest", "another-password"))
+                )
+                val other = assertFailsWith<IllegalStateException> { proxy.start(settings, upstream) }
+                assertTrue("already in use" in other.message.orEmpty(), other.message)
+
+                LanCores.lineStopped()
+                val clash = assertFailsWith<IllegalStateException> { proxy.start(settings, upstream) }
+                assertTrue("already in use" in clash.message.orEmpty(), clash.message)
+            } finally {
+                proxy.stop()
+                LanCores.lineStopped()
+            }
+        }
     }
 
     @Test

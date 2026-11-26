@@ -16,6 +16,7 @@ import org.olcbox.app.net.core.CoreFixtures
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.net.core.CoreLines
 import org.olcbox.app.vpn.DesktopSocksProxySettings
+import org.olcbox.app.vpn.LanCores
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
@@ -202,6 +203,7 @@ class HostEngineTest {
             sessionParent = sessions,
             lanSettings = { sharing },
             lanNetworkProblem = { null },
+            lanPortHeld = { false },
         )
         val started = trusted.line.start(request(reality, port = 41080))
         try {
@@ -221,6 +223,7 @@ class HostEngineTest {
             sessionParent = sessions,
             lanSettings = { sharing },
             lanNetworkProblem = { "This is a different local network; select the LAN interface again before sharing" },
+            lanPortHeld = { false },
         )
         val withoutLan = untrusted.line.start(request(reality, port = 41080))
         try {
@@ -233,6 +236,67 @@ class HostEngineTest {
         }
         assertFalse(withoutLan.alive())
         assertTrue("different local network" in logText(), logText())
+    }
+
+    /**
+     * A LAN port held by another program, or a LAN plan the core refuses, costs
+     * LAN sharing alone. The line still starts, and the session says why there
+     * is no LAN inbound for the proxy to bind.
+     */
+    @Test
+    fun aHeldOrRefusedLanPortLeavesTheLineRunningWithoutLan() = runTest {
+        if (!posix()) return@runTest
+        val program = standIn(protocol = 1, run = SERVES)
+        val sharing = DesktopSocksProxySettings(
+            shareOnLan = true,
+            lanAddress = "192.168.50.10",
+            lanNetworkId = "192.168.50.1|aa:bb:cc:dd:ee:ff",
+            lanPort = 10818,
+            lanUsername = "ghostlane-guest",
+            lanPassword = "generated-lan-password",
+        )
+        fun writtenTags(): List<String> = sessions.toFile().listFiles()!!.single()
+            .resolve(HostProcess.SESSION_FILE).readText()
+            .let { Json.parseToJsonElement(it).jsonObject.getValue("core").jsonObject }
+            .getValue("inbounds").jsonArray.map { it.jsonObject.getValue("tag").jsonPrimitive.content }
+
+        val held = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing },
+            lanNetworkProblem = { null },
+            lanPortHeld = { true },
+        )
+        val withHeldPort = held.line.start(request(reality, port = 41080))
+        try {
+            assertEquals(listOf(CoreInbound.TAG), writtenTags(), "the line is written without the LAN inbound")
+            assertNull(LanCores.currentLine().lan)
+            assertTrue("already in use" in LanCores.currentLine().reason.orEmpty(), "the reason is kept for the proxy")
+            assertTrue("LAN sharing was left out" in logText(), logText())
+        } finally {
+            held.line.stopNow()
+        }
+        assertFalse(withHeldPort.alive())
+
+        val refused = HostEngine(
+            host,
+            binary = { program },
+            serverAddress = noName,
+            sessionParent = sessions,
+            lanSettings = { sharing.copy(lanPort = 41080) },
+            lanNetworkProblem = { null },
+            lanPortHeld = { false },
+        )
+        val withRefusedPlan = refused.line.start(request(reality, port = 41080))
+        try {
+            assertEquals(listOf(CoreInbound.TAG), writtenTags(), "the line is written without the LAN inbound")
+            assertEquals(CoreInbound.LAN_PORT_REFUSAL, LanCores.currentLine().reason)
+        } finally {
+            refused.line.stopNow()
+        }
+        assertFalse(withRefusedPlan.alive())
     }
 
     /**

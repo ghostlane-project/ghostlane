@@ -59,8 +59,8 @@ internal interface LanCore {
  * it is the Rust engine.
  */
 internal object LanCores {
-    @Volatile
-    var factory: (onOutput: (String) -> Unit) -> LanCore = { out -> go(out) }
+    /** What the running line's core holds: its LAN inbound, or why it holds none. */
+    data class LineState(val lan: CoreInbound.Lan?, val reason: String?)
 
     /** The manager's current settings, registered by [DesktopLanProxy]. */
     @Volatile
@@ -68,7 +68,23 @@ internal object LanCores {
 
     fun currentSettings(): DesktopSocksProxySettings = settings()
 
-    fun create(onOutput: (String) -> Unit): LanCore = factory(onOutput)
+    @Volatile private var lineState: LineState = LineState(null, null)
+
+    /** What a line's core started with, read by the proxy before it binds anything. */
+    fun lineStarted(lan: CoreInbound.Lan?, reason: String? = null) {
+        lineState = LineState(lan, reason)
+    }
+
+    fun lineStopped() {
+        lineState = LineState(null, null)
+    }
+
+    fun currentLine(): LineState = lineState
+
+    /** Whether the running line's core holds exactly these LAN settings. */
+    fun lineHolds(lan: CoreInbound.Lan): Boolean = lineState.lan == lan
+
+    fun create(onOutput: (String) -> Unit): LanCore = go(onOutput)
 
     /** sing-box, as LAN sharing has always run. */
     fun go(onOutput: (String) -> Unit): LanCore = GoLanCore(onOutput)

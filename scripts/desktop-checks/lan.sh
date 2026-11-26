@@ -21,8 +21,9 @@
 #     and with a method list that offers no login first, every attempt is
 #     refused, TCP and datagram alike;
 #   - a stop closes the LAN port, and no engine is left;
-#   - a LAN port another program holds fails the line's start with the engine's
-#     sentence.
+#   - a LAN port another program holds leaves the line running, with LAN sharing
+#     unavailable: the line leaves that inbound out and the proxy's own port
+#     check then fails.
 #
 # Target 203.0.113.10 (TEST-NET-3) sits on this machine's loopback and is
 # unreachable from the client namespace except through the line's Xray server.

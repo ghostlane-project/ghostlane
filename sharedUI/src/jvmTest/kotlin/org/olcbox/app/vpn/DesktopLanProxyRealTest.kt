@@ -28,6 +28,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -203,23 +205,38 @@ class DesktopLanProxyRealTest {
         assertFalse(portOpen(check.lanAddress, check.lanPort), "the LAN port is closed once the line stops")
     }
 
+    /**
+     * A LAN port another program holds costs LAN sharing, not the connection.
+     * The line starts without that inbound, the proxy's own port check then
+     * fails, and the manager would show LAN sharing as unavailable.
+     */
     @Test
-    fun aPortAnotherProgramHoldsFailsTheLinesStart(): Unit = runBlocking {
+    fun aPortAnotherProgramHoldsStartsTheLineButLeavesLanSharingUnavailable(): Unit = runBlocking {
         bindLanSocket().use { held ->
             val lanSettings = settings(held.localPort)
-            DesktopLanProxy(::say, LanCores.rust(), settings = { lanSettings })
+            val proxy = DesktopLanProxy(::say, settings = { lanSettings })
             val engine = HostEngine(engineHost, sessionParent = sessions)
             val ownPort = freeOwnPort(held.localPort)
             try {
-                val failure = assertFailsWith<IllegalStateException> {
-                    engine.line.start(request(ownPort, SocksLogin("tun-user", "tun-pass")))
-                }
+                val started = runCatching { engine.line.start(request(ownPort, SocksLogin("tun-user", "tun-pass"))) }
+                    .getOrNull()
+                assertNotNull(started, "the line starts even when LAN's port is held\n${tail()}")
+                assertTrue(started.alive(), "the line keeps serving without LAN sharing\n${tail()}")
+                assertTrue(engine.line.anyRunning())
+                assertNull(LanCores.currentLine().lan, "the line's core holds no LAN inbound")
                 assertTrue(
-                    failure.message.orEmpty().startsWith("ghostlane-engine did not start the line: start: "),
-                    "${failure.message}\n${tail()}",
+                    "already in use" in LanCores.currentLine().reason.orEmpty(),
+                    "the session says why LAN sharing was left out",
                 )
-                assertFalse(engine.line.anyRunning())
+                assertTrue(portOpen("127.0.0.1", ownPort), "the line's own port is up\n${tail()}")
+
+                val upstream = SubscriptionFetchProxy("127.0.0.1", ownPort, "tun-user", "tun-pass")
+                val unavailable = assertFailsWith<IllegalStateException> { proxy.start(lanSettings, upstream) }
+                assertTrue("already in use" in unavailable.message.orEmpty(), "${unavailable.message}\n${tail()}")
+                assertFalse(proxy.isRunning(), "LAN sharing is not left running on a stranger's port")
+                assertTrue(started.alive(), "a failed LAN listener does not take the line down\n${tail()}")
             } finally {
+                proxy.stop()
                 engine.line.stopNow()
             }
         }

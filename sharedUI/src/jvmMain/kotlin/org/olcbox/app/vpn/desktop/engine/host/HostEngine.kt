@@ -36,6 +36,8 @@ import org.olcbox.app.vpn.desktop.engine.RoomEngine
 import org.olcbox.app.vpn.desktop.engine.TunCore
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.nio.file.Path
 import java.util.Hashtable
 import javax.naming.Context
@@ -70,11 +72,13 @@ internal class HostEngine(
     sessionParent: Path? = null,
     lanSettings: () -> DesktopSocksProxySettings = { LanCores.currentSettings() },
     lanNetworkProblem: () -> String? = { DesktopLanProxy.networkProblem(LanCores.currentSettings()) },
+    lanPortHeld: (CoreInbound.Lan) -> Boolean = ::lanPortHeldByAnother,
 ) : DesktopEngine {
     private val go = GoEngines(host)
 
     override val line: LineEngine = HostLine(
         host.log, binary, serverAddress, defaultInterface, sessionParent, go.line, lanSettings, lanNetworkProblem,
+        lanPortHeld,
     )
     override val windowsTun: TunCore get() = go.windowsTun
     override val room: RoomEngine get() = go.room
@@ -86,6 +90,14 @@ internal class HostEngine(
 
 private fun linuxDefaultInterface(): String? =
     if (DesktopPaths.os == DesktopOs.Linux) DesktopDnsResolver.linuxDefaultInterface() else null
+
+/** Whether another program already holds the LAN port the line would bind. */
+internal fun lanPortHeldByAnother(lan: CoreInbound.Lan): Boolean = runCatching {
+    ServerSocket().use { socket ->
+        socket.reuseAddress = false
+        socket.bind(InetSocketAddress(lan.address, lan.port))
+    }
+}.isFailure
 
 /**
  * What the engine is told for a line: the session file's halves, written by
@@ -218,6 +230,7 @@ private class HostLine(
     private val go: LineEngine,
     private val lanSettings: () -> DesktopSocksProxySettings,
     private val lanNetworkProblem: () -> String?,
+    private val lanPortHeld: (CoreInbound.Lan) -> Boolean,
 ) : LineEngine {
     @Volatile private var current: HostProcess? = null
     @Volatile private var checked: Path? = null
