@@ -1,142 +1,179 @@
 package org.olcbox.app.vpn
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.test.runTest
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
+import org.olcbox.app.desktop.DesktopOs
+import org.olcbox.app.desktop.DesktopPaths
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.nio.file.Path
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** LAN sharing's config for ghostlane-engine: what listens, who may use it, and where it leads. */
+/**
+ * LAN sharing on ghostlane-engine (D5): the listener is an inbound in the
+ * session's own core, so DesktopLanProxy starts no second process and binds
+ * no port of its own while keeping the pinned-network and credential guards.
+ */
 class DesktopLanProxyRustTest {
-    private val upstream = SubscriptionFetchProxy("127.0.0.1", 10808, "internal", "secret")
+    private val upstream = SubscriptionFetchProxy("127.0.0.1", 10810, "internal", "secret")
+    private val networkId = "192.168.50.1|00:11:22:33:44:55"
+    private lateinit var previousSettings: () -> DesktopSocksProxySettings
 
-    private fun config(
-        host: String = "192.168.50.10",
+    @BeforeTest
+    fun saveSettings() {
+        previousSettings = LanCores.settings
+    }
+
+    @AfterTest
+    fun restoreSettings() {
+        LanCores.settings = previousSettings
+    }
+
+    private fun sharing(
+        address: String = "192.168.50.10",
         port: Int = 10818,
+        network: String = networkId,
         username: String = "guest",
         password: String = "generated-password",
-        upstream: SubscriptionFetchProxy = this.upstream,
-        ownershipPort: Int = 18888,
-    ): String = DesktopLanProxy.rustConfig(
-        host = host,
-        port = port,
-        username = username,
-        password = password,
-        upstream = upstream,
-        ownershipPort = ownershipPort,
-        ownershipUsername = "owner-user",
-        ownershipPassword = "owner-password",
+    ) = DesktopSocksProxySettings(
+        shareOnLan = true,
+        lanAddress = address,
+        lanNetworkId = network,
+        lanPort = port,
+        lanUsername = username,
+        lanPassword = password,
     )
 
-    private fun inbound(document: JsonObject, tag: String): JsonObject =
-        document["inbounds"]!!.jsonArray.map { it.jsonObject }.single { it["tag"]!!.jsonPrimitive.content == tag }
-
     @Test
-    fun theLanListenerDemandsItsOwnLoginOnThePrivateAddress() {
-        val document = Json.parseToJsonElement(config()).jsonObject
-        val lan = inbound(document, "lan-in")
-        assertEquals("socks", lan["protocol"]!!.jsonPrimitive.content)
-        assertEquals("192.168.50.10", lan["listen"]!!.jsonPrimitive.content)
-        assertEquals(10818, lan["port"]!!.jsonPrimitive.int)
-        val settings = lan["settings"]!!.jsonObject
-        assertEquals("password", settings["auth"]!!.jsonPrimitive.content)
-        assertTrue(settings["udp"]!!.jsonPrimitive.boolean, "a LAN client asks for a datagram relay")
-        assertTrue(settings["allowUnauthenticatedLan"]!!.jsonPrimitive.boolean, "the core's name for a listener off loopback")
-        val account = settings["accounts"]!!.jsonArray.single().jsonObject
-        assertEquals("guest", account["user"]!!.jsonPrimitive.content)
-        assertEquals("generated-password", account["pass"]!!.jsonPrimitive.content)
+    fun aRustSessionStartsNoProcessOfItsOwnAndDoesNotBindTheLanPort() = runTest {
+        if (DesktopPaths.os == DesktopOs.Windows) return@runTest
+        var binaryAsked = 0
+        val core = LanCores.rust(binary = { binaryAsked++; Path.of("unused-ghostlane-engine") })
+        // 192.168.50.10 is not an address on the runner: a ServerSocket bind to
+        // it would fail, so passing proves DesktopLanProxy did not bind it.
+        val proxy = DesktopLanProxy(
+            onOutput = {},
+            core = core,
+            availableAddresses = { listOf("192.168.50.10") },
+            readNetworkIdentity = { networkId },
+        )
+        assertFalse(proxy.isRunning())
+        val endpoint = proxy.start(sharing(), upstream)
+        assertEquals("192.168.50.10:10818", endpoint)
+        assertTrue(proxy.isRunning())
+        assertEquals(0, binaryAsked, "no second ghostlane-engine binary is resolved or started")
+        proxy.stop()
+        assertFalse(proxy.isRunning())
     }
 
     @Test
-    fun theOwnershipListenerIsOnLoopbackWithALoginOfItsOwn() {
-        val document = Json.parseToJsonElement(config()).jsonObject
-        val owner = inbound(document, "in")
-        assertEquals("127.0.0.1", owner["listen"]!!.jsonPrimitive.content)
-        assertEquals(18888, owner["port"]!!.jsonPrimitive.int)
-        val settings = owner["settings"]!!.jsonObject
-        assertEquals("password", settings["auth"]!!.jsonPrimitive.content)
-        val account = settings["accounts"]!!.jsonArray.single().jsonObject
-        assertEquals("owner-user", account["user"]!!.jsonPrimitive.content)
-        assertEquals("owner-password", account["pass"]!!.jsonPrimitive.content)
-    }
+    fun aPortAlreadyHeldByTheSessionsCoreDoesNotFailRustLanProxy() = runTest {
+        if (DesktopPaths.os == DesktopOs.Windows) return@runTest
+        val localPrivate = DesktopLanProxy.privateAddresses().firstOrNull() ?: return@runTest
+        ServerSocket().use { heldByCore ->
+            heldByCore.reuseAddress = false
+            heldByCore.bind(InetSocketAddress(localPrivate, 0))
+            val heldPort = heldByCore.localPort
+            if (heldPort == PacServerPort || heldPort == upstream.port) return@runTest
 
-    @Test
-    fun everyConnectionLeadsToTheSessionsPortWithItsLogin() {
-        val document = Json.parseToJsonElement(config()).jsonObject
-        val outbound = document["outbounds"]!!.jsonArray.map { it.jsonObject }.single()
-        assertEquals("socks", outbound["protocol"]!!.jsonPrimitive.content)
-        val settings = outbound["settings"]!!.jsonObject
-        assertEquals("127.0.0.1", settings["address"]!!.jsonPrimitive.content)
-        assertEquals(10808, settings["port"]!!.jsonPrimitive.int)
-        assertEquals("internal", settings["user"]!!.jsonPrimitive.content)
-        assertEquals("secret", settings["pass"]!!.jsonPrimitive.content)
-        val tag = outbound["tag"]!!.jsonPrimitive.content
-        val rule = document["routing"]!!.jsonObject["rules"]!!.jsonArray.map { it.jsonObject }.single()
-        assertEquals(tag, rule["outboundTag"]!!.jsonPrimitive.content)
-        assertEquals(setOf("lan-in", "in"), rule["inboundTag"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet())
-    }
+            val rust = DesktopLanProxy(
+                onOutput = {},
+                core = LanCores.rust(binary = { Path.of("unused") }),
+                availableAddresses = { listOf(localPrivate) },
+                readNetworkIdentity = { networkId },
+            )
+            assertEquals("$localPrivate:$heldPort", rust.start(sharing(address = localPrivate, port = heldPort), upstream))
+            assertTrue(rust.isRunning())
+            rust.stop()
 
-    @Test
-    fun aSessionPortWithNoLoginIsWrittenWithNone() {
-        val open = SubscriptionFetchProxy("127.0.0.1", 10808)
-        val settings = Json.parseToJsonElement(config(upstream = open)).jsonObject["outbounds"]!!
-            .jsonArray.single().jsonObject["settings"]!!.jsonObject
-        assertFalse("user" in settings)
-        assertFalse("pass" in settings)
-    }
-
-    @Test
-    fun theChainSniffsNothingSoThatNoServerWaitsOnAClientThatSpeaksSecond() {
-        val document = Json.parseToJsonElement(config()).jsonObject
-        for (tag in listOf("lan-in", "in")) {
-            val sniffing = assertNotNull(inbound(document, tag)["sniffing"], tag).jsonObject
-            assertFalse(sniffing["enabled"]!!.jsonPrimitive.boolean, "sniffing on $tag")
+            val go = DesktopLanProxy(
+                onOutput = {},
+                core = LanCores.go {},
+                availableAddresses = { listOf(localPrivate) },
+                readNetworkIdentity = { networkId },
+            )
+            val clash = assertFailsWith<IllegalStateException> {
+                go.start(sharing(address = localPrivate, port = heldPort), upstream)
+            }
+            assertTrue("already in use" in clash.message.orEmpty(), clash.message)
+            assertFalse(go.isRunning())
         }
     }
 
     @Test
-    fun noLoginInTheConfigReachesALogLevelThatWouldPrintIt() {
-        val log = Json.parseToJsonElement(config()).jsonObject["log"]!!.jsonObject
-        assertEquals("warning", log["loglevel"]!!.jsonPrimitive.content)
-        assertEquals("none", log["access"]!!.jsonPrimitive.content)
+    fun pinnedNetworkMissingInterfaceBlankLoginAndClashingPortAreRefused() = runTest {
+        if (DesktopPaths.os == DesktopOs.Windows) return@runTest
+        fun proxy(addresses: List<String> = listOf("192.168.50.10"), identity: String? = networkId) = DesktopLanProxy(
+            onOutput = {},
+            core = LanCores.rust(binary = { Path.of("unused") }),
+            availableAddresses = { addresses },
+            readNetworkIdentity = { identity },
+        )
+
+        assertFailsWith<IllegalArgumentException> { proxy().start(sharing(username = "", password = ""), upstream) }
+        assertFailsWith<IllegalArgumentException> { proxy().start(sharing(password = " "), upstream) }
+        assertFailsWith<IllegalStateException> { proxy(addresses = emptyList()).start(sharing(), upstream) }
+        assertFailsWith<IllegalStateException> { proxy(identity = null).start(sharing(), upstream) }
+        assertFailsWith<IllegalArgumentException> {
+            proxy(identity = "192.168.50.1|ff:ee:dd:cc:bb:aa").start(sharing(), upstream)
+        }
+        assertFailsWith<IllegalArgumentException> { proxy().start(sharing(port = upstream.port), upstream) }
+        assertFailsWith<IllegalArgumentException> {
+            proxy(addresses = listOf("0.0.0.0")).start(sharing(address = "0.0.0.0"), upstream)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            proxy(addresses = listOf("203.0.113.5")).start(sharing(address = "203.0.113.5"), upstream)
+        }
+
+        assertEquals(
+            "This is a different local network; select the LAN interface again before sharing",
+            DesktopLanProxy.networkProblem(
+                sharing(),
+                availableAddresses = { listOf("192.168.50.10") },
+                readNetworkIdentity = { "192.168.50.1|ff:ee:dd:cc:bb:aa" },
+            ),
+        )
+        assertEquals(
+            null,
+            DesktopLanProxy.networkProblem(
+                sharing().copy(shareOnLan = false),
+                availableAddresses = { emptyList() },
+                readNetworkIdentity = { null },
+            ),
+        )
     }
 
     @Test
-    fun wildcardPublicBlankAndClashingListenersAreRefused() {
-        assertFailsWith<IllegalArgumentException> { config(host = "0.0.0.0") }
-        assertFailsWith<IllegalArgumentException> { config(host = "203.0.113.5") }
-        assertFailsWith<IllegalArgumentException> { config(host = "::") }
-        assertFailsWith<IllegalArgumentException> { config(username = "", password = "") }
-        assertFailsWith<IllegalArgumentException> { config(username = "guest", password = " ") }
-        assertFailsWith<IllegalArgumentException> { config(port = 80) }
-        assertFailsWith<IllegalArgumentException> { config(port = upstream.port) }
-        assertFailsWith<IllegalArgumentException> { config(port = 18888, ownershipPort = 18888) }
+    fun theManagerPassesItsSettingsThroughToLanCores() {
+        var current = DesktopSocksProxySettings()
+        DesktopLanProxy(onOutput = {}, core = LanCores.rust(), settings = { current })
+        assertFalse(LanCores.currentSettings().shareOnLan)
+        current = sharing()
+        assertEquals(current, LanCores.currentSettings())
     }
 
     @Test
-    fun theGoAndTheRustCoresAreTwoCoresOfOneProxy() {
-        val seen = mutableListOf<String>()
-        val go = LanCores.go { seen += it }
-        val rust = LanCores.rust({ seen += it })
+    fun goStaysTheDefaultAndOwnsItsListenerWhileRustUsesTheSessionsCore() {
+        val go = LanCores.go {}
+        val rust = LanCores.rust()
+        assertEquals("sing-box", LanCores.create {}.name)
         assertEquals("sing-box", go.name)
         assertEquals("ghostlane-engine", rust.name)
+        assertTrue(go.ownsListener)
+        assertFalse(rust.ownsListener)
         assertFalse(go.isRunning())
         assertFalse(rust.isRunning())
         go.stopNow()
         rust.stopNow()
     }
 
-    @Test
-    fun goIsTheDefault() {
-        assertEquals("sing-box", LanCores.create { }.name)
+    private companion object {
+        const val PacServerPort = 10808
     }
 }

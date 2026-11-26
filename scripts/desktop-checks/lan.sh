@@ -1,36 +1,41 @@
 #!/usr/bin/env bash
 # desktop-check-os: linux
+# desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopLanProxy.kt
+# desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxy*Test.kt
+# desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/host/HostEngine.kt
+# desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/HostEngineTest.kt
 #
-# LAN sharing on ghostlane-engine, in two network namespaces: the app's own
-# DesktopLanProxy starts the Core build's program at the pin on a private
-# address of this machine (the near end of a veth pair), in front of the
-# port a session would hold, and a client in the namespace at the far end
-# reaches it as another device on the network would
-# (DesktopLanProxyRealTest, which this script runs and holds to: every test of
-# it run, none skipped, none failed):
+# LAN sharing on ghostlane-engine (D5), in two network namespaces: HostEngine
+# starts the line's own core at the pin with CoreInbound.Lan on a private
+# address of this machine (the near end of a veth pair) and a VLESS REALITY
+# Vision line to Xray 26.4.25, DesktopLanProxy starts no second process and
+# binds no port of its own, and a client in the namespace at the far end
+# reaches it as another device on the network would (DesktopLanProxyRealTest,
+# which this script runs and holds to: every test of it run, none skipped,
+# none failed):
 #   - with the login, the client's SOCKS5 CONNECT carries a download and an
-#     upload byte for byte, and its UDP ASSOCIATE carries a datagram out and
-#     the answer back, all through the session's port and its own login;
-#   - with no login at all, with the wrong password, and with a method list
-#     that offers no login first, every attempt is refused, TCP and datagram
-#     alike;
-#   - a stop closes the port, and no engine is left;
-#   - a port another program holds fails the start with the app's sentence.
-# The session's port is a SOCKS5 server of this script's own on loopback that
-# demands a login and takes TEST-NET-3's 203.0.113.10 for the page and the
-# datagram echo (a request that did not go through the chain goes nowhere);
-# it logs what it carried, and the script holds the chain to that log.
+#     upload byte for byte, and its UDP ASSOCIATE (the client binding first and
+#     declaring its port) carries a datagram out and the answer back, all over
+#     the line's own core (one ghostlane-engine process, no second one);
+#   - with no login at all, with the wrong password, with the wrong username,
+#     and with a method list that offers no login first, every attempt is
+#     refused, TCP and datagram alike;
+#   - a stop closes the LAN port, and no engine is left;
+#   - a LAN port another program holds fails the line's start with the engine's
+#     sentence.
 #
-# The addresses are 192.168.77.1 (this machine's end) and 192.168.77.2 (the
-# namespace's); both are removed again, however the script ends. A room's leg
-# of LAN sharing is not here.
+# Target 203.0.113.10 (TEST-NET-3) sits on this machine's loopback and is
+# unreachable from the client namespace except through the line's Xray server.
+# The addresses of the pair are 192.168.77.1 (this machine's end) and
+# 192.168.77.2 (the namespace's); everything added is removed on exit. A room's
+# leg of LAN sharing is S10's.
 #
-# Run by rust-desktop.yml on each leg the line above names:
+# Run by rust-desktop.yml on the Linux leg:
 #   bash scripts/desktop-checks/lan.sh
 # with GHOSTLANE_ENGINE (the program), GHOSTLANE_CORE_COMMIT (the commit it
 # must say it was built from), DESKTOP_CHECK_OS (linux) and DESKTOP_CHECK_WORK
-# (an empty directory of its own). Needs Python 3, sudo with ip(8), and Java 21
-# with the Android SDK for the Gradle build.
+# (an empty directory of its own). Needs Python 3, curl, openssl, sudo with
+# ip(8), and Java 21 with the Android SDK for the Gradle build.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -56,7 +61,9 @@ done
 [ -n "$py" ] || die "no Python 3"
 [ -x "$engine" ] || die "GHOSTLANE_ENGINE is no program: $engine"
 sudo -n true 2> /dev/null || die "no sudo without a password: the namespaces need it"
-command -v ip > /dev/null || die "no ip(8)"
+for tool in ip curl openssl; do
+  command -v "$tool" > /dev/null || die "no $tool"
+done
 
 # The program says what it is: the contract this app writes, and the pin.
 "$engine" version > "$work/version.jsonl" 2> "$work/version.err" || die "\`ghostlane-engine version\` failed: $(head -c 300 "$work/version.err")"
@@ -76,21 +83,50 @@ PY
 )" || die "the program is not the pin's: $said"
 say "$said"
 
-# The namespace, and the veth pair between it and this machine.
+# Xray 26.4.25, the line's server, checked against scripts/xray-servers.txt.
+xray_version=26.4.25
+sum="$(sed -n "s/^$xray_version \([0-9a-f]\{64\}\)\$/\1/p" "$root/scripts/xray-servers.txt")"
+[ -n "$sum" ] || die "no sha256 of Xray-linux-64 $xray_version"
+mkdir -p "$work/xray"
+curl -fsSL --retry 3 -o "$work/xray/Xray-linux-64.zip" \
+  "https://github.com/XTLS/Xray-core/releases/download/v$xray_version/Xray-linux-64.zip" ||
+  die "Xray $xray_version could not be fetched"
+xray="$("$py" -I - "$work/xray/Xray-linux-64.zip" "$sum" "$work/xray" 2>&1 <<'PY'
+import hashlib, os, stat, sys, zipfile
+archive, want, out = sys.argv[1:4]
+got = hashlib.sha256(open(archive, "rb").read()).hexdigest()
+if got != want:
+    sys.exit("the archive hashes to %s, the pin is %s" % (got, want))
+with zipfile.ZipFile(archive) as z:
+    z.extract("xray", out)
+path = os.path.join(out, "xray")
+os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+print(path)
+PY
+)" || die "Xray $xray_version: $xray"
+xray_said="$("$xray" version | sed -n 1p)"
+say "$xray_said"
+
+# The namespace, the veth pair between it and this machine, and the target
+# address on this machine's loopback (unreachable from the client namespace).
 ns=gl-lan-check
 near=gl-lan0
 far=gl-lan1
 lan_address=192.168.77.1
 far_address=192.168.77.2
+target_ip=203.0.113.10
 teardown() {
   touch "$work/stop" 2> /dev/null || true
   [ -z "${servers:-}" ] || { for _ in $(seq 20); do kill -0 "$servers" 2> /dev/null || break; sleep 0.5; done; kill "$servers" 2> /dev/null || true; }
   sudo -n ip netns del "$ns" 2> /dev/null || true
   sudo -n ip link del "$near" 2> /dev/null || true
+  sudo -n ip addr del "$target_ip/32" dev lo 2> /dev/null || true
 }
 trap teardown EXIT
 sudo -n ip netns del "$ns" 2> /dev/null || true
 sudo -n ip link del "$near" 2> /dev/null || true
+sudo -n ip addr del "$target_ip/32" dev lo 2> /dev/null || true
+sudo -n ip addr add "$target_ip/32" dev lo
 sudo -n ip netns add "$ns"
 sudo -n ip link add "$near" type veth peer name "$far"
 sudo -n ip link set "$far" netns "$ns"
@@ -106,23 +142,23 @@ sudo -n ip netns exec "$ns" ping -c 1 -W 2 "$lan_address" > /dev/null || die "th
 gateway="$(ip route show default | awk '/dev/ {print $3; exit}')"
 [ -z "$gateway" ] || ping -c 1 -W 2 "$gateway" > /dev/null 2>&1 || true
 
-# The servers: the page and the datagram echo behind the session's port, and
-# the session's port itself. They run until the file `stop` appears.
+# The servers: the HTTP page and the UDP echo on 203.0.113.10, and Xray 26.4.25
+# in front of them as the VLESS REALITY Vision line's server.
 cat > "$work/servers.py" <<'PY'
-import hashlib, http.server, json, os, secrets, select, socket, struct, sys, threading, time
+import hashlib, http.server, json, os, secrets, socket, ssl, subprocess, sys, threading, time
 
-work, lan_address = sys.argv[1], sys.argv[2]
+work, xray, lan_address, target_ip = sys.argv[1:5]
 DOWN, UP = 2 * 1024 * 1024, 1024 * 1024
-TARGET = "203.0.113.10"
-USER, PASS = "session-" + secrets.token_hex(4), secrets.token_hex(16)
+SNI = "reality.lan-check.test"
+UUID = "5a4e8c2d-6a1f-4c3b-9d7e-2f1b0c9a8e71"
 LAN_USER, LAN_PASS = "lan-" + secrets.token_hex(4), secrets.token_hex(16)
-logfile = open(os.path.join(work, "upstream.log"), "a", buffering=1)
+origin_log = open(os.path.join(work, "origin.log"), "a", buffering=1)
 log_lock = threading.Lock()
 
 
 def note(line):
     with log_lock:
-        logfile.write(line + "\n")
+        origin_log.write(line + "\n")
 
 
 def pattern(size):
@@ -140,6 +176,7 @@ class Page(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        note("http GET %s" % self.path)
         body = self.down if self.path.endswith("/down") else b"page"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -154,6 +191,7 @@ class Page(http.server.BaseHTTPRequestHandler):
                 break
             digest.update(chunk)
             length -= len(chunk)
+        note("http POST %s" % self.path)
         body = digest.hexdigest().encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -168,11 +206,46 @@ class PageServer(http.server.ThreadingHTTPServer):
         pass
 
 
-page = PageServer(("127.0.0.1", 0), Page)
+def reality_target():
+    cert, key = os.path.join(work, "target.crt"), os.path.join(work, "target.key")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+                    "-subj", "/CN=" + SNI, "-keyout", key, "-out", cert], check=True, capture_output=True)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    context.load_cert_chain(cert, key)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+
+    def serve(conn):
+        try:
+            conn.settimeout(15)
+            with context.wrap_socket(conn, server_side=True) as tls:
+                while tls.recv(4096):
+                    pass
+        except (OSError, ssl.SSLError):
+            pass
+        finally:
+            conn.close()
+
+    def accept():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=serve, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    return "127.0.0.1:%d" % listener.getsockname()[1]
+
+
+page = PageServer((target_ip, 0), Page)
 threading.Thread(target=page.serve_forever, daemon=True).start()
 
 echo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-echo.bind(("127.0.0.1", 0))
+echo.bind((target_ip, 0))
 
 
 def echo_loop():
@@ -181,192 +254,93 @@ def echo_loop():
             data, peer = echo.recvfrom(65535)
         except OSError:
             return
+        note("udp %d" % len(data))
         echo.sendto(b"echo:" + data, peer)
 
 
 threading.Thread(target=echo_loop, daemon=True).start()
 
+target = reality_target()
+out = subprocess.run([xray, "x25519"], check=True, capture_output=True, text=True).stdout
+keys = [line.split(":", 1)[1].strip() for line in out.splitlines() if ":" in line]
+if len(keys) < 2 or not all(keys[:2]):
+    sys.exit("cannot read `xray x25519`: %r" % out)
+private, public = keys[0], keys[1]
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    xray_port = s.getsockname()[1]
 
-def recv_exact(conn, n):
-    out = b""
-    while len(out) < n:
-        chunk = conn.recv(n - len(out))
-        if not chunk:
-            raise ConnectionError("closed")
-        out += chunk
-    return out
-
-
-def read_address(conn):
-    atyp = recv_exact(conn, 1)[0]
-    if atyp == 1:
-        host = socket.inet_ntoa(recv_exact(conn, 4))
-    elif atyp == 3:
-        host = recv_exact(conn, recv_exact(conn, 1)[0]).decode()
-    elif atyp == 4:
-        host = socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
-    else:
-        raise ConnectionError("address type %d" % atyp)
-    return host, struct.unpack(">H", recv_exact(conn, 2))[0]
-
-
-def parse_datagram(data):
-    if len(data) < 10 or data[2] != 0:
-        return None
-    atyp = data[3]
-    if atyp == 1:
-        host, rest = socket.inet_ntoa(data[4:8]), data[8:]
-    elif atyp == 3:
-        n = data[4]
-        host, rest = data[5:5 + n].decode(), data[5 + n:]
-    else:
-        return None
-    return host, struct.unpack(">H", rest[:2])[0], rest[2:]
-
-
-def pump(a, b):
+config = {
+    "log": {
+        "loglevel": "warning",
+        "access": os.path.join(work, "xray-access.log"),
+        "error": os.path.join(work, "xray-server.log"),
+    },
+    "inbounds": [{
+        "tag": "in", "listen": "127.0.0.1", "port": xray_port, "protocol": "vless",
+        "settings": {"clients": [{"id": UUID, "flow": "xtls-rprx-vision"}], "decryption": "none"},
+        "streamSettings": {"network": "raw", "security": "reality", "realitySettings": {
+            "dest": target, "serverNames": [SNI], "privateKey": private, "shortIds": ["ab12cd34"]}},
+    }],
+    "outbounds": [{"tag": "direct", "protocol": "freedom", "settings": {
+        "ipsBlocked": [], "finalRules": [{"action": "allow", "ip": [target_ip + "/32"]}]}}],
+}
+with open(os.path.join(work, "xray-server.json"), "w") as f:
+    json.dump(config, f, indent=2)
+server = subprocess.Popen([xray, "run", "-c", os.path.join(work, "xray-server.json")],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+deadline = time.monotonic() + 20
+while True:
+    if server.poll() is not None:
+        sys.exit("Xray ended at its start; its log is xray-server.log")
     try:
-        while True:
-            data = a.recv(65536)
-            if not data:
-                break
-            b.sendall(data)
+        socket.create_connection(("127.0.0.1", xray_port), timeout=0.5).close()
+        break
     except OSError:
-        pass
-    finally:
-        for s in (a, b):
-            try:
-                s.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+        if time.monotonic() > deadline:
+            sys.exit("Xray did not open its port in 20 s")
+        time.sleep(0.2)
 
+while True:
+    with socket.socket() as probe:
+        probe.bind((lan_address, 0))
+        lan_port = probe.getsockname()[1]
+    if lan_port != 10808:
+        break
 
-def udp_relay(control, bound):
-    """UDP ASSOCIATE: datagrams for TARGET:53 go to the echo; the answer comes back wrapped."""
-    out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client = None
-    control.setblocking(False)
-    try:
-        while True:
-            ready, _, _ = select.select([bound, out, control], [], [], 1)
-            if control in ready:
-                try:
-                    if control.recv(1) == b"":
-                        return
-                except BlockingIOError:
-                    pass
-                except OSError:
-                    return
-            if bound in ready:
-                data, client = bound.recvfrom(65535)
-                parsed = parse_datagram(data)
-                if parsed:
-                    host, port, payload = parsed
-                    dest = ("127.0.0.1", echo.getsockname()[1]) if (host, port) == (TARGET, 53) else (host, port)
-                    note("udp %s:%d" % (host, port))
-                    out.sendto(payload, dest)
-            if out in ready and client:
-                payload, _ = out.recvfrom(65535)
-                head = b"\x00\x00\x00\x01" + socket.inet_aton(TARGET) + struct.pack(">H", 53)
-                bound.sendto(head + payload, client)
-    finally:
-        out.close()
-        bound.close()
-
-
-def serve(conn):
-    try:
-        conn.settimeout(30)
-        ver, n = recv_exact(conn, 2)
-        methods = recv_exact(conn, n)
-        if ver != 5 or 2 not in methods:
-            conn.sendall(b"\x05\xff")
-            note("refused: no login offered")
-            return
-        conn.sendall(b"\x05\x02")
-        _, ulen = recv_exact(conn, 2)
-        user = recv_exact(conn, ulen)
-        plen = recv_exact(conn, 1)[0]
-        password = recv_exact(conn, plen)
-        if user.decode() != USER or password.decode() != PASS:
-            conn.sendall(b"\x01\x01")
-            note("refused: wrong login")
-            return
-        conn.sendall(b"\x01\x00")
-        _, cmd, _ = recv_exact(conn, 3)
-        host, port = read_address(conn)
-        if cmd == 1:
-            dest = ("127.0.0.1", page.server_address[1]) if (host, port) == (TARGET, 80) else (host, port)
-            note("connect %s:%d" % (host, port))
-            try:
-                remote = socket.create_connection(dest, timeout=10)
-            except OSError:
-                conn.sendall(b"\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00")
-                return
-            conn.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
-            conn.settimeout(None)
-            remote.settimeout(None)
-            t = threading.Thread(target=pump, args=(remote, conn), daemon=True)
-            t.start()
-            pump(conn, remote)
-            t.join(5)
-            remote.close()
-        elif cmd == 3:
-            bound = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            bound.bind(("127.0.0.1", 0))
-            conn.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", bound.getsockname()[1]))
-            note("associate")
-            conn.settimeout(None)
-            udp_relay(conn, bound)
-        else:
-            conn.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
-    except (OSError, ConnectionError):
-        pass
-    finally:
-        conn.close()
-
-
-listener = socket.socket()
-listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-listener.bind(("127.0.0.1", 0))
-listener.listen(64)
-
-
-def accept():
-    while True:
-        try:
-            conn, _ = listener.accept()
-        except OSError:
-            return
-        threading.Thread(target=serve, args=(conn,), daemon=True).start()
-
-
-threading.Thread(target=accept, daemon=True).start()
-with socket.socket() as probe:
-    probe.bind((lan_address, 0))
-    lan_port = probe.getsockname()[1]
+link = ("vless://%s@127.0.0.1:%d?security=reality&encryption=none&pbk=%s&sid=ab12cd34&fp=chrome"
+        "&sni=%s&flow=xtls-rprx-vision&type=tcp#lan-check") % (UUID, xray_port, public, SNI)
 check = {
+    "link": link,
     "lan_address": lan_address, "lan_port": lan_port, "lan_user": LAN_USER, "lan_pass": LAN_PASS,
-    "upstream_port": listener.getsockname()[1], "upstream_user": USER, "upstream_pass": PASS,
-    "target": TARGET, "down_bytes": DOWN, "down_sha256": hashlib.sha256(Page.down).hexdigest(), "up_bytes": UP,
+    "target": target_ip, "page_port": page.server_address[1], "echo_port": echo.getsockname()[1],
+    "down_bytes": DOWN, "down_sha256": hashlib.sha256(Page.down).hexdigest(), "up_bytes": UP,
     "ready": os.path.join(work, "ready"), "done": os.path.join(work, "done"),
 }
 with open(os.path.join(work, "check.json.part"), "w") as f:
     json.dump(check, f, indent=2)
 os.replace(os.path.join(work, "check.json.part"), os.path.join(work, "check.json"))
-print("servers: the session's port on 127.0.0.1:%d, the page on 127.0.0.1:%d, the LAN on %s:%d"
-      % (check["upstream_port"], page.server_address[1], lan_address, lan_port), flush=True)
-while not os.path.exists(os.path.join(work, "stop")):
+print("servers: Xray on 127.0.0.1:%d, the page on %s:%d, the echo on %s:%d, the LAN on %s:%d"
+      % (xray_port, target_ip, check["page_port"], target_ip, check["echo_port"], lan_address, lan_port), flush=True)
+while not os.path.exists(os.path.join(work, "stop")) and server.poll() is None:
     time.sleep(0.5)
+code = server.poll()
+server.terminate()
+try:
+    server.wait(5)
+except subprocess.TimeoutExpired:
+    server.kill()
+if code is not None:
+    sys.exit("Xray ended while the check ran (%s); its log is xray-server.log" % code)
 PY
 
 # The client of the namespace: another device on the network.
 cat > "$work/client.py" <<'PY'
-import hashlib, json, socket, struct, sys, time
+import hashlib, json, socket, struct, sys
 
 check = json.load(open(sys.argv[1]))
 HOST, PORT = check["lan_address"], check["lan_port"]
-TARGET = check["target"]
+TARGET, PAGE_PORT, ECHO_PORT = check["target"], check["page_port"], check["echo_port"]
 failed = []
 
 
@@ -427,7 +401,7 @@ def http(path, method="GET", body=b""):
     if why:
         raise ConnectionError(why)
     with conn:
-        rep, _, _ = request(conn, 1, TARGET, 80)
+        rep, _, _ = request(conn, 1, TARGET, PAGE_PORT)
         if rep != 0:
             raise ConnectionError("CONNECT replied %d" % rep)
         head = "%s %s HTTP/1.0\r\nHost: %s\r\nContent-Length: %d\r\n\r\n" % (method, path, TARGET, len(body))
@@ -447,7 +421,7 @@ def http(path, method="GET", body=b""):
 def attempt(name, fn):
     try:
         fn()
-    except Exception as e:  # the check's own words
+    except Exception as e:
         outcome(name, False, "%s: %s" % (type(e).__name__, e))
 
 
@@ -463,8 +437,24 @@ def refused(name, methods, user=None, password=None):
     attempt(name, go)
 
 
-# Refused: no login at all, a wrong password, and a client that lists the
-# no-login method first (the server must still demand the login).
+# Target is unreachable from the client namespace without the proxy.
+def unreachable_direct():
+    s = socket.socket()
+    s.settimeout(2)
+    try:
+        s.connect((TARGET, PAGE_PORT))
+    except OSError:
+        outcome("the target is unreachable outside the line", True)
+        return
+    finally:
+        s.close()
+    outcome("the target is unreachable outside the line", False, "connected directly")
+
+
+attempt("the target is unreachable outside the line", unreachable_direct)
+
+# Refused: no login at all, a wrong password, a wrong username, and a client
+# that lists the no-login method first (the server must still demand the login).
 refused("no login is refused", [0])
 refused("a wrong password is refused", [2], check["lan_user"], "not-" + check["lan_pass"])
 refused("a wrong username is refused", [2], "not-" + check["lan_user"], check["lan_pass"])
@@ -488,7 +478,6 @@ def udp_without_login():
     with conn:
         why = greet(conn, [0])
         if why is None:
-            # The server took no login: ask for the relay anyway, and fail if it is given.
             rep, _, _ = request(conn, 3, "0.0.0.0", 0)
             outcome("a datagram relay is not given without the login", False, "UDP ASSOCIATE replied %d" % rep)
         else:
@@ -520,36 +509,41 @@ def datagram():
         raise ConnectionError(why)
     with conn:
         # The core pins an association that demands a login to the socket the
-        # client declares, so the client binds first and says its port.
+        # client declares, so the client binds first and says its port (an
+        # all-zero address waits for F14).
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", 0))
         sock.settimeout(2)
-        rep, addr, bport = request(conn, 3, "0.0.0.0", sock.getsockname()[1])
-        if rep != 0:
-            raise ConnectionError("UDP ASSOCIATE replied %d" % rep)
-        relay = (HOST if addr in ("0.0.0.0", "::") else addr, bport)
-        payload = b"lan-check-" + bytes(range(64))
-        head = b"\x00\x00\x00\x01" + socket.inet_aton(TARGET) + struct.pack(">H", 53)
-        got = None
-        for _ in range(5):
-            sock.sendto(head + payload, relay)
-            try:
-                data, _ = sock.recvfrom(65535)
-            except socket.timeout:
-                continue
-            got = data[10:]
-            break
-        outcome("a datagram out and its answer back", got == b"echo:" + payload, "relay %s:%d" % relay)
+        try:
+            rep, addr, bport = request(conn, 3, "0.0.0.0", sock.getsockname()[1])
+            if rep != 0:
+                raise ConnectionError("UDP ASSOCIATE replied %d" % rep)
+            relay = (HOST if addr in ("0.0.0.0", "::") else addr, bport)
+            payload = b"lan-check-" + bytes(range(64))
+            head = b"\x00\x00\x00\x01" + socket.inet_aton(TARGET) + struct.pack(">H", ECHO_PORT)
+            got = None
+            for _ in range(5):
+                sock.sendto(head + payload, relay)
+                try:
+                    data, _ = sock.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                got = data[10:]
+                break
+            outcome("a datagram out and its answer back", got == b"echo:" + payload, "relay %s:%d" % relay)
+        finally:
+            sock.close()
 
 
 attempt("a datagram out and its answer back", datagram)
 sys.exit(1 if failed else 0)
 PY
 
-: > "$work/upstream.log"
-: > "$work/outcomes.txt"
+: > "$work/origin.log"
+: > "$work/xray-access.log"
+: > "$work/xray-server.log"
 rm -f "$work/ready" "$work/done" "$work/stop" "$work/check.json"
-"$py" -I "$work/servers.py" "$work" "$lan_address" > "$work/servers.out" 2>&1 &
+"$py" -I "$work/servers.py" "$work" "$xray" "$lan_address" "$target_ip" > "$work/servers.out" 2>&1 &
 servers=$!
 for _ in $(seq 120); do
   [ -f "$work/check.json" ] && break
@@ -560,8 +554,8 @@ done
 say "$(cat "$work/servers.out")"
 
 # DesktopLanProxyRealTest, as the app's build runs its tests, in the
-# background: it starts the proxy, writes `ready`, waits for `done`.
-# --rerun: what it reads is no input Gradle knows of.
+# background: it starts the line's own core and DesktopLanProxy, writes `ready`,
+# waits for `done`. --rerun: what it reads is no input Gradle knows of.
 results="$root/sharedUI/build/test-results/jvmTest"
 class=org.olcbox.app.vpn.DesktopLanProxyRealTest
 rm -f "$results/TEST-$class.xml"
@@ -573,13 +567,16 @@ rm -f "$results/TEST-$class.xml"
 gradle_pid=$!
 
 client=-1
+running_count=0
 for _ in $(seq 1800); do
   [ -f "$work/ready" ] && break
   kill -0 "$gradle_pid" 2> /dev/null || break
   sleep 1
 done
 if [ -f "$work/ready" ]; then
-  say "the proxy is up; a client from the namespace"
+  running_pids="$(pgrep -f 'ghostlane-engine run --session' || true)"
+  running_count="$(printf '%s\n' "$running_pids" | sed '/^$/d' | wc -l | tr -d ' ')"
+  say "the line's core is up ($running_count ghostlane-engine process); a client from the namespace"
   set +e
   sudo -n ip netns exec "$ns" "$py" -I "$work/client.py" "$work/check.json" > "$work/client.out" 2>&1
   client=$?
@@ -587,7 +584,7 @@ if [ -f "$work/ready" ]; then
   cat "$work/client.out"
   touch "$work/done"
 else
-  say "the proxy never came up (Gradle ended first)"
+  say "the line's core never came up (Gradle ended first)"
   touch "$work/done"
 fi
 set +e
@@ -595,8 +592,10 @@ wait "$gradle_pid"
 gradle=$?
 set -e
 tail -n 20 "$work/gradle.out"
-echo "--- what the session's port carried"
-cat "$work/upstream.log"
+echo "--- what the origin saw"
+cat "$work/origin.log"
+echo "--- what Xray saw"
+tail -n 30 "$work/xray-access.log" 2> /dev/null || true
 echo "--- the test's own output"
 "$py" -I - "$results/TEST-$class.xml" <<'PY' || true
 import sys
@@ -631,15 +630,17 @@ sys.exit(1 if bad else 0)
 PY
 )" && held=0 || held=1
 
-# What the chain carried, by the session's port's own log.
-chain=""
-for want in "connect 203.0.113.10:80" "associate" "udp 203.0.113.10:53"; do
-  grep -qxF "$want" "$work/upstream.log" || chain="$chain; the session's port never saw \`$want\`"
+# What the line's own core carried, with no second engine process.
+line_check=""
+[ "$running_count" -eq 1 ] || line_check="$line_check; $running_count ghostlane-engine processes ran while serving (expected 1)"
+for want in "http GET /down" "http POST /up"; do
+  grep -qxF "$want" "$work/origin.log" || line_check="$line_check; the origin never saw \`$want\`"
 done
-grep -q '^refused' "$work/upstream.log" && chain="$chain; the chain reached the session's port with a login it refused"
-# No engine is left once the proxy is stopped.
+grep -q '^udp ' "$work/origin.log" || line_check="$line_check; the origin never saw a datagram"
+grep -qF "$target_ip:" "$work/xray-access.log" || line_check="$line_check; Xray's access log never saw $target_ip"
+# No engine is left once the line is stopped.
 left="$(pgrep -f 'ghostlane-engine run --session' || true)"
-[ -z "$left" ] || chain="$chain; an engine is still running (pid $(echo "$left" | tr '\n' ' '))"
+[ -z "$left" ] || line_check="$line_check; an engine is still running (pid $(echo "$left" | tr '\n' ' '))"
 sudo -n ip netns exec "$ns" "$py" -I -c '
 import socket, sys
 s = socket.socket(); s.settimeout(2)
@@ -647,20 +648,21 @@ try:
     s.connect((sys.argv[1], int(sys.argv[2])))
 except OSError:
     sys.exit(0)
-sys.exit(1)' "$lan_address" "$(sed -n 's/.*"lan_port": \([0-9]*\).*/\1/p' "$work/check.json")" || chain="$chain; the namespace still reaches the LAN port after the stop"
+sys.exit(1)' "$lan_address" "$(sed -n 's/.*"lan_port": \([0-9]*\).*/\1/p' "$work/check.json")" || line_check="$line_check; the namespace still reaches the LAN port after the stop"
 
 {
   echo "#### LAN sharing on ghostlane-engine ($os)"
   echo
   echo "- $said"
+  echo "- the line's server: $xray_said"
   echo "- DesktopLanProxyRealTest: $verdict"
   echo "- the client in the namespace: $([ "$client" -eq 0 ] && echo passed || echo "failed ($client)")"
-  [ -z "$chain" ] || echo "- the chain: ${chain#; }"
+  [ -z "$line_check" ] || echo "- the line: ${line_check#; }"
   sed 's/^/  /' "$work/client.out" 2> /dev/null || true
 } >> "$summary"
 say "DesktopLanProxyRealTest: $verdict"
 [ "$client" -eq 0 ] || die "the client failed ($client)"
 [ "$gradle" -eq 0 ] || die "Gradle failed ($gradle)"
 [ "$held" -eq 0 ] || die "DesktopLanProxyRealTest did not pass whole: $verdict"
-[ -z "$chain" ] || die "the chain: ${chain#; }"
+[ -z "$line_check" ] || die "the line: ${line_check#; }"
 say "passed"
