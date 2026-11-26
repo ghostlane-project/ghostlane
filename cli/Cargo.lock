@@ -97,6 +97,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghostlane-coreconfig"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ghostlane-gocompat"
 version = "0.0.0"
 dependencies = [
