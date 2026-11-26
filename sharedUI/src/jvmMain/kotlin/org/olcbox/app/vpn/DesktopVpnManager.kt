@@ -636,7 +636,7 @@ class DesktopVpnManager private constructor(
             // The old core holds the old login on its LAN inbound. Stopping
             // the proxy's listener alone would leave that login served until
             // the next connect, which is too late to revoke access.
-            restartOnLanChange(line, normalized)
+            restartOnLanChange()
             return
         }
         lanControlJob = scope.launch {
@@ -665,17 +665,24 @@ class DesktopVpnManager private constructor(
      * the LAN proxy stops and starts, and [applyLanSharingSettings] keeps the
      * way it has always worked.
      */
-    private fun restartOnLanChange(line: SessionLine, settings: DesktopSocksProxySettings) {
+    private fun restartOnLanChange() {
         val requestGeneration = generation
         scope.launch {
             mutex.withLock {
-                if (requestGeneration != generation || sessionLine !== line) return@withLock
+                // Read under the mutex, not when the change was pressed: two
+                // changes in quick succession must both end with a line built
+                // from the settings that stand when the job runs.
+                val line = sessionLine ?: return@withLock
+                if (requestGeneration != generation || !line.lanInEngine ||
+                    _status.value !is VpnStatus.Connected
+                ) return@withLock
                 // Both doors out of the old settings go before the new core
                 // is written: the LAN listener and the line's own inbound.
                 stopLanSharing()
                 addLog("LAN sharing changed; the line is started again behind the ${line.heldName()} with the new LAN settings")
                 lineRestartJob?.cancel()
                 lineRestartJob = null
+                val settings = _socksProxySettings.value
                 val updated = line.copy(
                     socksSettings = line.socksSettings.withLanFrom(settings),
                     session = line.session.copy(
@@ -683,10 +690,11 @@ class DesktopVpnManager private constructor(
                     )
                 )
                 sessionLine = updated
-                val running = process
-                process = null
+                // A room's own process is left running: its login is the
+                // SOCKS login, which did not change, and joining the meeting
+                // again would cost another password on Linux. What is
+                // rebuilt is the part of the line that holds the LAN plan.
                 stopDesktopCores()
-                stopProcess(running)
                 restartLineBehindTun(updated, requestGeneration)
             }
         }

@@ -146,8 +146,6 @@ class LineSupervisionTest {
         )
     }
 
-    // Its routes went with it, so the machine's traffic already leaves
-    // directly: there is nothing to change a line behind.
     /**
      * The precondition of the desktop flip. On ghostlane-engine the LAN
      * listener is an inbound of the line's own core: switching sharing off,
@@ -204,6 +202,8 @@ class LineSupervisionTest {
         )
     }
 
+    // Its routes went with it, so the machine's traffic already leaves
+    // directly: there is nothing to change a line behind.
     @Test
     fun aTunThatIsNotRunningIsRebuilt() {
         for (mode in listOf(DesktopMode.LinuxTun, DesktopMode.WindowsTun, DesktopMode.MacTun)) {
