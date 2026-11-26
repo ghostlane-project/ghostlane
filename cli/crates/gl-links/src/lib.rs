@@ -1,7 +1,9 @@
 //! Links, lists and crypt1 for the CLI, as the Go CLI and the app's Kotlin
 //! parsers read them. The vectors under `sharedUI/src/commonTest/resources/
 //! vectors/` hold this crate to both: `LinkVectorsTest` writes them from the
-//! app's own code, `tests/vectors.rs` reads them here.
+//! app's own code, `tests/vectors.rs` reads them here. `links.json` covers the
+//! share links and import links, `crypt1.json` the encrypted blobs, and
+//! `lists.json` the subscription bodies, headers, entries and selections.
 
 pub mod crypt1;
 pub mod import;
