@@ -787,10 +787,28 @@ jobs:
           path: olcrtc
           submodules: recursive
 
-      - name: Install Linux packaging deps
+      - name: The commit of the core
+        id: pin
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/core.env" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The Core build's program for Linux
+        uses: actions/cache/restore@v6
+        with:
+          path: olcbox/out/core
+          key: core-build-x86_64-unknown-linux-musl-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('olcbox/scripts/build-ghostlane-core-host.sh', 'olcbox/scripts/build-hev-linux.sh') }}
+
+      - name: Install Linux build and packaging deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y file
+          sudo apt-get install -y file cmake clang lld llvm libclang-dev p7zip-full squashfs-tools zstd cpio
 
       - name: Setup JDK
         uses: actions/setup-java@v6
@@ -810,35 +828,61 @@ jobs:
             https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /tmp/appimagetool.AppImage
 
-      # Same omission the Android job had: only build-macos fetched these, so the
-      # Linux AppImage shipped olcRTC and nothing else and every Reality,
-      # Hysteria2 and XHTTP location died at connect on
-      # "Bundled native binary is missing: native/sing-box".
-      - name: Bundle sing-box + Xray cores into the app
+      # One program, at the app's one pin. The build script writes every
+      # target it can to out/core and reports what it proved; the Core build
+      # keeps the same key, so a dry run of this job builds once at most.
+      - name: Build ghostlane-engine at the pin
         working-directory: olcbox
         env:
-          XRAY_VERSION: "26.7.11"
+          TARGET: x86_64-unknown-linux-musl
+        run: |
+          set -euo pipefail
+          engine="out/core/bin/$TARGET/ghostlane-engine"
+          if [ -s "$engine" ]; then
+            echo "ghostlane-engine for $TARGET at ${GHOSTLANE_CORE_COMMIT:0:12}: restored from the Core build's cache"
+          else
+            GHOSTLANE_CORE_SRC="$RUNNER_TEMP/core-src" \
+            GHOSTLANE_MUSL_TOOLCHAIN_DIR="$RUNNER_TEMP/musl" \
+              bash scripts/build-ghostlane-core-host.sh out/core "$TARGET"
+          fi
+          [ -s "$engine" ] || { echo "the build wrote no ghostlane-engine" >&2; exit 1; }
+          cat out/core/report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bundle the engine at the pin, and no Go core
+        working-directory: olcbox
         run: |
           set -euo pipefail
           dest="desktopApp/src/main/resources/native"
           mkdir -p "$dest"
+          engine="out/core/bin/x86_64-unknown-linux-musl/ghostlane-engine"
+          install -m 0755 "$engine" "$dest/ghostlane-engine"
 
-          # Built from the patched tree, not downloaded: the release archives
-          # carry a Reality hello Xray-core servers refuse from v26.7 on
-          # (scripts/patches/sing-box-reality-hello.patch).
-          bash scripts/build-singbox.sh "$dest/sing-box"
+          # An old build's Go cores have no place in this package. A name
+          # here would go into the jar and be found by K1 below.
+          for gone in sing-box xray olcrtc; do
+            if [ -e "$dest/$gone" ]; then echo "$dest/$gone is staged" >&2; exit 1; fi
+          done
+          echo "== bundled core =="; ls -la "$dest"
 
-          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -o xray.zip
-          rm -rf xr-x && mkdir xr-x && (cd xr-x && unzip -oq ../xray.zip)
-          install -m 0755 "$(find xr-x -type f -name xray | head -1)" "$dest/xray"
-
-          echo "== bundled cores =="; ls -la "$dest"
-          # sed, not head: both cores print several lines in separate writes,
-          # and head closing the pipe after the first one hands the core a
-          # SIGPIPE - exit 141 under pipefail, at random, which failed the
-          # 1.0.421 Linux build. sed -n 1p reads everything and prints one.
-          "$dest/sing-box" version | sed -n 1p
-          "$dest/xray" version | sed -n 1p
+          # The version event is the engine's own word about its pin, its
+          # protocol and whether it links BoringSSL. Reading it here keeps
+          # a cached program of another pin out of the AppImage.
+          "$dest/ghostlane-engine" version > "$RUNNER_TEMP/engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version":
+              sys.exit("its first line is no version event: %r" % (lines[:1],))
+          if v.get("protocol") != 1:
+              sys.exit("it reads protocol %r; this app writes protocol 1" % v.get("protocol"))
+          if v.get("pin") != sys.argv[2]:
+              sys.exit("it was built from %s, not from the pin %s" % (v.get("pin"), sys.argv[2]))
+          if not v.get("boringssl"):
+              sys.exit("it carries no BoringSSL")
+          print("ghostlane-engine %s at %s (%s; rooms %s, BoringSSL %s)" % (
+              v["engine"], v["pin"][:12], v["target"], v.get("rooms"), v["boringssl"]))
+          PY
 
       - name: Build Linux AppImage
         working-directory: olcbox
@@ -854,10 +898,11 @@ jobs:
           mkdir -p dist
           cp desktopApp/build/compose/binaries/main-release/appimage/*.AppImage "dist/Ghostlane-${OLCBOX_VERSION}-linux-amd64.AppImage"
 
-      # Against the finished AppImage, not the staging directory. The files being
-      # absent is one way to lose them; a packaging rule dropping them on the way
-      # in is another, and only the artifact can show that.
-      - name: Verify cores packaged in the AppImage
+      # Against the finished AppImage, not the staging directory. Compose packs
+      # `resources.srcDir` into the app jar, so a check that only looked at loose
+      # files would pass or fail for the wrong reason. The engine is run from
+      # what came out of the jar: the pin it prints is the one inside the asset.
+      - name: The engine inside the AppImage prints the pin
         working-directory: olcbox
         run: |
           set -euo pipefail
@@ -865,28 +910,45 @@ jobs:
           chmod +x "$img"
           rm -rf squashfs-root && "./$img" --appimage-extract >/dev/null
 
-          # Compose packs `resources.srcDir` into the app jar rather than leaving
-          # the files loose, so look in both places — a check that only knew about
-          # one would pass or fail for the wrong reason.
           entries=$(mktemp)
           find squashfs-root -type f -printf '%P\n' >>"$entries"
           find squashfs-root -type f -name '*.jar' -print0 \
             | xargs -0 -r -I{} unzip -Z1 {} 2>/dev/null >>"$entries" || true
 
-          missing=0
-          for core in sing-box xray; do
-            if grep -qE "(^|/)native/${core}$" "$entries"; then
-              echo "ok      native/$core"
-            else
-              echo "MISSING native/$core"; missing=1
-            fi
-          done
-          rm -rf squashfs-root "$entries"
-          [ "$missing" -eq 0 ] || {
-            echo "Cores are missing from the AppImage — every Reality/Hysteria2/" >&2
-            echo "XHTTP location would fail to start. Refusing to publish." >&2
-            exit 1
+          grep -qE "(^|/)native/ghostlane-engine$" "$entries" || {
+            echo "ghostlane-engine is missing from the AppImage" >&2; exit 1;
           }
+          if grep -qE "(^|/)native/(sing-box|xray|olcrtc[^/]*)$" "$entries"; then
+            echo "A Go core is packaged in the AppImage" >&2; exit 1
+          fi
+          echo "ok      native/ghostlane-engine, and no Go core"
+
+          jar=$(find squashfs-root -type f -name '*.jar' | sort | head -1)
+          [ -n "$jar" ] || { echo "the AppImage holds no jar" >&2; exit 1; }
+          engine=$(mktemp)
+          unzip -p "$jar" native/ghostlane-engine > "$engine"
+          chmod +x "$engine"
+          "$engine" version > "$RUNNER_TEMP/image-engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/image-engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version" or v.get("pin") != sys.argv[2]:
+              sys.exit("the engine in the AppImage says %r, not pin %s" % (lines[:1], sys.argv[2]))
+          if v.get("protocol") != 1 or not v.get("boringssl"):
+              sys.exit("the engine in the AppImage is not the app's: %r" % v)
+          print("inside the AppImage: ghostlane-engine %s at %s" % (v["engine"], v["pin"][:12]))
+          PY
+          rm -rf squashfs-root "$entries" "$engine"
+
+      # K1 against the finished AppImage. The Linux entry is gone from the
+      # allow list: Go anywhere in the asset, at any nesting, fails the job.
+      - name: No Go in the Linux asset
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-linux-amd64.AppImage"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
