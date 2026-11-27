@@ -220,12 +220,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // The engines remain in source until A7. Their native libraries
-            // must not ride along: K1 reads every shipped file at any nesting,
-            // and a Go core here would fail the APK, the AAB and the release.
-            excludes.add("**/libgojni.so")
-            excludes.add("**/libsingboxcore.so")
-            excludes.add("**/libxraycore.so")
         }
     }
 }
@@ -256,9 +250,6 @@ dependencies {
     // the app does — extracted into nativeLibraryDir and exec'd on a real Android.
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    // sharedUI keeps the olcRTC binding to itself; the tests need it directly to
-    // pin what its liveness check reports when olcRTC was never started.
-    androidTestImplementation(project(":sharedUI:olcrtc-bin"))
 }
 
 // The packaging test reads the build's own answers, not a copy kept in prose.

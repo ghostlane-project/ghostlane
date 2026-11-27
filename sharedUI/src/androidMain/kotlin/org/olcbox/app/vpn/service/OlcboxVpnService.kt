@@ -99,7 +99,7 @@ import org.olcbox.app.vpn.UpstreamTransport
 import org.olcbox.app.vpn.VpnStatus
 import org.olcbox.app.vpn.TunnelHold
 import org.olcbox.app.vpn.service.engine.EngineHost
-import org.olcbox.app.vpn.service.engine.EngineSwitch
+import org.olcbox.app.vpn.service.engine.RustEngineSession
 import org.olcbox.app.vpn.data.KEY_ANDROID_CONNECTION_MODE
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_BYPASS_APPS
 import org.olcbox.app.vpn.data.KEY_ANDROID_SPLIT_TUNNEL_MODE
@@ -255,8 +255,8 @@ class OlcboxVpnService : VpnService() {
             this@OlcboxVpnService.requestTransportRecovery(reason = reason, fullRestart = fullRestart)
     }
 
-    /** The session's engine: the Go engines, or the Rust core behind the developer switch (RustCore.resolve). */
-    private val engine = EngineSwitch(engineHost)
+    /** The session's engine: ghostlane-core in this process. */
+    private val engine = RustEngineSession(engineHost)
     private var activeCorePort: Int? = null
     private var activeCoreLogin: SocksLogin? = null
 
@@ -452,8 +452,6 @@ class OlcboxVpnService : VpnService() {
         // Always-on is a VPN by definition: a saved proxy mode never establishes
         // the tun the system is waiting for.
         applyStartOptions(if (bySystem) options.copy(connectionMode = AndroidConnectionMode.Tun) else options)
-        engine.rustCore = RustCore.resolve(startIntent, applicationContext)
-        if (engine.rustCore) addLog("Transport engine: Rust core (developer switch)")
         val isRestart = shouldRestartForStartCommand()
         // Android's claim lasts the session: a restart the app asks for inside
         // it (another location, an edited app list) is not a first connect again.
@@ -2055,10 +2053,10 @@ class OlcboxVpnService : VpnService() {
     /**
      * Whether the transport that is supposed to be carrying traffic is still alive.
      *
-     * olcRTC runs inside the gomobile library; sing-box and Xray run as child
-     * processes. Everything here was written when olcRTC was the only transport and
-     * asked the engine's `isRunning()` directly — which is false whenever a core is the
-     * active transport, so the watchdog declared every core connection dead fifteen
+     * The core and the olcRTC client run in this process. Everything here was
+     * written when olcRTC was the only transport and asked the engine's
+     * `isRunning()` directly — which is false whenever a core is the active
+     * transport, so the watchdog declared every core connection dead fifteen
      * seconds after it came up and restarted it, forever.
      */
     private fun isActiveTransportRunning(): Boolean = engine.isTransportRunning()

@@ -498,7 +498,6 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kstore.file)
             implementation(libs.zxing.core)
-            implementation(project(":sharedUI:olcrtc-bin"))
         }
 
         jvmMain.dependencies {

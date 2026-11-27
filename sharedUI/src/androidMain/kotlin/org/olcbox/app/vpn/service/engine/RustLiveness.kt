@@ -91,10 +91,9 @@ internal object RustLiveness {
     /**
      * The Rust engine's account of itself, for the log: whether the core and the room client run,
      * whether the port they serve answers (asked only once connected), the runtime's memory figures
-     * and the engine's last lines. [go] is the seam's (the Go session's own account); the Rust
-     * session has no Go core to account for, so it is not read.
+     * and the engine's last lines.
      */
-    fun diagnostics(@Suppress("UNUSED_PARAMETER") go: EngineSession): String {
+    fun diagnostics(): String {
         val engine = RustCore.backend ?: return "Rust core: not in this build"
         val core = if (engine.isCoreRunning()) "the core is running" else "no core is running"
         val olc = if (engine.isOlcRunning()) "the olcRTC client is running" else "no olcRTC client is running"
