@@ -81,28 +81,32 @@ class LinuxFlipTest {
         assertTrue("rm -f" in script, "AppRun does not remove the stale files")
     }
 
-    @Test
-    fun theSweepRemovesStagedGoCoresAndKeepsTheEngine() {
-        val sweep = try {
-            val kind = Class.forName("org.olcbox.app.vpn.desktop.StaleBinarySweep")
-            val instance = kind.getField("INSTANCE").get(null)
-            kind.getMethod("sweep", Path::class.java).bindTo(instance)
+    @Suppress("UNCHECKED_CAST")
+    private fun sweep(bin: Path): List<String> {
+        val kind = try {
+            Class.forName("org.olcbox.app.vpn.desktop.StaleBinarySweep")
         } catch (e: ClassNotFoundException) {
             throw AssertionError("StaleBinarySweep is missing: ${e.message}")
+        }
+        val method = try {
+            kind.getMethod("sweep", Path::class.java)
         } catch (e: NoSuchMethodException) {
             throw AssertionError("StaleBinarySweep has no sweep(Path): ${e.message}")
         }
+        return method.invoke(kind.getField("INSTANCE").get(null), bin) as List<String>
+    }
 
+    @Test
+    fun theSweepRemovesStagedGoCoresAndKeepsTheEngine() {
         val bin = Files.createTempDirectory("linux-flip-sweep")
         try {
             val stale = listOf("sing-box", "xray", "olcrtc-linux-amd64", "libolcrtc-linux-arm64.so")
             for (name in stale + "ghostlane-engine") Files.write(bin.resolve(name), byteArrayOf(1))
-            val removed = sweep(arrayOf(bin)) as? Collection<*> ?: error("sweep returned no list")
-            assertEquals(stale.toSet(), removed.map { it.toString() }.toSet())
+            val removed = sweep(bin)
+            assertEquals(stale.toSet(), removed.toSet())
             for (name in stale) assertFalse(Files.exists(bin.resolve(name)), "$name was not swept")
             assertTrue(Files.exists(bin.resolve("ghostlane-engine")), "the engine was swept")
-            val again = sweep(arrayOf(bin)) as? Collection<*> ?: error("sweep returned no list")
-            assertTrue(again.isEmpty(), "a second sweep is not empty")
+            assertTrue(sweep(bin).isEmpty(), "a second sweep is not empty")
         } finally {
             bin.toFile().deleteRecursively()
         }
