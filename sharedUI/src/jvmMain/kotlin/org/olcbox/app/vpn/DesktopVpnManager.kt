@@ -150,6 +150,16 @@ class DesktopVpnManager private constructor(
     private val lanProxy = DesktopLanProxy(::addLog, settings = { _socksProxySettings.value })
     private var lanWatchJob: Job? = null
     private var lanControlJob: Job? = null
+
+    /**
+     * Whether the line that was started last is one whose own core holds the
+     * LAN inbound, as only ghostlane-engine does. Asked before a line is
+     * started (see [markLineStart]) and read after it: the engine that writes
+     * its LAN inbound into the core is the one that has to start it again
+     * when the LAN settings change.
+     */
+    @Volatile private var lanInEngine = false
+
     private val _lanProxyEndpoint = MutableStateFlow<String?>(null)
     val lanProxyEndpoint: StateFlow<String?> = _lanProxyEndpoint.asStateFlow()
     private val _lanProxyHealth = MutableStateFlow<String?>(null)
@@ -363,6 +373,12 @@ class DesktopVpnManager private constructor(
         val desktopMode: DesktopMode,
         /** The sing-box front before the engine, in proxy mode under rules; null otherwise. */
         val frontPort: Int?,
+        /**
+         * Whether this line's own core, rather than a listener of its own,
+         * holds the LAN inbound when sharing is on. Only ghostlane-engine
+         * does, and only its plan has to be built again for a LAN change.
+         */
+        val lanInEngine: Boolean = false,
         /**
          * The listener the session was verified through, and its login: the
          * tun's own inbound where the tun has one, else the front, else the
@@ -605,11 +621,24 @@ class DesktopVpnManager private constructor(
      * connect.
      */
     fun applyLanSharingSettings(settings: DesktopSocksProxySettings) {
+        val previous = _socksProxySettings.value.normalized()
         val normalized = settings.normalized()
         _socksProxySettings.value = normalized
         lanControlJob?.cancel()
         lanWatchJob?.cancel()
         lanWatchJob = null
+        lanControlJob = null
+        val line = sessionLine
+        if (
+            line != null && _status.value is VpnStatus.Connected &&
+            LineSupervision.lanChangeRestartsEngine(normalized, previous, line.lanInEngine)
+        ) {
+            // The old core holds the old login on its LAN inbound. Stopping
+            // the proxy's listener alone would leave that login served until
+            // the next connect, which is too late to revoke access.
+            restartOnLanChange()
+            return
+        }
         lanControlJob = scope.launch {
             lanProxy.stop()
             _lanProxyEndpoint.value = null
@@ -619,6 +648,55 @@ class DesktopVpnManager private constructor(
             val requestGeneration = generation
             if (_status.value !is VpnStatus.Connected || upstream == null) return@launch
             startLanSharing(normalized, upstream, requestGeneration)
+        }
+    }
+
+    /**
+     * A change of the LAN half on a line whose core holds the LAN inbound.
+     *
+     * The tunnel or the system's proxy setting is not touched: what changes
+     * is the plan of the line behind it. What holds the old LAN inbound is
+     * stopped, the line is remembered with the new LAN settings, and the
+     * ordinary restart behind the tunnel builds a new plan from them. The
+     * health check of that restart starts the LAN proxy again, once the core
+     * with its new inbound answers.
+     *
+     * On a Go line none of this is needed: its listener is a separate process
+     * the LAN proxy stops and starts, and [applyLanSharingSettings] keeps the
+     * way it has always worked.
+     */
+    private fun restartOnLanChange() {
+        val requestGeneration = generation
+        scope.launch {
+            mutex.withLock {
+                // Read under the mutex, not when the change was pressed: two
+                // changes in quick succession must both end with a line built
+                // from the settings that stand when the job runs.
+                val line = sessionLine ?: return@withLock
+                if (requestGeneration != generation || !line.lanInEngine ||
+                    _status.value !is VpnStatus.Connected
+                ) return@withLock
+                // Both doors out of the old settings go before the new core
+                // is written: the LAN listener and the line's own inbound.
+                stopLanSharing()
+                addLog("LAN sharing changed; the line is started again behind the ${line.heldName()} with the new LAN settings")
+                lineRestartJob?.cancel()
+                lineRestartJob = null
+                val settings = _socksProxySettings.value
+                val updated = line.copy(
+                    socksSettings = line.socksSettings.withLanFrom(settings),
+                    session = line.session.copy(
+                        built = line.session.built.copy(socks = line.session.built.socks.withLanFrom(settings))
+                    )
+                )
+                sessionLine = updated
+                // A room's own process is left running: its login is the
+                // SOCKS login, which did not change, and joining the meeting
+                // again would cost another password on Linux. What is
+                // rebuilt is the part of the line that holds the LAN plan.
+                stopDesktopCores()
+                restartLineBehindTun(updated, requestGeneration)
+            }
         }
     }
 
@@ -1109,6 +1187,7 @@ class DesktopVpnManager private constructor(
                 dtlsProfile = dtlsProfile,
                 desktopMode = desktopMode,
                 frontPort = frontPort,
+                lanInEngine = lanInEngine,
                 verifiedThrough = channelProxy ?: error("the session has no listener to verify it through"),
                 windowsTunInterface = if (desktopMode == DesktopMode.WindowsTun) windowsTunInterface else null,
                 coresAlive = coresAlive,
@@ -1647,6 +1726,7 @@ class DesktopVpnManager private constructor(
                     "go into the tunnel while it is up; it may not connect until you disconnect and connect"
             )
         }
+        markLineStart()
         val started = engine.line.start(
             LineRequest(
                 spec = spec,
@@ -1661,6 +1741,7 @@ class DesktopVpnManager private constructor(
                 anotherPort = ::allocateVerifyPort
             )
         )
+        lineStartDone()
         val alive = started.alive
         addLog(started.said)
         if (!waitForCoreSocks(port) || !alive()) {
@@ -1695,6 +1776,7 @@ class DesktopVpnManager private constructor(
     ): Int {
         stopDesktopCores()
         val port = heldPort ?: allocateCorePort()
+        markLineStart()
         engine.line.startFront(
             FrontRequest(
                 enginePort = socksSettings.port,
@@ -1706,6 +1788,7 @@ class DesktopVpnManager private constructor(
                 login = login
             )
         )
+        lineStartDone()
         addLog("sing-box front for olcRTC starting on 127.0.0.1:$port")
         if (!waitForCoreSocks(port) || !engine.line.frontAlive()) {
             error(
@@ -1776,6 +1859,32 @@ class DesktopVpnManager private constructor(
         engine.line.stopNow()
         activeCorePort = null
     }
+
+    /**
+     * Marks a line start before the engine runs. A Go line leaves the mark
+     * where it is; ghostlane-engine writes what its core holds when it starts
+     * ([LanCores.lineStarted]), which is how a session knows whether a LAN
+     * change has to reach the line itself or only the LAN proxy's listener.
+     */
+    private fun markLineStart() {
+        LanCores.lineStarted(null, LAN_ENGINE_START_MARK)
+        lanInEngine = false
+    }
+
+    private fun lineStartDone() {
+        lanInEngine = LanCores.currentLine().reason != LAN_ENGINE_START_MARK
+    }
+
+    /** The current LAN half on a snapshot taken when the line was started. */
+    private fun DesktopSocksProxySettings.withLanFrom(settings: DesktopSocksProxySettings): DesktopSocksProxySettings =
+        copy(
+            shareOnLan = settings.shareOnLan,
+            lanAddress = settings.lanAddress,
+            lanNetworkId = settings.lanNetworkId,
+            lanPort = settings.lanPort,
+            lanUsername = settings.lanUsername,
+            lanPassword = settings.lanPassword
+        ).normalized()
 
     /**
      * Gives a line that was just stopped a moment to stop listening on [port].
@@ -2881,6 +2990,7 @@ class DesktopVpnManager private constructor(
             dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls),
             desktopMode = mode,
             frontPort = if (fronted) endpoint.port else null,
+            lanInEngine = lanInEngine,
             // The listener the session was verified through: the tun's own
             // where it has one, and otherwise the endpoint, with the login it
             // demands now.
@@ -3923,6 +4033,11 @@ class DesktopVpnManager private constructor(
     }
 
     private companion object {
+        /**
+         * Written to [LanCores] before a line is started. A Go line leaves it
+         * there; ghostlane-engine writes what its core holds instead.
+         */
+        const val LAN_ENGINE_START_MARK = "a line is being started"
         const val DIAGNOSTICS_TIMEOUT_MS = 2_000L
         const val MAX_LOG_ENTRIES = 5_000
         const val CORE_SOCKS_READY_TIMEOUT_MS = 10_000L

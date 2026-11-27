@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.desktop
 
+import java.io.File
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.model.LocationEntry
 import org.olcbox.app.data.model.RoutingMode
@@ -142,6 +143,62 @@ class LineSupervisionTest {
         assertEquals(
             LineChange.BehindTun,
             LineSupervision.changeOfLine(built(mode), mode, routing, lanOnly, tunRunning = true)
+        )
+    }
+
+    /**
+     * The precondition of the desktop flip. On ghostlane-engine the LAN
+     * listener is an inbound of the line's own core: switching sharing off,
+     * moving it to another interface or replacing the credentials has to
+     * reach a line that is already running. The Go listener owns its port and
+     * is still stopped and started on its own. The manager cannot be started
+     * in a test (it owns the system proxy, a tunnel and child processes), so
+     * the wiring is read from its source here.
+     */
+    @Test
+    fun aLanChangeOnAnEngineLineRestartsItBehindTheTunnel() {
+        val source = File("src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopVpnManager.kt").readText()
+        val apply = source.substringAfter("fun applyLanSharingSettings(", "")
+            .substringBefore("\n    }\n")
+        assertTrue("restartOnLanChange(" in apply, "a LAN change does not restart the line")
+        val restart = source.substringAfter("private fun restartOnLanChange(", "")
+            .substringBefore("\n    }\n")
+        assertTrue("stopDesktopCores()" in restart, "the old core still holds the old LAN inbound")
+        assertTrue("restartLineBehindTun(" in restart, "the LAN restart does not go behind the standing tunnel")
+    }
+
+    @Test
+    fun aLanChangeRestartsTheEngineThatHoldsTheInboundAndOnlyThat() {
+        val sharing = socks.copy(
+            shareOnLan = true, lanAddress = "192.168.1.5", lanNetworkId = "gw",
+            lanUsername = "guest", lanPassword = "guest-password"
+        )
+        val changes = listOf(
+            sharing.copy(shareOnLan = false),
+            sharing.copy(lanAddress = "192.168.2.5", lanNetworkId = "other-gw"),
+            sharing.copy(lanNetworkId = "another-gateway"),
+            sharing.copy(lanUsername = "other-guest"),
+            sharing.copy(lanPassword = "new-password"),
+            sharing.copy(lanPort = 10999)
+        )
+        for (now in changes) {
+            assertTrue(
+                LineSupervision.lanChangeRestartsEngine(now, sharing, engineRunsLan = true),
+                "$now revokes or moves the engine's own LAN inbound"
+            )
+            assertFalse(
+                LineSupervision.lanChangeRestartsEngine(now, sharing, engineRunsLan = false),
+                "$now is a Go listener the LAN proxy restarts on its own"
+            )
+        }
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing, sharing, engineRunsLan = true))
+        // The listener is a different question: its save is still a full
+        // restart, and its change never turns a behind-the-tunnel move into one.
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing.copy(port = 10900), sharing, true))
+        assertFalse(LineSupervision.lanChangeRestartsEngine(sharing.copy(username = "other"), sharing, true))
+        assertEquals(
+            LineChange.BehindTun,
+            LineSupervision.changeOfLine(built(DesktopMode.LinuxTun), DesktopMode.LinuxTun, routing, changes[3], true)
         )
     }
 

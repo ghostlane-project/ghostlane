@@ -193,6 +193,36 @@ internal object LineSupervision {
             now.username == then.username && now.password == then.password
 
     /**
+     * Whether a change of the LAN half alone has to start the session's line
+     * again.
+     *
+     * A Go listener is a process of its own: the LAN proxy stops it and starts
+     * it with the new settings, and the line need not know. On
+     * [engineRunsLan] the listener is one more inbound of the line's own core,
+     * written into its plan when that core starts. It keeps the old interface
+     * and the old login until the core is started again. Switching sharing
+     * off or replacing the credentials is how access is revoked, so the old
+     * inbound cannot be left running until the next connect.
+     *
+     * Only the LAN half is weighed. A change of the listener itself is a
+     * different matter: [changeOfLine] keeps it out of a behind-the-tunnel
+     * move, and a save of it is still a full restart.
+     */
+    fun lanChangeRestartsEngine(
+        now: DesktopSocksProxySettings,
+        then: DesktopSocksProxySettings,
+        engineRunsLan: Boolean
+    ): Boolean = engineRunsLan && !sameLan(now, then)
+
+    private fun sameLan(now: DesktopSocksProxySettings, then: DesktopSocksProxySettings): Boolean =
+        now.shareOnLan == then.shareOnLan &&
+            now.lanAddress == then.lanAddress &&
+            now.lanNetworkId == then.lanNetworkId &&
+            now.lanPort == then.lanPort &&
+            now.lanUsername == then.lanUsername &&
+            now.lanPassword == then.lanPassword
+
+    /**
      * Whether a line the session goes to by itself, when its own has stopped
      * answering, can be started behind what the session holds. It is
      * [changeOfLine] with the settings taken from the session itself, and so
