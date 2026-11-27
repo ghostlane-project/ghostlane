@@ -5,9 +5,8 @@
 #     (AndroidSingBoxController, AndroidXrayController, AndroidCoreProcess);
 #   - OlcboxVpnService.kt reaches for the Rust engine itself (RustCore.backend,
 #     RustCoreBackend) instead of asking its session;
-#   - the engine package lacks EngineSession.kt, GoEngineSession.kt or
-#     RustEngineSession.kt, or a file of the service's package other than
-#     engine/GoEngineSession.kt names a Go core;
+#   - the engine package lacks EngineSession.kt or RustEngineSession.kt, or
+#     any file of the service's package names a Go core;
 #   - the Rust core's proxy-mode refusal is written anywhere but in its hook
 #     file, engine/RustProxyMode.kt, or the Rust session does not ask the hook;
 #   - scripts/rust-core-android-e2e.sh does not ask for every test class under
@@ -30,12 +29,11 @@ go_names='(^|[^A-Za-z0-9_])[Mm]obile\.|singBoxCore|xrayCore|AndroidSingBoxContro
 [ -f "$svc" ] || { echo "FAIL no service source at $svc"; exit 1; }
 if grep -nE "$go_names" "$svc"; then bad "OlcboxVpnService.kt names a Go core (the lines above)"; fi
 if grep -nE 'RustCore\.backend|RustCoreBackend' "$svc"; then bad "OlcboxVpnService.kt reaches for the Rust engine (the lines above)"; fi
-for f in EngineSession GoEngineSession RustEngineSession; do
+for f in EngineSession RustEngineSession; do
   [ -f "$pkg/engine/$f.kt" ] || bad "engine/$f.kt is missing"
 done
 while IFS= read -r f; do
-  case "$f" in "$pkg/engine/GoEngineSession.kt") continue ;; esac
-  if grep -qE "$go_names" "$f"; then bad "${f#"$root"/} names a Go core; only engine/GoEngineSession.kt may"; fi
+  if grep -qE "$go_names" "$f"; then bad "${f#"$root"/} names a Go core"; fi
 done < <(find "$pkg" -name '*.kt' | sort)
 
 # ---- the proxy-mode refusal sits behind its hook -----------------------------

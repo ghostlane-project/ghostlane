@@ -1,12 +1,9 @@
 package org.olcbox.app.vpn
 
 import android.content.Context
-import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import mobile.Mobile
-import mobile.Runtime as OlcrtcRuntime
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.vpn.service.RustCore
@@ -47,11 +44,9 @@ data class RoomProbeResult(val millis: Long?, val reason: String?, val engine: S
 
 object OlcRtcConnectionChecker {
     const val ENGINE_RUST = "rust"
+    /** The answer when no Rust backend is in the build: nothing dials the room. */
     const val ENGINE_GO = "go"
     const val HTTP_PING_URL = "https://www.google.com/generate_204"
-
-    // The Go checker's own engine, so a probe never touches the service's.
-    private val runtime: OlcrtcRuntime by lazy { Mobile.new_() }
 
     suspend fun check(
         locationConfig: LocationConfig,
@@ -73,7 +68,7 @@ object OlcRtcConnectionChecker {
         dtlsProfile: String = OlcrtcDtls.OFF,
         context: Context? = null
     ): RoomProbeResult = request(locationConfig, deviceId, dtlsProfile, CONNECTION_CHECK_TIMEOUT_MS)
-        ?.let { checkRoom(it, context) } ?: incomplete(context)
+        ?.let { checkRoom(it, context) } ?: incomplete()
 
     suspend fun pingDetailed(
         locationConfig: LocationConfig,
@@ -81,18 +76,18 @@ object OlcRtcConnectionChecker {
         dtlsProfile: String = OlcrtcDtls.OFF,
         context: Context? = null
     ): RoomProbeResult = request(locationConfig, deviceId, dtlsProfile, HTTP_PING_TIMEOUT_MS)
-        ?.let { pingRoom(it, context) } ?: incomplete(context)
+        ?.let { pingRoom(it, context) } ?: incomplete()
 
     /** A check of exactly [request], attempted [CONNECTION_CHECK_ATTEMPTS] times. */
     suspend fun checkRoom(request: RoomRequest, context: Context? = null): RoomProbeResult =
         probe(request, context, CONNECTION_CHECK_ATTEMPTS, "check") { backend, r ->
-            backend?.check(r) ?: goCheck(r)
+            backend?.check(r) ?: noBackend()
         }
 
     /** A probe of exactly [request], attempted [HTTP_PING_ATTEMPTS] time. */
     suspend fun pingRoom(request: RoomRequest, context: Context? = null): RoomProbeResult =
         probe(request, context, HTTP_PING_ATTEMPTS, "ping") { backend, r ->
-            backend?.ping(r) ?: goPing(r)
+            backend?.ping(r) ?: noBackend()
         }
 
     private fun request(
@@ -116,18 +111,12 @@ object OlcRtcConnectionChecker {
         )
     }
 
-    private fun incomplete(context: Context?) =
-        RoomProbeResult(null, "the location is not complete", engineName(rustBackend(context)))
+    private fun incomplete() =
+        RoomProbeResult(null, "the location is not complete", engineName(rustBackend()))
 
-    /**
-     * The Rust client when the build carries it and the switch is on (the
-     * service's own rule, [RustCore.resolve], with no intent); else null, the
-     * Go runtime. Without a [context] only the build's default is known.
-     */
-    private fun rustBackend(context: Context?): RoomCheckBackend? {
-        val core = RustCore.backend ?: return null
-        val on = if (context != null) RustCore.resolve(Intent(), context) else core.defaultOn
-        if (!on) return null
+    /** The Rust client when the build carries it; the app has no other engine. */
+    private fun rustBackend(): RoomCheckBackend? {
+        if (RustCore.backend == null) return null
         return runCatching {
             Class.forName(ROOM_CHECK_CLASS).getField("INSTANCE").get(null) as RoomCheckBackend
         }.getOrNull()
@@ -137,12 +126,12 @@ object OlcRtcConnectionChecker {
 
     private suspend fun probe(
         request: RoomRequest,
-        context: Context?,
+        @Suppress("UNUSED_PARAMETER") context: Context?,
         attempts: Int,
         what: String,
         run: (RoomCheckBackend?, RoomRequest) -> Long
     ): RoomProbeResult = withContext(Dispatchers.IO) {
-        val backend = rustBackend(context)
+        val backend = rustBackend()
         val engine = engineName(backend)
         var reason: String? = null
         repeat(attempts) {
@@ -158,24 +147,7 @@ object OlcRtcConnectionChecker {
         RoomProbeResult(null, reason, engine)
     }
 
-    private fun goCheck(r: RoomRequest): Long {
-        // A probe takes the runtime's profile with the rest of its defaults.
-        runtime.setDTLSProfile(r.dtlsProfile)
-        return runtime.check(
-            r.provider, r.transport, r.room, r.deviceId, r.keyHex,
-            allocateLocalPort().toLong(), r.timeoutMs, r.vp8Fps.toLong(), r.vp8Batch.toLong()
-        )
-    }
-
-    private fun goPing(r: RoomRequest): Long {
-        runtime.setDTLSProfile(r.dtlsProfile)
-        return runtime.ping(
-            r.provider, r.transport, r.room, r.deviceId, r.keyHex,
-            allocateLocalPort().toLong(), r.timeoutMs, r.pingUrl, r.vp8Fps.toLong(), r.vp8Batch.toLong()
-        )
-    }
-
-    private fun allocateLocalPort(): Int = java.net.ServerSocket(0).use { it.localPort }
+    private fun noBackend(): Long = error("the Rust core is not packaged in this build")
 
     private const val TAG = "OlcRtcConnectionChecker"
     private const val ROOM_CHECK_CLASS = "org.olcbox.app.rustcore.RustRoomCheck"

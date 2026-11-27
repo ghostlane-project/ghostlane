@@ -104,11 +104,10 @@ data class RustOlcParams(
 }
 
 /**
- * Whether the Rust core engine runs the tunnel's transport instead of the Go
- * cores. OFF unless asked, in this order:
- *  1. the intent extra [OlcboxVpnActions.EXTRA_RUST_CORE] (tests, `adb shell am startservice`);
- *  2. the hidden developer setting [KEY_DEV_RUST_CORE] in the VPN preferences (no screen writes it);
- *  3. the build flag, `-Polcbox.rustCoreDefault=true` (false in every build today).
+ * The Rust core is the app's only engine; it is chosen at every start. The
+ * members below are the test hooks the instrumented suite still reads: an
+ * intent extra, a hidden preference and the build's default flag. They no
+ * longer choose an engine, only report what a test asked for.
  */
 object RustCore {
     val KEY_DEV_RUST_CORE = booleanPreferencesKey("dev_rust_core")
