@@ -1,0 +1,142 @@
+name: Rust Windows tun
+# W2 (K9): the Windows tunnel on a real Windows runner as an administrator:
+# hev's Wintun adapter, the split default route, the engine's way out by the
+# physical interface, the DNS guard and the sweep after a kill
+# (scripts/desktop-checks/windows-tun.ps1, WindowsTunRealTest). It needs the
+# engine for Windows at the pin: built here with the Core build's script and
+# kept under a key of this workflow's own (the Core build's Windows job fails
+# its BoringSSL proof on an MSVC executable, which has no symbol table, and
+# keeps nothing). No secret, nothing signed or published.
+on:
+  push:
+    branches:
+      - rust/all
+      - rust/t/W2-*
+    paths:
+      - .github/workflows/rust-windows-tun.yml
+      - scripts/desktop-checks/windows-tun.ps1
+      - scripts/build-hev-windows.sh
+      - scripts/ghostlane-core-pin.sh
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-windows-tun.yml
+      - scripts/desktop-checks/windows-tun.ps1
+      - scripts/build-hev-windows.sh
+      - scripts/ghostlane-core-pin.sh
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: 'Core commit to check instead of the pin'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: rust-windows-tun-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+jobs:
+  windows:
+    name: Windows tun, DNS guard and sweep
+    runs-on: windows-2025
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The commit of the core
+        id: pin
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh "$GHOSTLANE_CORE_PIN_OVERRIDE" > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+
+      - name: The engine for Windows of this commit
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: out/windows
+          key: rust-windows-tun-engine-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+
+      - name: Build the engine, which no cache held
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          GHOSTLANE_CORE_SRC="$(cygpath -u "$RUNNER_TEMP")/core-src"
+          export GHOSTLANE_CORE_SRC
+          # The script reads BoringSSL from the symbol table of the stripped
+          # program, which an MSVC executable does not have: it prints FAILED
+          # after the program is built and copied (the Core build's Windows job
+          # fails the same way). The next step asks the program itself.
+          rc=0
+          bash scripts/build-ghostlane-core-host.sh out/windows x86_64-pc-windows-msvc 2>&1 | tee "$RUNNER_TEMP/core-build.log" | tail -n 40 || rc=$?
+          echo "build script status: $rc (see the note above)"
+
+      - name: Keep the engine of this commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/windows
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: The engine is there and says its pin
+        run: |
+          set -euo pipefail
+          exe="out/windows/bin/x86_64-pc-windows-msvc/ghostlane-engine.exe"
+          [ -s "$exe" ] || { echo "::error::no ghostlane-engine.exe at the pin"; exit 1; }
+          "$exe" version | tee "$RUNNER_TEMP/engine-version.txt"
+          grep -q "${GHOSTLANE_CORE_COMMIT:0:12}" "$RUNNER_TEMP/engine-version.txt" || { echo "::error::the engine does not name the pin"; exit 1; }
+          grep -q '"boringssl":true' "$RUNNER_TEMP/engine-version.txt" || { echo "::error::the engine says it has no BoringSSL"; exit 1; }
+          echo "GHOSTLANE_ENGINE=$(cygpath -w "$PWD/$exe")" >> "$GITHUB_ENV"
+
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: hev for Windows (clang for MSVC) and Wintun
+        run: |
+          set -euo pipefail
+          choco install make --version=4.4.1 --no-progress -y
+          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
+          bash scripts/build-hev-windows.sh "$RUNNER_TEMP/hev-windows" 2>&1 | tee "$RUNNER_TEMP/hev-windows.log"
+          echo "HEV_OUT=$(cygpath -w "$RUNNER_TEMP/hev-windows")" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        shell: pwsh
+        run: sdkmanager.bat "platforms;android-36" "build-tools;36.0.0" | Out-Null
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: The check
+        shell: pwsh
+        run: scripts/desktop-checks/windows-tun.ps1
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: windows-tun
+          path: |
+            sharedUI/build/test-results/jvmTest/*.xml
+            sharedUI/build/reports/tests/jvmTest/
+          if-no-files-found: ignore
+          retention-days: 7
