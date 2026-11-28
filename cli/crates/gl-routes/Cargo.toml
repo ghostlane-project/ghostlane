@@ -1,0 +1,16 @@
+[package]
+name = "ghostlane-routes"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+description = "the CLI's policy rules: own-address rules, the kill switch and the leftovers of a crashed run"
+
+[lib]
+name = "gl_routes"
+path = "src/lib.rs"
+
+# libc only (already in cli/Cargo.lock): the rules are written over a netlink
+# socket, so the static musl binary needs no `ip` and no netlink crate.
+[dependencies]
+libc = "0.2"

@@ -11,6 +11,7 @@ pub mod device;
 #[cfg(test)]
 pub mod engine;
 pub mod links;
+pub mod routes;
 pub mod scrub;
 mod state;
 

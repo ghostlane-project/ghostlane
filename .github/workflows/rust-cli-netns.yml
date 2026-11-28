@@ -1,0 +1,68 @@
+name: Rust CLI netns
+
+# K2 for the Rust CLI (cli/Cargo.toml): the scripts of scripts/cli-checks/, as
+# root, in network namespaces of the runner. A later task adds its script to
+# that directory and no edit here. Nothing here signs, uploads, publishes or
+# starts another workflow.
+#
+# On a push or a pull request into rust/all that touches the CLI, its checks or
+# this file, and by hand.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - cli/**
+      - scripts/cli-checks/**
+      - .github/workflows/rust-cli-netns.yml
+  push:
+    branches:
+      - "**"
+    paths:
+      - cli/**
+      - scripts/cli-checks/**
+      - .github/workflows/rust-cli-netns.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-cli-netns-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  netns:
+    name: Network namespaces, as root
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: The toolchain cli/rust-toolchain.toml names
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' cli/rust-toolchain.toml)"
+          [ -n "$toolchain" ] || { echo "::error::cli/rust-toolchain.toml names no channel"; exit 1; }
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+      - name: The scripts of scripts/cli-checks/
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          ran=0
+          failed=0
+          for script in scripts/cli-checks/*.sh; do
+            echo "::group::$script"
+            if bash "$script"; then
+              echo "$script passed"
+            else
+              echo "::error::$script failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+            ran=$((ran + 1))
+          done
+          if [ "$ran" -eq 0 ]; then
+            echo "::error::no script in scripts/cli-checks/"
+            failed=1
+          fi
+          exit "$failed"
