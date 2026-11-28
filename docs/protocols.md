@@ -2,23 +2,23 @@
 
 Which protocols Ghostlane connects over, which engine carries each, and how the app moves between them. [Back to the README](../README.MD).
 
-| Protocol | Engine |
+| Protocol | Carried by |
 | --- | --- |
-| olcRTC: a tunnel inside a WebRTC video call | our own engine |
-| VLESS + Reality, over TCP, gRPC or HTTP/2 (`type=http`) | sing-box |
-| VLESS over TLS, incl. behind a CDN, over TCP, WebSocket, HTTPUpgrade or HTTP/2; a link's `allowInsecure` is honoured, and `security=none` is VLESS with no TLS | sing-box |
-| Hysteria2, with Salamander obfuscation | sing-box |
-| Trojan | sing-box |
-| Shadowsocks, AEAD and 2022 | sing-box |
-| VMess | sing-box |
-| XHTTP | Xray: sing-box has no xhttp transport |
+| olcRTC: a tunnel inside a WebRTC video call | the olcRTC client in the Rust core |
+| VLESS + Reality, over TCP, gRPC or HTTP/2 (`type=http`) | the Rust core |
+| VLESS over TLS, incl. behind a CDN, over TCP, WebSocket, HTTPUpgrade or HTTP/2; a link's `allowInsecure` is honoured, and `security=none` is VLESS with no TLS | the Rust core |
+| Hysteria2, with Salamander obfuscation | the Rust core |
+| Trojan | the Rust core |
+| Shadowsocks, AEAD and 2022 | the Rust core |
+| VMess | the Rust core |
+| XHTTP | the Rust core |
 
 A link that asks for something the app cannot carry is left out at import
 rather than added as a server that can never connect: a Shadowsocks plugin or
 stream cipher, Trojan over Reality, VMess over mKCP or QUIC.
 
-The engines in the table are those of the Android and desktop apps. The iPhone
-runs a narrower set on an engine of its own (see [On iPhone](#on-iphone)), and
+The table is the set the apps start. The iPhone runs the same core behind its
+packet tunnel, and the lines it refuses are named under [On iPhone](#on-iphone);
 the Linux command names its own set in [cli.md](cli.md#first-connection).
 
 ## olcRTC and the meeting services
@@ -92,9 +92,7 @@ says how.
 
 ## On iPhone
 
-This section describes the source at `main`, which is ahead of the App Store
-release: the released app runs the engines of the table above. At `main` the
-iPhone's packet tunnel carries no sing-box and no Xray. One Rust library,
+The iPhone's packet tunnel carries no sing-box and no Xray. One Rust library,
 `ghostlane-core`, runs there behind `hev-socks5-tunnel`: its core carries VLESS
 over Reality (TCP or gRPC), VLESS over TLS on WebSocket or HTTPUpgrade,
 Hysteria2 and XHTTP with Reality, and its olcRTC client carries the rooms. A

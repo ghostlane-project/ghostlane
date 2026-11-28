@@ -90,6 +90,5 @@ class GoEnginesTest {
         engine.sessionDown()
         engine.sessionDown()
         assertFalse(engine.line.anyRunning())
-        assertFalse(engine.windowsTun.isRunning())
     }
 }

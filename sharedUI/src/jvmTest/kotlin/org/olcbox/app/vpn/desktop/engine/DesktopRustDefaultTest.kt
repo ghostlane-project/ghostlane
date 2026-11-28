@@ -2,9 +2,10 @@ package org.olcbox.app.vpn.desktop.engine
 
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
+import org.olcbox.app.vpn.desktop.WatchedEngine
+import org.olcbox.app.vpn.desktop.engine.host.HostEngine
 import java.io.File
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -31,18 +32,27 @@ class DesktopRustDefaultTest {
     }
 
     @Test
-    fun windowsKeepsTheGoEnginesUntilItsOwnFlip() {
-        assertFalse(DesktopEngines.runsOnRust(DesktopEngines.defaultFor(DesktopOs.Windows, host)))
+    fun windowsRunsTheRustEngineToo_andNoGoEngineIsTheDefaultOnAnySystem() {
+        for (os in DesktopOs.entries) {
+            val engine = DesktopEngines.defaultFor(os, host)
+            assertTrue(DesktopEngines.runsOnRust(engine), "$os still gets the Go engines")
+            assertFalse(engine is GoEngines, "$os is given GoEngines")
+        }
+    }
+
+    /** The watch reads the way out by `ip route` or `route get`: on Windows it would read nothing, so none wraps it. */
+    @Test
+    fun windowsEngineIsNotWrappedInAWatchThatReadsNothing() {
+        assertTrue(DesktopEngines.defaultFor(DesktopOs.Windows, host) is HostEngine)
+        for (os in listOf(DesktopOs.Linux, DesktopOs.MacOS)) {
+            assertTrue(DesktopEngines.defaultFor(os, host) is WatchedEngine, "$os is watched")
+        }
     }
 
     @Test
-    fun theFactoryAManagerIsGivenFollowsTheSystemItRunsOn() {
+    fun theFactoryAManagerIsGivenRunsTheRustEngineOnTheSystemItRunsOn() {
         val os = DesktopPaths.os
-        assertEquals(
-            os == DesktopOs.Linux || os == DesktopOs.MacOS,
-            DesktopEngines.runsOnRust(DesktopEngines.create(host)),
-            "the default factory on $os"
-        )
+        assertTrue(DesktopEngines.runsOnRust(DesktopEngines.create(host)), "the default factory on $os")
     }
 
     /** A source test: the manager cannot be started in a test (it owns a tunnel and the system's proxy). */

@@ -7,10 +7,12 @@ what it costs to turn on.
 
 ## What it is
 
-sing-box listens as a SOCKS5 proxy on **one** private address of this machine —
-`10/8`, `172.16/12` or `192.168/16`, chosen from the interfaces that are up and
-not virtual — and forwards through the same chain the app is already using,
-including the routing mode. Nothing is exposed to the internet: a public
+The session's own engine (`ghostlane-engine`) listens as a SOCKS5 proxy, with
+a login, on **one** private address of this machine — `10/8`, `172.16/12` or
+`192.168/16`, chosen from the interfaces that are up and not virtual — as one
+more inbound of the core that carries the line, or of the front before a room.
+It forwards through the same chain the app is already using, including the
+routing mode. No second program is started for it. Nothing is exposed to the internet: a public
 address, `0.0.0.0` and the tunnel's own interfaces are refused, and the
 listener is closed when the tunnel stops, when the app exits, when its health
 check fails and when sharing is switched off.
@@ -38,12 +40,12 @@ a coworking space.
   different network: it fails closed.
 - **The port is proved to be ours.** Before sharing is reported healthy, the
   app opens a second, loopback-only listener with its own random credential in
-  the same sing-box process and reaches its exit through it. A port held by
+  the same engine process and reaches its exit through it. A port held by
   another process fails the whole configuration instead.
 - **The path is checked, and re-checked.** The exit is verified through the LAN
   listener itself at start and every fifteen seconds after; a failure stops the
   listener rather than leaving it accepting into a dead tunnel.
-- **On Windows** an inbound firewall rule is added for the sing-box binary
+- **On Windows** an inbound firewall rule is added for the engine's binary
   alone, scoped to the private profile, the local subnet and that one address
   and port. It is removed on stop, and a rule left behind by a crash is swept
   at the next start of the app.

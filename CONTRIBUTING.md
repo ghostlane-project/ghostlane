@@ -23,8 +23,13 @@ need no ceremony: send the pull request.
   shown.
 - **The Linux CLI parses the same lines.** A change to the Kotlin link or list
   parsers (`LocationsDatasource`, `LinkParser`, `ImportLink`) lands with the
-  same case in `cli/internal/links`, so the app and the CLI never read one
-  subscription differently.
+  same case in `cli/crates/gl-links` (and `gl-coreconfig` for what a link
+  becomes), so the app and the CLI never read one subscription differently.
+- **No Go in what ships.** The engine is the Rust core, built at the one commit
+  named in `scripts/ghostlane-core-pin.sh`; a change that puts a Go program or
+  library into a shipped file fails `scripts/check-no-go.sh`. A change to the
+  core, the pin or the branch it moves on follows
+  [docs/rust-core.md](docs/rust-core.md).
 - **Never commit credentials.** Not a server list, not a subscription URL, not a
   token, not a keystore, not a room id. The history is public and permanent.
 
@@ -39,8 +44,15 @@ instructions, including what each platform needs installed. The short version:
 ./gradlew :androidApp:assembleDebug  # an Android build
 ```
 
-The iOS and macOS applications need Xcode and a Mac; the engine's frameworks are
-fetched from a pinned release rather than built locally.
+The iOS and macOS applications need Xcode and a Mac. The engine is the Rust core
+at the pin, built with `scripts/build-ghostlane-core-host.sh` (desktop and
+CLI), `scripts/build-ghostlane-core-android.sh` or
+`scripts/build-ghostlane-core-ios.sh`; each says in its header what it needs
+(`rustup`, `git`, `cmake`, a C compiler and libclang; the NDK for Android,
+Xcode for the iPhone). A desktop app run from Gradle finds the engine as the
+bundled resource `native/ghostlane-engine` or at the path in
+`GHOSTLANE_ENGINE_BINARY`. The Rust CLI under `cli/` builds with `cargo`
+(`make -C cli build test lint`).
 
 The shared tests also lay every screen out on phones nobody here owns: widths
 from 320 points up, text sizes up to twice the default, four languages
