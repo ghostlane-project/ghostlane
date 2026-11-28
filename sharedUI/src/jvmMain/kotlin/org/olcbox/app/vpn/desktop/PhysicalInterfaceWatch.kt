@@ -195,6 +195,9 @@ internal class PhysicalInterfaceWatch(
         /** How often the system is asked: a move is acted on two to four seconds after it. */
         const val INTERVAL_MS = 2_000L
 
+        /** Windows asks a PowerShell, which takes a second: it is asked less often. */
+        const val INTERVAL_WINDOWS_MS = 5_000L
+
         /** How many reads in a row another interface must be the answer. */
         const val SETTLE_READS = 2
 
@@ -321,12 +324,15 @@ private fun LineRequest.boundTo(name: String) = LineRequest(
 /**
  * The interface the default route leaves by, the tun's own aside, read as
  * the desktop reads it for a line beside the tun: `ip route` on Linux
- * ([DesktopDnsResolver.linuxDefaultInterface]), `route get` on macOS. None
- * elsewhere: Windows binds no line to an interface.
+ * ([DesktopDnsResolver.linuxDefaultInterface]), `route get` on macOS, and on
+ * Windows the alias of the default route that is not the tunnel's
+ * ([WindowsTunController.physicalAliasNow], the manager's own read before the
+ * tun). None elsewhere.
  */
 private fun systemDefaultInterface(): String? = when (DesktopPaths.os) {
     DesktopOs.Linux -> DesktopDnsResolver.linuxDefaultInterface()
     DesktopOs.MacOS -> MacOsTunController.defaultInterfaceName()
+    DesktopOs.Windows -> WindowsTunController.physicalAliasNow()
     else -> null
 }
 

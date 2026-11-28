@@ -37,14 +37,19 @@ internal object DesktopDnsResolver {
      * elsewhere).
      *
      * Before the tun, because afterwards the system's list is the tun's as
-     * well: on Windows it may begin with the resolver of the tun's own adapter.
-     * That address is dropped here too, since the adapter of the session
-     * before can still be closing when the next one starts.
+     * well. On Windows it is read by adapter (`Get-DnsClientServerAddress`)
+     * and the tunnel's adapters are left out by their names, not by an
+     * address: the tunnel's resolver (1.1.1.1) is an address a machine may
+     * also really use, and a read after the tun is up (a location change
+     * inside the session) is then as good as one before it. Read again each
+     * time, not kept: a machine that moved networks has other resolvers. Only
+     * when PowerShell cannot be read is the JDK's list used, with the
+     * addresses of sing-box's tun networks dropped.
      */
     fun ownServers(): List<String> = when (DesktopPaths.os) {
         DesktopOs.Linux -> linuxDirectDnsServers()
-        DesktopOs.MacOS,
-        DesktopOs.Windows -> withoutTunResolvers(systemServers())
+        DesktopOs.MacOS -> withoutTunResolvers(systemServers())
+        DesktopOs.Windows -> WindowsTunController.physicalDnsServersNow() ?: withoutTunResolvers(systemServers())
         DesktopOs.Other -> emptyList()
     }
 

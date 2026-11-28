@@ -33,23 +33,8 @@ internal class WindowsTunController(
      * Asked before the tunnel's routes are in: afterwards the tunnel's own
      * adapter is not counted (the filter names ours and the old tun's).
      */
-    suspend fun physicalRoute(): PhysicalRoute {
-        val line = windowsPowerShell(
-            psScript(
-                """
-                §ErrorActionPreference = 'Stop'
-                §route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
-                  Where-Object { §_.InterfaceAlias -ne '§TUN_NAME' -and §_.InterfaceAlias -notlike 'Ghostlane-*' } |
-                  Sort-Object { §_.RouteMetric + (Get-NetIPInterface -InterfaceIndex §_.InterfaceIndex -AddressFamily IPv4).InterfaceMetric } |
-                  Select-Object -First 1
-                if (§null -eq §route) { throw 'No physical IPv4 default route' }
-                (§route.InterfaceAlias, §route.InterfaceIndex, §route.NextHop) -join '|'
-                """.replace("§TUN_NAME", TUN_NAME)
-            ),
-            timeoutSeconds = 60
-        ).trim().lines().last()
-        return parsePhysicalRoute(line)
-    }
+    suspend fun physicalRoute(): PhysicalRoute =
+        parsePhysicalRoute(windowsPowerShell(psScript(PHYSICAL_ROUTE_SCRIPT), timeoutSeconds = 60).trim().lines().last())
 
     /**
      * Brings the tunnel up: what an earlier run left is swept first, then hev
@@ -214,6 +199,63 @@ internal class WindowsTunController(
     }
 
     internal companion object {
+        /**
+         * The way out, as `physicalRoute` asks for it and the interface watch
+         * asks again: the IPv4 default route with the lowest metric whose
+         * adapter is neither the tunnel's (the old Olcbox name, nor
+         * `Ghostlane-*`). The tunnel's own routes are two halves (/1), so
+         * this is the same answer before and after the tunnel is up.
+         */
+        const val PHYSICAL_ROUTE_SCRIPT = """
+            §ErrorActionPreference = 'Stop'
+            §route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' |
+              Where-Object { §_.InterfaceAlias -ne 'Olcbox' -and §_.InterfaceAlias -notlike 'Ghostlane-*' } |
+              Sort-Object { §_.RouteMetric + (Get-NetIPInterface -InterfaceIndex §_.InterfaceIndex -AddressFamily IPv4).InterfaceMetric } |
+              Select-Object -First 1
+            if (§null -eq §route) { throw 'No physical IPv4 default route' }
+            (§route.InterfaceAlias, §route.InterfaceIndex, §route.NextHop) -join '|'
+        """
+
+        /**
+         * One line for each IPv4 resolver list of an adapter that is up, the
+         * adapter first: `alias|1.2.3.4,5.6.7.8`, by interface metric. The
+         * adapters are not filtered here: [physicalDnsServers] drops the
+         * tunnel's by name.
+         */
+        const val DNS_BY_ADAPTER_SCRIPT = """
+            §ErrorActionPreference = 'Stop'
+            Get-DnsClientServerAddress -AddressFamily IPv4 |
+              Where-Object { §_.ServerAddresses.Count -gt 0 -and (Get-NetAdapter -InterfaceIndex §_.InterfaceIndex -ErrorAction SilentlyContinue).Status -eq 'Up' } |
+              Sort-Object { (Get-NetIPInterface -InterfaceIndex §_.InterfaceIndex -AddressFamily IPv4).InterfaceMetric } |
+              ForEach-Object { §_.InterfaceAlias + '|' + (§_.ServerAddresses -join ',') }
+        """
+
+        /** The alias of [PHYSICAL_ROUTE_SCRIPT]'s answer, or null when the system gave none. */
+        fun physicalAliasNow(): String? = runCatching {
+            parsePhysicalRoute(windowsPowerShellBlocking(psScript(PHYSICAL_ROUTE_SCRIPT), timeoutSeconds = 12).lines().last()).alias
+        }.getOrNull()
+
+        /** Whether [alias] is an adapter of the tunnel: ours, or the old one's. */
+        fun isTunAdapter(alias: String): Boolean =
+            alias.equals(TUN_NAME, ignoreCase = true) || alias.startsWith("Ghostlane-", ignoreCase = true)
+
+        /**
+         * The resolvers of [DNS_BY_ADAPTER_SCRIPT]'s output without any that
+         * belong to a tunnel adapter, by the adapter and not by the address:
+         * the tunnel's resolver is whatever the tunnel names, 1.1.1.1 today.
+         * In the order read, without repeats.
+         */
+        fun physicalDnsServers(output: String): List<String> =
+            output.lines().map { it.trim() }.filter { '|' in it }
+                .filterNot { isTunAdapter(it.substringBefore('|').trim()) }
+                .flatMap { it.substringAfter('|').split(',') }
+                .map { it.trim() }.filter { IPV4.matches(it) }.distinct()
+
+        /** [physicalDnsServers] of the system now; null when it cannot be read. */
+        fun physicalDnsServersNow(): List<String>? = runCatching {
+            physicalDnsServers(windowsPowerShellBlocking(psScript(DNS_BY_ADAPTER_SCRIPT), timeoutSeconds = 20))
+        }.getOrNull()
+
         const val TUN_NAME = "Olcbox"
         const val HEV_ADAPTER = "Ghostlane-Tun"
         const val HEV_ADDRESS = "198.18.0.1"
