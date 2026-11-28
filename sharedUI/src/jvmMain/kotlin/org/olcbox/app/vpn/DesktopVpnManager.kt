@@ -2511,7 +2511,15 @@ class DesktopVpnManager private constructor(
                 addLog("The machine now leaves by ${interfaceName ?: "no interface"}")
                 // Windows hands the line and the room the alias it read before the tun: the next
                 // start binds to the new one (Linux and macOS read it at each start).
-                if (interfaceName != null && sessionLine?.desktopMode == DesktopMode.WindowsTun) windowsWayOut = interfaceName
+                if (interfaceName != null && sessionLine?.desktopMode == DesktopMode.WindowsTun) {
+                    windowsWayOut = interfaceName
+                    // The routes spared at the tun's start (the line's server) were laid on the old gateway
+                    // and interface: lay them again on the new way out, with the server's addresses read anew.
+                    runCatching {
+                        val fresh = windowsCarrierRoute(line.location).addresses.filter { it.endsWith("/32") }.map { it.removeSuffix("/32") }
+                        windowsTunController.followWayOut(fresh.ifEmpty { null })
+                    }.onFailure { addLog("Windows TUN: the spared routes did not follow the way out: ${it.message}") }
+                }
                 val running = process
                 process = null
                 stopDesktopCores()
