@@ -200,14 +200,17 @@ class DesktopManagerRealTest {
             .filter { it.name != LinuxTunController.TUN_NAME && it.name != LinuxTunController.KILL_SWITCH_DEVICE }
             .associate { it.name to File(it, "rp_filter").readText().trim() }
 
+    private val assignment = Regex("^[A-Za-z_][A-Za-z0-9_]*=.*", RegexOption.DOT_MATCHES_ALL)
+
     /** The command lines of the processes of the engine's program and of hev (under the sudo that runs it). */
     private fun ours(check: Check): List<String> =
         File("/proc").listFiles().orEmpty()
             .filter { it.name.all(Char::isDigit) }
             .mapNotNull { runCatching { File(it, "cmdline").readBytes().decodeToString().split('\u0000') }.getOrNull() }
-            // One argument that IS the program: the test's own `sudo env HEV_..._BINARY=<path> gradle`
-            // names the paths only inside `KEY=value` arguments and must not count.
-            .filter { args -> args.any { it == check.engine || it == check.hev } }
+            // An argument naming the program, not as a `KEY=value` assignment: the test's own
+            // `sudo env HEV_..._BINARY=<path> gradle` names the paths only that way and must not count,
+            // while hev runs under sudo through a shell line that names its path.
+            .filter { args -> args.any { a -> !assignment.matches(a) && (a.contains(check.engine) || a.contains(check.hev)) } }
             .map { it.joinToString(" ") }
 
     private fun world(service: String, check: Check): List<List<String>> =
