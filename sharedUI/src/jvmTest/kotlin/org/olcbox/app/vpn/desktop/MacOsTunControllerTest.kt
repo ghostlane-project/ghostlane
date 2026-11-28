@@ -22,6 +22,15 @@ import kotlin.test.assertTrue
 
 class MacOsTunControllerTest {
 
+    private val routeOutput = """
+           route to: default
+        destination: default
+               mask: default
+            gateway: 192.168.1.1
+          interface: en0
+              flags: <UP,GATEWAY,DONE,STATIC,PRCLO>
+    """.trimIndent()
+
     @Test fun readsTheInterfaceBehindTheDefaultRoute() {
         assertEquals("en0", MacOsTunController.defaultInterfaceName(routeOutput))
     }
