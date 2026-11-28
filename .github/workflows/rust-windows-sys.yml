@@ -9,15 +9,6 @@ on:
   push:
     branches:
       - rust/all
-      - rust/t/W3-*
-    paths:
-      - .github/workflows/rust-windows-sys.yml
-      - scripts/desktop-checks/windows-sys.ps1
-      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
-      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
-  pull_request:
-    branches:
-      - rust/all
     paths:
       - .github/workflows/rust-windows-sys.yml
       - scripts/desktop-checks/windows-sys.ps1

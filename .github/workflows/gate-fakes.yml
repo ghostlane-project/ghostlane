@@ -27,23 +27,12 @@ on:
   push:
     branches:
       - rust/all
-      - 'rust/t/**'
     paths:
       - scripts/ghostlane-core-pin.sh
       - scripts/gate-fakes.sh
       - scripts/gate-merge-reports.py
       - scripts/rust-core-checkout.sh
       - .github/workflows/gate-fakes.yml
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - scripts/ghostlane-core-pin.sh
-      - scripts/gate-fakes.sh
-      - scripts/gate-merge-reports.py
-      - scripts/rust-core-checkout.sh
-      - .github/workflows/gate-fakes.yml
-
 permissions:
   contents: read
 

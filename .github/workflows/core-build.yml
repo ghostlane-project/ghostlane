@@ -48,18 +48,6 @@ on:
       - scripts/build-hev-linux.sh
       - scripts/build-hev-macos.sh
       - 'androidApp/src/main/jni/hev-socks5-tunnel/**'
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - .github/workflows/core-build.yml
-      - scripts/ghostlane-core-pin.sh
-      - scripts/ghostlane-core-resolve.sh
-      - scripts/build-ghostlane-core-host.sh
-      - scripts/build-ghostlane-core-android.sh
-      - scripts/build-hev-linux.sh
-      - scripts/build-hev-macos.sh
-      - 'androidApp/src/main/jni/hev-socks5-tunnel/**'
   workflow_dispatch:
     inputs:
       pin:

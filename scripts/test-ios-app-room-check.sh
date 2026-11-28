@@ -383,7 +383,7 @@ CASES
   [ "$(scope "$work/changed" | tr '\n' ' ')" = "engines=false app=false " ] || die "scope of no change"
   echo "ok   the scope: each Mac job for what it reads, and nothing else"
 
-  # Every `paths` list of the workflow is the union of the two, so nothing
+  # The `paths` list of the workflow is the union of the two, so nothing
   # starts the workflow that no job reads, and nothing a job reads misses it.
   printf '%s\n%s\n' "$ENGINE_PATHS" "$APP_PATHS" | sort -u > "$work/union"
   "$PY" -I - "$WORKFLOW" "$work/union" << 'PY' || die "the workflow's paths are not the union of the scope's"
@@ -400,14 +400,14 @@ for line in open(workflow):
         current.add(s[2:].strip().strip("'\""))
     elif current is not None and s:
         current = None
-if len(lists) != 2:
-    sys.exit("expected two paths lists (push, pull_request), found %d" % len(lists))
+if len(lists) != 1:
+    sys.exit("expected one paths list (push), found %d" % len(lists))
 for n, got in enumerate(lists):
     if got != want:
         print("paths list %d: missing %s, extra %s" % (n + 1, sorted(want - got), sorted(got - want)))
         sys.exit(1)
 PY
-  echo "ok   the workflow's two paths lists are the union of what the Mac jobs read"
+  echo "ok   the workflow's paths list is the union of what the Mac jobs read"
 }
 
 [ $# -ge 1 ] || usage

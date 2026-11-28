@@ -10,18 +10,13 @@ on:
   push:
     branches:
       - rust/all
-    paths: &paths
+    paths:
       - .github/workflows/ios-no-go.yml
       - .github/workflows/release.yml
       - scripts/ios-checks/**
       - sharedUI/build.gradle.kts
       - iosApp/iosApp.xcodeproj/project.pbxproj
       - scripts/no-go-allow.d/**
-  pull_request:
-    branches:
-      - rust/all
-    paths: *paths
-
 permissions:
   contents: read
 

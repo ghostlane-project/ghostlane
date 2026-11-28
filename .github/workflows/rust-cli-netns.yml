@@ -9,16 +9,8 @@ name: Rust CLI netns
 # this file, and by hand.
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - cli/**
-      - scripts/cli-checks/**
-      - .github/workflows/rust-cli-netns.yml
   push:
-    branches:
-      - "**"
+    branches: [rust/all, main, ghostlane]
     paths:
       - cli/**
       - scripts/cli-checks/**

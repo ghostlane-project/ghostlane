@@ -11,17 +11,6 @@ on:
   push:
     branches:
       - rust/all
-      - rust/t/W2-*
-    paths:
-      - .github/workflows/rust-windows-tun.yml
-      - scripts/desktop-checks/windows-tun.ps1
-      - scripts/build-hev-windows.sh
-      - scripts/ghostlane-core-pin.sh
-      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
-      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
-  pull_request:
-    branches:
-      - rust/all
     paths:
       - .github/workflows/rust-windows-tun.yml
       - scripts/desktop-checks/windows-tun.ps1
