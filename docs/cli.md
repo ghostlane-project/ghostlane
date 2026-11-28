@@ -5,8 +5,8 @@ Linux without a screen: a static program with the Rust core's engine and the
 tun's hev beside it, a systemd service, and the same
 subscription links the app takes — olcRTC rooms, VLESS Reality, Hysteria2 and
 XHTTP lines. Source: `cli/` in this repository; its own
-licence is GPL-3.0-or-later because the binary links sing-box (see
-`THIRD_PARTY_NOTICES.md`).
+licence is GPL-3.0-or-later (see `THIRD_PARTY_NOTICES.md` for the programs
+that ship beside it).
 
 ## Install
 

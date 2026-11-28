@@ -1,7 +1,7 @@
 # Third-party notices
 
 Ghostlane itself is MIT (`LICENSE`); the Linux CLI in `cli/` is GPL-3.0-or-later
-(`cli/LICENSE`), because that binary links sing-box. Both ship and link components written by
+(`cli/LICENSE`). Both ship components written by
 other people, each under its own licence. This file lists them, because a
 licence that travels with the binary has to be findable, and because two of
 these carry obligations the MIT licence does not.
@@ -10,20 +10,18 @@ these carry obligations the MIT licence does not.
 
 | Component | Licence | How it is used |
 | --- | --- | --- |
-| [olcRTC](https://github.com/ghostlane-project/olcrtc) | Apache-2.0 | The tunnel engine. Linked into every platform; maintained by this project. |
-| [sing-box](https://github.com/SagerNet/sing-box) | **GPL-3.0-or-later** | Reality, TLS and Hysteria2. A separate binary on desktop; its `libbox` library is linked into the mobile builds. |
-| [Xray-core](https://github.com/XTLS/Xray-core) | **MPL-2.0** | XHTTP, through [libXray](https://github.com/XTLS/libXray) (MIT). A separate binary on desktop; linked into the mobile builds. |
-| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 on Apple platforms. |
+| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 (`ghostlane-hev` on Linux, `hev.exe` on Windows, and on Apple platforms). |
 | [Wintun](https://www.wintun.net/) | GPL-2.0 (redistribution permitted per its own terms) | The Windows TUN driver. Shipped as the vendor's signed binary, unmodified. |
-| [xray-rust](https://github.com/ghostlane-project/xray-rust) (the Rust core) | MPL-2.0, with the crates it builds on under their own licences, listed below | The proxy core and the engine (`ghostlane-engine`), at the commit pinned in `scripts/ghostlane-core-pin.sh`. Its own crates are MPL-2.0; its olcRTC crates are Apache-2.0; vendored crates (h2, h3, quinn, smoltcp, gotatun and others) keep the licence they came with. Every crate of its `Cargo.lock` at that commit is in the generated list below. |
-| [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its sing-box rule-sets, bundled unmodified (`files/rules/refilter-*.srs`, pinned in `scripts/rule-sets.lock`). |
+| [xray-rust](https://github.com/ghostlane-project/xray-rust) (the Rust core) | MPL-2.0, with the crates it builds on under their own licences, listed below | The proxy core and the engine (`ghostlane-engine`), which every package ships (the olcRTC rooms are its Rust crates), at the commit pinned in `scripts/ghostlane-core-pin.sh`. Its own crates are MPL-2.0; its olcRTC crates are Apache-2.0; vendored crates (h2, h3, quinn, smoltcp, gotatun and others) keep the licence they came with. Every crate of its `Cargo.lock` at that commit is in the generated list below. |
+| [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its domains and IPv4 prefixes, bundled as one geodata file (`files/xray/refilter.dat`, made by `tools/xray-geodata/refilter.py` from the pinned release). |
 
 Their sources are the upstream repositories above, at the versions pinned in
-`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Xray-core is modified, and
-its patch is published in `scripts/patches/`, as its licence requires:
-`xray-core-h2-window.patch`. No build of the app carries a modified sing-box
-any more; the sing-box patch of earlier releases (`sing-box-reality-hello.patch`)
-is in the repository's history.
+`scripts/ghostlane-core-pin.sh` and `scripts/hev-pins.sh`. xray-rust is our own
+fork, so its source is the repository linked above.
+
+Earlier releases also shipped sing-box (GPL-3.0-or-later), libbox, Xray-core
+(MPL-2.0, with a patch published in `scripts/patches/`), libXray and the Go
+olcRTC engine. No package ships any of them now.
 
 **MSYS2** (the MSYS2 project's toolchain and its Cygwin-based runtime, `msys-2.0.dll`, LGPL-3.0-or-later with the Cygwin linking exception) is a build tool for the Windows hev-socks5-tunnel, `hev.exe`, and is not part of the Ghostlane source. A `hev.exe` built under the MSYS environment imports `msys-2.0.dll`, and then that DLL ships beside it with its licence; the MinGW build imports only Windows system DLLs and ships no MSYS2 file. `docs/spikes/windows-hev.md` records which of the two a build was. hev-socks5-tunnel (MIT) and Wintun (above) are the two other files of the Windows tunnel bundle.
 
@@ -31,16 +29,11 @@ is in the repository's history.
 
 | Component | Licence | How it is used |
 | --- | --- | --- |
-| [olcRTC](https://github.com/ghostlane-project/olcrtc) | Apache-2.0 | The tunnel engine, linked as a Go library (`mobile.Runtime`). |
-| [sing-box](https://github.com/SagerNet/sing-box) | **GPL-3.0-or-later** | Linked as a Go library: the tun and the local proxy in front of the engine, and the Reality and Hysteria2 outbounds. This is why `cli/` is GPL-3.0-or-later. |
-| [Xray-core](https://github.com/XTLS/Xray-core) | **MPL-2.0** | Linked as a Go library, unmodified: XHTTP outbounds behind a loopback SOCKS. Pinned to the version the iOS Cores link. |
-| [vishvananda/netlink](https://github.com/vishvananda/netlink), [netns](https://github.com/vishvananda/netns) | Apache-2.0 | Policy rules and the test namespaces. |
-| [gopkg.in/yaml.v3](https://github.com/go-yaml/yaml) | MIT and Apache-2.0 | The daemon's config file. |
-| golang.org/x/net, golang.org/x/sys | BSD-3-Clause | SOCKS dialing and the Linux syscall constants. |
+| The CLI (`cli/`) | **GPL-3.0-or-later** | The `ghostlane` program, in Rust. Its crates are in the generated list below. |
+| [xray-rust](https://github.com/ghostlane-project/xray-rust) | MPL-2.0, vendored crates under their own licences | `ghostlane-engine`, a separate program at the pin in `scripts/ghostlane-core-pin.sh`: the proxy core and the olcRTC rooms. |
+| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | `ghostlane-hev`, a separate program: the tun's tun2socks. |
 
-Versions are pinned in `cli/go.mod`; a test keeps the engine and sing-box pins
-equal to the app's. sing-box is the patched tree described above: `cli/go.mod`
-replaces the module with it.
+Windows packages also ship [Wintun](https://www.wintun.net/) (see above).
 
 <!-- notices:begin (generated by scripts/notices.py; do not edit) -->
 
@@ -561,17 +554,12 @@ Generated by `scripts/notices.py` from the lock files named below; `scripts/noti
 
 ## What this means in practice
 
-**sing-box is GPL-3.0-or-later.** Linking it into an application makes the
-combined work subject to that licence when the combination is distributed. This
-project's own source is public, which satisfies the source-availability side of
-it. The known friction is distribution through app stores, whose terms have been
-argued to conflict with the GPL's condition that no further restrictions be
-imposed on recipients; this is the same question every sing-box-based client on
-those stores faces. We are not lawyers, we state the facts here rather than a
-conclusion, and we will follow whatever SagerNet and the stores settle on.
+**The CLI is GPL-3.0-or-later.** Its source is public in `cli/`, which
+satisfies the source-availability side of the licence. The engine and hev run
+as separate programs beside it, under their own licences.
 
-**Xray-core is MPL-2.0**, which is file-level copyleft: modified MPL files must
-be published. Ours is, in `scripts/patches/`.
+**xray-rust is MPL-2.0**, which is file-level copyleft: modified MPL files must
+be published. Its source is the repository linked above, at the pinned commit.
 
 **Everything else is permissive** and needs only the attribution given above.
 
