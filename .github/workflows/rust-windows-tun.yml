@@ -3,9 +3,10 @@ name: Rust Windows tun
 # hev's Wintun adapter, the split default route, the engine's way out by the
 # physical interface, the DNS guard and the sweep after a kill
 # (scripts/desktop-checks/windows-tun.ps1, WindowsTunRealTest). It needs the
-# engine for Windows at the pin: the Core build's cache of this commit when
-# there is one, else it is built here with the Core build's script and kept
-# under the same key. No secret, nothing signed or published.
+# engine for Windows at the pin: built here with the Core build's script and
+# kept under a key of this workflow's own (the Core build's Windows job fails
+# its BoringSSL proof on an MSVC executable, which has no symbol table, and
+# keeps nothing). No secret, nothing signed or published.
 on:
   push:
     branches:
@@ -64,12 +65,12 @@ jobs:
           echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
           echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
 
-      - name: The Core build's engine for Windows
+      - name: The engine for Windows of this commit
         id: cache
         uses: actions/cache/restore@v6
         with:
           path: out/windows
-          key: core-build-windows-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
+          key: rust-windows-tun-engine-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
 
       - name: Build the engine, which no cache held
         if: steps.cache.outputs.cache-hit != 'true'
@@ -77,7 +78,13 @@ jobs:
           set -euo pipefail
           GHOSTLANE_CORE_SRC="$(cygpath -u "$RUNNER_TEMP")/core-src"
           export GHOSTLANE_CORE_SRC
-          bash scripts/build-ghostlane-core-host.sh out/windows x86_64-pc-windows-msvc 2>&1 | tee "$RUNNER_TEMP/core-build.log" | tail -n 40
+          # The script reads BoringSSL from the symbol table of the stripped
+          # program, which an MSVC executable does not have: it prints FAILED
+          # after the program is built and copied (the Core build's Windows job
+          # fails the same way). The next step asks the program itself.
+          rc=0
+          bash scripts/build-ghostlane-core-host.sh out/windows x86_64-pc-windows-msvc 2>&1 | tee "$RUNNER_TEMP/core-build.log" | tail -n 40 || rc=$?
+          echo "build script status: $rc (see the note above)"
 
       - name: Keep the engine of this commit
         if: steps.cache.outputs.cache-hit != 'true'
@@ -93,6 +100,7 @@ jobs:
           [ -s "$exe" ] || { echo "::error::no ghostlane-engine.exe at the pin"; exit 1; }
           "$exe" version | tee "$RUNNER_TEMP/engine-version.txt"
           grep -q "${GHOSTLANE_CORE_COMMIT:0:12}" "$RUNNER_TEMP/engine-version.txt" || { echo "::error::the engine does not name the pin"; exit 1; }
+          grep -q '"boringssl":true' "$RUNNER_TEMP/engine-version.txt" || { echo "::error::the engine says it has no BoringSSL"; exit 1; }
           echo "GHOSTLANE_ENGINE=$(cygpath -w "$PWD/$exe")" >> "$GITHUB_ENV"
 
       - uses: ilammy/msvc-dev-cmd@v1.13.0
