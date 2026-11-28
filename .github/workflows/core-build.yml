@@ -482,6 +482,23 @@ jobs:
           path: out/windows
           key: core-build-windows-${{ needs.plan.outputs.commit }}-rust-${{ needs.plan.outputs.toolchain }}-${{ hashFiles('scripts/build-ghostlane-core-host.sh') }}
 
+      - name: A reader for the program's PDB
+        shell: bash
+        # The BoringSSL proof of a Windows program reads the public symbols in
+        # its PDB (an MSVC executable has no symbol table of its own).
+        run: |
+          set -uo pipefail
+          if ! command -v llvm-pdbutil > /dev/null 2>&1; then
+            for d in "/c/Program Files/LLVM/bin" "/c/Program Files (x86)/LLVM/bin"; do
+              [ -x "$d/llvm-pdbutil.exe" ] && { cygpath -w "$d" >> "$GITHUB_PATH"; break; }
+            done
+          fi
+          if ! command -v llvm-pdbutil > /dev/null 2>&1 && ! [ -x "/c/Program Files/LLVM/bin/llvm-pdbutil.exe" ]; then
+            choco install llvm --no-progress -y || true
+            cygpath -w "/c/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+          fi
+          ls "/c/Program Files/LLVM/bin" 2> /dev/null | grep -i pdbutil || echo "llvm-pdbutil not in Program Files/LLVM"
+
       - name: Build
         shell: bash
         env:

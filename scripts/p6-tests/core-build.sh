@@ -2,7 +2,7 @@
 # The core built once per pin: what can be checked in seconds, with no
 # network, no cargo and no compiler.
 #   - the four build scripts parse;
-#   - the BoringSSL proof reads a symbol table and nothing else: it passes on
+#   - the BoringSSL proof reads symbols (a symbol table, or a Windows program's PDB) and nothing else: it passes on
 #     an ELF and on a Mach-O listing that define BoringSSL's SSL_CTX_new and
 #     DTLS_method, and fails on AWS-LC alone (prefixed names), on a reference
 #     that is not a definition, on one name of the two, on a stripped file and
