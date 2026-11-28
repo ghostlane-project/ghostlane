@@ -286,6 +286,9 @@ jobs:
       olcrtc_proofkit_ahead_by: ${{ steps.pin.outputs.olcrtc_proofkit_ahead_by }}
       nightly_tag: ${{ steps.version.outputs.nightly_tag }}
       nightly_title: ${{ steps.version.outputs.nightly_title }}
+      # The first 12 hex of the Rust core's pin (scripts/ghostlane-core-pin.sh);
+      # the release notes name it and are not published without it.
+      core_pin: ${{ steps.core.outputs.core_pin }}
 
     steps:
       - name: Checkout the pins
@@ -305,6 +308,12 @@ jobs:
           set -euo pipefail
           scripts/olcrtc-pin.sh > "$RUNNER_TEMP/pin.out"
           cat "$RUNNER_TEMP/pin.out" >> "$GITHUB_OUTPUT"
+
+      - name: Read the core pin
+        id: core
+        run: |
+          set -euo pipefail
+          scripts/release-core-pin.sh >> "$GITHUB_OUTPUT"
 
       - name: One toolchain pin
         env:
@@ -2166,6 +2175,7 @@ jobs:
       OLCBOX_OLCRTC_VERSION: ${{ needs.release_version.outputs.olcrtc_version }}
       OLCBOX_OLCRTC_ON_PROOFKIT: ${{ needs.release_version.outputs.olcrtc_on_proofkit }}
       OLCBOX_OLCRTC_AHEAD: ${{ needs.release_version.outputs.olcrtc_proofkit_ahead_by }}
+      OLCBOX_CORE_PIN: ${{ needs.release_version.outputs.core_pin }}
       OLCBOX_NIGHTLY_TAG: ${{ needs.release_version.outputs.nightly_tag }}
       OLCBOX_NIGHTLY_TITLE: ${{ needs.release_version.outputs.nightly_title }}
 
@@ -2237,6 +2247,7 @@ jobs:
               '' | 0 | unknown) ;;
               *) echo "- olcrtc: \`proofkit\` is ${OLCBOX_OLCRTC_AHEAD} commit(s) ahead of this revision" ;;
             esac
+            echo "- Rust core pin: \`${OLCBOX_CORE_PIN}\` (ghostlane-project/xray-rust), what the engine of every platform here was built from"
             echo "- App version: \`${OLCBOX_VERSION}\`"
             echo "- Android versionCode: \`${OLCBOX_VERSION_CODE}\`"
             echo "- Android APKs: universal and \`armeabi-v7a\`"
@@ -2254,6 +2265,7 @@ jobs:
             echo "| --- | --- |"
             awk '{printf "| `%s` | `%s` |\n", $2, $1}' "$checksum_file"
           } > release-notes.md
+          scripts/release-core-pin.sh check release-notes.md "${OLCBOX_CORE_PIN}"
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@v4
@@ -2299,6 +2311,7 @@ jobs:
             fi
             cat release-notes.md
           } > versioned-notes.md
+          scripts/release-core-pin.sh check versioned-notes.md "${OLCBOX_CORE_PIN}"
 
           mapfile -t assets < <(find dist -type f | sort)
           if [ "${#assets[@]}" -eq 0 ]; then

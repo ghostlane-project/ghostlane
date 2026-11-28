@@ -102,8 +102,8 @@ class RustCoreVpnE2ETest {
     }
 
     @Test
-    fun theSwitchIsOffUnlessAsked() {
-        assertFalse("the build flag is off", RustCore.resolve(Intent(), context))
+    fun theRustCoreIsTheDefaultUnlessTheTestAsksOtherwise() {
+        assertTrue("the build flag is on", RustCore.resolve(Intent(), context))
         assertTrue(RustCore.resolve(Intent().putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true), context))
         assertFalse(RustCore.resolve(Intent().putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, false), context))
         assertNotNull("the engine is packaged", RustCore.backend)
