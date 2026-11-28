@@ -135,6 +135,8 @@ gate_dir = next((a.split("=", 1)[1] for a in args if a.startswith("-olcrtc.gate-
 if gate_dir and os.environ.get("STUB_GO_REPORT"):
     with open(os.path.join(gate_dir, "gate-report.json"), "w") as f:
         f.write(os.environ["STUB_GO_REPORT"])
+if os.environ.get("STUB_GO_STDERR"):
+    print(os.environ["STUB_GO_STDERR"], file=sys.stderr)
 sys.exit(int(os.environ.get("STUB_GO_EXIT", "0")))
 '''
 
@@ -797,6 +799,21 @@ class Run(unittest.TestCase):
         self.assertEqual(0, r.returncode, r.stderr)
         (call,) = self.box.go_calls()
         self.assertEqual(["run", "./cmd/gate-report", "compare", "-severity", "fail", str(prev), str(cur)], call["argv"])
+
+    def test_a_regression_at_severity_fail_stays_exit_2_through_go_run(self):
+        # `go run` turns the program's exit 2 into its own exit 1 and a last
+        # line "exit status 2": gate.yml reads 2 as "a regression" and any other
+        # non-zero code as "the comparison could not run".
+        prev, cur = self.box.root / "prev.json", self.box.root / "cur.json"
+        prev.write_text("{}")
+        cur.write_text("{}")
+        r = self.gate_run("compare", "fail", str(prev), str(cur), STUB_GO_EXIT="1", STUB_GO_STDERR="exit status 2")
+        self.assertEqual(2, r.returncode, r.stderr)
+        self.assertIn("exit status 2", r.stderr)
+        # An error of the tool itself is still 1.
+        r = self.gate_run("compare", "fail", str(prev), str(cur), STUB_GO_EXIT="1", STUB_GO_STDERR="gate-report: read report")
+        self.assertEqual(1, r.returncode, r.stderr)
+        self.assertIn("gate-report: read report", r.stderr)
 
     def test_the_unit_tests_run_race_under_the_asked_build(self):
         self.assertEqual(0, self.gate_run("unit", "lean").returncode)
