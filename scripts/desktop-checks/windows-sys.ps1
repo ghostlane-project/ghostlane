@@ -38,7 +38,8 @@ Remove-Item -Force -ErrorAction SilentlyContinue $xml
 $env:WINDOWS_SYS_CHECK = '1'
 Push-Location $root
 try {
-    & .\gradlew.bat ':sharedUI:jvmTest' --rerun --tests $class --stacktrace
+    & .\gradlew.bat ':sharedUI:jvmTest' --rerun --tests $class --tests 'org.olcbox.app.vpn.desktop.WindowsTrafficTest' `
+        --tests 'org.olcbox.app.vpn.desktop.WindowsSystemProxyTest' --tests 'org.olcbox.app.vpn.desktop.WindowsLanFirewallTest' --stacktrace
     $rc = $LASTEXITCODE
 } finally {
     Pop-Location
