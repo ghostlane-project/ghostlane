@@ -241,7 +241,7 @@ internal class WatchedEngine(
     read: () -> String?,
 ) : DesktopEngine by inner {
     override val line: LineEngine = WatchedLine(inner.line, watch, read)
-    override val room: RoomEngine = WatchedRoom(inner.room, watch)
+    override val room: RoomEngine = WatchedRoom(inner.room, watch, read)
 
     override fun sessionUp(mode: DesktopMode) {
         inner.sessionUp(mode)
@@ -255,17 +255,25 @@ internal class WatchedEngine(
 }
 
 /**
- * [inner]'s rooms, with every launch telling the watch that a room binds to
- * nothing. The manager launches only the session's room, so this is not a
- * probe's or a look at another location's room.
+ * [inner]'s rooms, with every launch told to the watch. A room that is asked
+ * to leave by the machine's way out ([RoomRequest.bindToWayOut]: ghostlane-engine
+ * beside a tunnel) is given the interface the watch reads and is watched
+ * against it; any other binds to nothing. The manager launches only the
+ * session's room, so this is not a probe's or a look at another location's room.
  */
 private class WatchedRoom(
     private val inner: RoomEngine,
     private val watch: PhysicalInterfaceWatch,
+    private val read: () -> String?,
 ) : RoomEngine by inner {
     override fun launch(binary: Path, request: RoomRequest): RoomLaunch {
-        watch.bound(null)
-        return inner.launch(binary, request)
+        if (!request.bindToWayOut) {
+            watch.bound(null)
+            return inner.launch(binary, request)
+        }
+        val name = request.bindInterface ?: read()
+        watch.bound(name, askedForWayOut = true)
+        return inner.launch(binary, if (name != null && request.bindInterface == null) request.copy(bindInterface = name) else request)
     }
 }
 

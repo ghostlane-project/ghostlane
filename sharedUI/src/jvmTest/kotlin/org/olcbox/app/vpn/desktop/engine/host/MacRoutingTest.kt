@@ -73,11 +73,12 @@ class MacRoutingTest {
             DesktopRulesHome.Nowhere,
             rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = false, needsRules = true),
         )
-        // Not moved by this: a room's rules, and a core line's in the other tunnels.
+        // A room on the engine carries its rules in its own front, the core half of the room's process (HR).
         assertEquals(
-            DesktopRulesHome.Nowhere,
+            DesktopRulesHome.Core,
             rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
         )
+        // Not moved by this: a core line's rules in the other tunnels.
         for (mode in listOf(DesktopMode.LinuxTun, DesktopMode.WindowsTun)) {
             assertEquals(
                 DesktopRulesHome.Nowhere,

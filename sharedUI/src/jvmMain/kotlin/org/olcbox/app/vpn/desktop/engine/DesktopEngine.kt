@@ -6,6 +6,8 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.net.XrayGeodata
+import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.DesktopMode
@@ -201,7 +203,7 @@ internal interface TunCore {
  * A room as the session's endpoint: the SOCKS listener it opens, with its
  * login, and what it is told about the machine.
  */
-internal class RoomRequest(
+internal data class RoomRequest(
     val location: LocationConfig,
     val socksHost: String,
     val socksPort: Int,
@@ -210,8 +212,42 @@ internal class RoomRequest(
     val dnsServer: String,
     /** A file of the destinations the room's program dials itself, or null for none. */
     val directRulesFile: Path?,
-    val dtlsProfile: String
+    val dtlsProfile: String,
+    /** The device's identity, for an engine that names it to the carrier. */
+    val deviceId: String = "",
+    /**
+     * The front that stands before the room, in an engine whose room carries
+     * its own ([RoomEngine.frontInRoom]); null for a room reached directly.
+     */
+    val front: RoomFront? = null,
+    /**
+     * The room's sockets leave by the interface the machine leaves by: beside
+     * the Linux tunnel and behind the macOS one, whose tun takes every route
+     * they would otherwise follow.
+     */
+    val bindToWayOut: Boolean = false,
+    /** The interface they leave by, when the caller has read it already ([PhysicalInterfaceWatch] does); null lets the engine ask. */
+    val bindInterface: String? = null
 )
+
+/** The front before a room, as the room's own process runs it: it listens on [port], demands [login] and applies [routing]. */
+internal class RoomFront(
+    val port: Int,
+    val login: SocksLogin?,
+    val routing: Routing.Rules,
+    val verboseLogs: Boolean,
+    /** The lists of a bypass's region, which are written into the front inline; null under any other policy. */
+    val geodata: XrayGeodata.Lists? = null
+) {
+    companion object {
+        /** A front with the lists [routing]'s policy needs, read here because reading them suspends. */
+        suspend fun of(port: Int, login: SocksLogin?, routing: Routing.Rules, verboseLogs: Boolean): RoomFront {
+            val effective = CoreRouting.effective(routing) as? Routing.RuleBased
+            val lists = (effective?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
+            return RoomFront(port, login, routing, verboseLogs, lists)
+        }
+    }
+}
 
 /**
  * What is run for a room. The manager writes [config] into a file only the
@@ -233,6 +269,9 @@ internal interface RoomLaunch {
 
     /** [line] says this start has failed for good. */
     fun saysFailed(line: String): Boolean
+
+    /** [line] as the log and a failure say it; what the program printed when it needs no reading. */
+    fun said(line: String): String = line
 }
 
 internal interface RoomEngine {
@@ -247,6 +286,12 @@ internal interface RoomEngine {
      * sockets to the physical interface instead.
      */
     val rootBesideLinuxTun: Boolean
+
+    /**
+     * Whether a room's process also runs the front before it ([RoomRequest.front]),
+     * so that nothing else is started for it ([LineEngine.startFront]).
+     */
+    val frontInRoom: Boolean get() = false
 }
 
 internal interface ProbeEngine {
