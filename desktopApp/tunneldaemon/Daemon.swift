@@ -1,12 +1,11 @@
 // What the daemon does with a request: the tunnel's process, the system's
 // resolver while that process runs, and the kill switch's block.
 //
-// The tunnel's process is sing-box with a config of the app's (`start`), or,
-// from the fifth protocol on, hev with a config written here from the fields
-// of a `tun` request. sing-box lays its own routes; hev's are laid here
-// (Routes.swift), and taken away by every stop and when hev dies. The
-// sing-box verbs stay beside it until the app has moved to hev. One tunnel at
-// a time: either verb ends the other's.
+// The tunnel's process is hev with a config written here from the fields of a
+// `tun` request. Its routes are laid here (Routes.swift), and taken away by
+// every stop and when hev dies. The sing-box tunnel (`start`, the first four
+// protocols) is gone: a request for it is an unknown verb, and what it left in
+// root's directory is swept when the daemon starts (Sweep.swift).
 //
 // Kept apart from the socket it is asked over (main.swift) so that it can be
 // driven without one, on a Mac that has no signed app to do the asking.
@@ -40,14 +39,15 @@ final class Daemon {
     // `start`; 3 = `names` and `hold` on `start`, `hold` on `stop`, `release`,
     // and `hold` in every reply; 4 = `line` and `line-stop`, and `line` in
     // every reply; 5 = `tun` (hev, from fields, and the routes it takes),
-    // `routes` in every reply and `tunnel` while one runs. The app reads it
-    // back to tell this daemon from an older one that would silently drop the
-    // field.
+    // `routes` in every reply and `tunnel` while one runs. The numbers keep
+    // their meaning: `start` of 2 to 4 is the verb that was deleted, and the
+    // app reads the number back to tell this daemon from an older one that
+    // would silently drop a field.
     static let protocolVersion = 5
 
     private let child: TunnelChild
     private let line: LineChild
-    /// hev's routes; sing-box keeps its own.
+    /// hev's routes.
     private let routes = Routes()
     private let hold: TrafficHold
     private let launchedAs = BinaryIdentity.onDisk()
@@ -62,6 +62,8 @@ final class Daemon {
         self.child = child
         self.line = line
         self.hold = hold
+        // What an earlier build left in root's directory, before anybody is answered.
+        Sweep.run()
         // A daemon that was killed left its key where it was, pointing the
         // system's lookups at a tunnel that died with it.
         SystemNames.restore()
@@ -80,11 +82,11 @@ final class Daemon {
             return failure("unparseable request")
         }
 
-        if (verb == "start" || verb == "tun" || verb == "stop" || verb == "line") && replacedOnDisk() {
+        if (verb == "tun" || verb == "stop" || verb == "line") && replacedOnDisk() {
             // Only on the verbs that change a child's state: a status query from
             // the new app must not cost a tunnel the old daemon is still carrying.
             // The block is the kernel's and outlives this process: a stop that
-            // asks for it to go still takes it, and a start leaves it for the
+            // asks for it to go still takes it, and a tun leaves it for the
             // daemon that comes next to load its own over.
             stopTunnel()
             line.stop()
@@ -99,8 +101,6 @@ final class Daemon {
         }
 
         switch verb {
-        case "start":
-            return start(object)
         case "tun":
             return startHev(object)
         case "stop":
@@ -160,58 +160,6 @@ final class Daemon {
         }
     }
 
-    private func start(_ object: [String: Any]) -> Data {
-        guard let config = object["config"] as? String else {
-            return failure("start without a config")
-        }
-        // Rule-set binaries the config refers to, file name → base64; absent
-        // for a config that names none.
-        let files = object["files"] as? [String: String] ?? [:]
-        // The address the system is to ask for names while this tunnel runs.
-        var names: String?
-        if let asked = object["names"] {
-            guard let address = asked as? String, HoldRequest.isAddress(address) else {
-                return failure("names are asked of an address")
-            }
-            names = address
-        }
-        do {
-            let wanted = try HoldRequest.parse(object["hold"])
-            stopTunnel()
-            // Before the tunnel, so that it comes up behind the block. A start
-            // that asks for none is a session without the switch, and takes
-            // away one that stood: its tunnel is in no rule of it.
-            if let wanted {
-                try hold.arm(wanted)
-            } else if hold.stands {
-                hold.release()
-            }
-            try child.start(config: config, files: files, group: wanted == nil ? nil : TrafficHold.group)
-            // Report what the child is doing a moment later, not what it was asked
-            // to do. sing-box rejects a bad config in well under a second, and an
-            // "ok" issued before that is a lie the app draws as a green light.
-            Thread.sleep(forTimeInterval: 1.0)
-            guard child.isRunning else {
-                return failure("sing-box exited at once", logTail: child.logTail)
-            }
-            if let names, !SystemNames.ask(names) {
-                // Up, and with names still going where they went before it: not
-                // what was asked for, so not a tunnel to leave running.
-                child.stop()
-                return failure("the system did not take the tunnel as its resolver", logTail: child.logTail)
-            }
-            return reply([
-                "ok": true,
-                "state": "running",
-                "pid": Int(child.pid ?? 0),
-                "logTail": child.logTail
-            ])
-        } catch {
-            let text = (error as? DaemonError)?.text ?? error.localizedDescription
-            return failure(text, logTail: child.logTail)
-        }
-    }
-
     /// hev's tunnel (protocol 5). The request is read whole before anything
     /// is touched: one that is refused costs the tunnel that runs nothing.
     private func startHev(_ object: [String: Any]) -> Data {
@@ -235,7 +183,9 @@ final class Daemon {
         }
         do {
             stopTunnel()
-            // As for sing-box: the block first, so that the tunnel comes up behind it.
+            // The block first, so that the tunnel comes up behind it. A tun that
+            // asks for none is a session without the switch, and takes away one
+            // that stood: its tunnel is in no rule of it.
             if let wanted {
                 try hold.arm(wanted)
             } else if hold.stands {

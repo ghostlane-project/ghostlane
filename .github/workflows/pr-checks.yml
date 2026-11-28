@@ -134,13 +134,11 @@ jobs:
           # The Mac's tunnel helper is the one part of the app that is root, and
           # nothing else here compiles it: only a release build does, with a
           # signing identity. Built and asked on a Mac when it, what asks it, or
-          # the config it is handed changed, or the tags of the sing-box it runs:
-          # a resolver of the Mac's tun is one of them (with_dhcp), and only a
-          # Mac can tell it is gone. So too for hev, which it runs from its
-          # fifth protocol on: its tree, the script that builds it, and the
-          # request the app's test holds the app to. Not on a change to this
+          # the request it is handed changed. So too for hev, which it runs: its
+          # tree, the script that builds it, and the request the app's test
+          # holds the app to. Not on a change to this
           # file alone: a Mac's minutes are billed tenfold.
-          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/check-macos-helper\.sh$|^scripts/macos-helper-check/|^scripts/mac-checks/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^sharedUI/src/jvmTest/resources/macos-helper/|^androidApp/src/main/jni/hev-socks5-tunnel/|^scripts/build-hev-macos\.sh$|^scripts/singbox-tags\.sh$|^scripts/ghostlane-core-pin\.sh$'; then
+          if printf '%s\n' "$changed" | grep -qE '^desktopApp/tunneldaemon/|^scripts/macos-helper-check/|^scripts/mac-checks/|^sharedUI/src/jvmTest/resources/reference-configs/desktop-tun-macos-names\.json$|^sharedUI/src/jvmTest/resources/macos-helper/|^androidApp/src/main/jni/hev-socks5-tunnel/|^scripts/build-hev-macos\.sh$|^scripts/ghostlane-core-pin\.sh$'; then
             echo 'mac_helper=true' >> "$GITHUB_OUTPUT"
             echo "The Mac's tunnel helper is built and asked: this change touches it." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -630,8 +628,6 @@ jobs:
     # is asked over a pipe, hev, the user who asks and the stand-in for a
     # line's program:
     #   sudo bash scripts/mac-checks/<name>.sh <helper-check> <hev> <user> <stand-in-line>
-    # The tunnel under sing-box, which goes when the app leaves it, on the
-    # arm64 Mac alone, as before.
     needs: [scope, mac-hev]
     if: needs.scope.outputs.mac_helper == 'true' && !cancelled()
     name: macOS tunnel helper (${{ matrix.runner }})
@@ -640,33 +636,14 @@ jobs:
       matrix:
         include:
           - runner: macos-latest
-            singbox: true
           - runner: macos-15-intel
-            singbox: false
     runs-on: ${{ matrix.runner }}
-    # 15 until sing-box was built here rather than downloaded: a few minutes more.
     timeout-minutes: 30
     env:
       # The app's own tree of hev-socks5-tunnel, as core-build.yml builds it.
       HEV_SOURCE: androidApp/src/main/jni/hev-socks5-tunnel
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        if: matrix.singbox
-        with:
-          distribution: temurin
-          java-version: '21'
-      # The toolchain the releases build sing-box with (scripts/cores-pins.sh).
-      - name: The pinned Go
-        if: matrix.singbox
-        id: go
-        run: echo "version=$(bash -c 'unset GO_VERSION; . scripts/cores-pins.sh; echo "$GO_VERSION"')" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@v7
-        if: matrix.singbox
-        with:
-          go-version: ${{ steps.go.outputs.version }}
-          # Nothing here has a go.sum to key a cache on.
-          cache: false
       # hev as the job before this one kept it, under the Core build's key.
       - name: Which tree of hev
         id: hev
@@ -703,23 +680,9 @@ jobs:
             -framework Foundation -framework Security -framework SystemConfiguration \
             -o "$RUNNER_TEMP/helper-parts" "${shared[@]}" scripts/macos-helper-check/parts/main.swift
           "$RUNNER_TEMP/helper-parts" sharedUI/src/jvmTest/resources/macos-helper/tun-request.json
-      # First: the sing-box check leaves a timer that takes the block and the
-      # resolver's key away three minutes after it started.
       - name: Ask the helper for a tunnel under hev
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: sudo bash scripts/macos-helper-check/hev-tunnel.sh "$RUNNER_TEMP/helper-check" "$GITHUB_WORKSPACE/out/hev-macos/hev-socks5-tunnel" "$USER"
-      # The sing-box the app ships, not SagerNet's release: the patched tree
-      # with the desktops' tags (scripts/build-singbox.sh). The Mac's tun finds
-      # the network's own resolver through one of those tags (with_dhcp,
-      # scripts/singbox-tags.sh), and the release has it whether ours does or not.
-      - name: sing-box as the app ships it, for this Mac
-        if: ${{ matrix.singbox && !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          bash scripts/build-singbox.sh "$RUNNER_TEMP/sing-box" desktop
-          "$RUNNER_TEMP/sing-box" version | sed -n 1p
-      - name: Ask the helper what it does with a tunnel under sing-box
-        if: ${{ matrix.singbox && !cancelled() && steps.build.outcome == 'success' }}
-        run: sudo scripts/check-macos-helper.sh "$RUNNER_TEMP/helper-check" "$RUNNER_TEMP/sing-box" "$USER" "$RUNNER_TEMP/stand-in-line"
       - name: Every check in scripts/mac-checks
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |

@@ -1,11 +1,11 @@
 // ProofKitTunnelDaemon — the only part of ProofKit that runs as root.
 //
-// It runs the bundled sing-box with a tun inbound, on behalf of a caller whose
+// It runs the bundled hev on a utun, on behalf of a caller whose
 // code signature it has verified, and holds what only root can hold for that
 // tunnel: the system's resolver while it runs (SystemNames) and the kill
 // switch's block (TrafficHold). It parses no share links and speaks none of our
-// protocols; what the tunnel is to do is in a config the app writes and this
-// daemon passes on byte for byte. Everything else stays in the app, where it
+// protocols; what the tunnel is to do is in fields the app sends, each read as
+// what it is, from which this daemon writes hev's config. Everything else stays in the app, where it
 // runs as the user — the smaller this is, the smaller the thing running as root.
 import Foundation
 
