@@ -10,6 +10,7 @@ import org.olcbox.app.net.CustomRules
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.Routing
+import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.MacOsTunController
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.LineRequest
@@ -84,8 +85,8 @@ class HostEngineBlockedOnlyRealTest {
 
     @BeforeTest
     fun onlyUnderTheCheck() {
-        val file = System.getenv(CHECK_ENV)
-        Assume.assumeTrue("set by scripts/desktop-checks/mac-routing.sh", !file.isNullOrBlank())
+        val file = System.getenv(CHECK_ENV) ?: System.getenv(LINUX_CHECK_ENV)
+        Assume.assumeTrue("set by scripts/desktop-checks/mac-routing.sh or linux-routing.sh", !file.isNullOrBlank())
         check = Check.read(File(file))
         sessions = Files.createTempDirectory("host-engine-blocked-only")
     }
@@ -98,8 +99,16 @@ class HostEngineBlockedOnlyRealTest {
     @Test
     fun aListedHostGoesByTheLineAndAnyOtherStraightOut(): Unit = runBlocking {
         val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
-        // The interface the Mac leaves by, as PhysicalInterfaceWatch reads it for the session.
-        val engine = HostEngine(host, defaultInterface = { MacOsTunController.defaultInterfaceName() }, sessionParent = sessions)
+        // The interface the machine leaves by, as PhysicalInterfaceWatch reads it for the session: the macOS
+        // tunnel's and the Linux tunnel's own readings.
+        val linux = System.getenv(LINUX_CHECK_ENV) != null
+        val engine = HostEngine(
+            host,
+            defaultInterface = {
+                if (linux) DesktopDnsResolver.linuxDefaultInterface() else MacOsTunController.defaultInterfaceName()
+            },
+            sessionParent = sessions,
+        )
         val started = engine.line.start(
             LineRequest(
                 spec = requireNotNull(LinkParser.parse(check.link)),
@@ -132,7 +141,7 @@ class HostEngineBlockedOnlyRealTest {
                 fetch(port, check.unlistedAddress, check.unlistedPort, timeoutMs = 8_000)
             }
             check.outcomes.appendText(
-                "Only blocked sites, the Mac tunnel's session: a listed name and a listed address by the line, " +
+                "Only blocked sites, the ${if (linux) "Linux" else "Mac"} tunnel's session: a listed name and a listed address by the line, " +
                     "this machine's address straight out, a TEST-NET address not by the line\n"
             )
             assertTrue(started.alive(), "the engine ended while it served\n${logTail()}")
@@ -200,5 +209,6 @@ class HostEngineBlockedOnlyRealTest {
 
     private companion object {
         const val CHECK_ENV = "MAC_ROUTING_CHECK"
+        const val LINUX_CHECK_ENV = "LINUX_ROUTING_CHECK"
     }
 }

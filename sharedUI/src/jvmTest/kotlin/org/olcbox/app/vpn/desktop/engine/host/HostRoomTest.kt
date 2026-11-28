@@ -71,8 +71,8 @@ class HostRoomTest {
         RoutingSettings(mode = mode, tunnelRules = listOf("example.org"))
             .toRules("unused-on-the-rust-core", DirectDns.Servers(listOf("192.0.2.53"))) as Routing.Rules
 
-    private fun session(request: RoomRequest, bind: String? = null): JsonObject =
-        Json.parseToJsonElement(HostRoomSession.text(request, bind)).jsonObject
+    private fun session(request: RoomRequest, bind: String? = null, geodataDir: String? = null): JsonObject =
+        Json.parseToJsonElement(HostRoomSession.text(request, bind, geodataDir)).jsonObject
 
     private fun posix(): Boolean = "posix" in FileSystems.getDefault().supportedFileAttributeViews()
 
@@ -123,6 +123,13 @@ class HostRoomTest {
         val said = assertFailsWith<IllegalStateException> { HostRoomSession.text(request(blocked), null) }
         assertTrue(CoreConfig.BLOCKED_ONLY_REFUSAL in said.message.orEmpty(), said.message)
         assertTrue(HostSession.REFUSED in said.message.orEmpty(), said.message)
+
+        // With Re:filter's list in a geodata directory (LR) the same front is carried, and the session names the directory.
+        val withList = session(request(blocked), null, geodataDir = "/data/geodata")
+        assertEquals("/data/geodata", withList.getValue("geodata_dir").jsonPrimitive.content)
+        assertTrue(HostRoomSession.blockedOnly(request(blocked)))
+        assertFalse(HostRoomSession.blockedOnly(request(RoomFront(20808, null, rules(RoutingMode.Global), verboseLogs = false))))
+        assertFalse(HostRoomSession.blockedOnly(request()))
 
         val front = RoomFront(20808, null, rules(RoutingMode.Global), verboseLogs = false)
         val blank = assertFailsWith<IllegalStateException> { HostRoomSession.text(request(front, user = "", pass = ""), null) }
