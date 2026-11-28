@@ -180,7 +180,7 @@ def fill(args):
             continue
         lic = None
         if kind == "path" and args.core_tree:
-            for rel in (f"vendor/{name}", f"olc/vendor/{name}-{version}", f"vendor/{name}-{version}"):
+            for rel in (f"vendor/{name}", f"olc/vendor/{name}-{version}", f"olc/{name}", f"crates/{name}"):
                 p = os.path.join(args.core_tree, rel, "Cargo.toml")
                 if os.path.exists(p):
                     lic = licence_from_toml(open(p).read())
