@@ -8,6 +8,11 @@ name: Parity ledger
 # environment variable the tree has and the inventory leaves out. It then plants
 # each of those faults in a copy and expects to be told.
 #
+# The runbook step: docs/rust-core.md is the lasting account of the checks. A
+# check named nowhere in it fails the job. The checks are K1 to K12, every
+# workflow file under .github/workflows/ and every step of scripts/pin-move.d/;
+# a new workflow or step is told in the runbook in the commit that adds it.
+#
 # Nothing here builds, signs or reaches a network. On a pull request into
 # rust/all, on a push to a rust/ branch that touches what the check reads, and
 # by hand (the integrator runs it at each wave gate and pin move).
@@ -25,6 +30,8 @@ on:
       - .github/workflows/parity.yml
       - README.MD
       - docs/*.md
+      - .github/workflows/*.yml
+      - scripts/pin-move.d/*
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/**
       - cli/cmd/ghostlane/**
@@ -43,3 +50,15 @@ jobs:
         run: python3 scripts/parity-ledger.py
       - name: The check catches what it is for
         run: python3 scripts/parity-ledger.py --self-test
+      - name: The runbook names every check
+        run: |
+          doc=docs/rust-core.md
+          missing=0
+          for n in $(seq 1 12); do
+            grep -qw "K$n" "$doc" || { echo "::error file=$doc::check K$n is named nowhere in $doc"; missing=1; }
+          done
+          for f in .github/workflows/*.yml scripts/pin-move.d/*; do
+            b=$(basename "$f")
+            grep -qF "$b" "$doc" || { echo "::error file=$doc::$f is named nowhere in $doc"; missing=1; }
+          done
+          exit $missing
