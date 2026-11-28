@@ -78,6 +78,7 @@ jobs:
           echo "core_key=core-build-${TARGET}-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
 
       - name: The Core build's program, or this workflow's own copy
+        id: restore
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.OUT }}
@@ -112,8 +113,10 @@ jobs:
           bash scripts/build-ghostlane-core-host.sh "$OUT" "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -n 40
           [ -s "$OUT/bin/$TARGET/ghostlane-engine" ] || { echo "::error::the build wrote no ghostlane-engine"; exit 1; }
 
+      # The jobs below restore this workflow's own key exactly: keep the program under it whenever it
+      # came from anywhere else (built here, or the Core build's copy), not only when it was built.
       - name: Keep the program of this commit
-        if: steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success' || (steps.have.outputs.found == 'true' && steps.restore.outputs.cache-matched-key != steps.pin.outputs.key)
         uses: actions/cache/save@v6
         with:
           path: ${{ env.OUT }}
