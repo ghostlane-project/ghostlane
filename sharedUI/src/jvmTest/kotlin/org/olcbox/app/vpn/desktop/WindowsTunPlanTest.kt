@@ -53,7 +53,7 @@ class WindowsTunPlanTest {
     @Test fun theSweepNamesWhatItTakesAndTheJournalSurvivesARoundTrip() {
         val journal = WindowsTunJournal(Files.createTempDirectory("w2").resolve("j.json"))
         assertNull(journal.read())
-        val record = WindowsTunRecord("Ghostlane-Tun", "C:\\x\\hev.exe", 99, listOf(WindowsRouteRecord("203.0.113.77/32", 12)), true)
+        val record = WindowsTunRecord("Ghostlane-Tun", "C:\\x\\hev.exe", 99, listOf(WindowsRouteRecord("203.0.113.77/32", 12, "10.1.0.1")), true)
         journal.write(record)
         assertEquals(record, journal.read())
         journal.update { it.copy(guard = false) }
@@ -68,5 +68,42 @@ class WindowsTunPlanTest {
     @Test fun thePhysicalRouteIsReadFromTheScriptsLine() {
         assertEquals(physical, WindowsTunController.parsePhysicalRoute("Ethernet 2|12|10.1.0.1\r\n"))
         assertTrue(runCatching { WindowsTunController.parsePhysicalRoute("") }.isFailure)
+    }
+
+    private val moved = PhysicalRoute(alias = "Wi-Fi", index = 7, gateway = "192.168.1.1")
+
+    @Test fun aMoveOfTheWayOutTakesTheOldSparedRoutesAndLaysThemOnTheNewOne() {
+        val old = listOf(WindowsRouteRecord("203.0.113.77/32", 12, "10.1.0.1"), WindowsRouteRecord("198.51.100.5/32", 12, "10.1.0.1"))
+        val move = WindowsTunController.planSparedMove(old, moved, addresses = null)
+        assertEquals(old, move.remove, "no route stays on the old interface")
+        assertEquals(
+            listOf(WindowsRouteRecord("203.0.113.77/32", 7, "192.168.1.1"), WindowsRouteRecord("198.51.100.5/32", 7, "192.168.1.1")),
+            move.add,
+        )
+        assertTrue(move.keep.isEmpty())
+        val script = WindowsTunController.moveSparedScript(move, moved)
+        assertTrue("Remove-NetRoute -DestinationPrefix '203.0.113.77/32' -InterfaceIndex 12" in script)
+        assertTrue("New-NetRoute -DestinationPrefix '203.0.113.77/32' -InterfaceIndex 7 -NextHop '192.168.1.1'" in script)
+        assertTrue(script.indexOf("Remove-NetRoute") < script.indexOf("New-NetRoute"), "the old go first")
+        assertFalse("§" in script)
+    }
+
+    @Test fun aReResolvedSetReplacesTheOldOneAndOneAlreadyThereStays() {
+        val old = listOf(WindowsRouteRecord("203.0.113.77/32", 7, "192.168.1.1"), WindowsRouteRecord("198.51.100.5/32", 7, "192.168.1.1"))
+        val move = WindowsTunController.planSparedMove(old, moved, addresses = listOf("203.0.113.77", "192.0.2.9", "100.64.3.4", "not-an-address"))
+        assertEquals(listOf(WindowsRouteRecord("203.0.113.77/32", 7, "192.168.1.1")), move.keep)
+        assertEquals(listOf(WindowsRouteRecord("198.51.100.5/32", 7, "192.168.1.1")), move.remove)
+        assertEquals(listOf(WindowsRouteRecord("192.0.2.9/32", 7, "192.168.1.1")), move.add, "the tunnel's own answer is no server's address")
+    }
+
+    @Test fun nothingUsableToResolveKeepsTheAddressesAndAnUnmovedRouteIsLeftAlone() {
+        val old = listOf(WindowsRouteRecord("203.0.113.77/32", 12, "10.1.0.1"))
+        val fake = WindowsTunController.planSparedMove(old, moved, addresses = listOf("100.64.0.9", "100.127.255.1"))
+        assertEquals(listOf(WindowsRouteRecord("203.0.113.77/32", 7, "192.168.1.1")), fake.add)
+        val same = WindowsTunController.planSparedMove(old, physical, addresses = null)
+        assertTrue(same.remove.isEmpty() && same.add.isEmpty() && same.keep == old)
+        val gatewayOnly = WindowsTunController.planSparedMove(old, physical.copy(gateway = "10.1.0.254"), null)
+        assertEquals(old, gatewayOnly.remove, "the same interface with another next hop is moved too")
+        assertTrue(WindowsTunController.isMapdnsAddress("100.64.0.1") && !WindowsTunController.isMapdnsAddress("100.128.0.1"))
     }
 }
