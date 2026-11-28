@@ -81,11 +81,16 @@ the rest, platform by platform: [docs/features.md](docs/features.md).
 
 ## Protocols
 
-| Protocol | Engine |
+| Protocol | Carried by |
 | --- | --- |
-| olcRTC, a tunnel inside a WebRTC video call | our own engine, [olcRTC](https://github.com/ghostlane-project/olcrtc) |
-| VLESS with Reality or TLS, Hysteria2, Trojan, Shadowsocks, VMess | sing-box |
-| XHTTP | Xray |
+| olcRTC, a tunnel inside a WebRTC video call | the olcRTC client in Ghostlane's Rust core |
+| VLESS with Reality or TLS, Hysteria2, Trojan, Shadowsocks, VMess | the Rust core |
+| XHTTP | the Rust core |
+
+The core is [ghostlane-project/xray-rust](https://github.com/ghostlane-project/xray-rust), a
+fork of xray-rust that also holds the olcRTC client in Rust. The app names one commit of it,
+and `scripts/check-no-go.sh` reads every shipped file for a Go core. How the work moves to it
+is in [docs/rust-core.md](docs/rust-core.md).
 
 olcRTC rides six meeting services: Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls,
 MTS Link and Jitsi. More in [docs/protocols.md](docs/protocols.md).

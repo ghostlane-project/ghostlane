@@ -1,6 +1,7 @@
 # ghostlane — Ghostlane for Linux servers
 
-The headless Ghostlane: one static binary and a systemd service that connect
+The headless Ghostlane: a static program, the Rust core's engine (`ghostlane-engine`) and
+the tun's `ghostlane-hev` beside it, and a systemd service that connect
 the lines of your subscription — an olcRTC room (a tunnel inside an ordinary
 video call on Yandex Telemost, WB Stream, Sber SaluteJazz, VK Calls or MTS
 Link), VLESS Reality, Hysteria2 or XHTTP — with failover between them, and
@@ -29,11 +30,9 @@ the same lists — plain or encrypted (crypt1) — with failover between them,
 over tun (with an optional kill switch) or a local proxy; systemd and OpenRC.
 Not yet: VLESS over grpc/ws, trojan, shadowsocks, vmess.
 
-Built from `cli/` in this repository (`make build`; Go 1.26). Licence:
+Built from `cli/` in this repository: a Rust program (`make build`, `make test`, `make lint`;
+`rust-toolchain.toml` names the toolchain). `ghostlane-engine` is the core's program at the pin in
+`../scripts/ghostlane-core-pin.sh` and `ghostlane-hev` is hev-socks5-tunnel; the Core build makes
+both (`packaging/build-arch.sh` stages them with the program). Licence:
 GPL-3.0-or-later — this binary links [sing-box](https://github.com/SagerNet/sing-box);
 the Ghostlane app itself stays MIT. See `COPYRIGHT` and `../THIRD_PARTY_NOTICES.md`.
-The sing-box it links is the pinned release with one published patch
-(`../scripts/patches/sing-box-reality-hello.patch`): `go.mod` replaces the
-module with the tree `make singbox-src` writes, which every `make` target
-writes first; run it once before a plain `go build`, `go test` or an editor's
-Go tools.
