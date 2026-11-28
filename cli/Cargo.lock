@@ -126,6 +126,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghostlane-routes"
+version = "0.0.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
