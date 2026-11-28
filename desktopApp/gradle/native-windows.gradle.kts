@@ -140,6 +140,23 @@ if (hostDesktopOs == "windows") {
     hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
+// hev.exe and its Wintun, built by scripts/build-hev-windows.sh (upstream's
+// tag with clang for MSVC; no msys-2.0.dll). Not in the staged list yet: it
+// needs make, clang and an MSVC environment, which the release build does not
+// have until the flip (W4) puts it there. rust-desktop.yml runs the script and
+// holds its files with scripts/desktop-checks/windows-bundle.ps1.
+if (hostDesktopOs == "windows") {
+    val hevWindowsOutputDir = layout.buildDirectory.dir("tmp/hev-windows")
+    tasks.register<Exec>("buildHevSocks5TunnelWindows") {
+        group = "build"
+        description = "Builds hev.exe and fetches wintun.dll into build/tmp/hev-windows."
+        val script = rootProject.layout.projectDirectory.file("scripts/build-hev-windows.sh").asFile
+        inputs.file(script)
+        outputs.dir(hevWindowsOutputDir)
+        commandLine("bash", script.absolutePath, hevWindowsOutputDir.get().asFile.absolutePath)
+    }
+}
+
 // The architectures a package is built for. Windows names amd64 in its
 // resources whatever the host is.
 desktopNativeArchs["windows"] = listOf("amd64")
