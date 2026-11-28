@@ -4,6 +4,7 @@
     gate-merge-reports.py merge   ...  the legs' reports and plans -> one gate-report.json
     gate-merge-reports.py header  ...  the app's lines above the engine's table (markdown)
     gate-merge-reports.py skipped ...  the report and markdown of a release that skipped the gate
+    gate-merge-reports.py rust    ...  add the Rust client's cells (ghostlane-engine on the fakes) to a report
     gate-merge-reports.py decide  ...  exit 1 with every reason the gate is red, 0 when green
 
 gate.yml runs one leg per provider, and each leg runs two go test processes,
@@ -28,6 +29,14 @@ counts the failed cells that carry one in `failed_known`, per leg and in all;
 are not known. A cell merge fails itself ("did not run: ...") never carries
 `known`, whatever its id: the engine's docs/gate.md, "Known failures".
 
+The Rust client (decision D12): the shipped ghostlane-engine runs the engine's
+suite against the three fake carriers (the fakes script), one report per
+carrier, and `rust` folds them into the report as the client `rust`, one leg per
+carrier. A carrier that left no usable report becomes a failed marker cell, as
+a Go leg does. decide fails a report with no `rust` client unless the gate was
+skipped by request; a dry run is not skipped by request, so it needs the
+client's cells too, and they are the only cells it has.
+
 Invoked through gate-run.sh merge, which supplies the report's file name (the
 engine's name for it lives there and only there). Standard library only.
 """
@@ -47,6 +56,12 @@ BUILDS = {"cli": "default", "mobile": "lean"}
 # legs uploaded. Unmerged, one artifact alone would lose that directory.
 PART_DIR = "{provider}"
 PLATFORM = "engine-linux"
+# The Rust client: its flavour name in the engine's cell ids, what it is, and
+# the fake each carrier's suite runs against (the engine's gate target name).
+RUST = "rust"
+RUST_BUILD = "ghostlane-engine"
+RUST_CARRIERS = {"salutejazz": "fakeroom", "vkcalls": "vkfake", "mtslink": "mtsfake"}
+RUST_REPORT = "gate-report.json"
 MAX_REASON = 500
 
 
@@ -242,6 +257,133 @@ def merge(args):
     return 0
 
 
+def rust_reject_reason(report, carrier):
+    """Why a fakes run's report cannot be trusted, or None."""
+    if not isinstance(report, dict):
+        return "not a JSON object"
+    if report.get("schema") != 1:
+        return f"schema {report.get('schema')!r}, not 1"
+    want = RUST_CARRIERS[carrier]
+    if report.get("target") != want:
+        return f"target {report.get('target')!r}, not {want}"
+    cells = report.get("cells")
+    if not isinstance(cells, list) or not cells:
+        return "no cells"
+    seen = set()
+    for cell in cells:
+        cell_id = cell.get("id") if isinstance(cell, dict) else None
+        fields = split_id(cell_id) if isinstance(cell_id, str) else None
+        if fields is None:
+            return "a cell without a well-formed id"
+        if cell_id in seen:
+            return "a cell is listed twice"
+        seen.add(cell_id)
+        if fields["client"] != RUST:
+            return f"a cell of the client {fields['client']!r}, not {RUST!r}"
+        if cell.get("status") not in ("pass", "fail"):
+            return "a cell ended neither pass nor fail"
+        if not isinstance(cell.get("known", ""), str):
+            return "a cell's known issue is not text"
+    if not isinstance(report.get("executed"), int):
+        return "no executed count"
+    return None
+
+
+def rust_cells_of(report):
+    return [c for c in report.get("cells", []) if isinstance(c, dict) and c.get("client") == RUST]
+
+
+def rust(args):
+    """Replace the Rust client's cells and legs of a report by what the fakes' reports hold."""
+    path = Path(args.report)
+    merged = json.loads(path.read_text())
+    carriers = [c for c in args.carriers.split(",") if c]
+    for carrier in carriers:
+        if carrier not in RUST_CARRIERS:
+            print(f"unknown carrier {carrier!r} (one of {', '.join(RUST_CARRIERS)})", file=sys.stderr)
+            return 2
+    # What an earlier fold left goes first, so a second run changes nothing.
+    old = rust_cells_of(merged)
+    cells = {c["id"]: c for c in merged.get("cells", []) if c not in old}
+    legs = [leg for leg in merged.get("legs", []) if leg.get("client") != RUST]
+    # The cells the fakes ran are counted apart, so that a second fold subtracts them.
+    executed = int(merged.get("executed") or 0) - int(merged.get("rust_executed") or 0)
+    rust_executed = 0
+    started = []
+    for carrier in carriers:
+        base = Path(args.rust_dir) / carrier / RUST_REPORT
+        target = RUST_CARRIERS[carrier]
+        report, state, reason = None, "missing", ""
+        if base.is_file():
+            try:
+                report = json.loads(base.read_text())
+            except ValueError:
+                report, state, reason = None, "rejected", "it is not JSON"
+            else:
+                why = rust_reject_reason(report, carrier)
+                if why:
+                    report, state, reason = None, "rejected", why
+                else:
+                    state = "present"
+        if report is not None:
+            own = [dict(c) for c in report["cells"]]
+            rust_executed += report["executed"]
+            if report.get("started_at"):
+                started.append(report["started_at"])
+        else:
+            what = f"its report was rejected ({reason})" if state == "rejected" else "it wrote no report"
+            own = [failed_cell(f"{target}-linux/{carrier}/*/{RUST}/*",
+                               f"did not run: the {carrier}/{RUST} run on the fakes: {what} (see the fakes job's log)")]
+        for c in own:
+            if c["id"] in cells:
+                c = failed_cell(c["id"], f"cell reported twice across the fakes ({carrier}/{RUST})")
+            cells[c["id"]] = c
+        legs.append({
+            "provider": carrier,
+            "client": RUST,
+            "build": RUST_BUILD,
+            "target": target,
+            "plan": None,
+            "report": state,
+            "reason": reason,
+            "planned": len(own),
+            "passed": sum(1 for c in own if c.get("status") == "pass"),
+            "failed": sum(1 for c in own if c.get("status") != "pass"),
+            "failed_known": failed_known(own),
+        })
+    ordered = [cells[k] for k in sorted(cells)]
+    passed = sum(1 for c in ordered if c.get("status") == "pass")
+    merged.update({
+        "planned": len(ordered),
+        "executed": executed + rust_executed,
+        "rust_executed": rust_executed,
+        "passed": passed,
+        "failed": len(ordered) - passed,
+        "failed_known": failed_known(ordered),
+        "legs": legs,
+        "cells": ordered,
+    })
+    if started and not merged.get("started_at"):
+        merged["started_at"] = min(started)
+    path.write_text(json.dumps(merged, indent=2) + "\n")
+    mine = rust_cells_of(merged)
+    line = (f"the {RUST} client: {len(mine)} cells on {len(carriers)} fake carrier(s), "
+            f"{sum(1 for c in mine if c.get('status') != 'pass')} failed")
+    print(line)
+    if args.md:
+        rows = ["", f"**Rust client** (`{RUST_BUILD}` against the fakes, no live room)", "",
+                "| Fake | Report | Cells | Passed | Failed |", "| --- | --- | --- | --- | --- |"]
+        for leg in legs:
+            if leg["client"] != RUST:
+                continue
+            state = leg["report"] + (f" ({leg['reason']})" if leg["reason"] else "")
+            rows.append(f"| `{md(leg['provider'])}` | {md(state)} | {leg['planned']} | {leg['passed']} | "
+                        f"{failed_text(leg['failed'], leg['failed_known'])} |")
+        with open(args.md, "a") as out:
+            out.write("\n".join(rows) + "\n")
+    return 0
+
+
 def header(args):
     report = json.loads(Path(args.report).read_text())
     sha = report.get("engine_commit", "")
@@ -328,6 +470,9 @@ def decide(args):
         report = json.loads(Path(args.report).read_text())
     except (OSError, ValueError):
         reasons.append("no readable gate report")
+    # A gate skipped by request needs no client: it is not a gate. A dry run
+    # walks no live leg, but the Rust client on the fakes is its leg.
+    need = args.rust_client if (args.skip != "true" or args.dry == "true") else ""
     if args.skip == "true":
         if report is not None and report.get("skipped") is not True:
             reasons.append("the report of a skipped gate does not say it was skipped")
@@ -352,6 +497,18 @@ def decide(args):
                 reasons.append(f"{planned - executed} of {planned} planned cells did not run")
         if args.regression == "true" and args.severity == "fail":
             reasons.append("a regression against the previous release, at severity fail")
+    if need:
+        if args.fakes_result != "success":
+            reasons.append(f"the {need} client on the fakes: {args.fakes_result or 'did not run'}")
+        if report is not None:
+            mine = [c for c in report.get("cells", []) if isinstance(c, dict) and c.get("client") == need]
+            if not mine:
+                reasons.append(f"the gate report has no '{need}' client")
+            elif args.skip == "true":
+                # A skipped report has no cell counts of its own to fail on.
+                bad = [c for c in mine if c.get("status") != "pass" and not c.get("known")]
+                if bad:
+                    reasons.append(f"{len(bad)} of {len(mine)} cells of the '{need}' client failed")
     if reasons:
         for reason in reasons:
             print(f"::error title=Release gate::{reason}")
@@ -403,11 +560,21 @@ def main(argv=None):
     s.add_argument("--out-md", required=True)
     s.set_defaults(func=skipped)
 
+    r = sub.add_parser("rust")
+    r.add_argument("--report", required=True, help="the report to fold the fakes' cells into, in place")
+    r.add_argument("--rust-dir", required=True, help="<dir>/<carrier>/gate-report.json, one per fake carrier")
+    r.add_argument("--carriers", default=",".join(RUST_CARRIERS))
+    r.add_argument("--md", default="", help="a markdown file to append the Rust client's table to")
+    r.set_defaults(func=rust)
+
     d = sub.add_parser("decide")
     d.add_argument("--report", required=True)
     d.add_argument("--skip", default="false")
     d.add_argument("--unit-result", default="")
     d.add_argument("--suite-result", default="")
+    d.add_argument("--dry", default="false", help="the run is a dry one: the skipped report still needs the Rust client")
+    d.add_argument("--fakes-result", default="", help="the fakes job's result")
+    d.add_argument("--rust-client", default=RUST, help="the client every gate report must carry; empty asks for none")
     d.add_argument("--regression", default="false")
     d.add_argument("--severity", default="warn")
     d.add_argument("--step", action="append", default=[], help="name=outcome of a verdict step that must have succeeded")

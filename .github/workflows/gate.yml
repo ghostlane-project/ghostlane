@@ -17,6 +17,12 @@ name: Release gate
 # - push: the pin or the gate changed ("pin"), on any branch but those under
 #   rust/.
 #
+# The Rust client (D12, K4): the `fakes` job (gate-fakes.yml) runs the shipped ghostlane-engine
+# as the engine suite's client against the three fake carriers, with no room
+# and no secret, in every run that is not skipped by request, a dry run
+# included: it is the dry run's only leg. The verdict folds its reports into
+# the gate report as the client `rust` and fails a report that has none.
+#
 # Dry: a run that may join no live room walks no leg and writes the skipped
 # report with one fixed reason. That is a release that signs nothing (the
 # caller passes dry), and any run of the gate's own on a branch under rust/,
@@ -372,9 +378,19 @@ jobs:
           # "Re-run failed jobs" uploads again under the same name.
           overwrite: true
 
+  # The Rust client on the fakes: .github/workflows/gate-fakes.yml, which holds
+  # no secret and joins no room. It reads the core's pin, so it has the pin's
+  # paths and a `pin` input of its own, and this file keeps the gate's. It is
+  # the one leg a dry run walks, so it carries none of the suite's three guards.
+  fakes:
+    name: Rust client on the fakes (ghostlane-engine)
+    needs: resolve
+    if: ${{ needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true' }}
+    uses: ./.github/workflows/gate-fakes.yml
+
   verdict:
     name: Verdict
-    needs: [resolve, unit, suite]
+    needs: [resolve, unit, suite, fakes]
     if: ${{ !cancelled() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -463,6 +479,31 @@ jobs:
             --expect-commit "$ENGINE_SHA" --engine-ref "$ENGINE_VERSION" --app-version "$APP_VERSION" \
             --mode "$MODE" --out gate/gate-report.json
 
+      # The Rust client's cells, folded into the report the legs or the skipped
+      # stub made: a dry run's only cells. A fakes job that uploaded nothing
+      # still owes its cells, and the fold fails them.
+      - name: Download the fakes' reports
+        id: fakes_dl
+        if: ${{ !cancelled() && (needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true') }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: gate-fakes
+          path: fakes
+
+      - name: Fold in the Rust client
+        id: rust
+        if: ${{ !cancelled() && (needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true') }}
+        env:
+          DRY: ${{ needs.resolve.outputs.dry }}
+        run: |
+          set -euo pipefail
+          mkdir -p fakes
+          args=()
+          # A dry run's markdown is the skipped stub's; a gated run's is made below.
+          if [ "$DRY" = true ]; then args+=(--md gate/gate-report.md); fi
+          python3 olcbox/scripts/gate-merge-reports.py rust --report gate/gate-report.json --rust-dir fakes "${args[@]}"
+
       - name: The previous release's report
         id: prev
         if: ${{ !cancelled() && needs.resolve.outputs.skip != 'true' }}
@@ -473,7 +514,7 @@ jobs:
 
       - name: The report as markdown
         id: md
-        if: ${{ !cancelled() && steps.merge.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.merge.outcome == 'success' && steps.rust.outcome == 'success' }}
         env:
           UNIT_RESULT: ${{ needs.unit.result }}
           SUITE_RESULT: ${{ needs.suite.result }}
@@ -546,8 +587,11 @@ jobs:
         env:
           UNIT_RESULT: ${{ needs.unit.result }}
           SUITE_RESULT: ${{ needs.suite.result }}
+          FAKES_RESULT: ${{ needs.fakes.result }}
+          RUST_OUTCOME: ${{ steps.rust.outcome }}
           REGRESSION: ${{ steps.md.outputs.regression }}
           SKIPPED_OUTCOME: ${{ steps.skipped.outcome }}
+          DRY: ${{ needs.resolve.outputs.dry }}
           MERGE_OUTCOME: ${{ steps.merge.outcome }}
           MD_OUTCOME: ${{ steps.md.outcome }}
           LEAK_OUTCOME: ${{ steps.leak.outcome }}
@@ -560,6 +604,11 @@ jobs:
           else
             steps+=(--step "merge=${MERGE_OUTCOME}" --step "markdown=${MD_OUTCOME}")
           fi
+          # The Rust client is folded in by every run but a skip by request.
+          if [ "$SKIP" != true ] || [ "$DRY" = true ]; then
+            steps+=(--step "rust client=${RUST_OUTCOME}")
+          fi
           python3 olcbox/scripts/gate-merge-reports.py decide --report gate/gate-report.json \
-            --skip "$SKIP" --unit-result "$UNIT_RESULT" --suite-result "$SUITE_RESULT" \
+            --skip "$SKIP" --dry "$DRY" --fakes-result "$FAKES_RESULT" \
+            --unit-result "$UNIT_RESULT" --suite-result "$SUITE_RESULT" \
             --regression "${REGRESSION:-false}" --severity "$SEVERITY" "${steps[@]}"
