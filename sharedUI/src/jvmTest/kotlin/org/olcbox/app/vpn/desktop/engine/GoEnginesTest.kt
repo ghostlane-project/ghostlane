@@ -15,7 +15,8 @@ import kotlin.test.assertTrue
  * itself.
  */
 class GoEnginesTest {
-    private val engine = DesktopEngines.create(
+    // The Go engines themselves: the default on Linux and macOS is ghostlane-engine's.
+    private val engine = GoEngines(
         DesktopEngineHost(
             log = {},
             windowsTunOutput = {},
