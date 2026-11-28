@@ -9,6 +9,11 @@
 //! `tests/netns.rs` (scripts/cli-checks/netns.sh).
 
 mod netlink;
+mod watch;
+
+pub mod hev;
+
+pub use watch::Watcher;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -27,6 +32,12 @@ pub const ENGINE_TABLE: u32 = 2022;
 /// take everything; while it is down, main answers only for what it routes
 /// specifically (LAN, Docker, link-local: suppress_prefixlength 0) and for the
 /// daemon's own uid (carriers, servers), and all else is unreachable.
+/// The tun's rules: the engine's own uid keeps main (9000), everything else
+/// takes table 2022 (9010), whose IPv4 default is the tun and whose IPv6
+/// default is a blackhole: IPv6 is refused at once, not carried.
+pub const TUN_BYPASS: u32 = ENGINE_RULE_FIRST;
+pub const TUN_LOOKUP: u32 = ENGINE_RULE_LAST;
+
 pub const KILL_SWITCH_LAN: u32 = 9098;
 pub const KILL_SWITCH_SELF: u32 = 9099;
 pub const KILL_SWITCH_DROP: u32 = 9100;
@@ -48,7 +59,10 @@ const RTA_PRIORITY: u16 = 6;
 const RTA_PREFSRC: u16 = 7;
 const RTA_TABLE: u16 = 15;
 const RTPROT_BOOT: u8 = 3;
+const RTN_UNICAST: u8 = 1;
+const RTN_BLACKHOLE: u8 = 6;
 const RTN_UNREACHABLE: u8 = 7;
+const RT_SCOPE_LINK: u8 = 253;
 const RT_SCOPE_UNIVERSE: u8 = 0;
 const AF_INET: u8 = libc::AF_INET as u8;
 const AF_INET6: u8 = libc::AF_INET6 as u8;
@@ -323,7 +337,7 @@ struct RouteEntry {
     attributes: Vec<u8>,
 }
 
-fn rtmsg(family: u8, table: u32, ty: u8) -> Vec<u8> {
+fn rtmsg(family: u8, table: u32, ty: u8, scope: u8) -> Vec<u8> {
     // family, dst_len, src_len, tos, table, protocol, scope, type, flags
     let mut h = vec![
         family,
@@ -332,7 +346,7 @@ fn rtmsg(family: u8, table: u32, ty: u8) -> Vec<u8> {
         0,
         if table < 256 { table as u8 } else { 0 },
         RTPROT_BOOT,
-        RT_SCOPE_UNIVERSE,
+        scope,
         ty,
     ];
     h.extend_from_slice(&0u32.to_ne_bytes());
@@ -340,7 +354,7 @@ fn rtmsg(family: u8, table: u32, ty: u8) -> Vec<u8> {
 }
 
 fn list_table(sock: &mut Socket, family: u8, table: u32) -> Result<Vec<RouteEntry>, Error> {
-    let header = rtmsg(family, 0, 0);
+    let header = rtmsg(family, 0, 0, RT_SCOPE_UNIVERSE);
     let messages = sock
         .request(
             netlink::RTM_GETROUTE,
@@ -392,7 +406,12 @@ fn flush_table(sock: &mut Socket, family: u8, table: u32) -> Result<(), Error> {
 }
 
 fn unreachable_default(sock: &mut Socket, family: u8) -> Result<(), Error> {
-    let header = rtmsg(family, KILL_SWITCH_TABLE, RTN_UNREACHABLE);
+    let header = rtmsg(
+        family,
+        KILL_SWITCH_TABLE,
+        RTN_UNREACHABLE,
+        RT_SCOPE_UNIVERSE,
+    );
     let mut attributes = Vec::new();
     put_attr(&mut attributes, RTA_TABLE, &KILL_SWITCH_TABLE.to_ne_bytes());
     sock.request(
@@ -406,6 +425,28 @@ fn unreachable_default(sock: &mut Socket, family: u8) -> Result<(), Error> {
     )
     .map(drop)
     .map_err(|e| Error::os(e, format!("unreachable default (family {family})")))
+}
+
+fn tun_route(sock: &mut Socket, family: u8, index: u32) -> Result<(), Error> {
+    let mut attributes = Vec::new();
+    let header = if family == AF_INET6 {
+        rtmsg(family, ENGINE_TABLE, RTN_BLACKHOLE, RT_SCOPE_UNIVERSE)
+    } else {
+        put_attr(&mut attributes, RTA_OIF, &index.to_ne_bytes());
+        rtmsg(family, ENGINE_TABLE, RTN_UNICAST, RT_SCOPE_LINK)
+    };
+    put_attr(&mut attributes, RTA_TABLE, &ENGINE_TABLE.to_ne_bytes());
+    sock.request(
+        netlink::RTM_NEWROUTE,
+        netlink::NLM_F_REQUEST
+            | netlink::NLM_F_ACK
+            | netlink::NLM_F_CREATE
+            | netlink::NLM_F_REPLACE,
+        &header,
+        &attributes,
+    )
+    .map(drop)
+    .map_err(|e| Error::os(e, format!("tun route (family {family})")))
 }
 
 fn kill_switch_rules(family: u8, uid: u32) -> [NewRule; 3] {
@@ -613,6 +654,93 @@ impl Manager {
                 }
             }
             if let Err(e) = flush_table(sock, family, KILL_SWITCH_TABLE) {
+                if !skip_v6(family, &e) {
+                    errors.push(e);
+                }
+            }
+        }
+        Error::join(errors)
+    }
+
+    /// Puts the tun's rules in (see `TUN_LOOKUP`), replacing what is there. The
+    /// device must exist. `bypass_uid` is the engine's uid, whose traffic keeps
+    /// the main table.
+    pub fn install_tun_rules(&self, tun: &str, bypass_uid: Option<u32>) -> Result<(), Error> {
+        let _g = self.guard();
+        let mut sock = open()?;
+        let index = std::ffi::CString::new(tun)
+            .ok()
+            // SAFETY: a valid NUL-terminated name.
+            .map(|name| unsafe { libc::if_nametoindex(name.as_ptr()) })
+            .unwrap_or(0);
+        if index == 0 {
+            return Err(Error {
+                errnos: vec![libc::ENODEV],
+                message: format!("no device {tun}"),
+            });
+        }
+        let _ = Self::remove_tun_rules_locked(&mut sock);
+        let mut errors = Vec::new();
+        for family in FAMILIES {
+            if let Err(e) = tun_route(&mut sock, family, index) {
+                if !skip_v6(family, &e) {
+                    errors.push(e);
+                }
+                continue;
+            }
+            let mut rules = Vec::new();
+            if let Some(uid) = bypass_uid {
+                rules.push(NewRule {
+                    family,
+                    priority: TUN_BYPASS,
+                    table: RT_TABLE_MAIN,
+                    src: None,
+                    suppress_prefixlen: None,
+                    uid: Some(uid),
+                });
+            }
+            rules.push(NewRule {
+                family,
+                priority: TUN_LOOKUP,
+                table: ENGINE_TABLE,
+                src: None,
+                suppress_prefixlen: None,
+                uid: None,
+            });
+            for rule in rules {
+                if let Err(e) = rule.add(&mut sock) {
+                    if skip_v6(family, &e) {
+                        break;
+                    }
+                    errors.push(e);
+                }
+            }
+        }
+        match Error::join(errors) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = Self::remove_tun_rules_locked(&mut sock);
+                Err(e)
+            }
+        }
+    }
+
+    /// Takes the tun's rules and table 2022 out.
+    pub fn remove_tun_rules(&self) -> Result<(), Error> {
+        let _g = self.guard();
+        let mut sock = open()?;
+        Self::remove_tun_rules_locked(&mut sock)
+    }
+
+    fn remove_tun_rules_locked(sock: &mut Socket) -> Result<(), Error> {
+        let mut errors = Vec::new();
+        for family in FAMILIES {
+            if let Err(e) = delete_priorities(sock, family, ENGINE_RULE_FIRST, ENGINE_RULE_LAST) {
+                if !skip_v6(family, &e) {
+                    errors.push(e);
+                }
+            }
+            if let Err(e) = flush_table(sock, family, ENGINE_TABLE) {
                 if !skip_v6(family, &e) {
                     errors.push(e);
                 }

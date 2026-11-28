@@ -70,6 +70,11 @@ pub fn ne32(bytes: &[u8]) -> Option<u32> {
 
 impl Socket {
     pub fn open() -> Result<Socket, i32> {
+        Self::open_groups(0)
+    }
+
+    /// A socket that also hears the multicast groups in `groups` (RTMGRP_*).
+    pub fn open_groups(groups: u32) -> Result<Socket, i32> {
         // SAFETY: plain system calls; the descriptor is owned at once.
         let raw = unsafe {
             libc::socket(
@@ -84,6 +89,7 @@ impl Socket {
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
         addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+        addr.nl_groups = groups;
         let rc = unsafe {
             libc::bind(
                 fd.as_raw_fd(),
@@ -99,6 +105,28 @@ impl Socket {
             seq: 0,
             buf: vec![0u8; 256 * 1024],
         })
+    }
+
+    pub fn raw_fd(&self) -> i32 {
+        self.fd.as_raw_fd()
+    }
+
+    /// Reads and drops what is waiting; never blocks.
+    pub fn drain(&mut self) {
+        loop {
+            // SAFETY: the buffer is ours and as long as it says.
+            let n = unsafe {
+                libc::recv(
+                    self.fd.as_raw_fd(),
+                    self.buf.as_mut_ptr().cast::<libc::c_void>(),
+                    self.buf.len(),
+                    libc::MSG_DONTWAIT,
+                )
+            };
+            if n <= 0 {
+                return;
+            }
+        }
     }
 
     /// Sends one message (`payload` is the fixed header, `attributes` follow it)
