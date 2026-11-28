@@ -27,7 +27,7 @@ on:
       - docs/*.md
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/**
-      - cli/cmd/ghostlane/**
+      - cli/src/commands.rs
 
 permissions:
   contents: read

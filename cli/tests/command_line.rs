@@ -784,28 +784,10 @@ fn the_daemon_serves_its_socket_until_it_is_told_to_stop() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o660);
-    // what connects a line is not in this program yet, and it says so
-    for verb in [
-        "status",
-        "list",
-        "add",
-        "connect",
-        "disconnect",
-        "refresh",
-        "remove",
-    ] {
-        let answer = ask(&socket, verb);
-        assert_eq!(
-            (answer.ok, answer.error.as_str()),
-            (false, "no_engine"),
-            "{verb}"
-        );
-        assert!(
-            answer.message.starts_with(&format!("{verb}: ")),
-            "{verb}: {}",
-            answer.message
-        );
-    }
+    // the daemon's own state machine answers, with nothing to connect
+    let status = ask(&socket, "status");
+    assert!(status.ok, "{status:?}");
+    assert_eq!(status.status.expect("a status").state, "idle");
     let unknown = ask(&socket, "frobnicate");
     assert_eq!(
         (unknown.ok, unknown.error.as_str(), unknown.message.as_str()),
@@ -813,12 +795,7 @@ fn the_daemon_serves_its_socket_until_it_is_told_to_stop() {
     );
     // the command line of this program against its own daemon
     let status = ghostlane(&["status", "--socket", &socket_arg]);
-    assert_eq!(status.code, 1);
-    assert!(
-        status.stderr.starts_with("no_engine: status: "),
-        "{}",
-        status.stderr
-    );
+    assert_eq!(status.code, 0, "{}", status.stderr);
     // no config is written by a start that was given nothing to write
     assert!(!scratch.join("state").join("config.yaml").exists());
 

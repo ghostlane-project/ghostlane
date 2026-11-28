@@ -174,17 +174,16 @@ def tree_features(root):
                 cells.append("cell." + ".".join(x for x in (kind.lower(), sec, t.lower()) if x))
     need("the accept matrix (protocol, security, transport)", cells)
 
-    commands = read(root, "cli/cmd/ghostlane/commands.go")
-    m = re.search(r"func run\(.*?\n\}\n", commands, flags=re.S)
-    names = []
-    if m:
-        for case in re.findall(r"^\tcase ([^:\n]+):", m.group(0), flags=re.M):
-            names += re.findall(r'"([a-z][a-z-]*)"', case)
+    # The Rust CLI (cli/src/commands.rs): COMMANDS is its list of verbs, a flag is
+    # a `.text("name"` or `.boolean("name"` of its flag sets, a variable is read
+    # through `getenv("GHOSTLANE_...")`.
+    commands = read(root, "cli/src/commands.rs")
+    m = re.search(r"pub const COMMANDS: &\[&str\] = &\[(.*?)\];", commands, flags=re.S)
+    names = re.findall(r'"([a-z][a-z-]*)"', m.group(1)) if m else []
     need("the CLI's commands", ["cli.cmd." + n for n in dict.fromkeys(names) if n != "help"])
-    flags = re.findall(r'fs\.(?:Bool|String|Int)\("([\w-]+)"',
-                       commands + read(root, "cli/cmd/ghostlane/run.go"))
+    flags = re.findall(r'\.(?:text|boolean)\(\s*"([\w-]+)"', commands)
     need("the CLI's flags", ["cli.flag." + f for f in dict.fromkeys(flags)])
-    env = re.findall(r'getenv\("(GHOSTLANE_\w+)"\)', read(root, "cli/cmd/ghostlane/run.go"))
+    env = re.findall(r'getenv\("(GHOSTLANE_\w+)"\)', commands)
     need("the CLI's environment", ["cli.env." + e.lower() for e in dict.fromkeys(env)])
     return found, broken
 

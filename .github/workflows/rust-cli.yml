@@ -1,15 +1,12 @@
 name: Rust CLI
 
-# The Linux CLI in Rust (cli/Cargo.toml), which stands beside the Go program
-# that still ships (cli/go.mod). Two jobs:
+# The Linux CLI in Rust (cli/Cargo.toml). Two jobs:
 #
 #   - the program by itself: format, build, tests and clippy with warnings
 #     denied, on the toolchain cli/rust-toolchain.toml names and with the
 #     committed cli/Cargo.lock (--locked everywhere);
-#   - the program against the Go program built from the same commit
-#     (cli/tests/go_interop.rs): the same command lines, the same state files,
-#     and each one's client asking the other one's daemon. The Go daemon there
-#     is given no list to fetch and is never asked to connect.
+#   - the program for the three architectures the release ships (static
+#     musl), run: K11, the 32-bit one under qemu-user.
 #
 # cli/Cargo.lock is committed. When it is missing or behind the manifests, the
 # first job writes the one cargo resolves, prints it in its log between two
@@ -28,6 +25,7 @@ on:
     paths:
       - cli/**
       - .github/workflows/rust-cli.yml
+      - scripts/build-hev-linux.sh
   push:
     # branches, so that a tag (whose push no path filter reads) starts nothing
     branches:
@@ -35,6 +33,7 @@ on:
     paths:
       - cli/**
       - .github/workflows/rust-cli.yml
+      - scripts/build-hev-linux.sh
 
 permissions:
   contents: read
@@ -110,44 +109,64 @@ jobs:
           echo "::error::cli/Cargo.lock is ${STATE:-unread}: see the step 'The lock file'"
           exit 1
 
-  interop:
-    name: Against the Go program
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-        working-directory: cli
+  # The program for the three architectures the release ships, as the release
+  # builds it (static, musl, the C of ring from the core's cross compiler), and
+  # run: K11, the 32-bit program under qemu-user, and the 64-bit ones where the
+  # runner can (amd64 natively, arm64 under qemu-user). The engine beside it is
+  # the release job's and the PR Checks job's.
+  cross:
+    name: ${{ matrix.target }} runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ""
+          - target: aarch64-unknown-linux-musl
+            runner: qemu-aarch64-static
+          - target: armv7-unknown-linux-musleabihf
+            runner: qemu-arm-static
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.5"
-          cache-dependency-path: cli/go.sum
-      # cli/go.mod replaces sing-box with a tree scripts/patched-singbox.sh
-      # writes: the build target writes it first.
-      - name: The Go program of this commit
-        run: |
-          set -euo pipefail
-          make build
-          ./dist/ghostlane version
-      - name: The toolchain cli/rust-toolchain.toml names
-        run: |
-          set -euo pipefail
-          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' rust-toolchain.toml)"
-          [ -n "$toolchain" ] || { echo "::error::cli/rust-toolchain.toml names no channel"; exit 1; }
-          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --no-self-update
-          cargo --version
-      # The other job is the one that fails for a lock file that is missing
-      # or behind; this one compares the programs all the same.
-      - name: The lock file
-        run: |
-          set -euo pipefail
-          if [ ! -f Cargo.lock ] || ! cargo metadata --locked --format-version 1 > /dev/null 2>&1; then
-            cargo metadata --format-version 1 > /dev/null
-          fi
-      - name: Both programs, side by side
+          persist-credentials: false
+      - name: The toolchain cli/rust-toolchain.toml names, and the cross compiler
         env:
-          GHOSTLANE_GO_BIN: ${{ github.workspace }}/cli/dist/ghostlane
-          GHOSTLANE_GO_REQUIRED: "1"
-        run: cargo test --locked --test go_interop
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' cli/rust-toolchain.toml)"
+          [ -n "$toolchain" ] || { echo "::error::cli/rust-toolchain.toml names no channel"; exit 1; }
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang lld llvm qemu-user-static
+          bash scripts/build-hev-linux.sh --toolchain "$RUNNER_TEMP/musl" "$TARGET" > "$RUNNER_TEMP/cross.env"
+          cat "$RUNNER_TEMP/cross.env" >> "$GITHUB_ENV"
+      - name: Build for the target
+        working-directory: cli
+        env:
+          TARGET: ${{ matrix.target }}
+          GHOSTLANE_VERSION: 0.0.0
+        run: |
+          set -euo pipefail
+          rustup target add "$TARGET"
+          cargo build --locked --release --target "$TARGET"
+          file "target/$TARGET/release/ghostlane" || true
+      - name: It runs
+        working-directory: cli
+        env:
+          TARGET: ${{ matrix.target }}
+          RUNNER: ${{ matrix.runner }}
+        run: |
+          set -euo pipefail
+          program="target/$TARGET/release/ghostlane"
+          # a static program: nothing is asked of the runner's libc
+          if readelf -l "$program" | grep -q 'Requesting program interpreter'; then
+            echo "::error::$program asks for a program interpreter; it is not static"
+            exit 1
+          fi
+          ${RUNNER:+"$RUNNER"} "$program" version --json | tee "$RUNNER_TEMP/version.json"
+          grep -q '"version": "0.0.0"' "$RUNNER_TEMP/version.json"
+          ${RUNNER:+"$RUNNER"} "$program" help > /dev/null

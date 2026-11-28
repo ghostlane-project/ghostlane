@@ -1,6 +1,4 @@
-# The Linux CLI in Rust, beside the Go module that still ships (go.mod, cmd/,
-# internal/). The Go tooling reads no directory without a .go file, so the two
-# live in one directory without seeing each other.
+# The Linux CLI, in Rust.
 #
 # The members are a glob: a later crate is a new directory under crates/ and
 # no edit here, unless the program itself has to call it (then it is one line
@@ -25,19 +23,24 @@ path = "src/lib.rs"
 name = "ghostlane"
 path = "src/main.rs"
 
-# Few and common, and none that needs a C toolchain or OpenSSL: the release
-# targets are static musl binaries.
+# Few and common, and none that needs OpenSSL: the release targets are static
+# musl binaries. ring (under rustls) has C and assembly, built with the cross
+# compiler the core's build makes for the same targets.
 [dependencies]
 base64 = "0.22"
-gocompat = { package = "ghostlane-gocompat", path = "crates/gocompat" }
+coreconfig = { package = "ghostlane-coreconfig", path = "crates/gl-coreconfig" }
+gl_links = { package = "ghostlane-links", path = "crates/gl-links" }
 gl_routes = { package = "ghostlane-routes", path = "crates/gl-routes" }
+gocompat = { package = "ghostlane-gocompat", path = "crates/gocompat" }
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 signal-hook = "0.3"
+# The list fetch: HTTPS with the roots built in (the image has no CA bundle).
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
-# The engine child's tests write the lines they run with the app's own
-# builder, ported (crates/gl-coreconfig).
-[dev-dependencies]
-coreconfig = { package = "ghostlane-coreconfig", path = "crates/gl-coreconfig" }
-libc = "0.2"
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

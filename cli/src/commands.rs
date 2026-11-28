@@ -2,15 +2,15 @@
 //! program's `cmd/ghostlane` (0 done, 1 refused or failed, 2 a command line
 //! that says nothing usable, 3 no daemon to ask).
 //!
-//! `run` is the daemon. Here it is the part that this crate holds: it reads
-//! the config, applies the arguments and the environment to it as the Go
-//! daemon does at its start, and serves the control socket. What connects a
-//! line is not in this crate, and the daemon says so to whoever asks.
+//! `run` is the daemon: it reads the config, applies the arguments and the
+//! environment to it as the Go daemon did at its start, and serves the
+//! control socket from the daemon's thread (`daemon::program`).
 
 use std::fmt::Write as _;
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::Path;
+use std::sync::Arc;
 use std::thread;
 
 use base64::engine::general_purpose::STANDARD;
@@ -21,7 +21,9 @@ use sha2::{Digest as _, Sha256};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
-use crate::ipc::{self, CallError, EntryView, Request, Response, Server, Status, VersionInfo};
+use crate::daemon::program::{self, Settings};
+use crate::engine;
+use crate::ipc::{self, CallError, EntryView, Request, Server, Status, VersionInfo};
 use crate::store::{self, Config, Selection, Subscription};
 
 /// Set at build time (`GHOSTLANE_VERSION`), as the Go build sets its own.
@@ -229,6 +231,19 @@ macro_rules! sayln {
     }};
 }
 
+/// The verbs, as `run` takes them (the parity ledger reads this list).
+pub const COMMANDS: &[&str] = &[
+    "run",
+    "version",
+    "add",
+    "list",
+    "connect",
+    "disconnect",
+    "status",
+    "refresh",
+    "remove",
+];
+
 /// Runs one command line (without the program's name) and returns the exit
 /// code.
 pub fn run(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> u8 {
@@ -278,8 +293,19 @@ pub fn version_info() -> VersionInfo {
     VersionInfo {
         version: VERSION.to_string(),
         engine: ENGINE.to_string(),
+        core: core_pin(),
+        crypt1: program::decryptor().is_some(),
         ..VersionInfo::default()
     }
+}
+
+/// The commit of the core, as the engine beside this program says it: empty
+/// when there is no engine, or it does not answer.
+fn core_pin() -> String {
+    engine::locate_here()
+        .and_then(|program| engine::check_version(&program))
+        .map(|version| version.pin)
+        .unwrap_or_default()
 }
 
 /// The sha256 of the release signing key, as install.sh prints it.
@@ -304,9 +330,14 @@ fn version(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> u
     } else {
         "unavailable (no key in this build)"
     };
+    let core = if info.core.is_empty() {
+        String::new()
+    } else {
+        format!("core {}\n", info.core)
+    };
     say!(
         stdout,
-        "ghostlane {}\nengine {}\ncrypt1 lists {crypt}\nrelease signing key sha256 {}\n",
+        "ghostlane {}\nengine {}\n{core}crypt1 lists {crypt}\nrelease signing key sha256 {}\n",
         info.version,
         info.engine,
         release_key_fingerprint()
@@ -948,23 +979,34 @@ fn run_daemon(args: &[String], stderr: &mut dyn Write) -> u8 {
             stopper.stop();
         }
     });
-    match server.serve(answer) {
+    let settings = Settings {
+        state_dir: Path::new(flags.value("state-dir")).to_path_buf(),
+        probe_url: flags.value("probe-url").to_string(),
+        version: VERSION.to_string(),
+    };
+    let log = program::stderr_log();
+    log(&format!(
+        "ghostlane {VERSION} starting (uid {}, state {})",
+        // SAFETY: getuid cannot fail.
+        unsafe { libc::getuid() },
+        settings.state_dir.display()
+    ));
+    let daemon = Arc::new(program::Running::start({
+        let log = Arc::clone(&log);
+        move || program::deps(&settings, log)
+    }));
+    program::notify_ready();
+    let served = {
+        let daemon = Arc::clone(&daemon);
+        server.serve(move |request| daemon.call(request))
+    };
+    // closes the line and takes the rules out, whatever ended the serving
+    daemon.stop();
+    match served {
         Ok(()) => 0,
         Err(err) => {
             sayln!(stderr, "control socket: {err}");
             1
         }
-    }
-}
-
-/// What the daemon of this crate answers: what it is made of, and for the
-/// rest that it has nothing to do it with. The verbs are the Go daemon's.
-pub fn answer(request: Request) -> Response {
-    match request.verb.as_str() {
-        "version" => Response { ok: true, version: Some(version_info()), ..Response::default() },
-        verb @ ("add" | "list" | "connect" | "disconnect" | "status" | "refresh" | "remove") => {
-            ipc::fail("no_engine", &format!("{verb}: this daemon holds the command line, the state files and the control socket; the part that connects a line is not in this build"))
-        }
-        verb => ipc::fail("bad_verb", &format!("unknown verb {verb}")),
     }
 }

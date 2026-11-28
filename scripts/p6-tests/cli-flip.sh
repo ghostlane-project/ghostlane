@@ -4,7 +4,7 @@
 #   - cli/ holds a Go module, a Go file or a built Go program;
 #   - cli/Makefile builds with Go, or does not build the Rust program;
 #   - a package spec or the image does not carry ghostlane-engine and the tun's
-#     hev-socks5-tunnel beside ghostlane;
+#     ghostlane-hev beside ghostlane;
 #   - the Linux CLI's jobs (PR Checks' `cli`, release.yml's build-cli, rust-cli.yml)
 #     set up or run Go, or the install smoke does not read `core`;
 #   - an allow-list file of a CLI package is still in scripts/no-go-allow.d.
@@ -24,7 +24,7 @@ if [ -n "$(find "$root/cli" -name '*.go' -not -path '*/target/*' -print -quit)" 
 fi
 
 make="$root/cli/Makefile"
-if grep -nE '\$\(GO\)|singbox|SINGBOX|go build|go test|XRAY_PIN' "$make"; then
+if grep -nE '\$\(GO\)|singbox|SINGBOX|(^|[^a-z])go (build|test|vet)|XRAY_PIN' "$make"; then
   bad "cli/Makefile still builds or pins Go"
 fi
 grep -q 'cargo' "$make" || bad "cli/Makefile does not build with cargo"
@@ -32,7 +32,7 @@ grep -q 'cargo' "$make" || bad "cli/Makefile does not build with cargo"
 for f in cli/packaging/nfpm.yaml cli/packaging/docker/stage.sh cli/packaging/docker/Dockerfile cli/Makefile; do
   [ -f "$root/$f" ] || { bad "no $f"; continue; }
   grep -q 'ghostlane-engine' "$root/$f" || bad "$f does not carry ghostlane-engine"
-  grep -q 'hev-socks5-tunnel' "$root/$f" || bad "$f does not carry hev-socks5-tunnel"
+  grep -q 'ghostlane-hev' "$root/$f" || bad "$f does not carry ghostlane-hev"
 done
 
 release="$root/.github/workflows/release.yml"
@@ -47,13 +47,13 @@ grep -q 'check-no-go.sh' <<<"$job" || bad "release.yml's build-cli does not run 
 checks="$root/.github/workflows/pr-checks.yml"
 job=$(awk '/^  cli:/{p=1;print;next} /^  [a-z][a-z0-9_-]*:/{if(p)exit} p' "$checks")
 [ -n "$job" ] || bad "pr-checks.yml has no cli job"
-if grep -nE 'setup-go|go vet|go test|golangci|make singbox-src|make xray-server' <<<"$job"; then
+if grep -nE 'setup-go|(^|[^a-z])go (vet|test)|golangci|make singbox-src|make xray-server' <<<"$job"; then
   bad "PR Checks' cli job still runs Go"
 fi
 grep -q 'check-no-go.sh' <<<"$job" || bad "PR Checks' cli job does not run K1 on the packages"
 grep -qE 'core' <<<"$(grep -n 'version --json' <<<"$job")" || bad "PR Checks' cli job's install smoke does not read core in version --json"
 
-if grep -nE 'setup-go|go test|make build' "$root/.github/workflows/rust-cli.yml"; then
+if grep -nE 'setup-go|(^|[^a-z])go (build|test)|make build' "$root/.github/workflows/rust-cli.yml"; then
   bad "rust-cli.yml still builds Go"
 fi
 

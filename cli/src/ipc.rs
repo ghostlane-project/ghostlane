@@ -118,13 +118,18 @@ pub struct Status {
     pub subscriptions: Vec<SubscriptionView>,
 }
 
-/// What a build is made of. The Go program names two more cores; the keys
+/// What a build is made of. The Go program named two more cores; the keys
 /// stay for the clients that read them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VersionInfo {
     pub version: String,
     pub engine: String,
+    /// The commit of the Rust core the engine beside this program is built
+    /// from, as `ghostlane-engine version` says it; left out when there is no
+    /// engine to ask.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub core: String,
     pub singbox: String,
     pub xray: String,
     /// This build decrypts crypt1 lists and links.

@@ -126,7 +126,11 @@ case "$FAMILY" in
   tar)
     stage="$tmp/stage"; mkdir -p "$stage"; tar -C "$stage" -xzf "$tmp/$asset"
     as_root install -d "$ROOT/usr/local/bin" "$ROOT/etc/systemd/system" "$ROOT/usr/local/share/doc/ghostlane-cli"
-    as_root install -m 0755 "$stage/ghostlane" "$ROOT/usr/local/bin/ghostlane"
+    # the program, the core's engine and the tun's hev: it looks for the other
+    # two beside its own file
+    for f in ghostlane ghostlane-engine ghostlane-hev; do
+      as_root install -m 0755 "$stage/$f" "$ROOT/usr/local/bin/$f"
+    done
     sed 's#/usr/bin/ghostlane#/usr/local/bin/ghostlane#' "$stage/ghostlane.service" > "$tmp/unit"
     as_root install -m 0644 "$tmp/unit" "$ROOT/etc/systemd/system/ghostlane.service"
     for f in README.md LICENSE COPYRIGHT; do

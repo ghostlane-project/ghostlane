@@ -1070,6 +1070,7 @@ impl Daemon {
                     if vless.transport == "xhttp" {
                         bringing.engine_obj = Some((self.deps.start_xray)(&XrayParams {
                             line: vless.clone(),
+                            raw: bringing.entry.raw.clone(),
                         })?);
                         bringing.stage = BringUpStage::ConfirmEngine;
                     } else if bringing.mode == "tun" {
@@ -1110,6 +1111,14 @@ impl Daemon {
                         proxy_port: 30_001,
                         probe_listen: probe_addr.clone(),
                         probe_user: probe_user.clone(),
+                        probe_pass: probe_pass.clone(),
+                        line: bringing.entry.raw.clone(),
+                        proxy_user: String::new(),
+                        proxy_pass: String::new(),
+                        preflight: true,
+                        upstream_addr: String::new(),
+                        upstream_user: String::new(),
+                        upstream_pass: String::new(),
                     })?;
                     bringing.front_obj = Some(front);
                     bringing.probe_addr = probe_addr;
@@ -1157,6 +1166,13 @@ impl Daemon {
                 } else {
                     self.upstream_kind(&bringing.entry)
                 };
+                let (upstream_addr, upstream_user, upstream_pass) = match &bringing.engine_obj {
+                    Some(engine) => {
+                        let (user, pass) = engine.credentials();
+                        (engine.socks_addr(), user, pass)
+                    }
+                    None => (String::new(), String::new(), String::new()),
+                };
                 let result = (self.deps.start_front)(&FrontParams {
                     mode: bringing.mode.clone(),
                     upstream,
@@ -1164,6 +1180,14 @@ impl Daemon {
                     proxy_port: self.cfg.proxy.port as u16,
                     probe_listen: bringing.probe_addr.clone(),
                     probe_user: bringing.probe_user.clone(),
+                    probe_pass: bringing.probe_pass.clone(),
+                    line: bringing.entry.raw.clone(),
+                    proxy_user: self.cfg.proxy.user.clone(),
+                    proxy_pass: self.cfg.proxy.pass.clone(),
+                    preflight: false,
+                    upstream_addr,
+                    upstream_user,
+                    upstream_pass,
                 });
                 match result {
                     Ok(front) => bringing.front_obj = Some(front),

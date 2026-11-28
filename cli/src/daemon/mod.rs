@@ -11,6 +11,7 @@ pub mod device;
 #[cfg(test)]
 pub mod engine;
 pub mod links;
+pub mod program;
 pub mod routes;
 pub mod scrub;
 mod state;
@@ -93,6 +94,8 @@ pub struct OlcrtcParams {
 
 pub struct XrayParams {
     pub line: VlessLine,
+    /// The link as the list wrote it: what the core is started from.
+    pub raw: String,
 }
 
 pub struct FrontParams {
@@ -103,6 +106,21 @@ pub struct FrontParams {
     pub proxy_port: u16,
     pub probe_listen: String,
     pub probe_user: String,
+    pub probe_pass: String,
+    /// The link as the list wrote it, for a line the front carries itself
+    /// (`upstream` is `vless` or `hy2`).
+    pub line: String,
+    /// The proxy's own login, from the config; none when both are empty.
+    pub proxy_user: String,
+    pub proxy_pass: String,
+    /// Only the probe inbound is wanted: the check of a native line before
+    /// the tun's rules take the default route.
+    pub preflight: bool,
+    /// Where the engine in front of this front listens, and its login
+    /// (`upstream` is `socks`).
+    pub upstream_addr: String,
+    pub upstream_user: String,
+    pub upstream_pass: String,
 }
 
 /// Everything the daemon is given instead of doing itself. The cases replace
