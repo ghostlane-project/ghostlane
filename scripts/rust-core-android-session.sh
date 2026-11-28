@@ -247,7 +247,7 @@ session_start() {
     kill "$sampler" 2> /dev/null
     wait "$sampler" 2> /dev/null
   fi
-  [ "$(log_count 'Transport engine: Rust core')" -ge 1 ] || fail "the session is not on the Rust core"
+  [ "$(log_count 'Rust core ready on')" -ge 1 ] || fail "the session is not on the Rust core"
 }
 
 session_stop() {

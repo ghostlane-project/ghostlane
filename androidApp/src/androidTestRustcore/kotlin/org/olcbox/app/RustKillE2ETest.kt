@@ -84,12 +84,12 @@ class RustKillE2ETest {
         }
         d.saveProfile(RustE2eDevice.PLACEHOLDER_LINK)
         saveSettings(login)
-        val onRust = d.logCount("Transport engine: Rust core")
+        val onRust = d.logCount("Rust core ready on")
         try {
             // The debug receiver's start, and what Android redelivers: the action and nothing else.
             d.startVpn(d.serviceIntent(OlcboxVpnActions.ACTION_START_VPN))
             d.waitForConnected()
-            assertTrue("the saved switch put the session on the Rust core", d.logCount("Transport engine: Rust core") > onRust)
+            assertTrue("the session came up on the Rust core", d.logCount("Rust core ready on") > onRust)
             assertTrue("the Rust core runs", RustCoreEngine.isCoreRunning())
             assertEquals("the saved login is the one the core was given", login, seen.get())
             assertTrue(
