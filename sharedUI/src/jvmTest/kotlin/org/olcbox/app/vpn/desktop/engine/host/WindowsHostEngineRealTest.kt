@@ -125,7 +125,7 @@ class WindowsHostEngineRealTest {
 
     private fun hev(): Path {
         val out = System.getenv("HEV_OUT") ?: error("HEV_OUT is not set")
-        return Path.of(out, "hev.exe").also { check(Files.isRegularFile(it)) { "no hev.exe in $out" } }
+        return Path.of(out, "hev.exe").also { require(Files.isRegularFile(it)) { "no hev.exe in $out" } }
     }
 
     private val login = SocksLogin("tun-user", "tun-pass")
