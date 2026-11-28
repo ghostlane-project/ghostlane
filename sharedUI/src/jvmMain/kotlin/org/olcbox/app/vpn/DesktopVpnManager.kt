@@ -84,6 +84,7 @@ import org.olcbox.app.vpn.desktop.WindowsTunPlan
 import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.DesktopEngines
+import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
 import org.olcbox.app.vpn.desktop.engine.LineRequest
@@ -856,7 +857,7 @@ class DesktopVpnManager private constructor(
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             // Where the rules apply, if anywhere (desktopRulesHome). Global with
             // no rules of the user's keeps every core and tunnel as it was.
-            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules)
+            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
             if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
                 addLog("Routing: $desktopMode carries everything for this server")
             } else if (rulesHome != DesktopRulesHome.Nowhere) {
@@ -1812,6 +1813,10 @@ class DesktopVpnManager private constructor(
         }
         true
     }.getOrDefault(false)
+
+    /** Which engine runs this session's lines, as [rulesHomeWithoutDaemon] asks it. */
+    private fun lineEngineKind(): DesktopLineEngine =
+        if (DesktopEngines.runsOnRust(engine)) DesktopLineEngine.Rust else DesktopLineEngine.Go
 
     private fun stopDesktopCores() {
         engine.line.stopNow()
@@ -2909,7 +2914,7 @@ class DesktopVpnManager private constructor(
         val mode = current.desktopMode
         val socks = session.built.socks
         val isOlcrtc = location.kind == LocationKind.Olcrtc
-        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules)
+        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
         val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
             routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), DirectDns.System)
         } else {
@@ -4140,5 +4145,10 @@ internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
  * sing-box in the helper to hold rules. What that answers for the daemon is
  * nowhere, and a session says so in its log.
  */
-internal fun rulesHomeWithoutDaemon(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
-    desktopRulesHome(mode, isOlcrtc, needsRules).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }
+internal fun rulesHomeWithoutDaemon(
+    mode: DesktopMode,
+    isOlcrtc: Boolean,
+    needsRules: Boolean,
+    engine: DesktopLineEngine = DesktopLineEngine.Go
+): DesktopRulesHome =
+    desktopRulesHome(mode, isOlcrtc, needsRules, engine).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }
