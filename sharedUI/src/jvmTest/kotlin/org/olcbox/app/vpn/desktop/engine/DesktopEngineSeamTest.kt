@@ -22,12 +22,9 @@ class DesktopEngineSeamTest {
     @Test
     fun theManagerNamesNoCoreOfALine() {
         for (name in listOf("DesktopSingBoxController", "DesktopXrayController")) {
-            assertFalse(name in manager, "DesktopVpnManager.kt still names $name; a line's cores belong to GoEngines.kt")
+            assertFalse(name in manager, "DesktopVpnManager.kt still names $name; a line's cores belong to an engine")
         }
-        val go = engineFile("GoEngines.kt")
-        assertTrue(go.isFile, "GoEngines.kt is missing")
-        val text = go.readText()
-        assertTrue("DesktopSingBoxController" in text && "DesktopXrayController" in text, "GoEngines.kt holds the two cores")
+        assertFalse(engineFile("GoEngines.kt").exists(), "GoEngines.kt is back; no Go core is run by the desktop")
         assertTrue(engineFile("DesktopEngine.kt").isFile, "DesktopEngine.kt is missing")
     }
 
@@ -54,8 +51,7 @@ class DesktopEngineSeamTest {
 
     @Test
     fun theManagerNamesNoRoomCommand() {
-        assertFalse("OlcRtcCommand" in manager, "DesktopVpnManager.kt still names OlcRtcCommand; a room's command belongs to GoEngines.kt")
-        assertTrue("OlcRtcCommand" in engineFile("GoEngines.kt").readText(), "GoEngines.kt builds the room's command")
+        assertFalse("OlcRtcCommand" in manager, "DesktopVpnManager.kt still names OlcRtcCommand; a room's command belongs to its engine")
         // What the room's program prints is its engine's to read.
         assertFalse("SOCKS5 server listening" in manager, "the manager still reads the olcRTC engine's own words")
     }

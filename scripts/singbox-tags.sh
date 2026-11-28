@@ -19,9 +19,7 @@
 # new SINGBOX_VERSION adds nothing here on its own: read its include/ and
 # release/DEFAULT_BUILD_TAGS_OTHERS against these lists when the pin moves.
 #
-# Not in cores-pins.sh, because that file is in the iPhone Cores' cache key
-# (ios-frameworks.yml): a change to these lists would rebuild a framework that
-# does not read them.
+# Not in cores-pins.sh, which holds pins only and is read by the release gate.
 #
 # Dropped from upstream's list, and why nothing misses them:
 #   with_tailscale      the Tailscale endpoint; no config has one. Likely the
@@ -59,9 +57,9 @@ SINGBOX_TAGS_ANDROID="with_quic,with_utls,badlinkname,tfogo_checklinkname0"
 #
 #   with_gvisor     the tun inbound's `stack: gvisor`. Without it sing-box
 #                   refuses the tun ("gVisor is not included in this build").
-#   with_clash_api  `experimental.clash_api`, the local API the traffic chart
-#                   reads (vpn/desktop/TunnelTraffic.kt,
-#                   scripts/check-singbox-traffic-api.sh).
+#   with_clash_api  `experimental.clash_api`, the local API a tun's traffic
+#                   could be read from (SingBoxConfig.LocalApi); nothing reads
+#                   it now, the chart counts the tun device.
 #   with_dhcp       for macOS. A `local` resolver in a process with a tun asks
 #                   the physical network's DHCP resolvers on Darwin
 #                   (dns/transport/local/local_darwin.go); without the tag it

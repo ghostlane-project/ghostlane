@@ -115,10 +115,8 @@ list's order with failover between them, rooms and servers alike), an
 exact label from 'list' (one line), or an index from 'list'. Lists whose
 labels carry no country code (city names) are selected by label or index.
 
-Which core carries what: olcRTC rooms run in the engine, XHTTP lines in
-Xray-core, VLESS Reality and Hysteria2 in sing-box itself. In tun mode a
-Reality or Hysteria2 server is proven through a local proxy first, so a dead
-server never gets the tun.
+Every line and room runs in ghostlane-engine. In tun mode a server is
+proven through a local proxy first, so a dead server never gets the tun.
 
   --proxy   (default) a local SOCKS5 + HTTP proxy on 127.0.0.1:1080; needs no
             privileges; 'status' prints the environment lines to paste.

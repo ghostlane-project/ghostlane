@@ -134,7 +134,7 @@ data class LocationConfig(
         /**
          * The third carrier (Sber SaluteJazz, LiveKit-as-JSON over pion),
          * merged into the engine 2026-09-22. This value is forwarded verbatim
-         * as the engine's `auth.provider` (see OlcRtcCommand.desktopProviderArg,
+         * as the engine's `auth.provider` (see OlcRtcProvider.desktopProviderArg,
          * IosVpnManager.carrierName, OlcboxVpnService.setProvider), and the
          * engine answers to `salutejazz` alone. `jazz` is the same service
          * under upstream olcrtc's older name, gone from the engine since May

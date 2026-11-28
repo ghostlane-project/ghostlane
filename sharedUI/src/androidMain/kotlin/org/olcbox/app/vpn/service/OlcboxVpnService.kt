@@ -71,7 +71,6 @@ import org.olcbox.app.net.UpstreamDns
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.Routing
-import org.olcbox.app.net.RuleSets
 import org.olcbox.app.net.SessionFailover
 import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.SmartConnect
@@ -2152,9 +2151,8 @@ class OlcboxVpnService : VpnService() {
     }
 
     /**
-     * What the builders get for [routingMode]: the rule files on disk and the
-     * network's resolvers for direct names. Files are rewritten on every start —
-     * 59 KB, and the alternative is a version check that can be wrong.
+     * What the builders get for [routingMode]: the rules and the network's
+     * resolvers for direct names.
      */
     private suspend fun routingFor(upstream: Network?): Routing {
         // Android itself blocks IPv6 at the VpnService boundary.
@@ -2171,7 +2169,6 @@ class OlcboxVpnService : VpnService() {
             // when Android reports no usable resolver.
             directDns = DirectDns.Servers(upstreamDnsAddresses(upstream))
         )
-        for (file in RuleSets.selected(routing)) File(dir, file.name).writeBytes(RuleSets.bytes(file))
         val own = routing.custom.direct.size + routing.custom.tunnel.size
         addLog("Routing: ${routingMode.hubSummary()}" + if (own > 0) ", $own rules of the user's" else "")
         return routing

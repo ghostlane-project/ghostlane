@@ -98,9 +98,9 @@ Everything the Ghostlane app does, feature by feature and platform by platform. 
 - On the desktop a core or an olcRTC engine that dies is restarted behind the
   tunnel instead of taking it down: the tunnel stays as it is, and apps wait
   behind it, rather than going out directly, while the process comes back on
-  the port it had. A dead sing-box or Xray core is noticed now; it used to leave
-  a session that said Connected and carried nothing. The death of the tunnel's
-  own process still ends the session.
+  the port it had. A dead engine is noticed; the session never says Connected
+  while it carries nothing. The death of the tunnel's own process still ends
+  the session.
 - On the desktop another server chosen while connected is started behind the
   tunnel as well. The tunnel is built once, for the session, and is not taken
   down, rebuilt or started again for the new server, so there is no moment

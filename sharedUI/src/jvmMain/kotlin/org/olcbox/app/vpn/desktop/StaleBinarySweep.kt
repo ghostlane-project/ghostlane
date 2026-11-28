@@ -15,8 +15,9 @@ import java.nio.file.Path
  * could still run one by hand, and the old credentials in its config could
  * still open a SOCKS port. [sweep] takes them away and keeps the engine and
  * the tun's C helper. It is idempotent, and the Linux launcher calls the same list
- * of names on the first start of a new install and the Windows manager calls
- * [sweepAppData] at its own start (Windows has no launcher script).
+ * of names on the first start of a new install; the desktop manager calls
+ * [sweepAppData] at its own start on every system (Windows and macOS have no
+ * launcher script).
  */
 internal object StaleBinarySweep {
     /** The files the old cores were copied as, whatever their name in the jar. */
