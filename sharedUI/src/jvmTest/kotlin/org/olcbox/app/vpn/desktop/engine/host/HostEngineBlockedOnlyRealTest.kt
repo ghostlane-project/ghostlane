@@ -105,7 +105,7 @@ class HostEngineBlockedOnlyRealTest {
                 spec = requireNotNull(LinkParser.parse(check.link)),
                 kind = "Vless",
                 port = port,
-                routing = Routing.Rules("/unused", DirectDns.System, Routing.Policy.BlockedOnly, CustomRules.of(emptyList(), emptyList())),
+                routing = Routing.Rules("/unused", DirectDns.Servers(listOf("192.0.2.53")), Routing.Policy.BlockedOnly, CustomRules.of(emptyList(), emptyList())),
                 verboseLogs = false,
                 login = null,
                 serverResolver = null,

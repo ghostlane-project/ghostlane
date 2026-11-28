@@ -339,7 +339,11 @@ class HostEngineTest {
         val engine = HostEngine(host, binary = { programs++; error("no program in this test") }, serverAddress = noName)
         val blocked = Routing.Rules(scratch.toString(), DirectDns.System, Routing.Policy.BlockedOnly)
         val onlyBlocked = assertFailsWith<IllegalStateException> { engine.line.start(request(reality, routing = blocked)) }
-        assertEquals("${HostSession.REFUSED}: ${CoreConfig.BLOCKED_ONLY_REFUSAL}", onlyBlocked.message)
+        // The list is the app's to give (HostGeodata); what the core refuses here is a resolver it cannot name.
+        assertEquals(
+            "${HostSession.REFUSED}: the Rust core cannot name the system resolver: give it an address",
+            onlyBlocked.message
+        )
         val noPort = assertFailsWith<IllegalStateException> { engine.line.start(request(reality, port = 0)) }
         assertEquals("${HostSession.REFUSED}: ${CoreInbound.PORT_REFUSAL}", noPort.message)
         assertEquals(0, programs)

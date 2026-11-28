@@ -161,7 +161,11 @@ internal object HostSession {
         } else null
         val plan = CoreInbound.Plan(CoreInbound.Proxy(request.port, request.login), lan)
         CoreInbound.refusal(plan)?.let { refuse(it) }
-        val core = CoreInbound.build(spec, plan, request.routing, geodata, request.verboseLogs, refilterDat = blockedOnly)
+        val core = try {
+            CoreInbound.build(spec, plan, request.routing, geodata, request.verboseLogs, refilterDat = blockedOnly)
+        } catch (e: IllegalArgumentException) {
+            refuse(e.message ?: "the core refuses this config")
+        }
         val bind = request.bindInterface ?: if (request.autoDetectInterface) defaultInterface() else null
         return Line(spec, core, bind, named, lan, geodataPath)
     }

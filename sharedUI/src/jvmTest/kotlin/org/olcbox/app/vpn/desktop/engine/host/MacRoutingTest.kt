@@ -41,7 +41,7 @@ class MacRoutingTest {
             "&pbk=${CoreFixtures.PUBLIC_KEY}&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&flow=xtls-rprx-vision&type=tcp#line"
 
     private val blockedOnly =
-        Routing.Rules("/unused", DirectDns.System, Routing.Policy.BlockedOnly, CustomRules.of(emptyList(), emptyList()))
+        Routing.Rules("/unused", DirectDns.Servers(listOf("192.0.2.53")), Routing.Policy.BlockedOnly, CustomRules.of(emptyList(), emptyList()))
 
     private fun request(routing: Routing) = LineRequest(
         spec = requireNotNull(LinkParser.parse(reality)),
@@ -153,7 +153,8 @@ class MacRoutingTest {
             "a session's rules home ignores the engine"
         )
         assertTrue(
-            manager.contains("rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())"),
+            manager.contains("rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())") &&
+                manager.split("coreDirectDns()").size == 4,
             "a line added behind the tunnel ignores the engine"
         )
     }
