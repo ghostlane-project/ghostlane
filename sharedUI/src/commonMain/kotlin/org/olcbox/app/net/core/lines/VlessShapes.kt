@@ -20,9 +20,7 @@ import org.olcbox.app.net.core.putVless
  * is [Reality]'s.
  *
  * A VLESS link over HTTP/2 (`type=http`, or `h2` as older links spell it) is
- * this kind's too, with TLS, with Reality or with none, and it is refused
- * ([HTTP2_REFUSAL]): its shape is [HTTP2], which is not among the shapes this
- * kind writes.
+ * [VlessHttp2]'s, with TLS, with Reality or with none.
  */
 internal object VlessShapes : CoreLine {
     const val TLS = "vless-tls"
@@ -33,13 +31,6 @@ internal object VlessShapes : CoreLine {
     const val NONE_GRPC = "vless-none-grpc"
     const val NONE_HTTP_UPGRADE = "vless-none-httpupgrade"
     const val NONE_XHTTP = "vless-none-xhttp"
-
-    /** The shape of a VLESS link over HTTP/2: this kind's, always refused, so no config is written for it. */
-    const val HTTP2 = "vless-http2"
-
-    /** Why a VLESS link over HTTP/2 is refused. */
-    const val HTTP2_REFUSAL =
-        "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
 
     /** Why a link with Vision and no TLS is refused: Vision runs inside the line's TLS, and there is none. */
     const val VISION_NEEDS_TLS = "the link asks for Vision with no TLS (security=none), and Vision runs only inside TLS or Reality"
@@ -60,7 +51,7 @@ internal object VlessShapes : CoreLine {
         if (spec !is OutboundSpec.Vless) return null
         val transport = spec.transport
         return when {
-            transport is TransportSpec.Http -> HTTP2
+            transport is TransportSpec.Http -> null
             spec.publicKey.isNotBlank() -> null
             spec.plain -> when (transport) {
                 TransportSpec.Tcp -> NONE
@@ -68,7 +59,7 @@ internal object VlessShapes : CoreLine {
                 is TransportSpec.Grpc -> NONE_GRPC
                 is TransportSpec.HttpUpgrade -> NONE_HTTP_UPGRADE
                 is TransportSpec.Xhttp -> NONE_XHTTP
-                is TransportSpec.Http -> HTTP2
+                is TransportSpec.Http -> null
             }
             else -> when (transport) {
                 TransportSpec.Tcp -> TLS
@@ -81,7 +72,7 @@ internal object VlessShapes : CoreLine {
     }
 
     /**
-     * Refused: HTTP/2 ([HTTP2_REFUSAL]), a flow other than Vision, Vision
+     * Refused: a flow other than Vision, Vision
      * with no TLS ([VISION_NEEDS_TLS]), and no TLS to a server the core
      * does not send VLESS in the clear to ([PLAIN_NEEDS_PRIVATE_SERVER]). A
      * link that waives the certificate check is carried: the waiver is the
@@ -92,7 +83,6 @@ internal object VlessShapes : CoreLine {
         spec as OutboundSpec.Vless
         val flow = CoreSupport.flowRefusal(spec.flow)
         return when {
-            spec.transport is TransportSpec.Http -> HTTP2_REFUSAL
             flow != null -> flow
             spec.plain && spec.flow != null -> VISION_NEEDS_TLS
             spec.plain && !isPrivateServer(spec.host) -> PLAIN_NEEDS_PRIVATE_SERVER
