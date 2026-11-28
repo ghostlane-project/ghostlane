@@ -27,9 +27,7 @@ on:
       - .github/workflows/rust-cli.yml
       - scripts/build-hev-linux.sh
   push:
-    # branches, so that a tag (whose push no path filter reads) starts nothing
-    branches:
-      - "**"
+    branches: [rust/all, main, ghostlane]
     paths:
       - cli/**
       - .github/workflows/rust-cli.yml

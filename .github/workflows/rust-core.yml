@@ -54,24 +54,6 @@ on:
       - 'sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**'
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/InteropDumpTest.kt
       - sharedUI/build.gradle.kts
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - .github/workflows/rust-core.yml
-      - scripts/ghostlane-core-pin.sh
-      - scripts/ghostlane-core-resolve.sh
-      - scripts/rust-core-checkout.sh
-      - scripts/test-rust-core-checkout.sh
-      - scripts/rust-core-upstream-ci.py
-      - scripts/rust-core-upstream-skips.txt
-      - scripts/rust-core-interop.py
-      - 'scripts/rust-core-interop/**'
-      - scripts/xray-servers.txt
-      - scripts/fetch-xray-servers.sh
-      - 'sharedUI/src/commonMain/kotlin/org/olcbox/app/net/**'
-      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/InteropDumpTest.kt
-      - sharedUI/build.gradle.kts
   workflow_dispatch:
     inputs:
       pin:
