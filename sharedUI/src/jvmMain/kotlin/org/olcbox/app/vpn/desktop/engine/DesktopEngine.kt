@@ -9,6 +9,7 @@ import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.DesktopMode
+import org.olcbox.app.vpn.desktop.PhysicalInterfaceWatch
 import org.olcbox.app.vpn.desktop.WatchedEngine
 import org.olcbox.app.vpn.desktop.engine.host.HostEngine
 import java.nio.file.Path
@@ -93,8 +94,15 @@ internal object DesktopEngines {
     @Volatile
     var factory: (DesktopEngineHost) -> DesktopEngine = { host -> defaultFor(DesktopPaths.os, host) }
 
-    /** What a build runs on [os]. */
-    fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = GoEngines(host)
+    /**
+     * What a build runs on [os]: ghostlane-engine, watched for a change of the
+     * way out, on Linux and macOS, whose packages carry no Go core. Windows
+     * keeps the Go engines until its own flip.
+     */
+    fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = when (os) {
+        DesktopOs.Linux, DesktopOs.MacOS -> PhysicalInterfaceWatch.around(HostEngine(host), host)
+        else -> GoEngines(host)
+    }
 
     /** Whether [engine] is ghostlane-engine's, watched or not. */
     fun runsOnRust(engine: DesktopEngine): Boolean =

@@ -52,8 +52,9 @@ import javax.naming.directory.InitialDirContext
  *
  * What is not on this engine yet is the Go engines' still, call for call:
  * the Windows tun's core, a room, the front before a room and the probes.
- * Go stays the desktop's default: [org.olcbox.app.vpn.desktop.engine.DesktopEngines]
- * hands a manager this engine only when it is told to.
+ * This is the desktop's default on Linux and macOS
+ * ([org.olcbox.app.vpn.desktop.engine.DesktopEngines.defaultFor]); the Go
+ * engines stay for what it hands to them, and for Windows.
  *
  * [binary] is the program ([HostAssets.resolve]); [serverAddress] the
  * address of a server named by a hostname, asked before the engine starts
