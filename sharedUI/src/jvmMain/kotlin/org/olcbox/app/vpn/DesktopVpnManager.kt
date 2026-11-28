@@ -74,7 +74,6 @@ import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SessionBuild
 import org.olcbox.app.vpn.desktop.SessionEndpoint
 import org.olcbox.app.vpn.desktop.MacTunTraffic
-import org.olcbox.app.vpn.desktop.SingBoxTunTraffic
 import org.olcbox.app.vpn.desktop.TunnelTraffic
 import org.olcbox.app.vpn.desktop.StaleBinarySweep
 import org.olcbox.app.vpn.desktop.WindowsAdapterTraffic
@@ -247,9 +246,6 @@ class DesktopVpnManager private constructor(
         WindowsTunJournal(DesktopPaths.appDataDir().resolve("windows-tun.json"))
     )
     private val macOsTunController = MacOsTunController(::addLog)
-
-    /** The daemon's own socks inbound, which is what a green light is measured through. */
-    private var macTunVerifyPort: Int? = null
 
     /**
      * What keeps count of the tunnel this session runs in, for the status
@@ -524,8 +520,8 @@ class DesktopVpnManager private constructor(
         }
         val config = locationConfig.normalized()
         if (config.kind != LocationKind.Olcrtc) {
-            val spec = config.rawLink?.let(LinkParser::parse) ?: return null
-            return DesktopChannelProbe.measure(spec)
+            if (config.rawLink?.let(LinkParser::parse) == null) return null
+            return DesktopChannelProbe.measure(config, engine.probes.fresh)
         }
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
@@ -746,14 +742,15 @@ class DesktopVpnManager private constructor(
         Runtime.getRuntime().addShutdownHook(lanShutdownHook)
         runCatching { lanProxy.cleanupStaleFirewallRules() }
             .onFailure { addLog("LAN sharing: stale firewall cleanup failed: ${it.message}") }
+        // The Go cores an earlier version staged in the app's bin directory are
+        // taken away here, on every system: the Linux launcher script does the
+        // same on a new install, and Windows and macOS have none.
+        runCatching { StaleBinarySweep.sweepAppData() }
+            .onSuccess { removed ->
+                if (removed.isNotEmpty()) addLog("Removed the cores of an earlier version: ${removed.joinToString()}")
+            }
+            .onFailure { addLog("Sweep of the cores of an earlier version failed: ${it.message}") }
         if (DesktopPaths.os == DesktopOs.Windows) {
-            // Windows has no launcher script: the Go cores an earlier version
-            // staged in the app's bin directory are taken away here.
-            runCatching { StaleBinarySweep.sweepAppData() }
-                .onSuccess { removed ->
-                    if (removed.isNotEmpty()) addLog("Removed the cores of an earlier version: ${removed.joinToString()}")
-                }
-                .onFailure { addLog("Sweep of the cores of an earlier version failed: ${it.message}") }
             scope.launch {
                 // A run that was killed left the system's proxy pointing at a PAC
                 // nobody serves, and perhaps a tunnel with no line behind it.
@@ -872,7 +869,6 @@ class DesktopVpnManager private constructor(
                     DesktopPaths.appDataDir().resolve("rulesets").toString(),
                     coreDirectDns()
                 )
-                installRuleSets(routing)
                 routing
             } else {
                 Routing.Global
@@ -1137,36 +1133,22 @@ class DesktopVpnManager private constructor(
             // "connected" — a port collision, a rejected certificate, a browser that
             // never used the proxy — because the status meant "we ran the steps", not
             // "traffic reaches the internet".
-            // In TUN mode the probe goes through the daemon's own inbound, so a
-            // green light means the tun carried the request — not merely that the
-            // core would have. That inbound has no auth; only the olcRTC core's has.
-            val tunVerifyPort = if (desktopMode == DesktopMode.MacTun) macTunVerifyPort else null
-            val verifiedThroughTun = tunVerifyPort != null
             // Through the front when there is one: it has no auth, and a green
-            // light has to be about the chain the traffic actually takes.
-            val directToOlcrtc = isOlcrtc && !verifiedThroughTun && frontPort == null
+            // light has to be about the chain the traffic actually takes. Only
+            // the olcRTC core's own listener has a login.
+            val directToOlcrtc = isOlcrtc && frontPort == null
             channelProxy = SubscriptionFetchProxy(
                 socksSettings.host,
-                tunVerifyPort ?: (frontPort ?: effectiveSocksPort),
+                frontPort ?: effectiveSocksPort,
                 if (directToOlcrtc) socksSettings.username else "",
                 if (directToOlcrtc) socksSettings.password else ""
             )
-            val exit = when {
-                tunVerifyPort != null -> verifyThroughMacTun(
-                    host = socksSettings.host,
-                    port = tunVerifyPort,
-                    requestGeneration = requestGeneration,
-                    lineAlive = {
-                        if (isOlcrtc) process?.isAlive == true else engine.line.anyRunning()
-                    }
-                )
-                else -> org.olcbox.app.net.TunnelVerifier.verify(
-                    socksHost = socksSettings.host,
-                    socksPort = frontPort ?: effectiveSocksPort,
-                    username = if (directToOlcrtc) socksSettings.username else "",
-                    password = if (directToOlcrtc) socksSettings.password else ""
-                )
-            }
+            val exit = org.olcbox.app.net.TunnelVerifier.verify(
+                socksHost = socksSettings.host,
+                socksPort = frontPort ?: effectiveSocksPort,
+                username = if (directToOlcrtc) socksSettings.username else "",
+                password = if (directToOlcrtc) socksSettings.password else ""
+            )
             if (requestGeneration != generation) {
                 throw CancellationException("Desktop start superseded")
             }
@@ -1221,7 +1203,7 @@ class DesktopVpnManager private constructor(
                         username = socksSettings.username,
                         password = socksSettings.password
                     ),
-                    tunListener = channelProxy.takeIf { verifiedThroughTun },
+                    tunListener = null,
                     // A Mac's tun that answers names answers a line's own as
                     // well, with real addresses, and under the kill switch is
                     // the only resolver a line can reach: its own would be
@@ -1502,50 +1484,9 @@ class DesktopVpnManager private constructor(
             namesProgramsFor = ownProgram(),
             rustEngine = true,
         )
-        macTunVerifyPort = null
         macTunActive = true
         tunnelTraffic = macOsTunController.engineTunName?.let { MacTunTraffic(it) }
         return letsEveryLineOut
-    }
-
-    /**
-     * The session's check through a Mac tunnel's own listener. Every probe
-     * that brings nothing back is written down with what it said and how soon,
-     * and a check that was refused at once is made again for as long as the
-     * tunnel has to settle ([TunnelSettle.asksAgain]): refused is news of this
-     * machine, where the tunnel or the line behind it is not serving yet, and
-     * only silence is news of the far end. [lineAlive] ends the asking when
-     * the line's own process is gone: nothing will answer then.
-     */
-    private suspend fun verifyThroughMacTun(
-        host: String,
-        port: Int,
-        requestGeneration: Long,
-        lineAlive: () -> Boolean
-    ): org.olcbox.app.net.TunnelExit? {
-        val started = System.currentTimeMillis()
-        while (true) {
-            val failures = mutableListOf<org.olcbox.app.net.ProbeFailure>()
-            val exit = org.olcbox.app.net.TunnelVerifier.verify(
-                socksHost = host,
-                socksPort = port,
-                onFailure = { failures += it }
-            )
-            if (exit != null) return exit
-            if (requestGeneration != generation) {
-                throw CancellationException("Desktop start superseded")
-            }
-            failures.forEach {
-                addLog("macOS TUN: the check of ${it.url} brought nothing back after ${it.tookMs} ms: ${it.reason}")
-            }
-            if (!lineAlive()) {
-                addLog("macOS TUN: the line's own process is gone, so the check is not made again")
-                return null
-            }
-            if (!TunnelSettle.asksAgain(failures, System.currentTimeMillis() - started)) return null
-            addLog("macOS TUN: the check was refused at once, which is not an answer from the internet; asking again")
-            delay(TunnelSettle.PAUSE_MS)
-        }
     }
 
     /**
@@ -1595,21 +1536,6 @@ class DesktopVpnManager private constructor(
      */
     private fun ownProgram(): String? = runCatching {
         ProcessHandle.current().info().command().orElse(null)?.let { Path.of(it).toRealPath().toString() }
-    }.getOrNull()
-
-    /**
-     * Where a tun's sing-box is to say what it has carried: a loopback port
-     * nobody holds, as the system picks one, and a secret made for this tun
-     * alone ([org.olcbox.app.net.SingBoxConfig.LocalApi]). Null when the system
-     * names no port. That tun is started without, and its session has no chart:
-     * a port guessed at instead could be somebody's, and a sing-box that cannot
-     * listen where it was told to does not start.
-     */
-    private fun newTrafficApi(): org.olcbox.app.net.SingBoxConfig.LocalApi? = runCatching {
-        java.net.ServerSocket().use { socket ->
-            socket.bind(java.net.InetSocketAddress("127.0.0.1", 0))
-            org.olcbox.app.net.SingBoxConfig.LocalApi(port = socket.localPort, secret = UUID.randomUUID().toString())
-        }
     }.getOrNull()
 
     /**
@@ -1789,19 +1715,6 @@ class DesktopVpnManager private constructor(
         activeCorePort = port
         addLog("sing-box front ready on 127.0.0.1:$port")
         return port
-    }
-
-    /**
-     * The rule-set files, written under the app's data directory for the
-     * proxy's core. Rewritten on every start: 59 KB, and the alternative is
-     * a version check that can be wrong.
-     */
-    private suspend fun installRuleSets(routing: Routing.Rules) {
-        val dir = Path.of(routing.ruleSetDir)
-        Files.createDirectories(dir)
-        for (file in org.olcbox.app.net.RuleSets.selected(routing)) {
-            Files.write(dir.resolve(file.name), org.olcbox.app.net.RuleSets.bytes(file))
-        }
     }
 
     /**
@@ -2149,7 +2062,6 @@ class DesktopVpnManager private constructor(
                         addLog("macOS TUN stop failed: ${it.message}")
                     }
                     macTunActive = false
-                    macTunVerifyPort = null
                 }
                 runCatching {
                     proxyController.restore()
