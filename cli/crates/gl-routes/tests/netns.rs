@@ -125,7 +125,15 @@ fn netns_own_address_rules_and_cleanup() {
 
     // A crash leaves the engine's rules and table behind; cleanup_stale removes them.
     ip(&["rule", "add", "priority", "9003", "table", "2022"]);
-    ip(&["route", "add", "203.0.113.0/24", "dev", "gl-dum0", "table", "2022"]);
+    ip(&[
+        "route",
+        "add",
+        "203.0.113.0/24",
+        "dev",
+        "gl-dum0",
+        "table",
+        "2022",
+    ]);
     m.cleanup_stale().expect("cleanup_stale");
     assert!(rules_with_priority("-4", 9003).is_empty());
     assert_eq!(routes_of_table("-4", 2022), Vec::<String>::new());
