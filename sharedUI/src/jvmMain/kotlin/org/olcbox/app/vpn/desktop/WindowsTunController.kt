@@ -2,11 +2,32 @@ package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.file.Path
 import kotlin.system.exitProcess
 
+/** How the machine leaves now: the interface of its default route and the next hop. */
+internal data class PhysicalRoute(val alias: String, val index: Int, val gateway: String)
+
+/** What the hev tunnel is told. */
+internal data class WindowsTunPlan(
+    val socksPort: Int,
+    val spared: List<String> = emptyList(),
+    val username: String = "",
+    val password: String = "",
+    val dnsGuard: Boolean = true,
+    val adapter: String = WindowsTunController.HEV_ADAPTER,
+)
+
 internal class WindowsTunController(
-    private val addLog: (String) -> Unit
+    private val addLog: (String) -> Unit,
+    internal val journal: WindowsTunJournal = WindowsTunJournal(Path.of("windows-tun.json")),
 ) {
+    /** RED stub: the tunnel's lifecycle is written in the next commit. */
+    suspend fun physicalRoute(): PhysicalRoute = throw NotImplementedError("physicalRoute")
+    suspend fun startTunnel(hev: Path, plan: WindowsTunPlan): Process = throw NotImplementedError("startTunnel")
+    suspend fun stopTunnel(): Unit = throw NotImplementedError("stopTunnel")
+    suspend fun sweep(): List<String> = throw NotImplementedError("sweep")
+
     suspend fun ensureAdministratorOrRequestRestart() {
         if (isAdministrator()) return
 
@@ -114,6 +135,7 @@ internal class WindowsTunController(
 
     internal companion object {
         const val TUN_NAME = "Olcbox"
+        const val HEV_ADAPTER = "Ghostlane-Tun"
         const val ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
 
         /**

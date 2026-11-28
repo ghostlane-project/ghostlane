@@ -193,6 +193,7 @@ Every file under `.github/workflows/` is named here, with what it is for.
   official Xray releases, and the K5 lines through it.
 - `rust-jitsi.yml`: K4's Jitsi leg on the fork's fake.
 - `rust-windows-sys.yml`: K9's system pieces.
+- `rust-windows-tun.yml`: K9's tunnel: hev's Wintun adapter and the split routes, the engine's way out, the DNS guard and the sweep after a kill, as an administrator on windows-2025.
 - `rust-windows-lab.yml`: the Windows spike, by hand, evidence only.
 - `no-go.yml`: K1: its self-test on ubuntu and macOS, and by hand the scan of a published
   release's assets or a run's artifacts.
