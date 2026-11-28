@@ -23,7 +23,8 @@ hand.
 | `resolve` | Resolves the engine revision to a full commit, checks that it carries `internal/gate` and `cmd/gate-report`, and decides the mode and the legs | none |
 | `unit` (x2) | `go test -race ./...` of the engine, default build and lean build | none |
 | `suite` (x4) | One leg per provider: `jitsi`, `salutejazz`, `vkcalls`, `mtslink`; `telemost` and `wbstream` only when a manual run names them (Telemost: [olcrtc#58](https://github.com/ghostlane-project/olcrtc/issues/58)) | that provider's own (`salutejazz` has none) |
-| `verdict` | Merges the legs, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
+| `fakes` | The Rust client: the shipped `ghostlane-engine`, built from the core at the pin, runs the engine's suite as the client `rust` against the three fake carriers (SaluteJazz, VK Calls, MTS Link). No room, no secret. It runs in every run that is not skipped by request, a dry run included | none |
+| `verdict` | Merges the legs, folds in the Rust client, compares with the previous release, renders the markdown, leak-checks it, uploads `Ghostlane-gate-report`, decides | none |
 
 Each suite leg runs the same steps:
 
@@ -105,6 +106,35 @@ A cell is `platform/provider/transport/client/scenario`, for example
 `engine-linux/telemost/vp8channel/mobile/S2`. Nothing in a cell name, a report
 or a log names a room.
 
+### The Rust client
+
+The gate's client is moving from Go to the Rust core (decision D12). The Go
+flavours, `cli` and `mobile`, stay until the last Go client leaves; the `rust`
+flavour is already part of every verdict.
+
+- The `fakes` job checks the core out at the pin of `scripts/ghostlane-core-pin.sh`
+  (`scripts/rust-core-checkout.sh`), builds `ghostlane-engine` with `boring` as it
+  ships, and runs `scripts/gate-fakes.sh`. That script calls the core's own
+  `olc/interop` harness for each carrier: the Go server at the harness's engine
+  pin, a fake room, and the engine behind a shim that turns the gate's client
+  config into the engine's session file. One `gate-report.json` per carrier is
+  uploaded as `gate-fakes`.
+- `gate-merge-reports.py rust` folds those reports into the gate report: the
+  cells keep the engine's ids (`<fake>-linux/<carrier>/<transport>/rust/<scenario>`),
+  and each carrier is a leg with client `rust` and build `ghostlane-engine`. A
+  carrier with no report, or one whose target, client or cells are wrong, becomes
+  one marker cell, `<fake>-linux/<carrier>/*/rust/*`, failed as `did not run`.
+- `decide` fails a report that has no cell of the client `rust`, and a `fakes` job
+  that did not succeed. It is not asked of a gate skipped by request, which is no
+  gate. A dry run is not skipped by request: its skipped report takes the fakes
+  leg's cells as well, and it fails on the same two reasons and on a failed
+  `rust` cell. A dry run joins no live room, and this leg joins none.
+- The harness serves with the engine at the core's `OLC_PIN` (`olc/interop/lib.sh`),
+  which may not be the commit the live legs gate; check K7 holds that the two
+  agree.
+- Live rooms with the Rust client are not run here: they need the owner's word and
+  run from the visapics box, never from this workflow.
+
 ### What makes it red
 
 The last step of `Verdict` lists every reason that applies:
@@ -123,7 +153,9 @@ The last step of `Verdict` lists every reason that applies:
   plan nor a report fails as one marker cell, `engine-linux/<provider>/*/<client>/*`.
 - A flavour's report was rejected: another schema, another engine commit,
   another target, or a cell listed twice or belonging to another leg.
-- The merge, the markdown, the leak check or the upload did not succeed.
+- The report has no `rust` client, or the `fakes` job did not succeed, or one of
+  the Rust client's cells failed (see "The Rust client").
+- The merge, the Rust fold, the markdown, the leak check or the upload did not succeed.
 - A regression against the previous release, at severity `fail`. Today the
   severity is `warn` (see below), so this never applies.
 
@@ -409,15 +441,16 @@ Nothing in the workflows refers to it yet. When it comes:
 
 | File | Role |
 | --- | --- |
-| `.github/workflows/gate.yml` | The gate: resolve, unit, suite, verdict |
+| `.github/workflows/gate.yml` | The gate: resolve, unit, suite, fakes, verdict |
 | `.github/workflows/release.yml` | Calls it (`gate` job); builds and publish need it; the pin as a commit; the report in the notes and assets |
 | `.github/workflows/pr-checks.yml` | Builds against the pinned commit and Go; runs the scripts' tests |
 | `scripts/olcrtc-pin.sh` | The pin (or `--ref`) to a full commit, with checks |
 | `scripts/gate-resolve.sh` | Mode, revision, legs; `check <provider>` for a leg's secrets |
 | `scripts/gate-run.sh` | Every engine name; unit, plan, run, render, compare |
+| `scripts/gate-fakes.sh` | The Rust client's leg: the core's interop harness for each fake carrier, one report apiece |
 | `scripts/gate-mask.sh` | `::add-mask::` for every secret value |
 | `scripts/gate-scrub.py` | Scrub and verify what is uploaded |
-| `scripts/gate-merge-reports.py` | Merge, header, skipped stub, decide |
+| `scripts/gate-merge-reports.py` | Merge, rust fold, header, skipped stub, decide |
 | `scripts/gate-previous-report.sh` | The baseline release's report |
 | `scripts/gate-api.sh` | Read-only GitHub API calls (curl) |
 | `scripts/test_gate_scripts.py` | Offline tests for all of the above |

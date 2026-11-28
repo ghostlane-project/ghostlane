@@ -38,6 +38,11 @@
 # runs out of it. Later entries are spares: moving one to the front is how a
 # room that rotted is replaced (docs/release-gate.md).
 #
+# The Rust client's leg (the shipped ghostlane-engine against the fake carriers)
+# is scripts/gate-fakes.sh, not an entry here: it joins no room, so a dry run
+# walks it, and scripts/test-release-dry.sh reads every other word after this
+# file's name in gate.yml as a call that may join one.
+#
 # Usage (the engine checkout is GATE_ENGINE_DIR, default $GITHUB_WORKSPACE/olcrtc):
 #   gate-run.sh paths                          what the resolve job checks for
 #   gate-run.sh unit <default|lean>            the engine's unit tests, one build
