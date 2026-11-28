@@ -13,6 +13,7 @@ import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.vpn.DesktopVpnManager
 import org.olcbox.app.vpn.VpnStatus
+import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import java.io.File
 import java.net.InetSocketAddress
@@ -107,7 +108,7 @@ class DesktopManagerRealTest {
             // The engine the manager started is the program of this run's pin; the tun's hev runs as root.
             val running = ours(check)
             assertTrue(
-                running.any { it.contains(File(check.engine).name) } && running.any { it.contains(File(check.hev).name) },
+                running.any { it.contains(File(check.engine).name) } && running.any { it.contains(DesktopNativeAssets.hevSocks5TunnelFileName()) || it.contains(File(check.hev).name) },
                 "the session runs ghostlane-engine and hev: $running\n${logs(manager)}"
             )
             assertTrue(
@@ -200,7 +201,9 @@ class DesktopManagerRealTest {
             .filter { it.name != LinuxTunController.TUN_NAME && it.name != LinuxTunController.KILL_SWITCH_DEVICE }
             .associate { it.name to File(it, "rp_filter").readText().trim() }
 
-    private fun programs(check: Check): Set<String> = setOf(File(check.engine).name, File(check.hev).name)
+    /** The engine's file name, and hev's under the name the manager stages its copy by (`hev-socks5-tunnel-linux-<arch>`). */
+    private fun programs(check: Check): Set<String> =
+        setOf(File(check.engine).name, File(check.hev).name, DesktopNativeAssets.hevSocks5TunnelFileName())
 
     private val assignment = Regex("^[A-Za-z_][A-Za-z0-9_]*=.*", RegexOption.DOT_MATCHES_ALL)
 
