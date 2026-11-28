@@ -36,10 +36,12 @@ jobs:
           mkdir -p w/fakes
           gh release download v1.0.469 -R "$GITHUB_REPOSITORY" -p gate-report.json -D w/base
           gh run download 46164260173 -R "$GITHUB_REPOSITORY" -n gate-fakes -D w/fakes
+          mkdir -p w/fakes2
+          gh run download 46147086248 -R "$GITHUB_REPOSITORY" -n gate-fakes -D w/fakes2 || echo "no second artifact"
           find w -type f
       - name: Build the mixed report and run the tool
         run: |
-          set -uo pipefail
+          set +e
           cd w
           cp base/gate-report.json mixed.json
           python3 ../olcbox/scripts/gate-merge-reports.py rust --report mixed.json --rust-dir fakes
@@ -55,11 +57,17 @@ jobs:
           G=../olcbox/scripts/gate-run.sh
           export GATE_ENGINE_DIR="$GITHUB_WORKSPACE/olcrtc"
           echo "== render base"; $G render base/gate-report.json > base.md; echo rc=$?; grep -c '^| `' base.md
-          echo "== render mixed"; $G render mixed.json > mixed.md; echo rc=$?; cat mixed.md
+          echo "== render mixed"; $G render mixed.json > mixed.md; echo rc=$?
           echo "rows in md: $(grep -c '^| `' mixed.md)"
           echo "== compare base mixed (warn)"; $G compare warn base/gate-report.json mixed.json; echo rc=$?
           echo "== compare base mixed (fail)"; $G compare fail base/gate-report.json mixed.json > /dev/null; echo rc=$?
           echo "== compare mixed mixed (fail)"; $G compare fail mixed.json mixed.json; echo rc=$?
           echo "== compare mixed mutated (fail)"; $G compare fail mixed.json mutated.json; echo rc=$?
           echo "== compare mixed base (fail; rust cells vanish)"; $G compare fail mixed.json base/gate-report.json | tail -5; echo rc=$?
+          echo "== two rust runs"
+          if [ -d fakes2/vkcalls ]; then
+            cp base/gate-report.json mixed2.json
+            python3 ../olcbox/scripts/gate-merge-reports.py rust --report mixed2.json --rust-dir fakes2
+            $G compare fail mixed2.json mixed.json | grep -i "rust\|REGRESSION\|fake"; echo rc=${PIPESTATUS[0]}
+          fi
           echo "== leak check"; python3 ../olcbox/scripts/gate-scrub.py --check-only . ; echo rc=$?
