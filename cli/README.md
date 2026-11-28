@@ -34,5 +34,6 @@ Built from `cli/` in this repository: a Rust program (`make build`, `make test`,
 `rust-toolchain.toml` names the toolchain). `ghostlane-engine` is the core's program at the pin in
 `../scripts/ghostlane-core-pin.sh` and `ghostlane-hev` is hev-socks5-tunnel; the Core build makes
 both (`packaging/build-arch.sh` stages them with the program). Licence:
-GPL-3.0-or-later — this binary links [sing-box](https://github.com/SagerNet/sing-box);
-the Ghostlane app itself stays MIT. See `COPYRIGHT` and `../THIRD_PARTY_NOTICES.md`.
+GPL-3.0-or-later; the Ghostlane app itself stays MIT. The engine
+([xray-rust](https://github.com/ghostlane-project/xray-rust), MPL-2.0) and hev-socks5-tunnel (MIT) are
+separate programs in the package, each under its own licence. See `COPYRIGHT` and `../THIRD_PARTY_NOTICES.md`.

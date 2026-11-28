@@ -2,5 +2,7 @@ ghostlane (the cli/ module of Ghostlane)
 Copyright (C) 2026 Ghostlane contributors
 
 Licensed under the GNU General Public License, version 3 or (at your option)
-any later version: see LICENSE. The binary links sing-box (GPL-3.0-or-later),
-the olcRTC engine (Apache-2.0) and, from Stage B, Xray-core (MPL-2.0).
+any later version: see LICENSE. The CLI is GPL-3.0-or-later. The package also
+carries ghostlane-engine (xray-rust, MPL-2.0) and ghostlane-hev
+(hev-socks5-tunnel, MIT), each as a separate program under its own licence:
+see THIRD_PARTY_NOTICES.md.
