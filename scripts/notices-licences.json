@@ -129,6 +129,7 @@
  "ghostlane-engine": "MPL-2.0",
  "ghostlane-gocompat": "GPL-3.0-or-later",
  "ghostlane-links": "GPL-3.0-or-later",
+ "ghostlane-routes": "GPL-3.0-or-later",
  "ghostlane-runtime": "MPL-2.0",
  "gimli": "MIT OR Apache-2.0",
  "glob": "MIT OR Apache-2.0",
