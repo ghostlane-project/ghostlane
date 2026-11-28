@@ -14,6 +14,7 @@ import org.olcbox.app.net.core.CoreRefusal
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -114,7 +115,10 @@ class VlessHttp2Test {
             assertNull(spec("$link&flow=xtls-rprx-vision").flow, link)
             assertEquals(VlessHttp2.NO_FLOW, CoreRefusal.of(spec(link).copy(flow = "xtls-rprx-vision")), link)
         }
-        assertEquals(CoreRefusal.WAIVED_CHECKS, CoreRefusal.of(spec("$reality&allowInsecure=1&type=http&path=%2Fh")))
+        // Nor does a Reality link keep allowInsecure (the parser keeps it on ordinary TLS only): a spec that carries it does.
+        val waived = spec("$reality&allowInsecure=1&type=http&path=%2Fh")
+        assertFalse(waived.insecure)
+        assertEquals(CoreRefusal.WAIVED_CHECKS, CoreRefusal.of(waived.copy(insecure = true)))
         assertEquals(
             "a Reality line with no server name",
             CoreRefusal.of(spec("vless://$id@127.0.0.1:443?security=reality&encryption=none&pbk=${CoreFixtures.PUBLIC_KEY}&sid=ab12&type=http")),
