@@ -577,7 +577,12 @@ selftest() {
   # lines.py reads them, each with K5's server for it.
   "$PY" -I "$HOST/lines.py" lines "$REFS" "$LINES_DIR" > "$work/lines.txt" ||
     die "the lines: a reference with no server, or a shape no line carries (above)"
-  want="$(for f in "$REFS"/ios-core-*.json "$REFS"/core-*.json; do basename "$f"; done | sort)"
+  # A line whose K5 server is sing-box's (scripts/rust-core-interop/sing-box-lines/)
+  # has no server on this host, and lines.py leaves it out.
+  want="$(for f in "$REFS"/ios-core-*.json "$REFS"/core-*.json; do
+    b="$(basename "$f" .json)"; b="${b#ios-}"; b="${b#core-}"
+    [ -f "$LINES_DIR/../sing-box-lines/$b.server.json" ] || basename "$f"
+  done | sort)"
   got="$(awk '{ print $2 }' "$work/lines.txt" | sort)"
   [ "$got" = "$want" ] ||
     die "the fetch's lines are not every case's reference: $(diff <(echo "$want") <(echo "$got") | grep -E '^[<>]' | tr '\n' ' ')"
