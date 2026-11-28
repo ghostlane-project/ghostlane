@@ -34,7 +34,7 @@ on:
       - scripts/pin-move.d/*
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt
       - sharedUI/src/commonMain/kotlin/org/olcbox/app/data/model/**
-      - cli/cmd/ghostlane/**
+      - cli/src/commands.rs
 
 permissions:
   contents: read

@@ -95,7 +95,7 @@ pub fn logged(world: &World, part: &str) -> bool {
 
 pub fn fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("internal/links/testdata")
+        .join("testdata/links")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

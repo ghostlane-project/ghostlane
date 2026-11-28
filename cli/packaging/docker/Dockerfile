@@ -1,4 +1,5 @@
-# ghcr.io/ghostlane-project/ghostlane-cli — the static binary on distroless.
+# ghcr.io/ghostlane-project/ghostlane-cli — the static program, the core's
+# engine and the tun's hev on distroless.
 # Build context: cli/ after `packaging/docker/stage.sh dist <version>` (or
 # `make docker-stage`), which puts the released binaries under dist/docker/.
 #
@@ -11,6 +12,8 @@
 FROM gcr.io/distroless/static-debian12:latest
 ARG TARGETPLATFORM
 COPY dist/docker/${TARGETPLATFORM}/ghostlane /usr/bin/ghostlane
+COPY dist/docker/${TARGETPLATFORM}/ghostlane-engine /usr/bin/ghostlane-engine
+COPY dist/docker/${TARGETPLATFORM}/ghostlane-hev /usr/bin/ghostlane-hev
 # the state (config, caches, device id) lives on the volume, whatever the
 # command line says
 ENV GHOSTLANE_STATE_DIR=/data

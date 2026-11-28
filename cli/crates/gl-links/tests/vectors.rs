@@ -202,7 +202,7 @@ fn every_crypt1_case_is_decrypted_or_refused_as_the_vector_says() {
 }
 
 fn fixture(name: &str) -> String {
-    let path = root().join("cli/internal/links/testdata").join(name);
+    let path = root().join("cli/testdata/links").join(name);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 

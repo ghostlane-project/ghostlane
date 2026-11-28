@@ -17,6 +17,8 @@
 //!   CONNECT and a plain GET for a URL carry a page; `--probe-url` is asked
 //!   through `ghostlane-engine probe`; a dead line and a wrong login fail.
 //!   A room on the `none` carrier is joined on a hub of this test's own.
+//!   The program's own daemon, `ghostlane run`, takes a line from its config,
+//!   connects it in proxy mode through its real main loop and carries a page.
 //!
 //! Nothing here reaches beyond loopback: the page is asked for at
 //! 203.0.113.10 (TEST-NET-3), which only the Xray server's freedom redirect
@@ -38,6 +40,7 @@ use coreconfig::{build_plan, Own, Plan, Spec};
 use ghostlane_cli::daemon::links::OlcrtcLine;
 use ghostlane_cli::daemon::{Engine, OlcrtcParams};
 use ghostlane_cli::engine::{self, Options};
+use ghostlane_cli::ipc::{self, Request};
 use serde_json::json;
 
 const PAGE: &str = "ghostlane-engine-child-page\n";
@@ -801,4 +804,93 @@ fn a_line_with_the_wrong_id_carries_nothing() {
     )
     .is_err());
     engine.stop().expect("a stop");
+}
+
+/// `ghostlane run` with the real engine: the daemon's main loop, its fetch-free
+/// list (one inline line), the front with the proxy's own inbound, the probe.
+#[test]
+fn the_programs_daemon_connects_a_line_in_proxy_mode_and_stops_clean() {
+    let Some(program) = real_engine() else { return };
+    let servers = xray_servers();
+    let Some((version, xray)) = servers.into_iter().next() else {
+        eprintln!("nothing run: XRAY_SERVERS names no server");
+        return;
+    };
+    let scratch = Scratch::create();
+    let page = page_server();
+    let port = free_port();
+    let _server = Xray::start(&xray, scratch.path(), port, page, GOOD);
+    let proxy_port = free_port();
+    let line = format!("vless://{GOOD}@127.0.0.1:{port}?type=tcp&security=none#DE%20test");
+    let socket = scratch.join("run").join("ghostlane.sock");
+    let child = Command::new(env!("CARGO_BIN_EXE_ghostlane"))
+        .args(["run", "--state-dir"])
+        .arg(scratch.join("state"))
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--subscription")
+        .arg(format!("inline:{line}"))
+        .args(["--connect", "1", "--mode", "proxy", "--probe-url"])
+        .arg(format!("http://{TARGET}/"))
+        .env("GHOSTLANE_ENGINE", &program)
+        .env("GHOSTLANE_PROXY_PORT", proxy_port.to_string())
+        .env_remove("GHOSTLANE_PROXY_LISTEN")
+        .env_remove("GHOSTLANE_PROXY_USER")
+        .env_remove("GHOSTLANE_PROXY_PASS")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("the program starts");
+    let mut daemon = Daemon(child);
+
+    let status = |socket: &Path| -> Option<String> {
+        let request = Request {
+            verb: "status".to_string(),
+            ..Request::default()
+        };
+        ipc::call(socket, &request)
+            .ok()
+            .and_then(|answer| answer.status)
+            .map(|status| status.state)
+    };
+    wait_for(
+        &format!("the daemon is up (Xray {version})"),
+        Duration::from_secs(90),
+        || {
+            if let Ok(Some(ended)) = daemon.0.try_wait() {
+                panic!("the daemon ended at start: {ended}");
+            }
+            status(&socket).as_deref() == Some("up")
+        },
+    );
+    let proxy = format!("127.0.0.1:{proxy_port}");
+    assert_eq!(socks5_page(&proxy), PAGE, "Xray {version}: SOCKS5");
+    assert_eq!(connect_page(&proxy), PAGE, "Xray {version}: CONNECT");
+
+    let told = Command::new("kill")
+        .args(["-TERM", &daemon.0.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(told.success());
+    wait_for("the daemon ends", Duration::from_secs(30), || {
+        matches!(daemon.0.try_wait(), Ok(Some(_)))
+    });
+    assert!(
+        !socket.exists(),
+        "the socket file is removed on the way out"
+    );
+    wait_for("the proxy is closed", Duration::from_secs(10), || {
+        TcpStream::connect(&proxy[..]).is_err()
+    });
+}
+
+/// A started daemon that does not outlive a failing test.
+struct Daemon(Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

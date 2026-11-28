@@ -1,6 +1,6 @@
-# One file, four package formats. VERSION and GOARCH come from the environment.
+# One file, four package formats. VERSION and ARCH come from the environment.
 name: ghostlane-cli
-arch: "${GOARCH}"
+arch: "${ARCH}"
 platform: linux
 version: "${VERSION}"
 version_schema: semver
@@ -16,8 +16,18 @@ vendor: Ghostlane
 homepage: https://github.com/ghostlane-project/ghostlane
 license: GPL-3.0-or-later
 contents:
-  - src: dist/linux-${GOARCH}/ghostlane
+  - src: dist/linux-${ARCH}/ghostlane
     dst: /usr/bin/ghostlane
+    file_info:
+      mode: 0755
+  # the core's engine and the tun's hev: the program looks for both beside its
+  # own file
+  - src: dist/linux-${ARCH}/ghostlane-engine
+    dst: /usr/bin/ghostlane-engine
+    file_info:
+      mode: 0755
+  - src: dist/linux-${ARCH}/ghostlane-hev
+    dst: /usr/bin/ghostlane-hev
     file_info:
       mode: 0755
   - src: packaging/ghostlane.service

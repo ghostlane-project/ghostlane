@@ -123,11 +123,10 @@ jobs:
             echo 'shared_kotlin=false' >> "$GITHUB_OUTPUT"
             echo 'Apple compilation skipped: nothing under the shared Kotlin changed.' >> "$GITHUB_STEP_SUMMARY"
           fi
-          # The Linux CLI is its own Go module: built and tested only when it, its
-          # workflow, the engine pin it must match, or the sing-box tree it
-          # compiles (the patch, the script that applies it, the Xray servers its
-          # Reality end-to-end dials) changed.
-          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/cores-pins\.sh$|^scripts/patches/sing-box-|^scripts/patched-singbox\.sh$|^scripts/fetch-xray-servers\.sh$|^scripts/xray-servers\.txt$|^scripts/ghostlane-core-pin\.sh$'; then
+          # The Linux CLI's packages are built only when it, its workflow, the
+          # core it carries or the scripts that make the core's engine and hev
+          # changed.
+          if printf '%s\n' "$changed" | grep -qE '^cli/|^\.github/workflows/pr-checks\.yml$|^\.github/workflows/release\.yml$|^scripts/ghostlane-core-pin\.sh$|^scripts/build-ghostlane-core-host\.sh$|^scripts/build-hev-linux\.sh$'; then
             echo 'cli=true' >> "$GITHUB_OUTPUT"
           else
             echo 'cli=false' >> "$GITHUB_OUTPUT"
@@ -396,88 +395,98 @@ jobs:
   # public repository uploads, so they are tested offline on every push:
   # scripts/test_gate_scripts.py runs them against a local stand-in for the
   # GitHub API and a stub go. The gate itself runs in gate.yml.
-  # The Linux CLI (cli/): vet, lint, unit tests with the race detector, the
-  # netns tests as root (a fresh network namespace; the runner's own network
-  # is untouched), every package format, and an install smoke in containers.
+  # The Linux CLI (cli/), the packages it ships: the Rust program with the
+  # core's engine and the tun's hev beside it, built for amd64 (the arm builds
+  # and the 32-bit smoke are rust-cli.yml's and the release's), every package
+  # format, K1 on each of them, and an install smoke in containers that reads
+  # the core in `ghostlane version --json`. The program's own tests, clippy and
+  # the netns cases are rust-cli.yml, rust-cli-engine.yml and
+  # rust-cli-netns.yml.
   cli:
     if: github.event_name != 'workflow_dispatch' && needs.scope.outputs.cli == 'true'
     name: Linux CLI
     needs: scope
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: cli
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TARGET: x86_64-unknown-linux-musl
+      CORE_OUT: ${{ github.workspace }}/out/linux
+      HEV_OUT: ${{ github.workspace }}/out/hev-linux
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.5"
-          cache-dependency-path: cli/go.sum
-      # cli/go.mod replaces sing-box with this tree (scripts/patched-singbox.sh):
-      # nothing in the module builds before it is written.
-      - name: The patched sing-box
-        run: make singbox-src
-      - name: Vet and lint
+          persist-credentials: false
+      - name: The commit of the core
+        id: pin
         run: |
-          go vet -tags with_utls,with_quic ./...
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
-          golangci-lint run ./...
-      - name: Unit tests
-        run: go test -race -tags with_utls,with_quic ./...
-      # The servers: an xray built from the pinned module, and the official
-      # releases in scripts/xray-servers.txt (checked against the sums there),
-      # each a version whose Reality check a hello has to pass.
-      - name: Server end-to-ends against the pinned xray module and the releases in scripts/xray-servers.txt
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          echo "engine_key=core-build-${TARGET}-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "own_key=rust-desktop-engine-${TARGET}-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "hev_key=core-build-hev-linux-$(git rev-parse HEAD:androidApp/src/main/jni/hev-socks5-tunnel)-${{ hashFiles('scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+      - name: The Core build's engine
+        uses: actions/cache/restore@v6
+        with:
+          path: out/linux
+          key: ${{ steps.pin.outputs.engine_key }}
+          restore-keys: ${{ steps.pin.outputs.own_key }}
+      - name: The Core build's hev
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-linux
+          key: ${{ steps.pin.outputs.hev_key }}
+      - name: What the cache did not hold
+        id: core
         run: |
-          set -o pipefail
-          make xray-server
-          servers="$(bash ../scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
-          XRAY_SERVER_BIN="$PWD/dist/xray-server" XRAY_SERVERS="$servers" \
-            go test -count=1 -tags with_utls,with_quic -run 'EndToEnd' -v ./internal/engine/xray/ ./internal/engine/singbox/ | tee e2e.log
-          # a skip must not read as a pass, and a parent passes when its
-          # subtests skip: every cell is named
-          required="TestRealityXhttpEndToEnd TestHysteria2EndToEnd"
-          for server in pinned $(sed -n 's/^\([0-9][0-9.]*\) .*/xray-\1/p' ../scripts/xray-servers.txt); do
-            for fp in chrome chrome-wrong-key firefox firefox-wrong-key; do
-              required="$required TestRealityTCPEndToEnd/$server/$fp"
-            done
-          done
-          # the Reality hello fallback (the sing-box patch, point 4): servers before
-          # Xray-core v26.9.9 take the short hello, the ones from it on refuse it
-          for v in $(sed -n 's/^\([0-9][0-9.]*\) .*/\1/p' ../scripts/xray-servers.txt); do
-            if [ "$(printf '%s\n' 26.9.9 "$v" | sort -V | head -n 1)" = 26.9.9 ]; then
-              cells="retry-is-refused next-dial-is-not-watched"
-            else
-              cells="whole-hello-is-not-retried unanswered-hello-is-retried-short next-dial-starts-short unanswered-hello-is-retried-short-firefox unanswered-hello-is-retried-short-android"
-            fi
-            for c in $cells; do
-              required="$required TestRealityHelloFallbackEndToEnd/xray-$v/$c"
-            done
-          done
-          for t in $required; do
-            grep -q -- "--- PASS: $t " e2e.log || { echo "::error::$t did not pass (skipped or failed)"; exit 1; }
-          done
-      - name: netns tests (root)
-        run: |
-          sudo -E env "PATH=$PATH" GHOSTLANE_NETNS=1 go test -tags with_utls,with_quic -count=1 -run 'TestNetns' -v ./internal/routes/ ./internal/daemon/
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang lld llvm libclang-dev
+          GHOSTLANE_CORE_SRC="$RUNNER_TEMP/core-src" GHOSTLANE_MUSL_TOOLCHAIN_DIR="$RUNNER_TEMP/musl" \
+            bash cli/packaging/make-core.sh "$TARGET"
+      - name: Keep the engine of this commit
+        if: steps.core.outputs.engine_built == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: out/linux
+          key: ${{ steps.pin.outputs.own_key }}
       - name: Packages
+        env:
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
-          make dist VERSION=0.0.0
+          set -euo pipefail
+          sh cli/packaging/install-nfpm.sh "$RUNNER_TEMP/nfpm"
+          cd cli
+          make dist VERSION=0.0.0 ARCHES=amd64 NFPM="$RUNNER_TEMP/nfpm/nfpm"
           systemd-analyze verify packaging/ghostlane.service || true
           ls -la dist
+      # K1: no Go in any package, and no file of them on the allow list.
+      - name: No Go in the packages
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" cli/dist/ghostlane-cli-0.0.0-linux-amd64.*
+      # `core` in version --json is the engine beside the program: the pin
+      # the packages were built at, read from the installed files.
       - name: Install smoke
         run: |
-          docker run --rm -v "$PWD/dist:/dist:ro" debian:bookworm sh -c 'dpkg -i /dist/ghostlane-cli-0.0.0-linux-amd64.deb && ghostlane version && id ghostlane'
-          docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -c 'rpm -i /dist/ghostlane-cli-0.0.0-linux-amd64.rpm && ghostlane version && id ghostlane'
-          docker run --rm -v "$PWD/dist:/dist:ro" alpine:3.20 sh -c 'apk add --no-cache openrc >/dev/null && apk add --allow-untrusted /dist/ghostlane-cli-0.0.0-linux-amd64.apk && ghostlane version && id ghostlane && test -x /etc/init.d/ghostlane && rc-service ghostlane describe'
+          set -euo pipefail
+          pin="$GHOSTLANE_CORE_COMMIT"
+          smoke='ghostlane version --json | tee /dev/stderr | grep -q "\"core\": \"'"$pin"'\"" && id ghostlane && test -x /usr/bin/ghostlane-engine && test -x /usr/bin/ghostlane-hev'
+          docker run --rm -v "$PWD/cli/dist:/dist:ro" debian:bookworm sh -c "dpkg -i /dist/ghostlane-cli-0.0.0-linux-amd64.deb && $smoke"
+          docker run --rm -v "$PWD/cli/dist:/dist:ro" rockylinux:9 sh -c "rpm -i /dist/ghostlane-cli-0.0.0-linux-amd64.rpm && $smoke"
+          docker run --rm -v "$PWD/cli/dist:/dist:ro" alpine:3.20 sh -c "apk add --no-cache openrc >/dev/null && apk add --allow-untrusted /dist/ghostlane-cli-0.0.0-linux-amd64.apk && $smoke && test -x /etc/init.d/ghostlane && rc-service ghostlane describe"
+          docker run --rm -v "$PWD/cli/dist:/dist:ro" archlinux:base sh -c "pacman -U --noconfirm /dist/ghostlane-cli-0.0.0-linux-amd64.pkg.tar.zst >/dev/null && $smoke"
+          mkdir "$RUNNER_TEMP/tarball" && tar -C "$RUNNER_TEMP/tarball" -xzf cli/dist/ghostlane-cli-0.0.0-linux-amd64.tar.gz
+          "$RUNNER_TEMP/tarball/ghostlane" version --json | tee /dev/stderr | grep -q "\"core\": \"$pin\""
       # The apt and dnf repositories the release publishes, built here with a
       # throwaway key (natively: reprepro, createrepo_c and rpmsign are apt
       # packages; in containers when the runner's archive does not answer, as
       # the release does), then installed from with signature checks on (the package's
       # header signature is RSA with whatever digest the runner's gpg picks).
       - name: Repositories
+        working-directory: cli
         run: |
           set -euo pipefail
           sh packaging/repo/install-tools.sh
@@ -494,8 +503,8 @@ jobs:
             REPOS_IN_CONTAINERS="$containers" sh packaging/repo/build-repos.sh dist "$repo" "$RUNNER_TEMP/repo-key.asc" 0.0.0
             # the CI key, not the release key, verifies here
             gpg --batch --no-default-keyring --keyring "$RUNNER_TEMP/kr.gpg" --armor --export > "$repo/ghostlane-repo.gpg.asc"
-            docker run --rm -v "$repo:/repo:ro" debian:bookworm sh -c 'apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends gnupg >/dev/null 2>&1; install -d /etc/apt/keyrings; gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg < /repo/ghostlane-repo.gpg.asc; sed "s#https://ghostlane-project.github.io/ghostlane/apt#file:///repo/apt#" /repo/ghostlane.list > /etc/apt/sources.list.d/ghostlane.list; apt-get update 2>&1 | { ! grep -E "NO_PUBKEY|^E:|^W: GPG"; }; apt-get install -y ghostlane-cli >/dev/null && ghostlane version'
-            docker run --rm -v "$repo:/repo:ro" rockylinux:9 sh -c 'printf "[ghostlane]\nname=Ghostlane CLI\nbaseurl=file:///repo/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///repo/ghostlane-repo.gpg.asc\n" > /etc/yum.repos.d/ghostlane.repo; dnf install -y -q ghostlane-cli >/dev/null && ghostlane version && rpm -q --qf "%{RSAHEADER:pgpsig}\n" ghostlane-cli | grep -q "^RSA/"'
+            docker run --rm -v "$repo:/repo:ro" debian:bookworm sh -c 'apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends gnupg >/dev/null 2>&1; install -d /etc/apt/keyrings; gpg --dearmor -o /etc/apt/keyrings/ghostlane.gpg < /repo/ghostlane-repo.gpg.asc; sed "s#https://ghostlane-project.github.io/ghostlane/apt#file:///repo/apt#" /repo/ghostlane.list > /etc/apt/sources.list.d/ghostlane.list; apt-get update 2>&1 | { ! grep -E "NO_PUBKEY|^E:|^W: GPG"; }; apt-get install -y ghostlane-cli >/dev/null && ghostlane version --json | grep -q "\"core\""'
+            docker run --rm -v "$repo:/repo:ro" rockylinux:9 sh -c 'printf "[ghostlane]\nname=Ghostlane CLI\nbaseurl=file:///repo/rpm\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///repo/ghostlane-repo.gpg.asc\n" > /etc/yum.repos.d/ghostlane.repo; dnf install -y -q ghostlane-cli >/dev/null && ghostlane version --json | grep -q "\"core\"" && rpm -q --qf "%{RSAHEADER:pgpsig}\n" ghostlane-cli | grep -q "^RSA/"'
           done
 
   gate-scripts:

@@ -211,9 +211,9 @@ cli.cmd.connect                      | c | docs/cli.md::ghostlane connect | conn
 cli.cmd.disconnect                   | c | docs/cli.md::`disconnect` clears it | disconnect: clears the stored selection
 cli.cmd.status                       | c | docs/cli.md::ghostlane status | status: state, line, mode, the proxy lines to paste, errors
 cli.cmd.refresh                      | c | docs/cli.md::ghostlane refresh | refresh: ask the lists again now
-cli.cmd.remove                       | c | cli/cmd/ghostlane/commands.go::remove | remove: drop a list
-cli.flag.json                        | c | cli/cmd/ghostlane/commands.go::machine-readable output | --json: machine-readable output
-cli.flag.socket                      | c | cli/cmd/ghostlane/commands.go::control socket | --socket: the control socket
+cli.cmd.remove                       | c | cli/src/commands.rs::remove | remove: drop a list
+cli.flag.json                        | c | cli/src/commands.rs::machine-readable output | --json: machine-readable output
+cli.flag.socket                      | c | cli/src/commands.rs::control socket | --socket: the control socket
 cli.flag.tun                         | c | docs/cli.md::--tun | --tun: route the whole machine
 cli.flag.proxy                       | c | docs/cli.md::--proxy | --proxy: a local SOCKS5 and HTTP proxy only
 cli.flag.kill-switch                 | c | docs/cli.md::--kill-switch | --kill-switch: with --tun, refuse traffic outside the tunnel while no line is up

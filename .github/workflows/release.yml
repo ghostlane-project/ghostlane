@@ -961,22 +961,25 @@ jobs:
           name: Ghostlane-linux-amd64-appimage
           path: olcbox/dist/Ghostlane-*-linux-amd64.AppImage
 
-  # The Linux CLI: one free runner cross-builds amd64/arm64/armv7, packages
-  # deb/rpm/apk/arch + tarballs, sums and signs them with the release key, and
-  # templates the installer with this version. The artifact name starts with
-  # Ghostlane- so the publish job picks it up like every other asset.
+  # The Linux CLI: one free runner builds the Rust program for amd64, arm64 and
+  # armv7 (static, musl), puts the core's engine at the pin and the tun's hev
+  # beside each, packages deb/rpm/apk/arch + tarballs, sums and signs them with
+  # the release key, and templates the installer with this version. K1 reads
+  # every package and the image of each platform; K11 runs the armv7 program
+  # and engine under qemu-user. The artifact name starts with Ghostlane- so the
+  # publish job picks it up like every other asset.
   build-cli:
     needs: [release_version, plan, gate]
     if: needs.plan.outputs.cli == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_CRYPT_KEY_V1: ${{ secrets.OLCBOX_CRYPT_KEY_V1 }}
-    defaults:
-      run:
-        working-directory: cli
+      CORE_OUT: ${{ github.workspace }}/out/linux
+      HEV_OUT: ${{ github.workspace }}/out/hev-linux
     steps:
       - uses: actions/checkout@v7
       # The key reaches the two steps that need it and no other; a dry run
@@ -987,18 +990,90 @@ jobs:
           CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
         run: |
           [ -n "${CLI_RELEASE_SIGNING_KEY}" ] || { echo "::error::CLI_RELEASE_SIGNING_KEY is not set; the CLI release is signed or not built"; exit 1; }
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: cli/go.sum
-      - name: Build, package, sum
+      - name: The commit of the core
+        id: pin
         run: |
           set -euo pipefail
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          bash scripts/ghostlane-core-resolve.sh > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          echo "x86=core-build-x86_64-unknown-linux-musl-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "arm64=core-build-aarch64-unknown-linux-musl-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "arm7=core-build-armv7-unknown-linux-musleabihf-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "hev=core-build-hev-linux-$(git rev-parse HEAD:androidApp/src/main/jni/hev-socks5-tunnel)-${{ hashFiles('scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/core.env" >> "$GITHUB_STEP_SUMMARY"
+      # The Core build's programs, one cache a target (each holds its own
+      # bin/<target>); what none holds is built next.
+      - name: The Core build's engine for amd64
+        uses: actions/cache/restore@v6
+        with:
+          path: out/linux
+          key: ${{ steps.pin.outputs.x86 }}
+      - name: The Core build's engine for arm64
+        uses: actions/cache/restore@v6
+        with:
+          path: out/linux
+          key: ${{ steps.pin.outputs.arm64 }}
+      - name: The Core build's engine for armv7
+        uses: actions/cache/restore@v6
+        with:
+          path: out/linux
+          key: ${{ steps.pin.outputs.arm7 }}
+      - name: The Core build's hev
+        uses: actions/cache/restore@v6
+        with:
+          path: out/hev-linux
+          key: ${{ steps.pin.outputs.hev }}
+      - name: What the caches did not hold
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang lld llvm libclang-dev qemu-user-static
+          GHOSTLANE_CORE_SRC="$RUNNER_TEMP/core-src" GHOSTLANE_MUSL_TOOLCHAIN_DIR="$RUNNER_TEMP/musl" \
+            bash cli/packaging/make-core.sh x86_64-unknown-linux-musl aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
+      - name: Build, package, sum
+        env:
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
+        run: |
+          set -euo pipefail
+          sh cli/packaging/install-nfpm.sh "$RUNNER_TEMP/nfpm"
           [ -n "${OLCBOX_CRYPT_KEY_V1}" ] || echo "::warning::OLCBOX_CRYPT_KEY_V1 is not set; this CLI build cannot read crypt1 lists"
-          make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}"
+          cd cli
+          make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}" NFPM="$RUNNER_TEMP/nfpm/nfpm"
+      # K1 on every package, and on the image of each platform as the release
+      # pushes it (the same files, the same Dockerfile). The docker driver cannot
+      # export a foreign platform's image as a tar: buildx's container driver and
+      # qemu can.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: No Go in the packages and the image
+        run: |
+          set -euo pipefail
+          cd cli
+          sh packaging/docker/stage.sh dist "${OLCBOX_VERSION}"
+          for platform in linux/amd64 linux/arm64 linux/arm/v7; do
+            docker buildx build --platform "$platform" -f packaging/docker/Dockerfile \
+              -o "type=docker,dest=$RUNNER_TEMP/image-$(echo "$platform" | tr / -).tar" .
+          done
+          cd ..
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" \
+            cli/dist/ghostlane-cli-"${OLCBOX_VERSION}"-linux-* "$RUNNER_TEMP"/image-linux-*.tar
+      # K11: the 32-bit program and its engine run under qemu-user, and the
+      # program reads the pin of the engine beside it.
+      - name: The armv7 program and engine run under qemu-user
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/arm7"
+          mkdir "$dir"
+          tar -C "$dir" -xzf "cli/dist/ghostlane-cli-${OLCBOX_VERSION}-linux-arm7.tar.gz"
+          qemu-arm-static "$dir/ghostlane-engine" version
+          GHOSTLANE_ENGINE="$dir/ghostlane-engine" qemu-arm-static "$dir/ghostlane" version --json | tee "$dir/version.json"
+          # the program asks the engine by running it, which qemu-user does
+          # not do for a child: the pin is the one the engine just printed
+          grep -q "\"version\": \"${OLCBOX_VERSION}\"" "$dir/version.json"
       - name: Sign
         if: needs.plan.outputs.signed == 'true'
+        working-directory: cli
         env:
           CLI_RELEASE_SIGNING_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY }}
         run: |
@@ -1008,9 +1083,10 @@ jobs:
           make sign VERSION="${OLCBOX_VERSION}" KEY="$RUNNER_TEMP/cli-signing.pem"
           rm -f "$RUNNER_TEMP/cli-signing.pem"
       - name: Only what ships
+        working-directory: cli
         run: |
           set -euo pipefail
-          rm -rf dist/linux-* dist/nfpm-*.yaml
+          rm -rf dist/linux-* dist/nfpm-*.yaml dist/docker
           ls -la dist
       - name: Upload artifact
         uses: actions/upload-artifact@v7

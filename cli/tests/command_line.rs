@@ -690,6 +690,54 @@ fn ask(socket: &Path, verb: &str) -> Response {
     }
 }
 
+/// A `ghostlane-engine` that answers `version` as the real one does.
+fn stand_in_engine(dir: &Path, pin: &str) -> std::path::PathBuf {
+    let program = dir.join("ghostlane-engine");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{{\"event\":\"version\",\"engine\":\"0.1.0\",\"protocol\":1,\"pin\":\"{pin}\",\"boringssl\":true,\"rooms\":true,\"target\":\"x86_64-unknown-linux-musl\"}}'\n"
+        ),
+    )
+    .expect("the stand-in");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("its mode");
+    program
+}
+
+#[test]
+fn version_names_the_core_the_engine_beside_it_says() {
+    let scratch = Scratch::create();
+    let pin = "0123456789abcdef0123456789abcdef01234567";
+    let engine = stand_in_engine(scratch.path(), pin);
+
+    let json = program()
+        .args(["version", "--json"])
+        .env("GHOSTLANE_ENGINE", &engine)
+        .output()
+        .expect("the program runs");
+    assert_eq!(json.status.code(), Some(0));
+    let said: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("version --json is JSON");
+    assert_eq!(said["core"], pin, "{said}");
+
+    let text = program()
+        .arg("version")
+        .env("GHOSTLANE_ENGINE", &engine)
+        .output()
+        .expect("the program runs");
+    let text = String::from_utf8(text.stdout).expect("text");
+    assert!(text.contains(&format!("core {pin}\n")), "{text}");
+
+    // no engine: the line is not made up
+    let none = program()
+        .args(["version", "--json"])
+        .env("GHOSTLANE_ENGINE", scratch.join("none"))
+        .output()
+        .expect("the program runs");
+    let said: serde_json::Value = serde_json::from_slice(&none.stdout).expect("JSON");
+    assert!(said.get("core").is_none(), "{said}");
+}
+
 #[test]
 fn the_program_prints_its_version() {
     let output = program().arg("version").output().expect("the program runs");
@@ -736,28 +784,10 @@ fn the_daemon_serves_its_socket_until_it_is_told_to_stop() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o660);
-    // what connects a line is not in this program yet, and it says so
-    for verb in [
-        "status",
-        "list",
-        "add",
-        "connect",
-        "disconnect",
-        "refresh",
-        "remove",
-    ] {
-        let answer = ask(&socket, verb);
-        assert_eq!(
-            (answer.ok, answer.error.as_str()),
-            (false, "no_engine"),
-            "{verb}"
-        );
-        assert!(
-            answer.message.starts_with(&format!("{verb}: ")),
-            "{verb}: {}",
-            answer.message
-        );
-    }
+    // the daemon's own state machine answers, with nothing to connect
+    let status = ask(&socket, "status");
+    assert!(status.ok, "{status:?}");
+    assert_eq!(status.status.expect("a status").state, "idle");
     let unknown = ask(&socket, "frobnicate");
     assert_eq!(
         (unknown.ok, unknown.error.as_str(), unknown.message.as_str()),
@@ -765,12 +795,7 @@ fn the_daemon_serves_its_socket_until_it_is_told_to_stop() {
     );
     // the command line of this program against its own daemon
     let status = ghostlane(&["status", "--socket", &socket_arg]);
-    assert_eq!(status.code, 1);
-    assert!(
-        status.stderr.starts_with("no_engine: status: "),
-        "{}",
-        status.stderr
-    );
+    assert_eq!(status.code, 0, "{}", status.stderr);
     // no config is written by a start that was given nothing to write
     assert!(!scratch.join("state").join("config.yaml").exists());
 
