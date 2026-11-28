@@ -43,7 +43,7 @@ internal class WindowsTunController(
                   Sort-Object { §_.RouteMetric + (Get-NetIPInterface -InterfaceIndex §_.InterfaceIndex -AddressFamily IPv4).InterfaceMetric } |
                   Select-Object -First 1
                 if (§null -eq §route) { throw 'No physical IPv4 default route' }
-                "§(§route.InterfaceAlias)|§(§route.InterfaceIndex)|§(§route.NextHop)"
+                (§route.InterfaceAlias, §route.InterfaceIndex, §route.NextHop) -join '|'
                 """.replace("§TUN_NAME", TUN_NAME)
             ),
             timeoutSeconds = 60

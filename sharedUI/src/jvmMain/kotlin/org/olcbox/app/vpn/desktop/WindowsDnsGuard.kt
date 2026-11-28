@@ -91,15 +91,15 @@ internal class WindowsDnsGuard(
 
         /** The lines that take the guard away by name; with [announce] each prints what it took. */
         fun removeLines(announce: Boolean): String = buildString {
-            val say = { what: String -> if (announce) "; \"$what\"" else "" }
+            val say = { what: String -> if (announce) "; ('$what' + §name)" else "" }
             appendLine("§ErrorActionPreference = 'SilentlyContinue'")
             appendLine(
                 "foreach (§r in @(Get-NetFirewallRule -Name '$RULE_PREFIX-*')) { " +
-                    "Remove-NetFirewallRule -Name §r.Name${say("firewall §(§r.Name)")} }"
+                    "Remove-NetFirewallRule -Name §r.Name${say("firewall ").replace("§name", "§r.Name")} }"
             )
             appendLine(
                 "foreach (§x in @(Get-DnsClientNrptRule | Where-Object { §_.DisplayName -eq '$NRPT_NAME' })) { " +
-                    "Remove-DnsClientNrptRule -Name §x.Name -Force${say("name rule §(§x.Name)")} }"
+                    "Remove-DnsClientNrptRule -Name §x.Name -Force${say("name rule ").replace("§name", "§x.Name")} }"
             )
         }
     }

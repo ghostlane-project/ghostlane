@@ -173,7 +173,7 @@ class WindowsTunRealTest {
         assertTrue(rules >= 2, "the firewall rules of the guard stand: $rules")
         assertEquals(1, nrpt, "the catch-all name rule stands")
         val states = powershell(
-            "Get-NetFirewallRule -Name '${WindowsDnsGuard.RULE_PREFIX}-*' | ForEach-Object { \"\$(\$_.Enabled) \$(\$_.Action) \$(\$_.Direction)\" } | Sort-Object -Unique"
+            "Get-NetFirewallRule -Name '${WindowsDnsGuard.RULE_PREFIX}-*' | ForEach-Object { ('{0} {1} {2}' -f \$_.Enabled, \$_.Action, \$_.Direction) } | Sort-Object -Unique"
         ).lines().map { it.trim() }.filter { it.isNotEmpty() }
         assertEquals(listOf("True Block Outbound"), states, "every rule of the guard blocks outbound")
         powershell("Clear-DnsClientCache")

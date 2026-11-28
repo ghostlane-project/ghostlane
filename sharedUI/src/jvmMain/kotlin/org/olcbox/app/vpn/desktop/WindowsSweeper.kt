@@ -123,7 +123,7 @@ internal class WindowsSweeper(
                     appendLine("§p = ${r.prefix.powershellString()}; §i = ${r.interfaceIndex}")
                     appendLine(
                         "if (Get-NetRoute -DestinationPrefix §p -InterfaceIndex §i) { " +
-                            "Remove-NetRoute -DestinationPrefix §p -InterfaceIndex §i -Confirm:§false; \"route §p\" }"
+                            "Remove-NetRoute -DestinationPrefix §p -InterfaceIndex §i -Confirm:§false; ('route ' + §p) }"
                     )
                 }
                 append(WindowsDnsGuard.removeLines(announce = true))
