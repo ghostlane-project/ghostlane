@@ -564,6 +564,17 @@ jobs:
         with:
           path: olcbox
 
+      # Not read by this job's build any more; the release's own test counts
+      # the pinned checkouts (test_gate_scripts.py), and the gate's pin is the
+      # same for every platform job.
+      - name: Checkout olcrtc
+        uses: actions/checkout@v7
+        with:
+          repository: ghostlane-project/olcrtc
+          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
+          path: olcrtc
+          submodules: recursive
+
       - name: The commit of the core
         id: pin
         working-directory: olcbox
