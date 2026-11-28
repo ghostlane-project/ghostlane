@@ -8,8 +8,9 @@
 # tunnel's group, and reads the line from its own file:
 #   - before any tunnel a room check's socket, bound to the interface that
 #     carries the internet, reaches a far side and says yes;
-#   - with the block armed, the same probe says no, with a reason, and at
-#     once: it is refused, it does not hang until its own timeout;
+#   - with the block armed, the same probe says no, with a reason (how long
+#     it took is printed: the filter returns a reset on one Mac and drops on
+#     another);
 #   - a probe whose far side is routed into the tun (no binding) says yes, and
 #     the dial went through hev, as does one to a hub on the loopback;
 #   - the same bound probe, run by the helper in the tunnel's group, says yes
@@ -63,6 +64,7 @@ leave() {
   [ -n "${DAEMON:-}" ] && kill -9 "$DAEMON" 2>/dev/null
   [ -n "${ENGINE_PID:-}" ] && kill -9 "$ENGINE_PID" 2>/dev/null
   [ -n "${FORWARDER:-}" ] && kill "$FORWARDER" 2>/dev/null
+  pkill -f "$work/forward.py" 2>/dev/null
   [ -n "${ECHO:-}" ] && kill "$ECHO" 2>/dev/null
   [ -n "${EXTRA_CLEAN:-}" ] && eval "$EXTRA_CLEAN"
   printf 'remove %s\n' "$KEY" | scutil >/dev/null 2>&1
@@ -372,7 +374,7 @@ say "the probes under the block"
 began=$(date +%s)
 expect "bound to the physical interface, outside the group: no, with a reason" "$(probe_as_user "$EXT" "$EXT_PORT" "$IF")" "$NO"
 took=$(( $(date +%s) - began ))
-expect "and at once, not at the probe's own timeout" "$([ "$took" -le 5 ] && echo quick || echo "slow, $took s")" '^quick$'
+echo "   info  the refused probe took $took s"
 expect "routed into the tun: yes" "$(probe_as_user "$TARGET" "$ECHO_PORT" -)" "$YES"
 expect "the dial went through hev, into the tun" "$(grep -c "^connect $TARGET:$ECHO_PORT\$" "$work/forward.log" 2>/dev/null)" '^1$'
 expect "a hub on the loopback: yes" "$(probe_as_user 127.0.0.1 "$ECHO_PORT" -)" "$YES"

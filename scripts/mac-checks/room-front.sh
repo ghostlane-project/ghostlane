@@ -65,6 +65,7 @@ leave() {
   [ -n "${DAEMON:-}" ] && kill -9 "$DAEMON" 2>/dev/null
   [ -n "${ENGINE_PID:-}" ] && kill -9 "$ENGINE_PID" 2>/dev/null
   [ -n "${FORWARDER:-}" ] && kill "$FORWARDER" 2>/dev/null
+  pkill -f "$work/forward.py" 2>/dev/null
   [ -n "${ECHO:-}" ] && kill "$ECHO" 2>/dev/null
   [ -n "${EXTRA_CLEAN:-}" ] && eval "$EXTRA_CLEAN"
   printf 'remove %s\n' "$KEY" | scutil >/dev/null 2>&1
