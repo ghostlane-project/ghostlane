@@ -91,6 +91,8 @@ dependencies = [
  "base64",
  "ghostlane-coreconfig",
  "ghostlane-gocompat",
+ "ghostlane-routes",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -124,6 +126,13 @@ dependencies = [
  "serde",
  "serde_json",
  "yaml-rust2",
+]
+
+[[package]]
+name = "ghostlane-routes"
+version = "0.0.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
