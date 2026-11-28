@@ -7,14 +7,7 @@
 import org.gradle.api.file.Directory
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.TaskProvider
 
-@Suppress("UNCHECKED_CAST")
-val registerOlcRtcBuildTask =
-    extra["registerOlcRtcBuildTask"] as (String, String, String, String) -> TaskProvider<Exec>
-@Suppress("UNCHECKED_CAST")
-val registerOlcRtcLibraryBuildTask =
-    extra["registerOlcRtcLibraryBuildTask"] as (String, String, String, String) -> TaskProvider<Exec>
 @Suppress("UNCHECKED_CAST")
 val generatedNativeResources = extra["generatedNativeResources"] as Provider<Directory>
 @Suppress("UNCHECKED_CAST")
@@ -37,51 +30,11 @@ val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidA
 
 fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-val buildOlcRtcLinuxAmd64 = registerOlcRtcBuildTask(
-    "buildOlcRtcLinuxAmd64",
-    "linux",
-    "amd64",
-    "olcrtc-linux-amd64"
-)
-
-val buildOlcRtcLinuxArm64 = registerOlcRtcBuildTask(
-    "buildOlcRtcLinuxArm64",
-    "linux",
-    "arm64",
-    "olcrtc-linux-arm64"
-)
-
-val buildOlcRtcLibLinuxAmd64 = registerOlcRtcLibraryBuildTask(
-    "buildOlcRtcLibLinuxAmd64",
-    "linux",
-    "amd64",
-    "libolcrtc-linux-amd64.so"
-)
-
-val buildOlcRtcLibLinuxArm64 = registerOlcRtcLibraryBuildTask(
-    "buildOlcRtcLibLinuxArm64",
-    "linux",
-    "arm64",
-    "libolcrtc-linux-arm64.so"
-)
-
-desktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
-desktopNativeAssetTasks.add(buildOlcRtcLinuxArm64)
-desktopNativeAssetTasks.add(buildOlcRtcLibLinuxAmd64)
-desktopNativeAssetTasks.add(buildOlcRtcLibLinuxArm64)
-
+// The Go cores are gone from the Linux package: a line and a room's front
+// run in ghostlane-engine. Nothing here builds olcrtc-linux-* any more, so
+// nor can a packaging rule put one in the AppImage. K1 reads the finished
+// asset; this is the half that keeps the Go file from being made at all.
 if (hostDesktopOs == "linux") {
-    when (hostDesktopArch) {
-        "amd64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxAmd64)
-        }
-        "arm64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxArm64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibLinuxArm64)
-        }
-    }
-
     val buildHevSocks5TunnelLinux = tasks.register<Exec>("buildHevSocks5TunnelLinux") {
         val outputFile = generatedNativeResources.map {
             it.file("native/hev-socks5-tunnel-linux-$hostDesktopArch")
@@ -105,18 +58,13 @@ desktopNativeArchs["linux"] = listOf("amd64", "arm64")
 
 // Made by the tasks above under build/generated/desktopNativeResources.
 generatedNativeResourcePathsByOs["linux"] = { arch: String ->
-    buildList {
-        add("native/olcrtc-linux-$arch")
-        add("native/libolcrtc-linux-$arch.so")
-        add("native/hev-socks5-tunnel-linux-$arch")
-    }
+    listOf("native/hev-socks5-tunnel-linux-$arch")
 }
 
-// Supplied under src/main/resources by whoever runs the build.
-bundledCorePathsByOs["linux"] = listOf(
-    "native/sing-box",
-    "native/xray"
-)
+// Supplied under src/main/resources by the release job, which builds the
+// program at scripts/ghostlane-core-pin.sh. Its `version` event carries the
+// pin, and no Go core is delivered beside it.
+bundledCorePathsByOs["linux"] = listOf("native/ghostlane-engine")
 
 if (hostDesktopOs == "linux") {
     val appImageTool = providers.environmentVariable("APPIMAGETOOL").orElse("appimagetool")
@@ -153,6 +101,14 @@ if (hostDesktopOs == "linux") {
             cat > "${'$'}target_dir/AppRun" <<'APPRUN'
             #!/bin/sh
             HERE="${'$'}(dirname "${'$'}(readlink -f "${'$'}0")")"
+
+            # An earlier version staged Go cores in the app's own bin directory.
+            # This one starts only ghostlane-engine. Take the old copies away
+            # on the first start, before anything can run one by hand.
+            stale_bin="${'$'}HOME/.olcbox/bin"
+            rm -f "${'$'}stale_bin/sing-box" "${'$'}stale_bin/xray"
+            rm -f "${'$'}stale_bin"/olcrtc-linux-* "${'$'}stale_bin"/libolcrtc-linux-*.so
+
             exec "${'$'}HERE/bin/$desktopPackageName" "${'$'}@"
             APPRUN
             chmod +x "${'$'}target_dir/AppRun"

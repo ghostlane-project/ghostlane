@@ -1,12 +1,6 @@
 # The native resources the Linux package takes: "<arch> <kind> <path>", sorted.
 # Compared with the build by :desktopApp:checkDesktopNativeResourceLists.
-amd64 bundled native/sing-box
-amd64 bundled native/xray
+amd64 bundled native/ghostlane-engine
 amd64 generated native/hev-socks5-tunnel-linux-amd64
-amd64 generated native/libolcrtc-linux-amd64.so
-amd64 generated native/olcrtc-linux-amd64
-arm64 bundled native/sing-box
-arm64 bundled native/xray
+arm64 bundled native/ghostlane-engine
 arm64 generated native/hev-socks5-tunnel-linux-arm64
-arm64 generated native/libolcrtc-linux-arm64.so
-arm64 generated native/olcrtc-linux-arm64
