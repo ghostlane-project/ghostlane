@@ -1,6 +1,7 @@
 package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import kotlin.system.exitProcess
@@ -16,6 +17,15 @@ internal data class WindowsTunPlan(
     val password: String = "",
     val dnsGuard: Boolean = true,
     val adapter: String = WindowsTunController.HEV_ADAPTER,
+    /** The adapter's own address; another tunnel's adapter beside it (a check's) needs a different one. */
+    val address: String = WindowsTunController.HEV_ADDRESS,
+)
+
+/** What a move of the way out does to the spared routes: [keep] stays, [remove] goes, [add] is laid. */
+internal data class SparedMove(
+    val remove: List<WindowsRouteRecord>,
+    val add: List<WindowsRouteRecord>,
+    val keep: List<WindowsRouteRecord>,
 )
 
 internal class WindowsTunController(
@@ -27,6 +37,11 @@ internal class WindowsTunController(
 
     @Volatile
     private var running: Process? = null
+
+    /** The way out the spared routes are laid on now; null with no tunnel up. */
+    @Volatile
+    private var physical: PhysicalRoute? = null
+    private val moveLock = kotlinx.coroutines.sync.Mutex()
 
     /**
      * The interface the machine leaves by, with the address of its next hop.
@@ -50,7 +65,7 @@ internal class WindowsTunController(
         val physical = physicalRoute()
         val spared = plan.spared.map { address ->
             require(IPV4.matches(address)) { "a spared address is an IPv4 address: $address" }
-            WindowsRouteRecord("$address/32", physical.index)
+            WindowsRouteRecord("$address/32", physical.index, physical.gateway)
         }
         journal.write(WindowsTunRecord(adapter = plan.adapter, hev = hev.toAbsolutePath().toString(), routes = spared))
         val directory = journal.file.toAbsolutePath().parent
@@ -65,6 +80,7 @@ internal class WindowsTunController(
                 .start()
         }
         running = process
+        this.physical = physical
         journal.update { it.copy(hevPid = process.pid()) }
         try {
             windowsPowerShell(adapterUpScript(plan), timeoutSeconds = 90)
@@ -86,8 +102,34 @@ internal class WindowsTunController(
     suspend fun stopTunnel() {
         running?.destroyForcibly()
         running = null
+        physical = null
         sweep()
         forgetTunnelAnswers()
+    }
+
+    /**
+     * The machine now leaves by another interface: the spared /32 routes are
+     * taken from the old one and laid again on the way out as it reads now
+     * (its gateway and its interface index). [addresses] are the line's
+     * addresses read again; without them, or with none usable, the same
+     * addresses are kept. The journal names a new route before it is made, so
+     * a stop or a sweep after a failure part way leaves none on the old
+     * interface. Null with no tunnel up.
+     */
+    suspend fun followWayOut(addresses: List<String>? = null): SparedMove? = moveLock.withLock {
+        if (running == null) return@withLock null
+        val record = journal.read() ?: return@withLock null
+        val now = physicalRoute()
+        val move = planSparedMove(record.routes, now, addresses)
+        if (move.remove.isNotEmpty() || move.add.isNotEmpty()) {
+            journal.update { it.copy(routes = it.routes + move.add) }
+            windowsPowerShell(moveSparedScript(move, now), timeoutSeconds = 60)
+            journal.update { it.copy(routes = move.keep + move.add) }
+            addLog("Windows TUN: the spared routes follow the way out to ${now.alias} (${now.gateway}): " +
+                "${move.remove.size} taken, ${move.add.size} laid")
+        }
+        physical = now
+        move
     }
 
     /** What an earlier run left, taken away; what was taken, one line each. */
@@ -278,7 +320,7 @@ internal class WindowsTunController(
             appendLine("tunnel:")
             appendLine("  name: ${plan.adapter}")
             appendLine("  mtu: $HEV_MTU")
-            appendLine("  ipv4: $HEV_ADDRESS")
+            appendLine("  ipv4: ${plan.address}")
             appendLine()
             appendLine("socks5:")
             appendLine("  address: 127.0.0.1")
@@ -314,10 +356,13 @@ internal class WindowsTunController(
             §ErrorActionPreference = 'SilentlyContinue'
             for (§i = 0; §i -lt 60; §i++) {
               if ((Get-NetAdapter -Name ${plan.adapter.powershellString()}) -and
-                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '$HEV_ADDRESS' })) { 'up'; exit 0 }
+                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '${plan.address}' -and §_.AddressState -eq 'Preferred' })) { 'up'; exit 0 }
               Start-Sleep -Milliseconds 500
             }
-            throw 'the adapter ${plan.adapter} did not come up in 30 s'
+            §seen = (Get-NetAdapter | ForEach-Object { §_.Name + '=' + §_.Status }) -join ', '
+            §addresses = (Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { §_.InterfaceAlias + ' ' + §_.IPAddress + ' ' + §_.AddressState }) -join '; '
+            [Console]::Error.WriteLine('the adapter ${plan.adapter} did not come up in 30 s. Adapters: ' + §seen + '. Addresses: ' + §addresses)
+            exit 1
             """
         )
 
@@ -332,12 +377,7 @@ internal class WindowsTunController(
                 val adapter = plan.adapter.powershellString()
                 appendLine("§ErrorActionPreference = 'Stop'")
                 appendLine("Set-NetIPInterface -InterfaceAlias $adapter -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1")
-                for (route in spared) {
-                    appendLine(
-                        "New-NetRoute -DestinationPrefix ${route.prefix.powershellString()} -InterfaceIndex ${route.interfaceIndex} " +
-                            "-NextHop ${physical.gateway.powershellString()} -RouteMetric 1 -PolicyStore ActiveStore | Out-Null"
-                    )
-                }
+                for (route in spared) appendLine(sparedRouteLine(route, physical))
                 for (half in listOf("0.0.0.0/1", "128.0.0.0/1")) {
                     appendLine(
                         "New-NetRoute -DestinationPrefix '$half' -InterfaceAlias $adapter -NextHop '0.0.0.0' " +
@@ -350,6 +390,53 @@ internal class WindowsTunController(
                 )
             }
         )
+        private fun sparedRouteLine(route: WindowsRouteRecord, physical: PhysicalRoute): String =
+            "New-NetRoute -DestinationPrefix ${route.prefix.powershellString()} -InterfaceIndex ${route.interfaceIndex} " +
+                "-NextHop ${physical.gateway.powershellString()} -RouteMetric 1 -PolicyStore ActiveStore | Out-Null"
+
+        /** Whether [address] is in the range the tunnel's resolver hands out (it is no server's address). */
+        fun isMapdnsAddress(address: String): Boolean {
+            val octets = address.split('.').mapNotNull { it.toIntOrNull() }
+            return octets.size == 4 && octets[0] == 100 && octets[1] in 64..127
+        }
+
+        /**
+         * The spared routes for a move of the way out to [physical]: the
+         * routes of [current] that are already that route stay; the others go;
+         * each wanted address not yet on it is laid. The wanted addresses are
+         * [addresses] (IPv4, never one of the tunnel's own answers), else the
+         * ones [current] holds.
+         */
+        fun planSparedMove(current: List<WindowsRouteRecord>, physical: PhysicalRoute, addresses: List<String>?): SparedMove {
+            val prefixes = addresses.orEmpty()
+                .filter { IPV4.matches(it) && !isMapdnsAddress(it) }.map { "$it/32" }.distinct()
+                .ifEmpty { current.map { it.prefix }.distinct() }
+            val wanted = prefixes.map { WindowsRouteRecord(it, physical.index, physical.gateway) }
+            val keep = current.filter { it in wanted }.distinct()
+            return SparedMove(remove = current.filter { it !in keep }, add = wanted.filter { it !in keep }, keep = keep)
+        }
+
+        /** The old routes out first (a same-index one with another hop shares its key with the new), then the new. */
+        fun moveSparedScript(move: SparedMove, physical: PhysicalRoute): String = psScript(
+            buildString {
+                appendLine("§ErrorActionPreference = 'Stop'")
+                appendLine("function Step(§what, [scriptblock]§block) { try { & §block } catch { [Console]::Error.WriteLine(§what + ' failed: ' + §_.Exception.Message); exit 1 } }")
+                for (route in move.remove) {
+                    appendLine(
+                        "Step ${("Remove-NetRoute " + route.prefix + " if " + route.interfaceIndex).powershellString()} { " +
+                            "Remove-NetRoute -DestinationPrefix ${route.prefix.powershellString()} -InterfaceIndex ${route.interfaceIndex} " +
+                            "-Confirm:§false -ErrorAction SilentlyContinue }"
+                    )
+                }
+                for (route in move.add) {
+                    appendLine(
+                        "Step ${("New-NetRoute " + route.prefix + " if " + route.interfaceIndex + " via " + physical.gateway).powershellString()} { " +
+                            sparedRouteLine(route, physical) + " }"
+                    )
+                }
+            }
+        )
+
         const val ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
 
         /**

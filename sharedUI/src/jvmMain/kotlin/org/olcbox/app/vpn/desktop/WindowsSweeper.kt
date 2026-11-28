@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 
 /** One route made outside the tunnel's own adapter: it outlives the adapter, so it is written down. */
 @Serializable
-internal data class WindowsRouteRecord(val prefix: String, val interfaceIndex: Int)
+internal data class WindowsRouteRecord(val prefix: String, val interfaceIndex: Int, val nextHop: String? = null)
 
 /** What a run of the Windows tunnel owes the machine, written before each change. */
 @Serializable

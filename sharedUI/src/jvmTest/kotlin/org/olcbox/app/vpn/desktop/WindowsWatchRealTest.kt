@@ -28,12 +28,16 @@ class WindowsWatchRealTest {
     private val on = System.getenv("WINDOWS_WATCH_CHECK") == "1" &&
         System.getProperty("os.name").startsWith("Windows")
     private val work: Path = Files.createTempDirectory("windows-watch-")
-    private val controller = WindowsTunController(addLog = { println("watch: $it") }, journal = WindowsTunJournal(work.resolve("windows-tun.json")))
+    private val journal = WindowsTunJournal(work.resolve("windows-tun.json"))
+    private val controller = WindowsTunController(addLog = { println("watch: $it") }, journal = journal)
     private var hev: Process? = null
+    private var engine: Process? = null
 
     @AfterTest fun undo() {
         if (!on) return
         runCatching { powershell("Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceAlias '$ALT' -Confirm:\$false -ErrorAction SilentlyContinue") }
+        runCatching { runBlocking { controller.stopTunnel() } }
+        engine?.let { runCatching { it.destroyForcibly().waitFor(5, TimeUnit.SECONDS) } }
         hev?.let { runCatching { it.destroyForcibly().waitFor(5, TimeUnit.SECONDS) } }
         runCatching { work.toFile().deleteRecursively() }
     }
@@ -47,7 +51,7 @@ class WindowsWatchRealTest {
 
     /** A second Wintun adapter, [ALT], with no default route yet. */
     private fun makeAlternativeAdapter() {
-        val plan = WindowsTunPlan(socksPort = 9, adapter = ALT, dnsGuard = false)
+        val plan = WindowsTunPlan(socksPort = 9, adapter = ALT, dnsGuard = false, address = "198.19.0.1")
         val config = work.resolve("alt.yml")
         Files.writeString(config, WindowsTunController.hevConfig(plan))
         hev = ProcessBuilder(hevExe().toString(), config.toString())
@@ -108,7 +112,63 @@ class WindowsWatchRealTest {
         }
     }
 
+    /** ghostlane-engine as the app runs it, bound to [wayOut]: a real line behind the tun, so the held state carries traffic. */
+    private fun startEngine(wayOut: String): Int {
+        val exe = System.getenv("GHOSTLANE_ENGINE") ?: error("GHOSTLANE_ENGINE is not set")
+        val session = work.resolve("session.json")
+        Files.writeString(
+            session,
+            """{"version":1,"core":{"log":{"loglevel":"warning"},"inbounds":[{"tag":"socks-in","protocol":"socks","listen":"127.0.0.1","port":0}],"outbounds":[{"tag":"direct","protocol":"freedom"}]},"bind":{"interface":"$wayOut"}}"""
+        )
+        val process = ProcessBuilder(exe, "run", "--session", session.toString())
+            .redirectError(work.resolve("engine.err").toFile())
+            .start()
+        engine = process
+        val lines = LinkedBlockingQueue<String>()
+        kotlin.concurrent.thread(isDaemon = true) { process.inputStream.bufferedReader().forEachLine { lines.put(it) } }
+        val deadline = System.nanoTime() + 30_000_000_000L
+        while (System.nanoTime() < deadline) {
+            val line = lines.poll(500, TimeUnit.MILLISECONDS)
+            if (line != null) Regex(""""address"\s*:\s*"127\.0\.0\.1:(\d+)"""").find(line)?.let { return it.groupValues[1].toInt() }
+            check(process.isAlive) { "the engine ended" }
+        }
+        error("the engine said no ready line in 30 s")
+    }
+
+    /** `index|nexthop` for each route to [prefix], whatever interface it is on. */
+    private fun routesTo(prefix: String): List<String> = powershell(
+        "Get-NetRoute -DestinationPrefix '$prefix' -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.InterfaceIndex)|\$(\$_.NextHop)\" }; exit 0"
+    ).lines().map { it.trim() }.filter { it.isNotEmpty() }
+
+    @Test fun aSparedRouteOfTheTunFollowsTheMoveAndBackAndNothingIsLeftAtTheStop() = runBlocking {
+        Assume.assumeTrue(on)
+        val first = controller.physicalRoute()
+        makeAlternativeAdapter()
+        val port = startEngine(first.alias)
+        controller.startTunnel(hevExe(), WindowsTunPlan(socksPort = port, spared = listOf(SPARED), dnsGuard = false))
+        val prefix = "$SPARED/32"
+        assertEquals(listOf("${first.index}|${first.gateway}"), routesTo(prefix), "laid on the first way out")
+        // Moved for as long as it takes to read: the tun's own halves keep the traffic going through the engine.
+        putDefaultRouteOnAlternative()
+        val alt: PhysicalRoute
+        try {
+            alt = controller.physicalRoute()
+            assertEquals(ALT, alt.alias)
+            val move = controller.followWayOut()
+            assertEquals(1, move?.add?.size)
+            assertEquals(listOf("${alt.index}|${alt.gateway}"), routesTo(prefix), "the spared route is the new way out's, none left on the old interface")
+        } finally {
+            removeDefaultRouteOfAlternative()
+        }
+        assertEquals(1, controller.followWayOut()?.add?.size)
+        assertEquals(listOf("${first.index}|${first.gateway}"), routesTo(prefix), "back on the first way out")
+        controller.stopTunnel()
+        assertEquals(emptyList(), routesTo(prefix), "nothing left after the stop")
+        assertEquals(null, journal.read(), "the journal is cleared")
+    }
+
     private companion object {
+        const val SPARED = "203.0.113.77"
         const val ALT = "WatchAlt"
     }
 }

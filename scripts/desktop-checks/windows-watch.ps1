@@ -1,6 +1,7 @@
 # desktop-check-os: windows
 # desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsWatchRealTest.kt
 # desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
+# desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/WindowsTunController.kt
 #
 # WW, the interface watch on a real Windows as an administrator:
 # WindowsWatchRealTest (Gradle, WINDOWS_WATCH_CHECK=1) run with the hev.exe and
@@ -13,6 +14,11 @@
 #     default route with the lowest metric is put on it, and the watch tells
 #     the move to WatchAlt within seconds; with the route taken away it tells
 #     the move back. The route points nowhere, so it is held for seconds.
+#   - WR: with the tun up on a real engine and one spared /32, the move makes
+#     the /32's next hop and interface the new route's (one route, none on the
+#     old interface), the move back makes them the old one's, and after the
+#     stop no route of it is left. The tun carries the traffic meanwhile, so
+#     the moved state is not a black hole.
 # Not covered: the whole session (the app's restart of the line behind the
 # tun) on a real move; the watch's tell and the manager's new alias are the
 # jvmTests', and the engine's own binding is windows-tun.ps1's.
@@ -33,6 +39,7 @@ function Die($m) {
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Die 'this check needs an administrator session' }
 if (-not $env:HEV_OUT -or -not (Test-Path (Join-Path $env:HEV_OUT 'hev.exe')) -or -not (Test-Path (Join-Path $env:HEV_OUT 'wintun.dll'))) { Die 'HEV_OUT must hold hev.exe and wintun.dll' }
+if (-not $env:GHOSTLANE_ENGINE -or -not (Test-Path $env:GHOSTLANE_ENGINE)) { Die 'GHOSTLANE_ENGINE must name the engine for Windows' }
 
 $class = 'org.olcbox.app.vpn.desktop.WindowsWatchRealTest'
 $results = Join-Path $root 'sharedUI\build\test-results\jvmTest'
@@ -64,6 +71,8 @@ $left = @()
 if (Get-NetAdapter -Name 'WatchAlt*' -ErrorAction SilentlyContinue) { $left += 'an adapter' }
 if (Get-NetRoute -InterfaceAlias 'WatchAlt*' -ErrorAction SilentlyContinue) { $left += 'a route' }
 if (Get-Process -Name hev -ErrorAction SilentlyContinue) { $left += 'hev.exe' }
+if (Get-NetAdapter -Name 'Ghostlane-Tun*' -ErrorAction SilentlyContinue) { $left += 'the tun adapter' }
+if (Get-NetRoute -DestinationPrefix '203.0.113.77/32' -ErrorAction SilentlyContinue) { $left += 'the spared route' }
 if ($left.Count) { Die ("left on the machine: " + ($left -join ', ')) }
 Say "passed: $expected tests, nothing left"
 if ($summary) { Add-Content -Path $summary -Value "- windows-watch: $expected tests passed (a default route moved to a second adapter and back), nothing left" }
