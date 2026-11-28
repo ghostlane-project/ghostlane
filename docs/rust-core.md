@@ -180,8 +180,10 @@ The heavy suites run on a push to `rust/all`, that is after the lead's batch mer
 dispatch, each on its own `paths`: `core-build.yml`, `rust-core.yml`, `rust-core-android.yml`,
 `rust-ios.yml`, `rust-desktop.yml`, `rust-jitsi.yml`, `rust-windows-sys.yml`,
 `rust-windows-tun.yml`, `rust-windows-lab.yml`, `rust-cli-engine.yml`, `rust-cli-netns.yml`,
-`gate-fakes.yml`, `ios-no-go.yml` and `no-go.yml`. None has a `pull_request` trigger or a push
-trigger for `rust/t/**`. `gate.yml` and `release.yml` keep their triggers.
+`gate-fakes.yml` and `ios-no-go.yml`. None has a `pull_request` trigger or a push
+trigger for `rust/t/**`. `gate.yml` and `release.yml` keep their triggers. `no-go.yml` (the K1
+checker's own tests, cheap) runs on pull requests into `main` and `rust/all` that touch the checker,
+and by dispatch on a release's or a dry run's assets.
 
 When a task needs a heavy suite on its topic branch, dispatch that one workflow once, when the
 rest is green: `/root/gl-rust-handoff/p6/tools/gh.sh dispatch ghostlane-project/ghostlane

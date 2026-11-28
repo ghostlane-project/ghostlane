@@ -46,8 +46,10 @@ on:
         description: Id of a run (a dry release run) whose artifacts are checked instead of a release's assets
         type: string
         default: ''
-  push:
-    branches: [rust/all, main, ghostlane]
+  pull_request:
+    branches:
+      - main
+      - rust/all
     paths:
       - scripts/check-no-go.sh
       - scripts/test-check-no-go.sh
