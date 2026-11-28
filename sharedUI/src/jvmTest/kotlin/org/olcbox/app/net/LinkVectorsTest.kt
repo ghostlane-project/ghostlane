@@ -131,7 +131,7 @@ class LinkVectorsTest {
 
     @Test fun everyFixtureEntryIsParsedByTheAppsLinkParser() {
         for (fixture in lists.list("fixtures")) {
-            val path = File("../cli/internal/links/testdata/" + fixture.str("name"))
+            val path = File("../cli/testdata/links/" + fixture.str("name"))
             assertTrue(path.isFile, "no ${path.path}")
             val lines = path.readLines().filter { it.isNotBlank() }
             assertEquals(fixture.list("entries").size, lines.size, fixture.str("name"))
