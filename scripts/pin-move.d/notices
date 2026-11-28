@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# A pin move's notices step (scripts/pin-move.sh runs it with the new commit):
+# rewrites the generated block of THIRD_PARTY_NOTICES.md from the app's locks and
+# the core's Cargo.lock at the new commit, so K10 stays green. A crate with no
+# licence in scripts/notices-licences.json stops the move: run
+#   scripts/notices.py fill --pin <commit>
+# read what it added, and run the move again.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+new="${1:-${GHOSTLANE_CORE_COMMIT:-}}"
+[[ "$new" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex commit of the core>" >&2; exit 2; }
+python3 -I "$here/../notices.py" generate --pin "$new"
