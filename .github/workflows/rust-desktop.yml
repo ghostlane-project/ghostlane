@@ -225,25 +225,6 @@ jobs:
             cygpath -w "/c/Program Files/LLVM/bin" >> "$GITHUB_PATH"
           fi
 
-      - uses: ilammy/msvc-dev-cmd@v1.13.0
-        if: matrix.os == 'windows'
-        with:
-          arch: x64
-
-      - name: hev for Windows (clang for MSVC) and Wintun
-        if: matrix.os == 'windows'
-        run: |
-          set -euo pipefail
-          choco install make --version=4.4.1 --no-progress -y
-          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
-          bash scripts/build-hev-windows.sh "$RUNNER_TEMP/hev-windows" 2>&1 | tee "$RUNNER_TEMP/hev-windows.log"
-          {
-            echo '```'
-            cat "$RUNNER_TEMP/hev-windows/report.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "HEV_OUT=$(cygpath -w "$RUNNER_TEMP/hev-windows")" >> "$GITHUB_ENV"
-
       - name: cmake, clang and lld (BoringSSL's build, and the musl cross compiler)
         if: matrix.os == 'linux' && steps.engine.outputs.found != 'true'
         run: |
@@ -281,6 +262,28 @@ jobs:
         with:
           path: ${{ matrix.out }}
           key: ${{ matrix.os == 'linux' && format('rust-desktop-engine-{0}-{1}-rust-{2}-{3}', matrix.target, steps.pin.outputs.commit, steps.pin.outputs.toolchain, hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh')) || format('rust-desktop-engine-{0}-{1}-rust-{2}-{3}', matrix.target, steps.pin.outputs.commit, steps.pin.outputs.toolchain, hashFiles('scripts/build-ghostlane-core-host.sh')) }}
+
+      # After the engine is built: msvc-dev-cmd puts the MSVC tools on the PATH
+      # of bash, where Git's own `link` (usr/bin) comes first and cargo's
+      # linker call reaches it. hev's build needs this environment, cargo does not.
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: matrix.os == 'windows'
+        with:
+          arch: x64
+
+      - name: hev for Windows (clang for MSVC) and Wintun
+        if: matrix.os == 'windows'
+        run: |
+          set -euo pipefail
+          choco install make --version=4.4.1 --no-progress -y
+          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
+          bash scripts/build-hev-windows.sh "$RUNNER_TEMP/hev-windows" 2>&1 | tee "$RUNNER_TEMP/hev-windows.log"
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/hev-windows/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "HEV_OUT=$(cygpath -w "$RUNNER_TEMP/hev-windows")" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v6
         if: matrix.os != 'windows'

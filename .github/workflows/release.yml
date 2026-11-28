@@ -459,11 +459,6 @@ jobs:
           java-version: '21'
           architecture: x64
 
-      - name: The MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1.13.0
-        with:
-          arch: x64
-
       # One program, at the app's one pin. The build script is the Core
       # build's, and keeps the same key, so a dry run of this job builds once
       # at most.
@@ -483,6 +478,14 @@ jobs:
           fi
           [ -s "$engine" ] || { echo "the build wrote no ghostlane-engine.exe" >&2; exit 1; }
           cat out/windows/report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      # After the engine is built: msvc-dev-cmd puts the MSVC tools on the PATH
+      # of bash, where Git's own `link` (usr/bin) comes first and cargo's
+      # linker call reaches it. hev's build needs this environment, cargo does not.
+      - name: The MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
 
       # Upstream's tag with clang for MSVC, and Wintun's release checked by its
       # sha256 (scripts/build-hev-windows.sh). The Gradle task takes the two
