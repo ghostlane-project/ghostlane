@@ -521,6 +521,9 @@ jobs:
       # The program's own checks: every script in scripts/p6-tests/ runs, each
       # one a plain bash test that exits non-zero on a failure.
       - name: Script tests (scripts/p6-tests)
+        env:
+          # pins-agree.sh asks GitHub's compare API; the token keeps it off the anonymous rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           shopt -s nullglob

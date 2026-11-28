@@ -143,7 +143,9 @@ from the job's summary first; the job log is for what the summary does not say.
   when a workflow that reads the pin does not name the pin file in each of its `paths:` lists or
   has no `pin` input, or when a workflow that must build the pin and nothing else has one. The
   plan also puts into K7 the agreement of `OLC_PIN`, the app's engine pin and the exits' pin;
-  `scripts/p6-tests/pin.sh` does not read that part.
+  `scripts/p6-tests/pin.sh` does not read that part: `scripts/pins-agree.sh` does (run by
+  `scripts/p6-tests/pins-agree.sh` in the same job), reading `OLC_PIN` of the core at the pin and
+  comparing it with `OLCRTC_VERSION` in `scripts/cores-pins.sh` and the olcrtc version in `cli/go.mod` and `cli/go.sum`.
 - **K8, the Mac helper.** The `mac-helper` job of `pr-checks.yml` runs every script of
   `scripts/mac-checks/` as root on `macos-latest` and `macos-15-intel`: utun, routes,
   exclusions, the pf group, and the clean-up after SIGKILL; LAN, the interface watch, probes
