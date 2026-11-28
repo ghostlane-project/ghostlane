@@ -72,9 +72,7 @@ fn device_exists(name: &str) -> bool {
 impl Hev {
     /// Starts hev, waits for the device, puts the rules in. On any failure
     /// nothing is left.
-    #[allow(unreachable_code)]
     pub fn start(manager: Arc<Manager>, params: &HevParams) -> Result<Hev, String> {
-        return Err("not written (red)".to_string());
         let text = config(params)?;
         std::fs::create_dir_all(&params.work_dir)
             .map_err(|e| format!("make {}: {e}", params.work_dir.display()))?;
