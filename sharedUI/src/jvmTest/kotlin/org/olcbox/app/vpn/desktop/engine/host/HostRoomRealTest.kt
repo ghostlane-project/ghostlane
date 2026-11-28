@@ -1,5 +1,6 @@
 package org.olcbox.app.vpn.desktop.engine.host
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -183,7 +184,7 @@ class HostRoomRealTest {
 
     @Test
     fun theFrontOfARegionsBypassIsAcceptedWithItsListsInline() {
-        val front = RoomFront(port = freePort(), login = null, routing = rules(RoutingMode.BypassRussia), verboseLogs = false)
+        val front = runBlocking { RoomFront.of(freePort(), null, rules(RoutingMode.BypassRussia), verboseLogs = false) }
         val (_, file) = launched(front, "tcp://127.0.0.1:1/hr-bypass")
         assertAccepted(file, "the room behind a bypass front")
     }

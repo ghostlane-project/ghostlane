@@ -6,6 +6,8 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.net.XrayGeodata
+import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.DesktopMode
@@ -233,8 +235,19 @@ internal class RoomFront(
     val port: Int,
     val login: SocksLogin?,
     val routing: Routing.Rules,
-    val verboseLogs: Boolean
-)
+    val verboseLogs: Boolean,
+    /** The lists of a bypass's region, which are written into the front inline; null under any other policy. */
+    val geodata: XrayGeodata.Lists? = null
+) {
+    companion object {
+        /** A front with the lists [routing]'s policy needs, read here because reading them suspends. */
+        suspend fun of(port: Int, login: SocksLogin?, routing: Routing.Rules, verboseLogs: Boolean): RoomFront {
+            val effective = CoreRouting.effective(routing) as? Routing.RuleBased
+            val lists = (effective?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
+            return RoomFront(port, login, routing, verboseLogs, lists)
+        }
+    }
+}
 
 /**
  * What is run for a room. The manager writes [config] into a file only the

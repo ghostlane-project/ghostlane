@@ -5,12 +5,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
-import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.net.core.CoreRoomFront
-import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.engine.RoomEngine
 import org.olcbox.app.vpn.desktop.engine.RoomLaunch
@@ -103,9 +100,7 @@ internal object HostRoomSession {
             CoreRoomFront.refusal(plan, roomLogin, front.routing)?.let {
                 throw IllegalStateException("${HostSession.REFUSED}: $it")
             }
-            val rules = CoreRouting.effective(front.routing) as? Routing.RuleBased
-            val geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
-            CoreRoomFront.build(plan, roomLogin, front.routing, geodata, front.verboseLogs)
+            CoreRoomFront.build(plan, roomLogin, front.routing, front.geodata, front.verboseLogs)
         }
         return HostSession.text(core = core, room = half(request, roomLogin, fronted = core != null).toString(), bind = bind)
     }

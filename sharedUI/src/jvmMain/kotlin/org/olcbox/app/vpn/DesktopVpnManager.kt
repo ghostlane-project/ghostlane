@@ -975,7 +975,7 @@ class DesktopVpnManager private constructor(
                         dtlsProfile = dtlsProfile,
                         dnsServer = tunResolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
                         front = frontPort?.takeIf { frontInRoom }?.let {
-                            RoomFront(it, null, coreRouting as Routing.Rules, verboseLogs)
+                            RoomFront.of(it, null, coreRouting as Routing.Rules, verboseLogs)
                         },
                         bindToWayOut = desktopMode == DesktopMode.LinuxTun || desktopMode == DesktopMode.MacTun
                     )
@@ -3849,7 +3849,7 @@ class DesktopVpnManager private constructor(
             dtlsProfile = line.dtlsProfile,
             dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
             front = (line.coreRouting as? Routing.Rules)?.let { rules ->
-                line.frontPort?.takeIf { engine.room.frontInRoom }?.let { RoomFront(it, line.login, rules, line.verboseLogs) }
+                line.frontPort?.takeIf { engine.room.frontInRoom }?.let { RoomFront.of(it, line.login, rules, line.verboseLogs) }
             },
             bindToWayOut = line.desktopMode == DesktopMode.LinuxTun || line.desktopMode == DesktopMode.MacTun
         )
