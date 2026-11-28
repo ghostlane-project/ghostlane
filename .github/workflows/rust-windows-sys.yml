@@ -1,0 +1,64 @@
+name: Rust Windows system pieces
+# W3: the Windows adapter counters, system-proxy mode's registry values and the
+# LAN firewall rule, on a real Windows runner as an administrator
+# (scripts/desktop-checks/windows-sys.ps1). It needs no engine: the rule names
+# the engine when there is one and the JVM, a real program, when there is not.
+# rust-desktop.yml's Windows leg runs the same script once the engine builds
+# for Windows. No secret, nothing signed or published.
+on:
+  push:
+    branches:
+      - rust/all
+      - rust/t/W3-*
+    paths:
+      - .github/workflows/rust-windows-sys.yml
+      - scripts/desktop-checks/windows-sys.ps1
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - .github/workflows/rust-windows-sys.yml
+      - scripts/desktop-checks/windows-sys.ps1
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-windows-sys-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    name: Windows counters, proxy values, firewall rule
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        shell: bash
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - uses: gradle/actions/setup-gradle@v6
+      - name: The check
+        shell: pwsh
+        run: scripts/desktop-checks/windows-sys.ps1
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: windows-sys
+          path: |
+            sharedUI/build/test-results/jvmTest/*.xml
+            sharedUI/build/reports/tests/jvmTest/
+          if-no-files-found: ignore
+          retention-days: 7
