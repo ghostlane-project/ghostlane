@@ -116,7 +116,7 @@ expect("all of each family but its first /8, in the fewest prefixes",
 let server = Prefix("64.176.32.7")!
 let server6 = Prefix("2001:db8::7")!
 let around = Routes.plan(holes: [server, server6])
-expect("around a server of each family, as many as sing-box laid",
+expect("around a server of each family, as many as sing-box once laid",
        "\(around.filter { !$0.isV6 }.count) \(around.filter { $0.isV6 }.count)", "^37 132$")
 expect("split exactly around it, lowest first",
        around.prefix(10).map(\.text).joined(separator: " "),
@@ -126,6 +126,26 @@ expect("none of them holds what is kept out", "\(around.contains { route in kept
 let held = around.filter { !$0.isV6 }.reduce(UInt64(0)) { $0 + (UInt64(1) << UInt64(32 - $1.length)) }
 expect("and together they hold every other IPv4 address", "\(held)", "^\((UInt64(1) << 32) - (UInt64(1) << 24) - 1)$")
 expect("an address in a first /8 costs no route", "\(Routes.plan(holes: [Prefix("0.1.2.3")!, Prefix("::1")!]).count)", "^16$")
+
+print("\n== what an earlier helper left in root's directory")
+let fm = FileManager.default
+let sweepRoot = fm.temporaryDirectory.appendingPathComponent("helper-sweep-\(UUID().uuidString)", isDirectory: true)
+try! fm.createDirectory(at: sweepRoot.appendingPathComponent("bin"), withIntermediateDirectories: true)
+try! fm.createDirectory(at: sweepRoot.appendingPathComponent("rules"), withIntermediateDirectories: true)
+for name in ["bin/sing-box", "bin/xray", "bin/olcrtc-darwin-arm64", "bin/libolcrtc-darwin-arm64.dylib",
+             "bin/hev-socks5-tunnel", "bin/as-group", "tun.json", "hev.yml", "rules/geoip.srs"] {
+    try! Data([1]).write(to: sweepRoot.appendingPathComponent(name))
+}
+expect("the Go copies, the old config and the rule-sets go",
+       Sweep.run(in: sweepRoot).joined(separator: " "),
+       "^bin/libolcrtc-darwin-arm64\\.dylib bin/olcrtc-darwin-arm64 bin/sing-box bin/xray rules tun\\.json$")
+let left = ((try? fm.contentsOfDirectory(atPath: sweepRoot.path)) ?? []).sorted()
+    + ((try? fm.contentsOfDirectory(atPath: sweepRoot.appendingPathComponent("bin").path)) ?? []).sorted().map { "bin/" + $0 }
+expect("hev, the step and hev's config stay", left.joined(separator: " "), "^bin hev\\.yml bin/as-group bin/hev-socks5-tunnel$")
+expect("a second sweep finds nothing", "[\(Sweep.run(in: sweepRoot).joined(separator: " "))]", "^\\[\\]$")
+expect("a directory that is not there is a clean one",
+       "[\(Sweep.run(in: sweepRoot.appendingPathComponent("none")).joined(separator: " "))]", "^\\[\\]$")
+try? fm.removeItem(at: sweepRoot)
 
 print()
 print(failed == 0 ? "the helper's parts do what the document says" : "the helper's parts do not do what the document says")

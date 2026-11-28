@@ -18,6 +18,12 @@ internal interface DesktopProxyController {
     suspend fun enable(target: DesktopProxyTarget)
     suspend fun restore()
 
+    /**
+     * Puts back what an earlier run that was killed left changed. Called when
+     * the app starts; a controller with no journal has nothing to do.
+     */
+    suspend fun recover() {}
+
     companion object {
         fun current(): DesktopProxyController {
             return when (DesktopPaths.os) {
@@ -150,54 +156,29 @@ internal data class WindowsProxyState(
     val autoConfigUrl: String?
 )
 
-internal class WindowsProxyController : DesktopProxyController {
-    private var backup: WindowsProxyState? = null
-
+/**
+ * The system proxy on Windows is [WindowsSystemProxy], which keeps a journal of
+ * the values it changed in the app's data directory: a run that is killed
+ * leaves them to [recover] at the next start. The commands of the companion
+ * are the ones its tests have always read.
+ */
+internal class WindowsProxyController(
+    private val proxy: WindowsSystemProxy = WindowsSystemProxy().also { it.journal = defaultJournal() },
+) : DesktopProxyController {
     // Windows keeps the PAC path: WinINET parses the result list properly and falls
     // through unknown tokens, so it was never affected by the macOS problem.
-    override suspend fun enable(target: DesktopProxyTarget) {
-        backup = readState()
-        enableCommands(target.pacUrl).forEach { runCommand(it) }
-        refreshProxySettings()
-    }
+    override suspend fun enable(target: DesktopProxyTarget) = proxy.enable(target.pacUrl)
 
-    override suspend fun restore() {
-        val state = backup ?: return
-        restoreCommands(state).forEach { command ->
-            runCatching { runCommand(command) }
-        }
-        refreshProxySettings()
-        backup = null
-    }
+    override suspend fun restore() = proxy.restore()
 
-    private suspend fun readState(): WindowsProxyState {
-        return WindowsProxyState(
-            proxyEnable = queryValue("ProxyEnable"),
-            proxyServer = queryValue("ProxyServer"),
-            proxyOverride = queryValue("ProxyOverride"),
-            autoConfigUrl = queryValue("AutoConfigURL")
-        )
-    }
-
-    private suspend fun queryValue(name: String): String? {
-        val output = runCatching {
-            runCommand(listOf("reg", "query", REGISTRY_KEY, "/v", name))
-        }.getOrNull() ?: return null
-
-        return output.lineSequence()
-            .map { it.trim() }
-            .firstOrNull { it.startsWith(name) }
-            ?.split(Regex("\\s{2,}"))
-            ?.lastOrNull()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-    }
-
-    private suspend fun refreshProxySettings() {
-        runCatching { runCommand(refreshCommand()) }
+    override suspend fun recover() {
+        proxy.recover()
     }
 
     companion object {
+        internal fun defaultJournal(): java.nio.file.Path =
+            org.olcbox.app.desktop.DesktopPaths.appDataDir().resolve("windows-proxy.json")
+
         private const val REGISTRY_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
 
         fun enableCommands(pacUrl: String): List<List<String>> {

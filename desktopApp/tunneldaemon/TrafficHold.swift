@@ -32,7 +32,7 @@
 // end, and was reset. A room's engine is run before its tunnel, with no block
 // standing, and holds its room's signalling from then on: the start that
 // followed put the block in place and took the room away within seconds
-// (1.0.464 on a Mac in the field; `sudo scripts/check-macos-helper.sh` holds
+// (1.0.464 on a Mac in the field; the Mac checks hold
 // a connection open across a start for this).
 //
 // The rules live in an anchor under `com.apple/`, which the system's own main

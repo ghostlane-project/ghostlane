@@ -316,8 +316,15 @@ def plan(ref_dir, lines_dir):
     """([(line, reference, server line, network)], [problems])."""
     refs = references(ref_dir)
     specs = servers(lines_dir)
+    # K5's lines for servers Xray cannot be (sing-box's, for VLESS over
+    # HTTP/2) sit beside lines/, in sing-box-lines/: this host runs only
+    # Xray's, so a reference with a line there is run by K5 alone.
+    beside = os.path.join(os.path.dirname(os.path.normpath(lines_dir)), "sing-box-lines")
+    elsewhere = {n[:-len(SUFFIX)] for n in os.listdir(beside) if n.endswith(SUFFIX)} if os.path.isdir(beside) else set()
     found, problems = [], []
     for line, name in refs.items():
+        if line in elsewhere and line not in specs:
+            continue
         try:
             server = server_of(line, load(os.path.join(ref_dir, name)), specs)
             found.append((line, name, server, specs[server].get("network", "tcp")))

@@ -11,6 +11,7 @@ mod hysteria2;
 mod reality;
 mod shadowsocks;
 mod trojan;
+mod vless_http2;
 mod vless_shapes;
 mod vmess;
 mod webtunnel;
@@ -48,11 +49,12 @@ pub trait Line: Sync {
 }
 
 /// Every kind, in the app's order.
-pub static LINES: [&dyn Line; 7] = [
+pub static LINES: [&dyn Line; 8] = [
     &hysteria2::Hysteria2,
     &reality::Reality,
     &shadowsocks::Shadowsocks,
     &trojan::Trojan,
+    &vless_http2::VlessHttp2,
     &vless_shapes::VlessShapes,
     &vmess::Vmess,
     &webtunnel::WebTunnel,

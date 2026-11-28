@@ -1,0 +1,46 @@
+{
+  "about": "VLESS over HTTP/2 (type=http, host and path) over REALITY, a sing-box server",
+  "shape": "vless-http2-reality",
+  "expect": "page",
+  "link": "vless://77777777-7777-7777-7777-777777777777@127.0.0.1:{port}?security=reality&encryption=none&pbk={public_key}&sid=ab12cd34&fp=chrome&sni=reality.interop.test&type=http&path=%2Fmedia%2Fh2&host=front.interop.test#interop-vless-http2-reality",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "77777777-7777-7777-7777-777777777778"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "listen_port": "{port}",
+      "users": [
+        {
+          "name": "u",
+          "uuid": "77777777-7777-7777-7777-777777777777"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "reality.interop.test",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "{target_host}",
+            "server_port": "{target_port}"
+          },
+          "private_key": "{private_key}",
+          "short_id": [
+            "ab12cd34"
+          ]
+        }
+      },
+      "transport": {
+        "type": "http",
+        "host": [
+          "front.interop.test"
+        ],
+        "path": "/media/h2"
+      }
+    }
+  ]
+}

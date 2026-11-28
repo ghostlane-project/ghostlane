@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.core.CoreLines
 import org.olcbox.app.net.core.lines.Reality
+import org.olcbox.app.net.core.lines.VlessHttp2
 import org.olcbox.app.net.core.lines.VlessShapes
 import org.olcbox.app.net.core.lines.VmessFixture
 import org.olcbox.app.vpn.olc.RustCarriers
@@ -593,9 +594,9 @@ class XrayConfigIosCoreTest {
     private val plainToAPublicServer =
         "vless://55555555-5555-5555-5555-555555555555@198.51.100.7:80?security=none&encryption=none&type=tcp#public"
 
-    /** VLESS over HTTP/2, which the core does not carry. */
+    /** VLESS over HTTP/2 with no TLS, which the core does not carry (with TLS it does: VlessHttp2). */
     private val http2 =
-        "vless://$vlessId@127.0.0.1:443?security=tls&encryption=none&sni=example.com&type=http&path=%2F#http"
+        "vless://$vlessId@127.0.0.1:80?security=none&encryption=none&type=http&path=%2F#http"
 
     @Test fun everyShapeOfEveryKindIsALineOfTheIphones() {
         // The line table is the kinds' shapes: a kind added under
@@ -663,8 +664,8 @@ class XrayConfigIosCoreTest {
     @Test fun http2AndPlainVlessToAPublicServerHaveNoEngineAndTheirSentences() {
         val overHttp2 = IosCore.choose(assertNotNull(LinkParser.parse(http2)))
         assertTrue(overHttp2.engine != IosEngine.RUST)
-        assertNull(overHttp2.line, "HTTP/2 is no shape the core writes")
-        assertEquals(VlessShapes.HTTP2_REFUSAL, overHttp2.reason)
+        assertNull(overHttp2.line, "HTTP/2 with no TLS is no shape the core writes")
+        assertEquals(VlessHttp2.NEEDS_TLS, overHttp2.reason)
         val plain = IosCore.choose(assertNotNull(LinkParser.parse(plainToAPublicServer)))
         assertTrue(plain.engine != IosEngine.RUST)
         assertEquals("vless-none", plain.line?.slug)
@@ -739,7 +740,7 @@ class XrayConfigIosCoreTest {
             IosStart.Refused("Cannot start DE line: ${VlessShapes.PLAIN_NEEDS_PRIVATE_SERVER}"),
             IosCore.start(located(plainToAPublicServer)),
         )
-        assertEquals(IosStart.Refused("Cannot start DE line: ${VlessShapes.HTTP2_REFUSAL}"), IosCore.start(located(http2)))
+        assertEquals(IosStart.Refused("Cannot start DE line: ${VlessHttp2.NEEDS_TLS}"), IosCore.start(located(http2)))
         // A server named by a hostname is not refused for its name: the
         // extension resolves it (IosStartHostPinTest).
         for (link in refused.filter { XrayConfig.isIpLiteral(assertNotNull(LinkParser.parse(it), it).host) }) {

@@ -6,7 +6,12 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.desktop.DesktopOs
+import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.DesktopMode
+import org.olcbox.app.vpn.desktop.PhysicalInterfaceWatch
+import org.olcbox.app.vpn.desktop.WatchedEngine
+import org.olcbox.app.vpn.desktop.engine.host.HostEngine
 import java.nio.file.Path
 
 /**
@@ -87,7 +92,21 @@ internal class DesktopEngineHost(
 /** Which engine a manager gets. One place, so that changing it touches no manager. */
 internal object DesktopEngines {
     @Volatile
-    var factory: (DesktopEngineHost) -> DesktopEngine = { host -> GoEngines(host) }
+    var factory: (DesktopEngineHost) -> DesktopEngine = { host -> defaultFor(DesktopPaths.os, host) }
+
+    /**
+     * What a build runs on [os]: ghostlane-engine, watched for a change of the
+     * way out, on Linux and macOS, whose packages carry no Go core. Windows
+     * keeps the Go engines until its own flip.
+     */
+    fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = when (os) {
+        DesktopOs.Linux, DesktopOs.MacOS -> PhysicalInterfaceWatch.around(HostEngine(host), host)
+        else -> GoEngines(host)
+    }
+
+    /** Whether [engine] is ghostlane-engine's, watched or not. */
+    fun runsOnRust(engine: DesktopEngine): Boolean =
+        engine is HostEngine || (engine as? WatchedEngine)?.inner is HostEngine
 
     fun create(host: DesktopEngineHost): DesktopEngine = factory(host)
 }

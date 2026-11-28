@@ -1,1 +1,1 @@
-windows | not-proven | - | -
+windows | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsSystemRealTest.kt::theRuleNamesTheEngineAndGoesAtStopAndAfterAKill, sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsSystemRealTest.kt::theLanListenerAnswersOnItsPortAndAgainAfter15Seconds, scripts/p6-tests/windows-flip.sh | DesktopLanProxy adds, removes and sweeps the inbound rule through WindowsLanFirewall; the rule names the engine

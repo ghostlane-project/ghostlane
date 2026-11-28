@@ -130,6 +130,14 @@ internal class MacOsTunController(
         }
     }
 
+    /**
+     * The name the last engine tunnel was asked to take, for the interface's
+     * byte counts ([MacTunTraffic]); null before one was started.
+     */
+    @Volatile
+    var engineTunName: String? = null
+        private set
+
     /** The block is held with no tunnel in front of it: a Mac whose traffic goes nowhere. */
     val holdsTraffic: Boolean
         get() = held && !tunUp
@@ -263,7 +271,9 @@ internal class MacOsTunController(
             asked
         }
         reportStart(reply, killSwitch)
-        return lineBinaries.isNotEmpty()
+        // An engine's line leaves by the interface it is bound to, which needs
+        // no rule on a program: every line of the session can get out.
+        return rustEngine || lineBinaries.isNotEmpty()
     }
 
     /**
@@ -299,6 +309,7 @@ internal class MacOsTunController(
         }
 
         val interfaceName = tunName()
+        engineTunName = interfaceName
         suspend fun ask(protocol: Int): DaemonReply {
             val names = protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD
             val tun = DaemonTun(

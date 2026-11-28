@@ -44,6 +44,13 @@
       ]
     },
     {
+      "name": "VlessHttp2",
+      "shapes": [
+        "vless-http2-tls",
+        "vless-http2-reality"
+      ]
+    },
+    {
       "name": "VlessShapes",
       "shapes": [
         "vless-tls",
@@ -487,6 +494,64 @@
         "tag": "trojan-insecure"
       },
       "reference": "core-trojan-insecure",
+      "helloNote": null
+    },
+    {
+      "name": "vless-http2-tls",
+      "kind": "VlessHttp2",
+      "shape": "vless-http2-tls",
+      "link": "vless://44444444-4444-4444-4444-444444444444@127.0.0.1:443?security=tls&encryption=none&sni=vless.example.com&fp=chrome&type=http&path=%2Fh2&host=h.example.com#vless-http2-tls",
+      "spec": {
+        "kind": "vless",
+        "uuid": "44444444-4444-4444-4444-444444444444",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "vless.example.com",
+        "publicKey": "",
+        "shortId": "",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/h2",
+          "hosts": [
+            "h.example.com"
+          ]
+        },
+        "tag": "vless-http2-tls",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-http2-tls",
+      "helloNote": null
+    },
+    {
+      "name": "vless-http2-reality",
+      "kind": "VlessHttp2",
+      "shape": "vless-http2-reality",
+      "link": "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:443?security=reality&encryption=none&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12cd34&fp=chrome&sni=www.microsoft.com&type=http&path=%2Fh2#vless-http2-reality",
+      "spec": {
+        "kind": "vless",
+        "uuid": "11111111-1111-1111-1111-111111111111",
+        "host": "127.0.0.1",
+        "port": 443,
+        "sni": "www.microsoft.com",
+        "publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+        "shortId": "ab12cd34",
+        "fingerprint": "chrome",
+        "flow": null,
+        "transport": {
+          "type": "http",
+          "path": "/h2",
+          "hosts": []
+        },
+        "tag": "vless-http2-reality",
+        "plain": false,
+        "insecure": false,
+        "alpn": []
+      },
+      "reference": "ios-core-vless-http2-reality",
       "helloNote": null
     },
     {
@@ -2000,7 +2065,7 @@
         "insecure": false,
         "alpn": []
       },
-      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+      "refusal": null
     },
     {
       "name": "vless-http2-reality",
@@ -2024,7 +2089,7 @@
         "insecure": false,
         "alpn": []
       },
-      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+      "refusal": null
     },
     {
       "name": "vless-http2-plain",
@@ -2048,7 +2113,7 @@
         "insecure": false,
         "alpn": []
       },
-      "refusal": "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)"
+      "refusal": "the link asks for HTTP/2 (type=http) with no TLS (security=none), and the core carries HTTP/2 only inside TLS or Reality"
     },
     {
       "name": "vless-tls-other-flow",

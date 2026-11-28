@@ -1,6 +1,6 @@
 // The tunnel's process the daemon runs, and where it is allowed to run it from:
-// sing-box with a config of the app's (the first four protocols), or hev with a
-// config this daemon writes from the fields of a `tun` request (the fifth).
+// hev, with a config this daemon writes from the fields of a `tun` request. The
+// config of the app's that the first four protocols ran sing-box under is gone.
 //
 // Never from a path the client sends, and never from a directory a non-root user
 // can write. /Applications is writable by any admin, so a binary verified there
@@ -292,7 +292,6 @@ struct HevRequest {
 
 final class TunnelChild {
     enum Kind: String {
-        case singBox = "sing-box"
         case hev
     }
 
@@ -306,8 +305,7 @@ final class TunnelChild {
     /// runner) has no binary of ours to check; the daemon itself never passes one.
     private let isTrusted: (URL) -> Bool
 
-    /// The programs to copy when they are not the bundle's own; as above, nil in the daemon.
-    private let coreSource: URL?
+    /// The program to copy when it is not the bundle's own; as above, nil in the daemon.
     private let hevSource: URL?
 
     /// Called, on a thread of its own, when the child ends without having been
@@ -319,8 +317,7 @@ final class TunnelChild {
     private var tail: [String] = []
     private let lock = NSLock()
 
-    init(coreSource: URL? = nil, hevSource: URL? = nil, isTrusted: @escaping (URL) -> Bool = PeerAuthority.isTrustedBinary) {
-        self.coreSource = coreSource
+    init(hevSource: URL? = nil, isTrusted: @escaping (URL) -> Bool = PeerAuthority.isTrustedBinary) {
         self.hevSource = hevSource
         self.isTrusted = isTrusted
     }
@@ -329,7 +326,7 @@ final class TunnelChild {
 
     var pid: Int32? { locked { process?.isRunning == true ? process?.processIdentifier : nil } }
 
-    /// Which of the two runs, if one does.
+    /// What runs, if something does.
     var kind: Kind? { locked { process?.isRunning == true ? running : nil } }
 
     var logTail: String { locked { tail.suffix(40).joined(separator: "\n") } }
@@ -365,49 +362,10 @@ final class TunnelChild {
         return try install(ownExecutable, as: "as-group", in: binDir)
     }
 
-    /// [group] is the group the child runs in, for a tunnel started under the
-    /// kill switch's block (TrafficHold); nil leaves it in root's own, as ever.
-    func start(config: String, files: [String: String] = [:], group: gid_t? = nil) throws {
-        stop()
-
-        let source = coreSource ?? bundled("sing-box")
-        guard FileManager.default.isReadableFile(atPath: source.path) else {
-            throw DaemonError.message("no bundled sing-box at \(source.path)")
-        }
-
-        let binDir = try binDirectory()
-        let core = try install(source, as: "sing-box", in: binDir)
-
-        // The rule-sets a Bypass Russia config names, root-owned like the
-        // config, at the paths the app wrote into it. Written or removed, never
-        // left behind: a config naming a file that is not there stops sing-box
-        // with "no such file", and a file nothing names is dead weight.
-        let rulesDir = Self.stateDir.appendingPathComponent("rules", isDirectory: true)
-        if files.isEmpty {
-            try? FileManager.default.removeItem(at: rulesDir)
-        } else {
-            try makeRootOnlyDirectory(rulesDir)
-            for (name, base64) in files {
-                guard !name.contains("/"), !name.hasPrefix("."),
-                      let data = Data(base64Encoded: base64) else {
-                    throw DaemonError.message("rule-set \(name) is not a plain file name with base64 content")
-                }
-                let url = rulesDir.appendingPathComponent(name)
-                try data.write(to: url, options: .atomic)
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600, .ownerAccountID: 0],
-                    ofItemAtPath: url.path
-                )
-            }
-        }
-
-        let configURL = Self.stateDir.appendingPathComponent("tun.json")
-        try writeRootOnly(config, to: configURL)
-        try run(core, ["run", "-c", configURL.path], group: group, from: binDir, as: .singBox)
-    }
-
     /// hev, with the config [request] reads as. It opens the utun the request
     /// names and gives it its addresses; the routes are the daemon's (Routes).
+    /// [group] is the group the child runs in, for a tunnel started under the
+    /// kill switch's block (TrafficHold); nil leaves it in root's own, as ever.
     func startHev(_ request: HevRequest, group: gid_t? = nil) throws {
         stop()
 
@@ -531,17 +489,12 @@ final class TunnelChild {
             return process?.isRunning == true ? (process, running) : (nil, nil)
         }
         guard let task = stopping.task else { return }
-        // A stop, never SIGKILL first. sing-box takes its routes out itself on
-        // SIGTERM. hev ends on SIGINT, closing its utun (its SIGTERM is the
-        // default one, an end with no step of its own). Killed outright either
-        // leaves nothing behind (the utun and every route through it go with
-        // the process, measured on macOS 26), but that is the kernel tidying up
-        // after a death, and a stop should not look like one.
-        if stopping.kind == .hev {
-            task.interrupt()
-        } else {
-            task.terminate()
-        }
+        // A stop, never SIGKILL first. hev ends on SIGINT, closing its utun (its
+        // SIGTERM is the default one, an end with no step of its own). Killed
+        // outright it leaves nothing behind (the utun and every route through
+        // it go with the process, measured on macOS 26), but that is the
+        // kernel tidying up after a death, and a stop should not look like one.
+        task.interrupt()
         let deadline = Date().addingTimeInterval(5)
         while task.isRunning && Date() < deadline { usleep(100_000) }
         if task.isRunning { kill(task.processIdentifier, SIGKILL) }

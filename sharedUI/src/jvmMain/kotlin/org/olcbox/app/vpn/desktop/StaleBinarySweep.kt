@@ -7,17 +7,24 @@ import java.nio.file.Path
 /**
  * The Go cores an earlier desktop version staged beside the app's own files.
  *
- * The Linux AppImage used to copy sing-box, Xray and the olcRTC engine into
- * [DesktopPaths.appDataDir]'s `bin` directory on first use. This build starts
+ * The Linux AppImage and the Windows app used to copy sing-box, Xray and the
+ * olcRTC engine into [DesktopPaths.appDataDir]'s `bin` directory on first use
+ * (`sing-box.exe`, `xray.exe` and `olcrtc-windows-amd64.exe` and `.dll` on
+ * Windows). This build starts
  * only ghostlane-engine, so those copies are dead weight at best: a person
  * could still run one by hand, and the old credentials in its config could
  * still open a SOCKS port. [sweep] takes them away and keeps the engine and
- * the tun's C helper. It is idempotent, and the launcher calls the same list
- * of names on the first start of a new install.
+ * the tun's C helper. It is idempotent, and the Linux launcher calls the same list
+ * of names on the first start of a new install and the Windows manager calls
+ * [sweepAppData] at its own start (Windows has no launcher script).
  */
 internal object StaleBinarySweep {
     /** The files the old cores were copied as, whatever their name in the jar. */
-    private val exactNames = setOf("sing-box", "sing-box.exe", "xray", "xray.exe", "olcrtc", "libolcrtc.so")
+    private val exactNames = setOf(
+        "sing-box", "sing-box.exe", "xray", "xray.exe", "olcrtc", "olcrtc.exe", "libolcrtc.so",
+        // sing-box's cache of the old Windows tun, which nothing reads now.
+        "windows-tun-cache.db",
+    )
 
     /** Per-system olcRTC copies, including the library the Go builder made. */
     private val prefixes = listOf("olcrtc-linux-", "libolcrtc-linux-", "olcrtc-darwin-", "libolcrtc-darwin-", "olcrtc-windows-")

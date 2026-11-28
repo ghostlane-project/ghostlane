@@ -331,3 +331,34 @@ jobs:
           set -euo pipefail
           python3 scripts/rust-core-interop.py run --work "$RUN_DIR" --dumps "$RUN_DIR/dumps" \
             --client ~/.cache/rust-core-cli/xray-rust --servers "$XRAY_SERVERS"
+
+      # The transports Xray removed have servers of their own: the lines of
+      # scripts/rust-core-interop/sing-box-lines/ (VLESS over HTTP/2, over TLS
+      # and over REALITY) run against the official sing-box, in the same
+      # steps over the same work directory: their links, the builder's dump
+      # of them, and the cells.
+      - name: The sing-box server, by hash
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          sing_box="$(bash scripts/fetch-sing-box-server.sh "$RUNNER_TEMP/sing-box" | tail -n 1)"
+          echo "SING_BOX_SERVERS=$sing_box" >> "$GITHUB_ENV"
+
+      - name: A link per sing-box line
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUN_DIR/dumps"
+          first="${XRAY_SERVERS%% *}"
+          python3 scripts/rust-core-interop.py prepare --engine sing-box --work "$RUN_DIR" --xray "${first#*=}"
+
+      - name: The builder's dump of each sing-box link
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' }}
+        run: ./gradlew :sharedUI:jvmTest --rerun --tests 'org.olcbox.app.net.InteropDumpTest' --stacktrace
+
+      - name: Every sing-box line through the sing-box server
+        if: ${{ !cancelled() && steps.cli.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/rust-core-interop.py run --engine sing-box --work "$RUN_DIR" --dumps "$RUN_DIR/dumps" \
+            --client ~/.cache/rust-core-cli/xray-rust --servers "$SING_BOX_SERVERS"

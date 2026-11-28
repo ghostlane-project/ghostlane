@@ -111,8 +111,8 @@ object XrayRustSurface {
     val DNS_RULE = setOf("action", "qType", "qtype", "domain", "rCode", "address", "port", "outboundTag")
     val STREAM = setOf(
         "address", "port", "method", "network", "security", "tlsSettings", "realitySettings", "tcpSettings",
-        "rawSettings", "wsSettings", "httpupgradeSettings", "grpcSettings", "xhttpSettings", "splithttpSettings",
-        "kcpSettings", "hysteriaSettings", "masqueSettings", "xdriveSettings", "finalmask", "sockopt",
+        "rawSettings", "wsSettings", "httpupgradeSettings", "grpcSettings", "httpSettings", "xhttpSettings",
+        "splithttpSettings", "kcpSettings", "hysteriaSettings", "masqueSettings", "xdriveSettings", "finalmask", "sockopt",
     )
     val ROUTING = setOf("domainStrategy", "rules", "balancers")
     val ROUTING_RULE = setOf(

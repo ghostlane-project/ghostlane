@@ -1,4 +1,4 @@
-bf6ca36318b5df7a409bafc2406e49bf4589c47c8c8710a7e4ecbac8317da49a  sharedUI/src/commonTest/resources/vectors/core-inputs.json
+d8e8d6b6364405f03e7d3a58560931efbdc296f5af2a9353f8d0b8908a0dea32  sharedUI/src/commonTest/resources/vectors/core-inputs.json
 c4f1c7437fbf1d7ea85fb6db2af8e3b8c20e4234ff5c81535ab6bbd27900fba5  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-and-lan-172.json
 bbc24648d4ddca0cf14cd895b8564fd455af4b10a85368be4e0c0fb49d619730  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-and-lan-verbose.json
 632fdb32cb29dce0d3d0d881ddcae1158343ab49c21690d030c496bee7bd83be  sharedUI/src/commonTest/resources/vectors/core-plans/proxy-login-ipv6.json
@@ -29,6 +29,8 @@ b0565a39837a503f18d6fc51da94b2edf533d52b86d6d2bb80d1ea7090879bbb  sharedUI/src/j
 0bafde4313f8379c8bc15d78ed964279e9f0b2ef97f148758697cbb39f72f371  sharedUI/src/jvmTest/resources/reference-configs/ios-core-trojan-httpupgrade.json
 e6d85bdd20d1115a78a34bde33eed8477e4add90193367817d9ed773871acce7  sharedUI/src/jvmTest/resources/reference-configs/ios-core-trojan-ws.json
 57cc5a40bb446a33e0ca2b2ef4145fe5d1ee250c83847f8698ac8ace79376d8d  sharedUI/src/jvmTest/resources/reference-configs/ios-core-trojan.json
+d3fd9d2423e729adc7de199118ea916d876b531237e5b611337e416a3b22424a  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-http2-reality.json
+401d0595a93875b2793fcbd6b8bd409221c23b3f374e2430bb8807158597e823  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-http2-tls.json
 b5d36a2748597db37cc2033084b6833ce6b7190b301367068657d3b8f3c90ef1  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-none-grpc.json
 4e5d4ae35b5dbac0007916a6234a269651b584eb89676ae7ec8b3e26574c0c7b  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-none-httpupgrade.json
 7a91f28b7c9805b47232bc2cc3e4883db14d7dda95e62308664ee4b7e25d65d1  sharedUI/src/jvmTest/resources/reference-configs/ios-core-vless-none-ws.json

@@ -1,8 +1,8 @@
 //! VLESS with no Reality key: over ordinary TLS on raw TCP (with Vision or
 //! without a flow), gRPC and XHTTP, and with no TLS at all on raw TCP,
 //! WebSocket, gRPC, HTTP upgrade and XHTTP, which the core sends only to a
-//! private, loopback or link-local server. VLESS over HTTP/2 is this kind's
-//! too, with any security, and always refused.
+//! private, loopback or link-local server. VLESS over HTTP/2 is
+//! `VlessHttp2`'s.
 
 use super::{not_mine, Line};
 use crate::json::Object;
@@ -23,11 +23,6 @@ const NONE_GRPC: &str = "vless-none-grpc";
 const NONE_HTTP_UPGRADE: &str = "vless-none-httpupgrade";
 const NONE_XHTTP: &str = "vless-none-xhttp";
 
-/// The shape of a VLESS link over HTTP/2: this kind's, never written.
-const HTTP2: &str = "vless-http2";
-
-const HTTP2_REFUSAL: &str =
-    "the link asks for HTTP/2 (type=http), a transport Xray removed and the core does not carry (XHTTP took its place)";
 const VISION_NEEDS_TLS: &str =
     "the link asks for Vision with no TLS (security=none), and Vision runs only inside TLS or Reality";
 const PLAIN_NEEDS_PRIVATE_SERVER: &str =
@@ -62,7 +57,7 @@ impl Line for VlessShapes {
     fn shape(&self, spec: &Spec) -> Option<&'static str> {
         let Spec::Vless(s) = spec else { return None };
         if matches!(s.transport, Transport::Http { .. }) {
-            return Some(HTTP2);
+            return None;
         }
         if !is_blank(&s.public_key) {
             return None;
@@ -74,7 +69,7 @@ impl Line for VlessShapes {
                 Transport::Grpc { .. } => NONE_GRPC,
                 Transport::HttpUpgrade { .. } => NONE_HTTP_UPGRADE,
                 Transport::Xhttp { .. } => NONE_XHTTP,
-                Transport::Http { .. } => HTTP2,
+                Transport::Http { .. } => return None,
             });
         }
         match s.transport {
@@ -86,14 +81,11 @@ impl Line for VlessShapes {
         }
     }
 
-    /// Refused: HTTP/2, a flow other than Vision, Vision with no TLS, and no
+    /// Refused: a flow other than Vision, Vision with no TLS, and no
     /// TLS to a server the core does not send VLESS in the clear to. Waived
     /// certificate checks are carried, and written as the link asks.
     fn refusal(&self, spec: &Spec) -> Option<String> {
         let s = own(spec);
-        if matches!(s.transport, Transport::Http { .. }) {
-            return Some(HTTP2_REFUSAL.to_string());
-        }
         if let Some(why) = flow_refusal(s.flow.as_deref()) {
             return Some(why);
         }
