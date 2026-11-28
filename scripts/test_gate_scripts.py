@@ -1408,7 +1408,7 @@ class Wiring(unittest.TestCase):
         release = self.read("release.yml")
         self.assertNotIn("OLCBOX_OLCRTC_REF", release)
         self.assertIn("olcrtc_ref: ${{ steps.pin.outputs.olcrtc_sha }}", release)
-        self.assertEqual(5, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
+        self.assertEqual(4, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
 
     def test_pr_checks_build_the_pinned_commit(self):
         checks = self.read("pr-checks.yml")
