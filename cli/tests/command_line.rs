@@ -690,6 +690,54 @@ fn ask(socket: &Path, verb: &str) -> Response {
     }
 }
 
+/// A `ghostlane-engine` that answers `version` as the real one does.
+fn stand_in_engine(dir: &Path, pin: &str) -> std::path::PathBuf {
+    let program = dir.join("ghostlane-engine");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{{\"event\":\"version\",\"engine\":\"0.1.0\",\"protocol\":1,\"pin\":\"{pin}\",\"boringssl\":true,\"rooms\":true,\"target\":\"x86_64-unknown-linux-musl\"}}'\n"
+        ),
+    )
+    .expect("the stand-in");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("its mode");
+    program
+}
+
+#[test]
+fn version_names_the_core_the_engine_beside_it_says() {
+    let scratch = Scratch::create();
+    let pin = "0123456789abcdef0123456789abcdef01234567";
+    let engine = stand_in_engine(scratch.path(), pin);
+
+    let json = program()
+        .args(["version", "--json"])
+        .env("GHOSTLANE_ENGINE", &engine)
+        .output()
+        .expect("the program runs");
+    assert_eq!(json.status.code(), Some(0));
+    let said: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("version --json is JSON");
+    assert_eq!(said["core"], pin, "{said}");
+
+    let text = program()
+        .arg("version")
+        .env("GHOSTLANE_ENGINE", &engine)
+        .output()
+        .expect("the program runs");
+    let text = String::from_utf8(text.stdout).expect("text");
+    assert!(text.contains(&format!("core {pin}\n")), "{text}");
+
+    // no engine: the line is not made up
+    let none = program()
+        .args(["version", "--json"])
+        .env("GHOSTLANE_ENGINE", scratch.join("none"))
+        .output()
+        .expect("the program runs");
+    let said: serde_json::Value = serde_json::from_slice(&none.stdout).expect("JSON");
+    assert!(said.get("core").is_none(), "{said}");
+}
+
 #[test]
 fn the_program_prints_its_version() {
     let output = program().arg("version").output().expect("the program runs");
