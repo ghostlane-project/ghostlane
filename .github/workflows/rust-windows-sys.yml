@@ -47,8 +47,8 @@ jobs:
         with:
           packages: platform-tools
       - name: Install Android SDK packages
-        shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+        shell: pwsh
+        run: sdkmanager.bat "platforms;android-36" "build-tools;36.0.0" | Out-Null
       - uses: gradle/actions/setup-gradle@v6
       - name: The check
         shell: pwsh
