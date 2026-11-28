@@ -1,0 +1,248 @@
+name: Rust CLI engine
+
+# The Linux CLI's engine child (cli/src/engine.rs) against the real
+# ghostlane-engine of the pin and the official Xray releases of
+# scripts/xray-servers.txt (26.4.25, 26.7.11, 26.11.9):
+#
+#   - the child's own tests on the real program (cli/tests/engine_child.rs,
+#     GHOSTLANE_ENGINE_REQUIRED=1, so a missing program or server is a
+#     failure, not a pass): proxy mode by SOCKS5, HTTP CONNECT and a plain
+#     GET against each release, `--probe-url` through `ghostlane-engine
+#     probe`, a dead line and a wrong id, a room on a fake `none` hub;
+#   - every line of scripts/rust-core-interop/lines/ (Reality, XHTTP,
+#     Hysteria2 and the rest) against each release, the builder's core.json
+#     started through the engine child (cli/examples/engine_client), judged
+#     as check K5 judges them (scripts/cli-engine/lines.sh).
+#
+# The program is the Core build's, as rust-desktop.yml has it: restored from
+# the cache of the pin, built here when no cache holds it. Nothing here
+# signs, uploads, publishes or starts another workflow.
+#
+# On a push or a pull request into rust/all that touches cli/, this file or
+# the scripts it runs, and by hand (a dispatch's pin=<sha> holds that commit
+# of the core to it).
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Run against this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
+        type: string
+        default: ''
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - cli/**
+      - .github/workflows/rust-cli-engine.yml
+      - scripts/cli-engine/lines.sh
+      - scripts/rust-core-interop.py
+      - 'scripts/rust-core-interop/**'
+      - scripts/ghostlane-core-pin.sh
+  push:
+    branches:
+      - "**"
+    paths:
+      - cli/**
+      - .github/workflows/rust-cli-engine.yml
+      - scripts/cli-engine/lines.sh
+      - scripts/rust-core-interop.py
+      - 'scripts/rust-core-interop/**'
+      - scripts/ghostlane-core-pin.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-cli-engine-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+env:
+  GHOSTLANE_CORE_PIN_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.pin || '' }}
+  TARGET: x86_64-unknown-linux-musl
+  OUT: out/linux
+
+jobs:
+  engine:
+    name: ghostlane-engine at the pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      commit: ${{ steps.pin.outputs.commit }}
+      key: ${{ steps.pin.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The commit of the core
+        id: pin
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh "$GHOSTLANE_CORE_PIN_OVERRIDE" > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          echo "key=rust-desktop-engine-${TARGET}-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "core_key=core-build-${TARGET}-${GHOSTLANE_CORE_COMMIT}-rust-${GHOSTLANE_CORE_TOOLCHAIN}-${{ hashFiles('scripts/build-ghostlane-core-host.sh', 'scripts/build-hev-linux.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: The Core build's program, or this workflow's own copy
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.OUT }}
+          key: ${{ steps.pin.outputs.core_key }}
+          restore-keys: ${{ steps.pin.outputs.key }}
+
+      - name: Is the program there
+        id: have
+        run: |
+          set -euo pipefail
+          if [ -s "$OUT/bin/$TARGET/ghostlane-engine" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: cmake, clang and lld (BoringSSL's build, and the musl cross compiler)
+        if: steps.have.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cmake clang lld llvm libclang-dev
+
+      - name: Build the program, which no cache held
+        id: build
+        if: steps.have.outputs.found != 'true'
+        env:
+          GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
+          GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
+        run: |
+          set -euo pipefail
+          bash scripts/build-ghostlane-core-host.sh "$OUT" "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -n 40
+          [ -s "$OUT/bin/$TARGET/ghostlane-engine" ] || { echo "::error::the build wrote no ghostlane-engine"; exit 1; }
+
+      - name: Keep the program of this commit
+        if: steps.build.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.OUT }}
+          key: ${{ steps.pin.outputs.key }}
+
+  child:
+    name: The engine child on the real program
+    needs: engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The program
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.OUT }}
+          key: ${{ needs.engine.outputs.key }}
+          fail-on-cache-miss: true
+          enableCrossOsArchive: false
+
+      - name: The toolchain cli/rust-toolchain.toml names
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --no-self-update
+          cargo --version
+
+      - name: The Xray servers, by hash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          servers="$(bash scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          echo "XRAY_SERVERS=$servers" >> "$GITHUB_ENV"
+
+      - name: The engine's tests, none of them skipped
+        env:
+          GHOSTLANE_CORE_COMMIT: ${{ needs.engine.outputs.commit }}
+          GHOSTLANE_ENGINE_REQUIRED: "1"
+        run: |
+          set -euo pipefail
+          export GHOSTLANE_ENGINE="$GITHUB_WORKSPACE/$OUT/bin/$TARGET/ghostlane-engine"
+          cargo test --locked --test engine_child -- --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/child.log"
+          # a test that returned at once for want of its inputs says so
+          if grep -q 'nothing run:' "$RUNNER_TEMP/child.log"; then
+            echo "::error::a test of the engine child did not run"
+            exit 1
+          fi
+
+  lines:
+    name: "Lines against Xray servers through the engine child"
+    needs: engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RUN_DIR: sharedUI/build/rust-core-interop
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The program
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.OUT }}
+          key: ${{ needs.engine.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: The client, built from the CLI's own engine child
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          cargo build --locked --example engine_client
+          echo "ENGINE_CLIENT=$GITHUB_WORKSPACE/cli/target/debug/examples/engine_client" >> "$GITHUB_ENV"
+
+      - name: The Xray servers, by hash
+        run: |
+          set -euo pipefail
+          servers="$(bash scripts/fetch-xray-servers.sh "$RUNNER_TEMP/xray-servers" | tail -n 1)"
+          echo "XRAY_SERVERS=$servers" >> "$GITHUB_ENV"
+
+      - name: A link per line
+        run: |
+          set -euo pipefail
+          first="${XRAY_SERVERS%% *}"
+          python3 scripts/rust-core-interop.py prepare --work "$RUN_DIR" --xray "${first#*=}"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: The builder's dump of each link
+        run: ./gradlew :sharedUI:jvmTest --rerun --tests 'org.olcbox.app.net.InteropDumpTest' --stacktrace
+
+      - name: Every line through every server, by the engine child
+        run: |
+          set -euo pipefail
+          export GHOSTLANE_ENGINE="$GITHUB_WORKSPACE/$OUT/bin/$TARGET/ghostlane-engine"
+          bash scripts/cli-engine/lines.sh

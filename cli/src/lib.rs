@@ -9,5 +9,6 @@
 
 pub mod commands;
 pub mod daemon;
+pub mod engine;
 pub mod ipc;
 pub mod store;
