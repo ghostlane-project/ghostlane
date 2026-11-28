@@ -111,12 +111,6 @@ abstract class CheckNativeResourceListsTask : DefaultTask() {
     }
 }
 
-val defaultOlcRtcRepo = rootProject.layout.projectDirectory.asFile.parentFile
-    .resolve("olcrtc")
-    .absolutePath
-val olcrtcRepo = providers.environmentVariable("OLCRTC_REPO")
-    .orElse(defaultOlcRtcRepo)
-val olcrtcRepoDir = olcrtcRepo.map { rootProject.file(it) }
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
 val currentBuildOs = OperatingSystem.current()
 // Installed application name (Ghostlane.app / Ghostlane.exe / Ghostlane.AppImage).
@@ -139,111 +133,6 @@ fun desktopArchName(arch: String): String = when (arch.lowercase()) {
 }
 
 val hostDesktopArch = desktopArchName(System.getProperty("os.arch"))
-
-fun registerOlcRtcBuildTask(
-    taskName: String,
-    goos: String,
-    goarch: String,
-    outputName: String
-) = tasks.register<Exec>(taskName) {
-    val outputFile = generatedNativeResources.map { it.file("native/$outputName") }
-
-    outputs.file(outputFile)
-    workingDir = olcrtcRepoDir.get()
-    environment("GOOS", goos)
-    environment("GOARCH", goarch)
-    environment("CGO_ENABLED", "0")
-    commandLine(
-        "go",
-        "build",
-        "-trimpath",
-        "-ldflags",
-        "-s -w",
-        "-o",
-        outputFile.get().asFile.absolutePath,
-        "./cmd/olcrtc"
-    )
-
-    doFirst {
-        outputFile.get().asFile.parentFile.mkdirs()
-    }
-
-    // Notarisation rejected the build over exactly this kind of file: the olcrtc
-    // engine is produced here, long after CI has signed sing-box and xray, and it
-    // travels inside the app's jar. Apple scans in there and wants a Developer ID
-    // signature, a secure timestamp and the hardened runtime on every Mach-O.
-    //
-    // Signed at execution time with plain ProcessBuilder and System.getenv, and
-    // with no reference to `project` — a task action that touches the project
-    // breaks the configuration cache this build relies on.
-    val signTarget = outputFile.map { it.asFile.absolutePath }
-    val entitlementsPath = layout.projectDirectory.file("macos-entitlements.plist").asFile.absolutePath
-    val signOnDarwin = goos == "darwin"
-    doLast {
-        val identity = System.getenv("MACOS_SIGN_IDENTITY")
-        if (signOnDarwin && !identity.isNullOrBlank()) {
-            val exit = ProcessBuilder(
-                "codesign", "--force", "--timestamp", "--options", "runtime",
-                "--entitlements", entitlementsPath,
-                "--sign", identity, signTarget.get()
-            ).inheritIO().start().waitFor()
-            check(exit == 0) { "codesign failed for ${signTarget.get()}" }
-        }
-    }
-}
-
-fun registerOlcRtcLibraryBuildTask(
-    taskName: String,
-    goos: String,
-    goarch: String,
-    outputName: String
-) = tasks.register<Exec>(taskName) {
-    val outputFile = generatedNativeResources.map { it.file("native/$outputName") }
-
-    outputs.file(outputFile)
-    workingDir = olcrtcRepoDir.get()
-    environment("GOOS", goos)
-    environment("GOARCH", goarch)
-    environment("CGO_ENABLED", "1")
-    commandLine(
-        "go",
-        "build",
-        "-buildmode=c-shared",
-        "-trimpath",
-        "-ldflags",
-        "-s -w",
-        "-o",
-        outputFile.get().asFile.absolutePath,
-        "./cmd/olcrtc-cgo"
-    )
-
-    doFirst {
-        outputFile.get().asFile.parentFile.mkdirs()
-    }
-
-    // Notarisation rejected the build over exactly this kind of file: the olcrtc
-    // engine is produced here, long after CI has signed sing-box and xray, and it
-    // travels inside the app's jar. Apple scans in there and wants a Developer ID
-    // signature, a secure timestamp and the hardened runtime on every Mach-O.
-    //
-    // Signed at execution time with plain ProcessBuilder and System.getenv, and
-    // with no reference to `project` — a task action that touches the project
-    // breaks the configuration cache this build relies on.
-    val signTarget = outputFile.map { it.asFile.absolutePath }
-    val entitlementsPath = layout.projectDirectory.file("macos-entitlements.plist").asFile.absolutePath
-    val signOnDarwin = goos == "darwin"
-    doLast {
-        val identity = System.getenv("MACOS_SIGN_IDENTITY")
-        if (signOnDarwin && !identity.isNullOrBlank()) {
-            val exit = ProcessBuilder(
-                "codesign", "--force", "--timestamp", "--options", "runtime",
-                "--entitlements", entitlementsPath,
-                "--sign", identity, signTarget.get()
-            ).inheritIO().start().waitFor()
-            check(exit == 0) { "codesign failed for ${signTarget.get()}" }
-        }
-    }
-}
 
 // The engine embeds its display-name dictionaries since upstream 189d16c and
 // the client yaml no longer names a `data:` directory, so nothing is copied
@@ -271,14 +160,6 @@ extra["hostDesktopOs"] = hostDesktopOs
 extra["hostDesktopArch"] = hostDesktopArch
 extra["desktopPackageName"] = desktopPackageName
 extra["desktopPackageVersion"] = desktopPackageVersion
-extra["registerOlcRtcBuildTask"] =
-    { taskName: String, goos: String, goarch: String, outputName: String ->
-        registerOlcRtcBuildTask(taskName, goos, goarch, outputName)
-    }
-extra["registerOlcRtcLibraryBuildTask"] =
-    { taskName: String, goos: String, goarch: String, outputName: String ->
-        registerOlcRtcLibraryBuildTask(taskName, goos, goarch, outputName)
-    }
 extra["desktopNativeAssetTasks"] = desktopNativeAssetTasks
 extra["hostDesktopNativeAssetTasks"] = hostDesktopNativeAssetTasks
 extra["desktopNativeArchs"] = desktopNativeArchs

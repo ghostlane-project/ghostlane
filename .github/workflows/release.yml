@@ -78,14 +78,9 @@ env:
   # desktop used to build the tip of the fork's `proofkit` branch while iOS
   # linked the pin, so one release could carry two engines.
   #
-  # Every Go step below reads this. It used to be `stable`, and `stable` moved
-  # from 1.26.5 to 1.27.1 between two runs of the cores bind: the 1.27.1 build
-  # left golang.org/x/net/http2.(*Transport).connPool undefined in every slice
-  # and Xcode could not link it (see scripts/cores-pins.sh). The Android job
-  # builds sing-box and Xray — .so-named executables — from that same dependency
-  # graph with the same external linker step, so the same toolchain is pinned
-  # here for the same reason. It must equal GO_VERSION in scripts/cores-pins.sh,
-  # and release_version fails when it does not.
+  # Every Go step below reads this: the engine's checkout is built with it, and
+  # the release gate's engine tests. It must equal GO_VERSION in
+  # scripts/cores-pins.sh, and release_version fails when it does not.
   GO_VERSION: "1.26.5"
   # ProofKit fork versionCode = PATCH_BASE + github.run_number (RUN_NUMBER_BASE 0,
   # since run numbers reset to 1 on this fork). PATCH_BASE is set ABOVE upstream's
@@ -1436,12 +1431,7 @@ jobs:
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
       ANDROID_NDK_VERSION: "28.2.13676358"
       # The Rust core is built from scripts/ghostlane-core-pin.sh by
-      # scripts/build-ghostlane-core-android.sh. No Go engine is built here:
-      # the Go code left in the tree for A7 is neither packaged nor started.
-      # The two version markers stay until the CLI's flip: cli/internal/pins
-      # reads SINGBOX_VERSION from this file to hold cli/go.mod to the pin.
-      SINGBOX_VERSION: "1.13.14"
-      XRAY_VERSION: "26.7.11"
+      # scripts/build-ghostlane-core-android.sh. No Go engine is built here.
       # The five below are empty in a dry run. The signing step then takes its
       # branch for a checkout without the secrets (a throw-away keystore, so
       # the APK installs and the bundle is whole), and nothing goes to Play.

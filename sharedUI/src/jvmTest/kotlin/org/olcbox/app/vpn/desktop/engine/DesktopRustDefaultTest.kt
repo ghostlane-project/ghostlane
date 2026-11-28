@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 /**
  * What a desktop build runs when nothing installs an engine. Linux's and
  * macOS's packages carry ghostlane-engine and no Go core, so a manager that
- * got [GoEngines] there would find no program to start.
+ * got a Go engine there would find no program to start.
  */
 class DesktopRustDefaultTest {
     private val host = DesktopEngineHost(
@@ -36,7 +36,6 @@ class DesktopRustDefaultTest {
         for (os in DesktopOs.entries) {
             val engine = DesktopEngines.defaultFor(os, host)
             assertTrue(DesktopEngines.runsOnRust(engine), "$os still gets the Go engines")
-            assertFalse(engine is GoEngines, "$os is given GoEngines")
         }
     }
 

@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 /**
  * Source tests: ghostlane-engine's desktop engine hands nothing to the Go
  * engines, and the manager asks for the rules' home of the engine it runs on.
- * GoEngines.kt stays, for Windows.
+ * GoEngines.kt is gone.
  */
 class HostEngineNoGoTest {
     private val main = "src/jvmMain/kotlin/org/olcbox/app/vpn"
@@ -32,7 +32,7 @@ class HostEngineNoGoTest {
                 assertFalse(name in code, "${file.name} reaches $name")
             }
         }
-        assertTrue(File("$main/desktop/engine/GoEngines.kt").isFile, "GoEngines.kt stays until G4")
+        assertFalse(File("$main/desktop/engine/GoEngines.kt").exists(), "GoEngines.kt is gone, and stays gone")
     }
 
     @Test

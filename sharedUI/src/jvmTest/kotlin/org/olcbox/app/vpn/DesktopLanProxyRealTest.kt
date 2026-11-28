@@ -15,6 +15,7 @@ import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
 import org.olcbox.app.vpn.desktop.engine.host.HostEngine
+import org.olcbox.app.vpn.desktop.engine.host.HostLanChain
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -34,28 +35,43 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * LAN sharing on ghostlane-engine, the Core build's program at the pin (D5):
- * HostEngine starts the line's own core with CoreInbound.Lan on a private
- * address of this machine (the near end of a veth pair), DesktopLanProxy
- * starts no second process and binds no port of its own, and
- * scripts/desktop-checks/lan.sh sends a client from the far end, in a network
- * namespace of its own, through the line to Xray 26.4.25.
+ * LAN sharing on ghostlane-engine, the Core build's program at the pin (D5),
+ * in the three ways a session can carry it, each served to a client from the
+ * far end of a veth pair in a network namespace of its own
+ * (scripts/desktop-checks/lan.sh):
+ *  - a core line in proxy mode holds the LAN inbound in its own core;
+ *    DesktopLanProxy starts no second process and binds no port;
+ *  - a room: its SOCKS port with its login (a stand-in for the room's port,
+ *    as the olcRTC engine opens it) has no LAN inbound, so one engine run
+ *    chained to that port carries LAN;
+ *  - a line started without the inbound (what the Go fallback was for: LAN
+ *    switched on after the connect, a tunnel the helper started): one engine
+ *    run chained to the line's port.
  *
  * Run by lan.sh (rust-desktop.yml), which writes what these tests read into
  * the file [CHECK_ENV] names, the program being GHOSTLANE_ENGINE_BINARY.
- * Anywhere else each test is skipped, and lan.sh fails a run in which one was
- * skipped or did not run.
+ * Each test writes `ready.<case>` and waits for `done.<case>`. Anywhere else
+ * each test is skipped, and lan.sh fails a run in which one was skipped or did
+ * not run.
  */
 class DesktopLanProxyRealTest {
     private class Check(
         val link: String,
         val lanAddress: String,
-        val lanPort: Int,
+        val lanPorts: Map<String, Int>,
+        val roomPort: Int,
+        val roomUser: String,
+        val roomPass: String,
+        val targetIp: String,
+        val pagePort: Int,
         val lanUser: String,
         val lanPass: String,
-        val ready: File,
-        val done: File,
+        val ready: String,
+        val done: String,
     ) {
+        fun ready(case: String) = File("$ready.$case")
+        fun done(case: String) = File("$done.$case")
+
         companion object {
             fun read(file: File): Check {
                 val o = Json.parseToJsonElement(file.readText()).jsonObject
@@ -64,11 +80,16 @@ class DesktopLanProxyRealTest {
                 return Check(
                     link = s("link"),
                     lanAddress = s("lan_address"),
-                    lanPort = i("lan_port"),
+                    lanPorts = o.getValue("lan_ports").jsonObject.mapValues { it.value.jsonPrimitive.int },
+                    roomPort = i("room_port"),
+                    roomUser = s("room_user"),
+                    roomPass = s("room_pass"),
+                    targetIp = s("target"),
+                    pagePort = i("page_port"),
                     lanUser = s("lan_user"),
                     lanPass = s("lan_pass"),
-                    ready = File(s("ready")),
-                    done = File(s("done")),
+                    ready = s("ready"),
+                    done = s("done"),
                 )
             }
         }
@@ -169,31 +190,70 @@ class DesktopLanProxyRealTest {
         return false
     }
 
+    /** A fetch of the check's page through the proxy at [port] (the way the manager proves a listener is its own). */
+    private fun fetchThrough(port: Int, user: String, pass: String): Boolean = runCatching {
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress("127.0.0.1", port), 2_000)
+            socket.soTimeout = 15_000
+            val out = socket.getOutputStream()
+            val input = socket.getInputStream()
+            out.write(byteArrayOf(5, 1, 2)); out.flush()
+            if (input.readNBytes(2)[1] != 2.toByte()) return@use false
+            val u = user.toByteArray()
+            val p = pass.toByteArray()
+            out.write(byteArrayOf(1, u.size.toByte()) + u + byteArrayOf(p.size.toByte()) + p); out.flush()
+            if (input.readNBytes(2)[1] != 0.toByte()) return@use false
+            val address = InetAddress.getByName(check.targetIp).address
+            out.write(byteArrayOf(5, 1, 0, 1) + address + byteArrayOf((check.pagePort shr 8).toByte(), check.pagePort.toByte()))
+            out.flush()
+            val head = input.readNBytes(4)
+            if (head[1] != 0.toByte()) return@use false
+            input.readNBytes(if (head[3] == 4.toByte()) 18 else 6)
+            out.write("GET /ping HTTP/1.0\r\nHost: lan-check\r\n\r\n".toByteArray()); out.flush()
+            String(input.readAllBytes()).startsWith("HTTP/1.")
+        }
+    }.getOrDefault(false)
+
+    /** DesktopLanProxy as the manager builds it, its listener's ownership proved by a fetch of the check's page. */
+    private fun proxyOf(settings: DesktopSocksProxySettings, chain: HostLanChain) = DesktopLanProxy(
+        ::say, chain, settings = { settings },
+        proveOwnership = { listener, port, user, pass ->
+            DesktopLanProxy.proveOwnershipOf(listener, port, user, pass) { p, u, w -> fetchThrough(p, u, w) }
+        },
+    )
+
+    /** Tells lan.sh the listener is up, and holds it up until the client at the far end is done. */
+    private fun serveUntilDone(case: String, alive: () -> Boolean, what: String) {
+        check.ready(case).writeText("ready")
+        val deadline = System.nanoTime() + 240_000_000_000L
+        while (!check.done(case).exists()) {
+            if (System.nanoTime() > deadline) fail("the client did not finish in 240 s\n${tail()}")
+            assertTrue(alive(), "$what ended while the client was served\n${tail()}")
+            Thread.sleep(200)
+        }
+        assertTrue(alive(), "$what ended while the client was served\n${tail()}")
+    }
+
     @Test
-    fun aLanClientWithTheLoginIsCarriedByTheLinesCoreAndOneWithoutIsRefused(): Unit = runBlocking {
-        val lanSettings = settings(check.lanPort)
-        val proxy = DesktopLanProxy(::say, LanCores.rust(), settings = { lanSettings })
+    fun aCoreLineInProxyModeCarriesLanInItsOwnCoreAndNoSecondEngineRuns(): Unit = runBlocking {
+        val port = check.lanPorts.getValue("core")
+        val lanSettings = settings(port)
+        val chain = HostLanChain(::say, sessionParent = sessions)
+        val proxy = proxyOf(lanSettings, chain)
         val engine = HostEngine(engineHost, sessionParent = sessions)
         val ownLogin = SocksLogin("tun-user", "tun-pass")
-        val ownPort = freeOwnPort(check.lanPort)
+        val ownPort = freeOwnPort(port)
         val started = engine.line.start(request(ownPort, ownLogin))
         try {
             assertTrue(waitForListener("127.0.0.1", ownPort, started.alive), "the line's own port did not open\n${tail()}")
-            assertTrue(waitForListener(check.lanAddress, check.lanPort, started.alive), "the LAN port did not open\n${tail()}")
+            assertTrue(waitForListener(check.lanAddress, port, started.alive), "the LAN port did not open\n${tail()}")
             val upstream = SubscriptionFetchProxy("127.0.0.1", ownPort, ownLogin.username, ownLogin.password)
             val endpoint = proxy.start(lanSettings, upstream)
-            assertEquals("${check.lanAddress}:${check.lanPort}", endpoint, tail())
+            assertEquals("${check.lanAddress}:$port", endpoint, tail())
             assertTrue(proxy.isRunning(), "DesktopLanProxy is active\n${tail()}")
             assertEquals(1, engine.line.runningProcesses().size, "only the line's own engine runs\n${tail()}")
-            check.ready.writeText("ready")
-            val deadline = System.nanoTime() + 240_000_000_000L
-            while (!check.done.exists()) {
-                if (System.nanoTime() > deadline) fail("the client did not finish in 240 s\n${tail()}")
-                assertTrue(started.alive(), "the line's engine ended while the client was served\n${tail()}")
-                assertTrue(proxy.isRunning(), "DesktopLanProxy stopped while the client was served\n${tail()}")
-                Thread.sleep(200)
-            }
-            assertTrue(started.alive(), "the line's engine ended while the client was served\n${tail()}")
+            assertEquals(0, chain.runningProcesses().size, "no engine is run for LAN\n${tail()}")
+            serveUntilDone("core", { started.alive() && proxy.isRunning() }, "the line's engine or DesktopLanProxy")
         } finally {
             proxy.stop()
             engine.line.stopNow()
@@ -202,7 +262,70 @@ class DesktopLanProxyRealTest {
         assertFalse(started.alive(), "a stop ends the line's engine")
         assertFalse(engine.line.anyRunning(), "no engine runs after the stop")
         assertEquals(0, started.exitCode(), "the engine exited cleanly\n${tail()}")
-        assertFalse(portOpen(check.lanAddress, check.lanPort), "the LAN port is closed once the line stops")
+        assertFalse(portOpen(check.lanAddress, port), "the LAN port is closed once the line stops")
+    }
+
+    /**
+     * A room's port is the olcRTC engine's: a SOCKS5 listener on loopback with
+     * a login, in no core that could hold the LAN inbound. The stand-in lan.sh
+     * runs is that port, and one engine run, chained to it, is all LAN needs.
+     */
+    @Test
+    fun aRoomsPortCarriesLanThroughOneEngineRunChainedToIt(): Unit = runBlocking {
+        val port = check.lanPorts.getValue("room")
+        val lanSettings = settings(port)
+        val chain = HostLanChain(::say, sessionParent = sessions)
+        val proxy = proxyOf(lanSettings, chain)
+        // What the manager leaves where a room starts: no core holds the inbound.
+        LanCores.lineStarted(null, "a line is being started")
+        try {
+            val room = SubscriptionFetchProxy("127.0.0.1", check.roomPort, check.roomUser, check.roomPass)
+            assertEquals("${check.lanAddress}:$port", proxy.start(lanSettings, room), tail())
+            assertTrue(proxy.isRunning(), "DesktopLanProxy is active\n${tail()}")
+            assertEquals(1, chain.runningProcesses().size, "one engine run carries LAN\n${tail()}")
+            serveUntilDone("room", { chain.isRunning() && proxy.isRunning() }, "the engine run")
+        } finally {
+            proxy.stop()
+            LanCores.lineStopped()
+        }
+        assertFalse(proxy.isRunning(), "a stop ends LAN sharing")
+        assertFalse(chain.isRunning(), "a stop ends the engine run")
+        assertFalse(portOpen(check.lanAddress, port), "the LAN port is closed once LAN sharing stops")
+    }
+
+    /**
+     * The case the Go fallback was for: a core line whose core holds no LAN
+     * inbound (LAN switched on after it was started; a tunnel the helper
+     * started). It keeps running untouched, and one engine run is chained to
+     * its port.
+     */
+    @Test
+    fun aLineStartedWithoutTheInboundIsLeftAloneAndCarriesLanThroughOneEngineRun(): Unit = runBlocking {
+        val port = check.lanPorts.getValue("line")
+        val lanSettings = settings(port)
+        val chain = HostLanChain(::say, sessionParent = sessions)
+        val proxy = proxyOf(lanSettings, chain)
+        val engine = HostEngine(engineHost, sessionParent = sessions, lanSettings = { DesktopSocksProxySettings() })
+        val ownLogin = SocksLogin("tun-user", "tun-pass")
+        val ownPort = freeOwnPort(port)
+        val started = engine.line.start(request(ownPort, ownLogin))
+        try {
+            assertTrue(waitForListener("127.0.0.1", ownPort, started.alive), "the line's own port did not open\n${tail()}")
+            assertNull(LanCores.currentLine().lan, "the line's core holds no LAN inbound")
+            assertFalse(portOpen(check.lanAddress, port), "nothing listens on the LAN port yet")
+            val upstream = SubscriptionFetchProxy("127.0.0.1", ownPort, ownLogin.username, ownLogin.password)
+            assertEquals("${check.lanAddress}:$port", proxy.start(lanSettings, upstream), tail())
+            assertTrue(proxy.isRunning(), "DesktopLanProxy is active\n${tail()}")
+            assertEquals(1, engine.line.runningProcesses().size, "the line's engine runs once\n${tail()}")
+            assertEquals(1, chain.runningProcesses().size, "one more engine run carries LAN\n${tail()}")
+            serveUntilDone("line", { started.alive() && chain.isRunning() && proxy.isRunning() }, "an engine")
+        } finally {
+            proxy.stop()
+            engine.line.stopNow()
+        }
+        assertFalse(chain.isRunning(), "a stop ends the engine run")
+        assertFalse(started.alive(), "a stop ends the line's engine")
+        assertFalse(portOpen(check.lanAddress, port), "the LAN port is closed once LAN sharing stops")
     }
 
     /**
@@ -214,7 +337,7 @@ class DesktopLanProxyRealTest {
     fun aPortAnotherProgramHoldsStartsTheLineButLeavesLanSharingUnavailable(): Unit = runBlocking {
         bindLanSocket().use { held ->
             val lanSettings = settings(held.localPort)
-            val proxy = DesktopLanProxy(::say, settings = { lanSettings })
+            val proxy = DesktopLanProxy(::say, HostLanChain(::say, sessionParent = sessions), settings = { lanSettings })
             val engine = HostEngine(engineHost, sessionParent = sessions)
             val ownPort = freeOwnPort(held.localPort)
             try {

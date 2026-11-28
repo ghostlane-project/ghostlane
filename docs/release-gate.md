@@ -332,36 +332,25 @@ These are calibration values. Revisit them after the first runs.
 
 ## Re-pinning
 
-`OLCRTC_VERSION` in `scripts/cores-pins.sh` is the engine of **every** platform,
-not only the iOS Cores:
-
-- Windows, macOS and Linux build `cmd/olcrtc` from it.
-- Android builds the AAR from it.
-- iOS builds the app's `OlcRtcMobile` from the checkout, and the extension's
-  Cores come from the same pin through the Go module proxy.
-- The gate tests it.
+`OLCRTC_VERSION` in `scripts/cores-pins.sh` is the engine revision the **gate**
+tests. No platform builds a Go engine from it any more; every package runs the
+Rust core, built at the pin in `scripts/ghostlane-core-pin.sh`. The pin is what
+the exits run and what the gate's Go legs check out.
 
 `release_version` resolves it once with `scripts/olcrtc-pin.sh`. The 12-hex tail
 becomes the full commit, and the pseudo-version's timestamp must equal the
-commit's time. All five build jobs then check that commit out.
-
-Android and the desktop used to follow the tip of `proofkit`. That is over: an
-engine fix now reaches users only through a re-pin.
+commit's time. The jobs that need the engine's checkout take that commit.
 
 1. Dispatch **Release gate** with `engine_ref=<candidate>`. This gates the
-   candidate before anything is built from it or paid for on a 10x runner.
+   candidate before anything is built from it.
 2. When it is green, set `OLCRTC_VERSION` to the candidate's pseudo-version,
-   `v0.0.0-<commit time, UTC, yyyymmddhhmmss>-<first 12 hex>`. Bump
-   `CORES_BUILD`, and copy `OLCRTC_VERSION` into `ios-frameworks.yml`'s `env`,
-   which checks itself against `cores-pins.sh`.
-3. Run **iOS Frameworks**, so the Cores for the new tag exist.
-4. Push. The push runs the gate in `pin` mode against the new pin.
-5. Release.
+   `v0.0.0-<commit time, UTC, yyyymmddhhmmss>-<first 12 hex>`.
+3. Push. The push runs the gate in `pin` mode against the new pin.
+4. Release.
 
 Pin a commit on `proofkit`. GitHub keeps serving a commit no branch reaches only
-until it is garbage-collected, and then every checkout of it fails. The iOS
-Cores survive through the module proxy; nothing else does. `olcrtc-pin.sh` warns
-when the pin is not on `proofkit`, and the release notes say so.
+until it is garbage-collected, and then every checkout of it fails.
+`olcrtc-pin.sh` warns when the pin is not on `proofkit`, and the release notes say so.
 
 The first re-pin after this change has to reach an engine commit that carries
 the gate: `internal/gate` and `cmd/gate-report`, with the flags of the engine

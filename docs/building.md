@@ -6,23 +6,23 @@ Everything below is for building the app yourself; the [downloads](../README.MD#
 
 ## Platform Matrix
 
-| Platform and modes | What carries the packets | Engines |
+| Platform and modes | What carries the packets | Engine |
 | --- | --- | --- |
-| Android: TUN, proxy | `VpnService` + `hev-socks5-tunnel` | sing-box and Xray as packaged native binaries, olcRTC bound in-process |
-| iOS: System VPN | `hev-socks5-tunnel` in front of one engine | `ghostlane-core`, one Rust library inside the extension: its core runs Reality, Hysteria2, WebTunnel and xhttp, its olcRTC client the rooms |
-| macOS: TUN, proxy | root daemon via `SMAppService` running sing-box; OS proxy settings and a PAC otherwise | bundled sing-box and Xray, olcRTC as a child process |
-| Windows: TUN, proxy | supervised sing-box TUN + Wintun, which in a session that starts on a core's line answers every name itself and refuses port 53 beside the tunnel (`strict_route`); OS proxy settings otherwise | as macOS |
-| Linux: TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | as macOS |
+| Android: TUN, proxy | `VpnService` + `hev-socks5-tunnel` | `ghostlane-core`, one Rust library in the app: its core runs every kind of line, its olcRTC client the rooms |
+| iOS: System VPN | `hev-socks5-tunnel` in front of one engine | `ghostlane-core`, one Rust library inside the extension |
+| macOS: TUN, proxy | root daemon via `SMAppService` running hev behind the engine; OS proxy settings and a PAC otherwise | `ghostlane-engine`, a child of the app |
+| Windows: TUN, proxy | hev + Wintun, the line leaving by the interface the machine leaves by; the tunnel answers every name itself and the firewall refuses port 53 beside it (the guard the old sing-box tun called `strict_route`); OS proxy settings otherwise | `ghostlane-engine`, a child of the app |
+| Linux: TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | `ghostlane-engine`, a child of the app |
+| Linux CLI | the same hev and policy routes, or a local proxy | `ghostlane-engine`, a child of the CLI |
 
-iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB. sing-box
-owning the tun in front of a second Go engine buffers every connection twice and
-serves it with twice the goroutines; a speed test killed the extension outright.
-sing-box's gVisor tun alone cost about 20 MB more than the same sing-box behind
-`hev-socks5-tunnel`, so its own lines moved behind it too. The measurements and
-what replaced it are in [ios-one-go-runtime.md](ios-one-go-runtime.md). The
-extension now links no Go engine at all: `hev-socks5-tunnel` owns the tun on
-every line, and behind it runs `ghostlane-core`, built at the commit in
-`scripts/ghostlane-core-pin.sh`.
+No package carries a Go program; `scripts/check-no-go.sh` (K1) reads every
+package for one. The Rust core is built at the commit in
+`scripts/ghostlane-core-pin.sh`; [rust-core.md](rust-core.md) says how.
+
+iOS is the odd one because an `NEPacketTunnelProvider` gets about 50 MB: the
+extension links no second engine, `hev-socks5-tunnel` owns the tun on every line,
+and `ghostlane-core` runs behind it. The measurements that led there are in
+[ios-one-go-runtime.md](ios-one-go-runtime.md).
 
 ## Requirements
 
@@ -30,33 +30,10 @@ every line, and behind it runs `ghostlane-core`, built at the commit in
 | --- | --- |
 | JVM | JDK 21, what CI builds with; the Android source and target level is 17 |
 | Android | Android Studio, SDK 37, NDK 28.2.13676358 |
-| Desktop native assets | Go 1.26.5 and a local `olcrtc` checkout |
+| Desktop native assets | a C toolchain for `hev-socks5-tunnel` (and, for the Mac, the tunnel daemon's bridge); `ghostlane-engine` is built by the Core build and put in the package, or built with `scripts/build-ghostlane-core-host.sh` |
 | iOS | macOS and Xcode; the first build fetches `Cores.xcframework` and `HevSocks5Tunnel.xcframework` from this repository's release tags, and builds `ghostlane-core` with `scripts/build-ghostlane-core-ios.sh`, which needs `rustup` and `git` |
 | Linux TUN | `iproute2`, `/dev/net/tun`, root/Polkit/sudo privileges; Linux 5.7 or later for any server other than an olcRTC room (the core is bound to the physical interface, which older kernels allow only to root). The kill switch needs the kernel's `dummy` device; without it the tunnel comes up without the switch, and the log says so |
 | Windows TUN | UAC elevation when TUN starts and bundled Wintun runtime |
-
-Default local `olcrtc` path:
-
-```text
-../olcrtc
-```
-
-Override it with `OLCRTC_REPO`:
-
-```bash
-OLCRTC_REPO=/path/to/olcrtc ./gradlew :desktopApp:run
-```
-
-Relative `OLCRTC_REPO` values are resolved from this project's root:
-
-```bash
-OLCRTC_REPO=../olcrtc-ansible-deploy/olcrtc ./gradlew :androidApp:assembleGithubRelease
-```
-
-```powershell
-$env:OLCRTC_REPO="C:\path\to\olcrtc"
-.\gradlew.bat :desktopApp:run
-```
 
 ## Commands
 
@@ -75,7 +52,7 @@ $env:OLCRTC_REPO="C:\path\to\olcrtc"
 | Stop and restart the Android tun's native code in one process (Linux) | `scripts/test-android-hev-restart.sh` |
 
 The main checks are what PR checks run, in that order; `check-singbox-configs.sh`
-follows them there, starting the shapes rather than only checking them, and
+follows them there, and
 `test-android-hev-restart.sh` runs after the main checks when the Android tun's
 native code changed.
 
@@ -100,13 +77,10 @@ Built into `desktopApp/build/generated/desktopNativeResources/` by
 
 | Asset | Path |
 | --- | --- |
-| macOS `olcrtc` | `native/olcrtc-darwin-<arch>` |
-| macOS `olcrtc` library, for room checks | `native/libolcrtc-darwin-<arch>.dylib` |
 | macOS tunnel-daemon bridge | `native/libolcboxtunneld.dylib` |
-| Windows `olcrtc` | `native/olcrtc-windows-amd64.exe`, `native/olcrtc-windows-amd64.dll` |
-| Windows Wintun runtime | `native/wintun.dll` |
-| Linux `olcrtc` | `native/olcrtc-linux-<arch>`, `native/libolcrtc-linux-<arch>.so` |
+| Windows `hev` and Wintun runtime | `native/hev.exe`, `native/wintun.dll` |
 | Linux `hev-socks5-tunnel` | `native/hev-socks5-tunnel-linux-<arch>` |
+| `ghostlane-engine` | `native/ghostlane-engine`, `native/ghostlane-engine.exe` on Windows (put in by the package build from the Core build) |
 
 `<arch>` is `arm64` or `amd64`. The macOS bridge is why a missing asset is worth
 a failed build rather than a warning: absent, the settings row for the system-wide
@@ -121,13 +95,9 @@ tunnel simply does not appear, and nothing anywhere says why.
   repository's releases; the `play` flavor drops it along with the two
   permissions Play refuses.
 - Android release builds require `keystore.properties` in the repository root.
-- sing-box and Xray are **not** produced by `buildDesktopNativeAssets`. The
-  release workflow puts the pinned versions into
-  `desktopApp/src/main/resources/native/` before packaging: sing-box 1.13.14
-  built with the Reality hello patch (`scripts/build-singbox.sh <dest>`, which
-  works on a desktop with Go), Xray 26.7.11 downloaded. A locally packaged
-  build starts olcRTC locations and fails on the rest until those two binaries
-  are put there.
+- `ghostlane-engine` is not produced by `buildDesktopNativeAssets` either: the
+  release workflow builds it at the pin and puts it into the package. A locally
+  packaged build has no engine until one is put there, and then connects nothing.
 - The release workflow signs and notarises every macOS build, published or not:
   `SMAppService` refuses to register the tunnel daemon from an un-notarised
   bundle. A local `packageReleaseDmg` is neither unless `MACOS_SIGN_IDENTITY`

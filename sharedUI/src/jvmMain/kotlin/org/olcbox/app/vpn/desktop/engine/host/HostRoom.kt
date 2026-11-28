@@ -11,7 +11,7 @@ import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.net.core.CoreRoomFront
 import org.olcbox.app.net.core.CoreRouting
-import org.olcbox.app.vpn.desktop.OlcRtcCommand
+import org.olcbox.app.vpn.desktop.OlcRtcProvider
 import org.olcbox.app.vpn.desktop.engine.RoomEngine
 import org.olcbox.app.vpn.desktop.engine.RoomLaunch
 import org.olcbox.app.vpn.desktop.engine.RoomRequest
@@ -57,7 +57,7 @@ internal class HostRoom(
         val geodataDir = if (HostRoomSession.blockedOnly(request)) runBlocking { HostGeodata.refilterDir() } else null
         val session = HostRoomSession.text(request, bind, geodataDir)
         return object : RoomLaunch {
-            override val provider: String = OlcRtcCommand.desktopProviderArg(request.location.bypassProvider)
+            override val provider: String = OlcRtcProvider.desktopProviderArg(request.location.bypassProvider)
             override fun config(): String = session
             override fun args(configPath: Path): List<String> =
                 listOf(binary.toString(), "run", "--session", configPath.toString())

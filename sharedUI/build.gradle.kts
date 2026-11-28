@@ -61,7 +61,7 @@ val olcboxBuildIdValue: String = providers.gradleProperty("olcbox.buildId").orNu
 // Xcode's build phases do not inherit the shell's environment, so exporting one
 // in a terminal never reaches the gradle that Xcode runs.
 //
-// Read plainly, the way this file already reads OLCRTC_REPO. A `fileContents`
+// Read plainly, the way this file reads its environment variables. A `fileContents`
 // provider was tried first and silently yielded nothing — the task ran, the key
 // stayed empty — and a build input that can fail without saying so is worth less
 // than the laziness it buys.
@@ -92,12 +92,6 @@ val olcboxAdminPassSha256 = providers.environmentVariable("OLCBOX_ADMIN_PASS_SHA
 val olcboxResolverBase = providers.environmentVariable("OLCBOX_RESOLVER_BASE")
     .orElse(localBuildProperty("olcbox.resolverBase") ?: "https://proofkit.org/api/v1")
 val generatedAppInfoDir = layout.buildDirectory.dir("generated/source/olcboxAppInfo/commonMain")
-
-val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
-    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("olcrtc").absolutePath)
-val olcrtcRepoDir = rootProject.file(olcrtcRepoPath.get())
-val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
-val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
 
 abstract class GenerateAppInfoTask : DefaultTask() {
     @get:Input

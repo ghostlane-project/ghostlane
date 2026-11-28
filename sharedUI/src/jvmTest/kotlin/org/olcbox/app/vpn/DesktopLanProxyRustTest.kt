@@ -22,8 +22,9 @@ import kotlin.test.assertTrue
 
 /**
  * LAN sharing on ghostlane-engine (D5): the listener is an inbound in the
- * session's own core, so DesktopLanProxy starts no second process and binds
- * no port of its own while keeping the pinned-network and credential guards.
+ * session's own core when it holds one, so DesktopLanProxy starts no second
+ * process and binds no port of its own while keeping the pinned-network and
+ * credential guards.
  */
 class DesktopLanProxyRustTest {
     private val upstream = SubscriptionFetchProxy("127.0.0.1", 10810, "internal", "secret")
@@ -59,7 +60,7 @@ class DesktopLanProxyRustTest {
     fun aRustSessionStartsNoProcessOfItsOwnAndDoesNotBindTheLanPort() = runTest {
         if (DesktopPaths.os == DesktopOs.Windows) return@runTest
         var binaryAsked = 0
-        val core = LanCores.rust(binary = { binaryAsked++; Path.of("unused-ghostlane-engine") })
+        val core = LanCores.session(binary = { binaryAsked++; Path.of("unused-ghostlane-engine") })
         // 192.168.50.10 is not an address on the runner: a ServerSocket bind to
         // it would fail, so passing proves DesktopLanProxy did not bind it.
         val proxy = DesktopLanProxy(
@@ -89,7 +90,7 @@ class DesktopLanProxyRustTest {
 
             val rust = DesktopLanProxy(
                 onOutput = {},
-                core = LanCores.rust(binary = { Path.of("unused") }),
+                core = LanCores.session(binary = { Path.of("unused") }),
                 availableAddresses = { listOf(localPrivate) },
                 readNetworkIdentity = { networkId },
             )
@@ -97,17 +98,19 @@ class DesktopLanProxyRustTest {
             assertTrue(rust.isRunning())
             rust.stop()
 
-            val go = DesktopLanProxy(
+            // The run of its own, as a room or a line without the inbound gets it,
+            // is held to the port check: a stranger's port is a sentence, not a listener.
+            val chained = DesktopLanProxy(
                 onOutput = {},
-                core = LanCores.go {},
+                core = LanCores.chain(binary = { Path.of("unused") }),
                 availableAddresses = { listOf(localPrivate) },
                 readNetworkIdentity = { networkId },
             )
             val clash = assertFailsWith<IllegalStateException> {
-                go.start(sharing(address = localPrivate, port = heldPort), upstream)
+                chained.start(sharing(address = localPrivate, port = heldPort), upstream)
             }
             assertTrue("already in use" in clash.message.orEmpty(), clash.message)
-            assertFalse(go.isRunning())
+            assertFalse(chained.isRunning())
         }
     }
 
@@ -116,7 +119,7 @@ class DesktopLanProxyRustTest {
         if (DesktopPaths.os == DesktopOs.Windows) return@runTest
         fun proxy(addresses: List<String> = listOf("192.168.50.10"), identity: String? = networkId) = DesktopLanProxy(
             onOutput = {},
-            core = LanCores.rust(binary = { Path.of("unused") }),
+            core = LanCores.session(binary = { Path.of("unused") }),
             availableAddresses = { addresses },
             readNetworkIdentity = { identity },
         )
@@ -184,7 +187,7 @@ class DesktopLanProxyRustTest {
     @Test
     fun aProxyRegistersItsSettingsWithLanCores() {
         var current = DesktopSocksProxySettings()
-        DesktopLanProxy(onOutput = {}, core = LanCores.rust(), settings = { current })
+        DesktopLanProxy(onOutput = {}, core = LanCores.session(), settings = { current })
         assertFalse(LanCores.currentSettings().shareOnLan)
         current = sharing()
         assertEquals(current, LanCores.currentSettings())
@@ -192,8 +195,8 @@ class DesktopLanProxyRustTest {
 
     /**
      * The running line, not a switch set somewhere else, says whether the LAN
-     * listener belongs to the session's core. Any other case must keep the
-     * Go listener's own port check, including a line with different settings.
+     * listener belongs to the session's core. Any other case keeps the
+     * engine run's own port check, including a line with different settings.
      */
     @Test
     fun theProxyBindsOnlyWhenNoRunningLineHoldsTheseExactLanSettings() = runTest {
@@ -237,17 +240,17 @@ class DesktopLanProxyRustTest {
     }
 
     @Test
-    fun goStaysTheDefaultAndOwnsItsListenerWhileRustUsesTheSessionsCore() {
-        val go = LanCores.go {}
-        val rust = LanCores.rust()
-        assertEquals("sing-box", go.name)
-        assertEquals("ghostlane-engine", rust.name)
-        assertTrue(go.ownsListener)
-        assertFalse(rust.ownsListener)
-        assertFalse(go.isRunning())
-        assertFalse(rust.isRunning())
-        go.stopNow()
-        rust.stopNow()
+    fun theSessionsCoreOwnsNoListenerAndTheChainRunOwnsItsOwn() {
+        val session = LanCores.session()
+        val chain = LanCores.chain()
+        assertEquals("ghostlane-engine", session.name)
+        assertEquals("ghostlane-engine", chain.name)
+        assertFalse(session.ownsListener)
+        assertTrue(chain.ownsListener)
+        assertFalse(session.isRunning())
+        assertFalse(chain.isRunning())
+        session.stopNow()
+        chain.stopNow()
     }
 
     private companion object {

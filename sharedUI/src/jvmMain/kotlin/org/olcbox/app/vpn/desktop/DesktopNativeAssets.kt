@@ -9,53 +9,6 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 
 internal object DesktopNativeAssets {
-    fun resolveOlcRtcBinary(): Path {
-        return resolveOlcRtcBinaryCandidates().first()
-    }
-
-    fun resolveOlcRtcBinaryCandidates(): List<Path> {
-        val fileNames = olcRtcFileNames()
-        return fileNames.mapNotNull { resolveOlcRtcBinaryOrNull(it) }.also {
-            if (it.isEmpty()) {
-                error("Bundled native binary is missing: ${fileNames.joinToString(", ") { name -> "native/$name" }}")
-            }
-        }
-    }
-
-    private fun resolveOlcRtcBinaryOrNull(fileName: String): Path? {
-        return try {
-            resolveBinary(
-                fileName = fileName,
-                resourceName = "native/$fileName",
-                candidates = olcRtcSourceCandidates(fileName)
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun olcRtcFileNames(): List<String> {
-        return when (DesktopPaths.os) {
-            DesktopOs.MacOS -> listOf(
-                "olcrtc-darwin-${desktopArch()}",
-                "olcrtc-darwin-${desktopArchFallback()}"
-            ).distinct()
-            DesktopOs.Windows -> listOf("olcrtc-windows-amd64.exe")
-            DesktopOs.Linux -> listOf("olcrtc-linux-${desktopArch()}")
-            DesktopOs.Other -> error("Ghostlane desktop supports macOS, Windows and Linux")
-        }
-    }
-
-    private fun olcRtcFileName(): String = olcRtcFileNames().first()
-
-    private fun desktopArchFallback(): String {
-        return when (desktopArch()) {
-            "arm64" -> "amd64"
-            "amd64" -> "arm64"
-            else -> "amd64"
-        }
-    }
-
     fun resolveHevSocks5TunnelBinary(): Path {
         val fileName = hevSocks5TunnelFileName()
         return resolveBinary(
@@ -66,11 +19,9 @@ internal object DesktopNativeAssets {
     }
 
     /**
-     * The bundled core binaries carry `.exe` on Windows and nothing elsewhere.
+     * The bundled sing-box carries `.exe` on Windows and nothing elsewhere.
      */
     fun singBoxFileName(): String = coreFileName("sing-box")
-
-    fun xrayFileName(): String = coreFileName("xray")
 
     private fun coreFileName(base: String): String =
         if (DesktopPaths.os == DesktopOs.Windows) "$base.exe" else base
@@ -100,13 +51,6 @@ internal object DesktopNativeAssets {
     fun ensureWintunRuntime() {
         if (DesktopPaths.os == DesktopOs.Windows) copyRuntimeAsset("wintun.dll")
     }
-
-    /**
-     * Resolve the bundled `xray` core binary (used for xhttp locations). Honors the
-     * `OLCBOX_XRAY_BINARY` env override before falling back to the bundled resource.
-     */
-    fun resolveXrayBinary(): Path =
-        resolveExternalCore(xrayFileName(), "OLCBOX_XRAY_BINARY")
 
     private fun resolveExternalCore(fileName: String, envVar: String): Path {
         System.getenv(envVar)?.takeIf { it.isNotBlank() }?.let { return Path(it) }
@@ -165,30 +109,6 @@ internal object DesktopNativeAssets {
             "aarch64", "arm64" -> "arm64"
             else -> error("Unsupported desktop architecture: ${DesktopPaths.arch}")
         }
-    }
-
-    private fun olcRtcSourceCandidates(fileName: String): List<Path> {
-        val explicitBinary = System.getenv("OLCRTC_BINARY")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        val explicitRepo = System.getenv("OLCRTC_REPO")?.takeIf { it.isNotBlank() }?.let { Path(it) }
-        val defaultRepo = Path("..").resolve("olcrtc")
-        return listOfNotNull(
-            explicitBinary,
-            explicitRepo
-        ).flatMap { repoOrBinary ->
-            if (repoOrBinary.fileName?.toString() == fileName || repoOrBinary.fileName?.toString() == fileName.removeSuffix(".exe")) {
-                listOf(repoOrBinary)
-            } else {
-                repoCandidates(repoOrBinary, fileName)
-            }
-        } + repoCandidates(defaultRepo, fileName)
-    }
-
-    private fun repoCandidates(repo: Path, fileName: String): List<Path> {
-        return listOf(
-            repo.resolve("build").resolve(fileName),
-            repo.resolve(fileName.removeSuffix(".exe")),
-            repo.resolve("olcrtc")
-        )
     }
 
     private fun hevSocks5TunnelSourceCandidates(fileName: String): List<Path> {

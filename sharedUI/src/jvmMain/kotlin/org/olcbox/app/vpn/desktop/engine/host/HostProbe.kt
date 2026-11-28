@@ -15,7 +15,7 @@ import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.TransportProbe
-import org.olcbox.app.vpn.desktop.OlcRtcCommand
+import org.olcbox.app.vpn.desktop.OlcRtcProvider
 import org.olcbox.app.vpn.desktop.engine.ProbeEngine
 import java.nio.file.Files
 import java.nio.file.Path
@@ -104,7 +104,7 @@ internal class HostProbe(
                 val normalized = config.normalized()
                 val vp8 = normalized.transport == LocationConfig.TRANSPORT_VP8CHANNEL
                 return Room(
-                    provider = OlcRtcCommand.desktopProviderArg(normalized.bypassProvider),
+                    provider = OlcRtcProvider.desktopProviderArg(normalized.bypassProvider),
                     rooms = normalized.failoverRooms(),
                     keyHex = normalized.key,
                     deviceId = deviceId,
