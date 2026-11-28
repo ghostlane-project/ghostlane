@@ -125,7 +125,6 @@ object RustE2eDevice {
         bypassApps: List<String> = emptyList(),
         mode: String = "tun",
     ): Intent = serviceIntent(OlcboxVpnActions.ACTION_START_VPN)
-        .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
         .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, mode)
         .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, login.username)
         .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, login.password)

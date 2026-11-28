@@ -13,12 +13,9 @@ import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.core.CoreBlockedOnly
 import org.olcbox.app.net.core.CoreConfig
 import org.olcbox.app.net.core.CoreFixtures
-import org.olcbox.app.vpn.DesktopMode
-import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
-import org.olcbox.app.vpn.rulesHomeWithoutDaemon
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -59,43 +56,9 @@ class MacRoutingTest {
     private val noName: suspend (String, DirectDns?) -> String = { host, _ -> error("asked for $host") }
 
     @Test
-    fun aCoreLineInTheMacTunnelOnTheEngineKeepsItsRulesInTheCore() {
-        assertEquals(
-            DesktopRulesHome.Core,
-            rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Rust),
-        )
-        assertEquals(
-            DesktopRulesHome.Nowhere,
-            rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = false, needsRules = false, engine = DesktopLineEngine.Rust),
-        )
-        // The Go answer is what it was: a daemon with no sing-box has nowhere to put them.
-        assertEquals(
-            DesktopRulesHome.Nowhere,
-            rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = false, needsRules = true),
-        )
-        // A room on the engine carries its rules in its own front, the core half of the room's process (HR).
-        assertEquals(
-            DesktopRulesHome.Core,
-            rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
-        )
-        // LR: a core line in the Linux tunnel keeps its rules in the core too; the Go answer stays.
-        assertEquals(
-            DesktopRulesHome.Core,
-            desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Rust),
-        )
-        assertEquals(
-            DesktopRulesHome.Nowhere,
-            desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Go),
-        )
-        assertEquals(
-            DesktopRulesHome.Nowhere,
-            desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = false, needsRules = false, engine = DesktopLineEngine.Rust),
-        )
-        // WD: the Windows tunnel's are the core's too (bound by the adapter's alias).
-        assertEquals(
-            DesktopRulesHome.Core,
-            desktopRulesHome(DesktopMode.WindowsTun, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Rust),
-        )
+    fun aCoreLineInTheMacTunnelKeepsItsRulesInTheCore() {
+        assertEquals(DesktopRulesHome.Core, desktopRulesHome(needsRules = true))
+        assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(needsRules = false))
     }
 
     @Test
@@ -157,16 +120,13 @@ class MacRoutingTest {
 
     /** A source test: the manager cannot be started in a test (it owns a tunnel and the system's proxy). */
     @Test
-    fun theManagerAsksWhereARulesLiveByTheEngineItRuns() {
+    fun theManagerAsksWhereARulesLiveFromTheRoutingSettingsAlone() {
         val manager = File("src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopVpnManager.kt").readText()
-        assertTrue(
-            manager.contains("rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules, lineEngineKind())"),
-            "a session's rules home ignores the engine"
+        assertEquals(
+            2,
+            manager.split("desktopRulesHome(routingSettings.needsRules)").size - 1,
+            "the connect and a line behind the tunnel each ask"
         )
-        assertTrue(
-            manager.contains("rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())") &&
-                manager.split("coreDirectDns()").size == 4,
-            "a line added behind the tunnel ignores the engine"
-        )
+        assertEquals(3, manager.split("coreDirectDns()").size - 1, "the definition and the two askers")
     }
 }

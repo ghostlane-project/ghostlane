@@ -56,12 +56,13 @@ class DesktopRustDefaultTest {
 
     /** A source test: the manager cannot be started in a test (it owns a tunnel and the system's proxy). */
     @Test
-    fun theMacTunnelIsStartedOnTheEngineVerbAndNeverWithASingBoxConfig() {
+    fun theMacTunnelIsStartedOnTheEngineVerbAndNeverWithAConfigOfTheApps() {
         val manager = File("src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopVpnManager.kt").readText()
         val from = manager.indexOf("private suspend fun startMacTun(")
         assertTrue(from >= 0, "DesktopVpnManager has no startMacTun")
         val body = manager.substring(from, manager.indexOf("\n    }\n", from))
-        assertTrue("rustEngine = true" in body, "startMacTun does not ask for the engine's tunnel")
+        assertTrue("macOsTunController.start(" in body, "startMacTun does not start the helper's tunnel")
+        assertFalse("rustEngine" in body, "startMacTun still has a second kind of tunnel to choose")
         assertFalse("ruleFiles" in body, "startMacTun still hands the helper rule-set files for a sing-box")
         assertFalse("SingBoxTunTraffic" in body, "startMacTun still counts through a sing-box API")
         assertFalse("newTrafficApi" in body, "startMacTun still asks for a sing-box API")

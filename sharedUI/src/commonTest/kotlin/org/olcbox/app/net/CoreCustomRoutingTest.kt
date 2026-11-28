@@ -14,8 +14,7 @@ import kotlin.test.assertTrue
 
 /**
  * The user's own direct and tunnel rules on the Rust core's config (Android's Rust path):
- * written inline, ahead of the region's lists, as the Go path writes them for sing-box
- * (SingBoxConfig.addPolicyRouteRules), in the spelling the core accepts.
+ * written inline, ahead of the region's lists, in the spelling the core accepts.
  */
 class CoreCustomRoutingTest {
     private val dns = DirectDns.Servers(listOf("10.20.30.40"))

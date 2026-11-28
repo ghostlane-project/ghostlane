@@ -143,7 +143,7 @@ macos.daemon                         | m | docs/macos-tunnel-daemon.md::daemon |
 linux.privilege-prompt               | l | docs/building.md::OLCBOX_LINUX_PRIVILEGE | The tunnel asks for the administrator's password (pkexec or sudo)
 linux.resolved-revert                | l | docs/building.md::reverts `systemd-resolved` settings | Stopping the tunnel removes the policy routes and reverts systemd-resolved
 windows.uac-elevation                | w | docs/building.md::UAC elevation | TUN mode starts after a UAC prompt, with the bundled Wintun runtime
-windows.wintun-dns-guard             | w | docs/building.md::`strict_route` | In the Windows tunnel every name is answered inside it and port 53 beside it is refused
+windows.wintun-dns-guard             | w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/WindowsDnsGuard.kt::class WindowsDnsGuard | In the Windows tunnel every name is answered inside it and port 53 beside it is refused
 desktop.tray.menu                    | m,l,w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/desktop/DesktopText.kt::Quit | A tray menu: Open, Start or Stop, Settings, Quit
 desktop.tray.icon-state              | m,l,w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/desktop/DesktopTrayIcon.kt::DesktopTrayIcon | The tray icon says whether the VPN is up
 desktop.close-to-tray                | m,l,w | desktopApp/src/main/kotlin/main.kt::SystemTray.isSupported | Closing the window hides it to the tray
@@ -276,7 +276,7 @@ dist.linux.appimage                  | l | README.MD::AppImage | The Linux AppIm
 
 # The cells of the link parser's accept matrix (protocol, security, transport) that a build writes,
 # and the features found by reading the builders that the README does not name.
-tunnel.ipv6-claimed | m,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/SingBoxConfig.kt::IPv6 is claimed and refused | The desktop tun claims IPv6 and refuses it, so a dual-stack machine does not go around the tunnel
+tunnel.ipv6-claimed | m,w | sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopTunNames.kt::IPv6 is claimed and refused | The desktop tun claims IPv6 and refuses it, so a dual-stack machine does not go around the tunnel
 carry.xhttp.modes | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/XrayConfig.kt::xhttp.mode | The XHTTP mode a link names (auto, packet-up, stream-up, stream-one), not only packet-up
 cell.vless.reality.tcp | a,i,m,l,w,c | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and TCP
 cell.vless.reality.grpc | a,i,m,l,w | sharedUI/src/commonMain/kotlin/org/olcbox/app/net/LinkParser.kt::parseVless | VLESS over Reality and gRPC

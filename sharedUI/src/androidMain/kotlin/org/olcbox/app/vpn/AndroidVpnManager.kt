@@ -339,7 +339,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     /**
      * The resolvers of the network the phone is on, for a probe whose server is
      * named by hostname: a core on Android has no system resolver to fall back
-     * on (see SingBoxConfig.build). Asked before the VPN is up, so the active
+     * on. Asked before the VPN is up, so the active
      * network is the physical one; an empty answer leaves DirectDns its public
      * fallback.
      */

@@ -477,8 +477,8 @@ kotlin {
         }
 }
 
-// The net dump tests write sing-box and Xray configs for `sing-box check`
-// (scripts/check-singbox-configs.sh, pr-checks). Declared as outputs so that a
+// The router export dump test writes sing-box and Xray configs for `sing-box check`
+// and `xray run -test` (pr-checks). Declared as outputs so that a
 // build-cache hit restores them: otherwise the cached test is skipped, writes
 // nothing, and the check that follows finds an empty directory.
 tasks.withType<org.gradle.api.tasks.testing.Test>().matching { it.name == "jvmTest" }.configureEach {

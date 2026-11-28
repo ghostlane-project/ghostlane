@@ -107,9 +107,8 @@ object LinkParser {
             sni = p.query["sni"].orEmpty(),
             obfsPassword = p.query["obfs-password"]?.takeIf { it.isNotBlank() },
             // A pinSHA256 in the link means the operator runs a self-signed cert and
-            // expects verification by fingerprint. sing-box has no pinning option, so
-            // system-CA verification would reject that certificate every time — see
-            // SingBoxConfig.build for how this is turned into a TLS setting.
+            // expects verification by fingerprint, so system-CA verification would
+            // reject that certificate every time; the core's writers turn it into a pin.
             certPinSha256 = p.query["pinSHA256"]?.takeIf { it.isNotBlank() },
             insecure = p.query["insecure"] == "1" || p.query["insecure"] == "true",
             tag = p.tag.ifBlank { p.host },

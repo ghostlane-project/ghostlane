@@ -58,7 +58,7 @@ sealed interface OutboundSpec {
          * TLS only (empty for anything else): ProofKit's WebTunnel links say
          * `h2,http/1.1`, a browser's offer, because `http/1.1` alone is the
          * fingerprint of such a line. What each core writes of it is its own
-         * rule ([IosCore], [SingBoxConfig]). Last and defaulted, as the two above.
+         * rule ([IosCore]). Last and defaulted, as the two above.
          */
         val alpn: List<String> = emptyList(),
     ) : OutboundSpec

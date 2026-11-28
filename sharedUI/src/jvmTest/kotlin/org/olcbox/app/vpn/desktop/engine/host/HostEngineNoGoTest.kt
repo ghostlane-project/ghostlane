@@ -1,6 +1,5 @@
 package org.olcbox.app.vpn.desktop.engine.host
 
-import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,27 +35,8 @@ class HostEngineNoGoTest {
     }
 
     @Test
-    fun theManagerAsksForTheRulesHomeOfTheEngineItRunsOn() {
-        val manager = File("$main/DesktopVpnManager.kt").readText()
-        var from = manager.indexOf("rulesHomeWithoutDaemon(")
-        var calls = 0
-        while (from >= 0) {
-            val head = manager.substring(maxOf(0, from - 12), from)
-            if (!head.contains("fun ")) {
-                val call = manager.substring(from, manager.indexOf(")\n", from) + 1)
-                assertTrue("lineEngineKind()" in call, "a call of the 3-argument rules home: $call")
-                calls++
-            }
-            from = manager.indexOf("rulesHomeWithoutDaemon(", from + 1)
-        }
-        assertEquals(2, calls, "the connect and a line behind the tunnel each ask")
-        assertTrue("DesktopLineEngine.Rust" in manager)
-    }
-
-    @Test
     fun aRoomThatCarriesItsFrontIsNotGivenASecondProcessForIt() {
         val manager = File("$main/DesktopVpnManager.kt").readText()
         assertTrue("engine.room.frontInRoom" in manager, "the manager never asks whether the room carries its front")
-        assertEquals(DesktopLineEngine.Rust, DesktopLineEngine.valueOf("Rust"))
     }
 }

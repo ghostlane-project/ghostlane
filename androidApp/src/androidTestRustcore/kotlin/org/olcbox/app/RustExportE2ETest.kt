@@ -21,22 +21,15 @@ import org.olcbox.app.vpn.service.RustCore
 
 /**
  * What the app's export and its room check do through the product path
- * (AndroidVpnManager), with the developer switch on. The build's default is off, so a
- * call that ignores the stored switch runs the Go runtime and shows it.
+ * (AndroidVpnManager): the export is the core's, and holds no file of a Go core.
  */
 @RunWith(AndroidJUnit4::class)
 class RustExportE2ETest {
     private val context: Context = InstrumentationRegistry.getInstrumentation().targetContext
     private val staleLog = File(File(context.cacheDir, "olcbox-xray"), "xray.log")
 
-    @Before
-    fun switchOn() {
-        runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = true } }
-    }
-
     @After
-    fun switchOff() {
-        runBlocking { context.vpnPrefDataStore.edit { it.remove(RustCore.KEY_DEV_RUST_CORE) } }
+    fun removeStaleLog() {
         staleLog.delete()
     }
 
@@ -52,21 +45,6 @@ class RustExportE2ETest {
         assertTrue(out, out.contains("Rust core ready"))
         assertFalse(out, out.contains("--- xray core ---"))
         assertFalse(out, out.contains("stale go line"))
-        assertEquals(CorePin.COMMIT, runBlocking { manager.corePin() })
-    }
-
-    /** The stored developer switch no longer picks an engine: switched off, the export is still the core's. */
-    @Test
-    fun theStoredSwitchOffStillLeavesTheRustSectionAndNoGoFiles() {
-        runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = false } }
-        staleLog.parentFile?.mkdirs()
-        staleLog.writeText("go line\n")
-        OlcboxVpnState.addLog("core: Rust core ready on 127.0.0.1")
-        val manager = AndroidVpnManager(context)
-        val out = runBlocking { manager.diagnosticsLog() }
-        assertTrue(out, out.contains("--- Rust core ---"))
-        assertFalse(out, out.contains("--- xray core ---"))
-        assertFalse(out, out.contains("go line"))
         assertEquals(CorePin.COMMIT, runBlocking { manager.corePin() })
     }
 }

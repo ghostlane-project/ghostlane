@@ -30,32 +30,11 @@ class DesktopModeSelectionTest {
 
     @Test
     fun withNoRulesAskedForNothingRoutes() {
-        for (mode in DesktopMode.entries) for (olcrtc in listOf(true, false)) {
-            assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(mode, olcrtc, needsRules = false), "$mode olcrtc=$olcrtc")
-        }
+        assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(needsRules = false))
     }
 
     @Test
-    fun theProxyAndTheMacTunnelRouteEveryServer() {
-        for (olcrtc in listOf(true, false)) {
-            // For a room the proxy's rules live in the sing-box front: it also does what
-            // the engine cannot, "only blocked sites" and a tunnel rule under a whole TLD.
-            assertEquals(DesktopRulesHome.Core, desktopRulesHome(DesktopMode.SystemProxy, olcrtc, needsRules = true))
-            assertEquals(DesktopRulesHome.Daemon, desktopRulesHome(DesktopMode.MacTun, olcrtc, needsRules = true))
-        }
-    }
-
-    @Test
-    fun theLinuxTunnelRoutesOnlyInRoomsWhereTheEngineRunsAsRoot() {
-        assertEquals(DesktopRulesHome.Engine, desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = true, needsRules = true))
-        // The cores run as the user; their direct sockets would enter the tunnel.
-        assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = false, needsRules = true))
-    }
-
-    @Test
-    fun theWindowsTunnelCarriesEverything() {
-        for (olcrtc in listOf(true, false)) {
-            assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(DesktopMode.WindowsTun, olcrtc, needsRules = true))
-        }
+    fun theRulesAskedForAreTheEnginesCoresInEveryMode() {
+        assertEquals(DesktopRulesHome.Core, desktopRulesHome(needsRules = true))
     }
 }

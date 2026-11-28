@@ -28,25 +28,12 @@ class DesktopEngineSeamTest {
         assertTrue(engineFile("DesktopEngine.kt").isFile, "DesktopEngine.kt is missing")
     }
 
-    /** Moved, and nothing else: the function reads as it did in the manager. */
+    /** The rules' home is a function of its own, not the manager's. */
     @Test
-    fun theRulesHomeMovedAsItWas() {
-        assertFalse("fun desktopRulesHome" in manager, "desktopRulesHome is still defined in DesktopVpnManager.kt")
-        assertFalse("enum class DesktopRulesHome" in manager, "DesktopRulesHome is still defined in DesktopVpnManager.kt")
-        val home = engineFile("RulesHome.kt")
-        assertTrue(home.isFile, "RulesHome.kt is missing")
-        val text = home.readText().replace("\r\n", "\n")
-        val asItWas = """
-            internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
-                when {
-                    !needsRules -> DesktopRulesHome.Nowhere
-                    mode == DesktopMode.SystemProxy -> DesktopRulesHome.Core
-                    mode == DesktopMode.MacTun -> DesktopRulesHome.Daemon
-                    mode == DesktopMode.LinuxTun && isOlcrtc -> DesktopRulesHome.Engine
-                    else -> DesktopRulesHome.Nowhere
-                }
-        """.trimIndent()
-        assertTrue(asItWas in text, "desktopRulesHome in RulesHome.kt is not the function the manager had")
+    fun theRulesHomeIsNotTheManagers() {
+        assertFalse("fun desktopRulesHome" in manager, "desktopRulesHome is defined in DesktopVpnManager.kt")
+        assertFalse("enum class DesktopRulesHome" in manager, "DesktopRulesHome is defined in DesktopVpnManager.kt")
+        assertTrue(engineFile("RulesHome.kt").isFile, "RulesHome.kt is missing")
     }
 
     @Test

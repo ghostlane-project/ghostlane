@@ -6,9 +6,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.olcbox.app.net.DirectDns
-import org.olcbox.app.net.Routing
-import org.olcbox.app.net.SingBoxConfig
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
@@ -25,14 +22,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The twins of [MacOsTunControllerTest] for a line on ghostlane-engine.
- *
- * The helper of the build before hev was handed a sing-box config and ran
- * sing-box; the current one is handed typed fields and runs hev, which gives
- * what it takes to the engine's SOCKS port. Everything the app keeps of the
- * tunnel, the block and the helper is the same, and is asked for the same
- * way: only the verb that starts the tunnel, and what travels with it, are
- * these tests' business.
+ * The tunnel in front of ghostlane-engine: the helper is handed typed fields
+ * and runs hev, which gives what it takes to the engine's SOCKS port. These
+ * tests are about the verb that starts the tunnel, what travels with it, and
+ * the kill switch's block kept around it; [MacOsTunControllerTest] holds what
+ * is asked of the helper without a tunnel.
  */
 class MacOsTunControllerEngineTest {
 
@@ -52,14 +46,12 @@ class MacOsTunControllerEngineTest {
         daemon: FakeDaemon,
         log: MutableList<String> = mutableListOf(),
         resolved: List<String> = addresses,
-        onInterface: String? = "en0",
         tunName: String = "utun231",
         askTun: (String) -> List<String> = { emptyList() }
     ) = MacOsTunController(
         log::add,
         TunnelDaemonClient(daemon.path),
         { resolved },
-        { onInterface },
         { tunName },
         askTun,
         MacTunDaemonClient(daemon.path),
@@ -71,22 +63,13 @@ class MacOsTunControllerEngineTest {
         password: String = "",
         serverHost: String? = null,
         killSwitch: Boolean = false,
-        routing: Routing = Routing.Global,
-        ruleFiles: Map<String, String> = emptyMap(),
-        namesProgramsFor: String? = null
     ) = runBlocking {
         start(
             corePort = corePort,
-            verifyPort = corePort + 1,
             username = username,
             password = password,
             serverHost = serverHost,
-            upstreamUdpIsLossy = false,
-            routing = routing,
-            ruleFiles = ruleFiles,
             killSwitch = killSwitch,
-            namesProgramsFor = namesProgramsFor,
-            rustEngine = true,
         )
     }
 
@@ -131,10 +114,9 @@ class MacOsTunControllerEngineTest {
             log::add,
             TunnelDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")),
             { addresses },
-            { "en0" },
             tunClient = MacTunDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")),
         )
-        assertFailsWith<IllegalStateException> { runBlocking { tunnel.start(rustEngine = true, corePort = 18821, verifyPort = 18822, username = "", password = "", serverHost = null, upstreamUdpIsLossy = false) } }
+        assertFailsWith<IllegalStateException> { runBlocking { tunnel.start(corePort = 18821, username = "", password = "", serverHost = null) } }
         assertTrue(log.any { "macOS TUN failed" in it }, log.toString())
     }
 
@@ -151,7 +133,7 @@ class MacOsTunControllerEngineTest {
         assertFalse("files" in request, daemon.requests[1])
         assertEquals("utun231", request.jsonObject["tun"]!!.jsonObject["name"]!!.jsonPrimitive.content)
         assertEquals(18821, request.jsonObject["socks"]!!.jsonObject["port"]!!.jsonPrimitive.content.toInt())
-        assertEquals(SingBoxConfig.DESKTOP_TUN_RESOLVER, request["names"]!!.jsonPrimitive.content)
+        assertEquals(DesktopTunNames.RESOLVER, request["names"]!!.jsonPrimitive.content)
         assertEquals("172.19.0.2", request["mapdns"]!!.jsonObject["address"]!!.jsonPrimitive.content)
         assertTrue(tunnel.answersNames)
         assertFalse(tunnel.blockStands)
@@ -212,7 +194,6 @@ class MacOsTunControllerEngineTest {
         tunnel.startEngine(
             killSwitch = true,
             serverHost = "de1.example.org",
-            namesProgramsFor = "/Applications/Ghostlane.app/Contents/MacOS/Ghostlane"
         )
         val request = daemon.tun(1)
         assertEquals("utun231", request["tun"]!!.jsonObject["name"]!!.jsonPrimitive.content)
@@ -258,6 +239,17 @@ class MacOsTunControllerEngineTest {
         assertNull(daemon.request(2)["hold"])
         assertFalse(tunnel.holdsTraffic)
         assertFalse(tunnel.blockStands)
+    }
+
+    @Test fun aSwitchThatIsOffNowKeepsNothingOfASessionStartedWithIt() = withFakeDaemon(
+        listOf(idle, runningHeld, idle)
+    ) { daemon ->
+        val tunnel = controller(daemon)
+        tunnel.startEngine(killSwitch = true)
+        assertFalse(tunnel.holdAfterSessionEnd(wanted = false))
+        runBlocking { tunnel.stop() }
+        assertNull(daemon.request(2)["hold"])
+        assertFalse(tunnel.holdsTraffic)
     }
 
     @Test fun aSwitchTurnedOffSinceTheTunnelStartedHoldsNothing() = withFakeDaemon(
@@ -372,10 +364,9 @@ class MacOsTunControllerEngineTest {
             {},
             TunnelDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")),
             { emptyList() },
-            { "en0" },
             askTun = { name ->
-                assertEquals(SingBoxConfig.NAMES_PROGRAMS_PROBE, name)
-                if (++asked < 3) emptyList() else listOf(SingBoxConfig.NAMES_PROGRAMS_ANSWER)
+                assertEquals(DesktopTunNames.NAMES_PROGRAMS_PROBE, name)
+                if (++asked < 3) emptyList() else listOf(DesktopTunNames.NAMES_PROGRAMS_ANSWER)
             },
         )
         assertTrue(runBlocking { tunnel.awaitNamesPrograms(timeoutMs = 5_000) })
@@ -388,34 +379,10 @@ class MacOsTunControllerEngineTest {
             log::add,
             TunnelDaemonClient(Path.of("/var/run/org.olcbox.app.tunneld.missing")),
             { emptyList() },
-            { "en0" },
             askTun = { emptyList() },
         )
         assertFalse(runBlocking { tunnel.awaitNamesPrograms(timeoutMs = 400) })
         assertTrue(log.any { "starting the line anyway" in it }, log.toString())
-    }
-
-    // Under rules the engine needs the physical interface for the traffic it
-    // sends beside the tunnel. Without one there is no tunnel at all, rather
-    // than one that sends the bypass into itself.
-    @Test fun aBypassWithNoInterfaceToBindToDoesNotStart() = withFakeDaemon(listOf(idle)) { daemon ->
-        val tunnel = controller(daemon, onInterface = null)
-        val rules = Routing.Rules("/Library/Application Support/org.olcbox.app/rules", DirectDns.System, "ru")
-        assertFailsWith<IllegalStateException> {
-            runBlocking {
-                tunnel.start(
-                    corePort = 18821,
-                    verifyPort = 18822,
-                    username = "",
-                    password = "",
-                    serverHost = null,
-                    upstreamUdpIsLossy = false,
-                    routing = rules,
-                    rustEngine = true,
-                )
-            }
-        }
-        assertEquals(emptyList(), daemon.verbs)
     }
 
     /** A scripted daemon on a real unix socket: one reply per request, in order. */

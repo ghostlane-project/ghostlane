@@ -104,7 +104,6 @@ internal class RustE2eService(private val instrumentation: Instrumentation) {
         OlcboxVpnState.addLog(mark)
         val intent = Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME)
             .setAction(OlcboxVpnActions.ACTION_START_VPN)
-            .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
             .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, mode)
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, user)
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, pass)

@@ -121,7 +121,6 @@ class RustProbeE2ETest {
     private fun startIntent(user: String, pass: String) =
         Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME)
             .setAction(OlcboxVpnActions.ACTION_START_VPN)
-            .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
             .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, "tun")
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, user)
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, pass)
@@ -141,13 +140,6 @@ class RustProbeE2ETest {
     private fun save(bundle: LocationBundleV4) = runBlocking { LocationsDataSourceImpl(context).saveLocationBundle(bundle) }
 
     private fun storedActiveId(): String? = runBlocking { LocationsDataSourceImpl(context).loadLocationBundle()?.activeLocationId }
-
-    /** The hidden developer switch, as the app's own probe reads it (null: unset, the build's default). */
-    private fun devSwitch(on: Boolean?) = runBlocking {
-        context.vpnPrefDataStore.edit { prefs ->
-            if (on == null) prefs.remove(RustCore.KEY_DEV_RUST_CORE) else prefs[RustCore.KEY_DEV_RUST_CORE] = on
-        }
-    }
 
     /** A Reality line to [host]:[port]: one the Rust core takes, so the probe is the builder's own core.json. */
     private fun realityLine(name: String, host: String, port: Int) = LocationConfig(
@@ -241,9 +233,6 @@ class RustProbeE2ETest {
                 locations = listOf(LocationEntry.from("line", realityLine("e2e", "192.0.2.9", 443)))
             )
         )
-        // The app's own probe follows the switch the app's next start would: on here, as it is
-        // for a build whose default is the Rust core.
-        devSwitch(true)
         try {
             RustE2eDevice.startVpn(startIntent(user, pass))
             waitFor("the session to connect", 90_000) { connected() }
@@ -290,7 +279,6 @@ class RustProbeE2ETest {
             say("RESULT the session stayed up: connected, its core not restarted, the tun carries")
         } finally {
             RustCoreEngine.testProbeConfig = null
-            devSwitch(null)
             stopAndWait()
             RustCore.testConfig = null
             web.close()
@@ -369,8 +357,7 @@ class RustProbeE2ETest {
             release.await(30, TimeUnit.SECONDS)
             config
         }
-        // Smart connect's probe before any session, on the Rust core by the switch.
-        devSwitch(true)
+        // Smart connect's probe before any session, on the Rust core.
         try {
             val manager = AndroidVpnManager(context)
             runBlocking {
@@ -388,7 +375,6 @@ class RustProbeE2ETest {
         } finally {
             release.countDown()
             RustCoreEngine.testProbeConfig = null
-            devSwitch(null)
         }
     }
 

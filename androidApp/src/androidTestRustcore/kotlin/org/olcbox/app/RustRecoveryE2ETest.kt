@@ -120,7 +120,6 @@ class RustRecoveryE2ETest {
     private fun startIntent(user: String, pass: String) =
         Intent().setClassName(pkg, OlcboxVpnActions.SERVICE_CLASS_NAME)
             .setAction(OlcboxVpnActions.ACTION_START_VPN)
-            .putExtra(OlcboxVpnActions.EXTRA_RUST_CORE, true)
             .putExtra(OlcboxVpnActions.EXTRA_CONNECTION_MODE, "tun")
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_USERNAME, user)
             .putExtra(OlcboxVpnActions.EXTRA_SOCKS_PASSWORD, pass)

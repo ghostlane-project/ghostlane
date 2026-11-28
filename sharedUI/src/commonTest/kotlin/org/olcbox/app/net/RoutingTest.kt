@@ -24,13 +24,13 @@ class RoutingTest {
         // Without its zone a link-local address names no interface, and
         // loopback inside the tunnel process is the tunnel itself.
         assertEquals(
-            SingBoxConfig.DIRECT_DNS_FALLBACK,
+            RoutingDefaults.DIRECT_DNS_FALLBACK,
             DirectDns.Servers(listOf("fe80::1", "127.0.0.1", "::1")).pick()
         )
     }
 
     @Test fun nothingOfferedFallsBackToThePublicResolver() {
-        assertEquals(SingBoxConfig.DIRECT_DNS_FALLBACK, DirectDns.Servers(emptyList()).pick())
-        assertEquals(SingBoxConfig.DIRECT_DNS_FALLBACK, DirectDns.Servers(listOf(" ", "")).pick())
+        assertEquals(RoutingDefaults.DIRECT_DNS_FALLBACK, DirectDns.Servers(emptyList()).pick())
+        assertEquals(RoutingDefaults.DIRECT_DNS_FALLBACK, DirectDns.Servers(listOf(" ", "")).pick())
     }
 }

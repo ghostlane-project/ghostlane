@@ -148,8 +148,8 @@ internal class WindowsTunController(
      * Empties the system's resolver cache, for when a tun has gone.
      *
      * While it was up the tun answered names with addresses that mean
-     * something only to it (SingBoxConfig's fake range), each good for ten
-     * minutes by sing-box's count. Left in the cache they are handed out
+     * something only to it (the tun's fake range), each good for ten
+     * minutes by the tun's count. Left in the cache they are handed out
      * after the tun has gone, to connections nothing takes. Whether Windows
      * drops them by itself when the adapter goes was not established, so they
      * are dropped here. Not waited for: the stop this belongs to is not held up.

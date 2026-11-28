@@ -54,7 +54,7 @@ internal sealed interface DaemonReply {
 
 /**
  * The kill switch's block as a start asks the daemon for it (`TrafficHold` in
- * the daemon): the tun's interface, named in the tunnel's config so that a
+ * the daemon): the tun's interface, named in the tunnel's request so that a
  * rule can name it before it exists, and the addresses let out beside the
  * tunnel, which are the ones the tun keeps out of itself.
  */
@@ -115,55 +115,11 @@ internal object TunnelDaemonProtocol {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * The config travels as a JSON *string*, not as a nested object: the daemon
-     * writes it to disk byte for byte, and a re-serialised copy is a copy that
-     * the `sing-box check` in CI never saw.
-     */
-    fun startRequest(
-        config: String,
-        files: Map<String, String> = emptyMap(),
-        /** The address the system is to ask for names while this tunnel runs; null leaves it asking whom it asks. */
-        names: String? = null,
-        hold: DaemonHold? = null
-    ): String =
-        line(
-            buildJsonObject {
-                put("verb", "start")
-                put("config", config)
-                // Rule-set binaries the config refers to, file name → base64. The
-                // daemon writes them next to the config, root-owned, and removes
-                // the directory when there are none, so a stale list cannot
-                // outlive the routing choice that put it there.
-                if (files.isNotEmpty()) {
-                    putJsonObject("files") { files.forEach { (name, base64) -> put(name, base64) } }
-                }
-                if (names != null) put("names", names)
-                if (hold != null) {
-                    putJsonObject("hold") {
-                        put("interface", hold.interfaceName)
-                        putJsonArray("pass") { hold.passes.forEach { add(it) } }
-                    }
-                }
-            }
-        )
-
-    /**
-     * The daemon's own directory, as `TunnelChild.stateDir` names it in Swift.
-     * Duplicated here because the config the app builds has to name absolute
-     * paths inside it — the rule-sets and the cache file — before the daemon
-     * ever sees the request. The two literals must agree.
-     */
-    const val STATE_DIR = "/Library/Application Support/org.olcbox.app"
-    const val RULES_DIR = "$STATE_DIR/rules"
-    const val CACHE_FILE = "$STATE_DIR/cache.db"
-
-    /**
-     * Mirror of the daemon's `protocolVersion` history: 1 said nothing, 2 takes
-     * rule files, 3 points the system's resolver at the tun and holds the kill
+     * Mirror of the daemon's `protocolVersion` history: 1 said nothing, 2 took
+     * rule files (the verb that took them is gone), 3 points the system's resolver at the tun and holds the kill
      * switch's block, 4 runs a line's own program for the app, 5 runs hev.
      */
     const val PROTOCOL_FIRST = 1
-    const val PROTOCOL_FILES = 2
     const val PROTOCOL_HOLD = 3
 
     /**
@@ -176,9 +132,8 @@ internal object TunnelDaemonProtocol {
     const val PROTOCOL_LINE = 4
 
     /**
-     * `tun`: hev in place of sing-box, its config written by the daemon from
-     * the request's fields ([tunRequest]), and its routes laid by the daemon
-     * around what it keeps out. The sing-box verbs stay beside it.
+     * `tun`: hev, its config written by the daemon from the request's fields
+     * ([tunRequest]), and its routes laid by the daemon around what it keeps out.
      */
     const val PROTOCOL_HEV = 5
 

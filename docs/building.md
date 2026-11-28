@@ -11,7 +11,7 @@ Everything below is for building the app yourself; the [downloads](../README.MD#
 | Android: TUN, proxy | `VpnService` + `hev-socks5-tunnel` | `ghostlane-core`, one Rust library in the app: its core runs every kind of line, its olcRTC client the rooms |
 | iOS: System VPN | `hev-socks5-tunnel` in front of one engine | `ghostlane-core`, one Rust library inside the extension |
 | macOS: TUN, proxy | root daemon via `SMAppService` running hev behind the engine; OS proxy settings and a PAC otherwise | `ghostlane-engine`, a child of the app |
-| Windows: TUN, proxy | hev + Wintun, the line leaving by the interface the machine leaves by; the tunnel answers every name itself and the firewall refuses port 53 beside it (the guard the old sing-box tun called `strict_route`); OS proxy settings otherwise | `ghostlane-engine`, a child of the app |
+| Windows: TUN, proxy | hev + Wintun, the line leaving by the interface the machine leaves by; the tunnel answers every name itself and the firewall refuses port 53 beside it; OS proxy settings otherwise | `ghostlane-engine`, a child of the app |
 | Linux: TUN | `hev-socks5-tunnel` + policy routes; an optional kill switch on a dummy device | `ghostlane-engine`, a child of the app |
 | Linux CLI | the same hev and policy routes, or a local proxy | `ghostlane-engine`, a child of the CLI |
 
@@ -48,11 +48,10 @@ and `ghostlane-core` runs behind it. The measurements that led there are in
 | Package current host OS | `./gradlew :desktopApp:packageReleaseDistributionForCurrentOS` |
 | Main checks | `./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug` |
 | JVM tests | `./gradlew :sharedUI:jvmTest` |
-| Run the emitted configs past sing-box itself | `scripts/check-singbox-configs.sh` |
 | Stop and restart the Android tun's native code in one process (Linux) | `scripts/test-android-hev-restart.sh` |
 
-The main checks are what PR checks run, in that order; `check-singbox-configs.sh`
-follows them there, and
+The main checks are what PR checks run, in that order; a `sing-box check` of the
+router exports follows them there, and
 `test-android-hev-restart.sh` runs after the main checks when the Android tun's
 native code changed.
 

@@ -2,7 +2,6 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.OutboundSpec
-import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.XrayConfig
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -21,37 +20,14 @@ class CorePortCollisionTest {
     fun coreSocksPortDoesNotCollideWithThePacServer() {
         assertNotEquals(
             PacServer.PAC_PORT,
-            SingBoxConfig.SINGBOX_SOCKS_PORT,
-            "sing-box would take the PAC port and break system-proxy mode"
-        )
-        assertNotEquals(
-            PacServer.PAC_PORT,
             XrayConfig.XRAY_SOCKS_PORT,
-            "Xray would take the PAC port and break system-proxy mode"
+            "the core would take the PAC port and break system-proxy mode"
         )
     }
 
     @Test
     fun coreSocksPortDoesNotCollideWithTheOlcrtcSocksPort() {
-        assertNotEquals(PacServer.LOCAL_SOCKS_PORT, SingBoxConfig.SINGBOX_SOCKS_PORT)
         assertNotEquals(PacServer.LOCAL_SOCKS_PORT, XrayConfig.XRAY_SOCKS_PORT)
-    }
-
-    @Test
-    fun singBoxConfigListensOnThePortItIsGiven() {
-        // The caller allocates the port; the config must follow it, or the app waits
-        // on one port while the core listens on another.
-        val spec = LinkParser.parse(
-            "vless://d67b1637-4fee-4e0d-bc96-000000000000@1.2.3.4:443" +
-                "?type=tcp&security=reality&sni=www.zoom.us&fp=chrome&pbk=abc&sid=ff#x"
-        )
-        assertTrue(spec is OutboundSpec.Vless)
-        val json = SingBoxConfig.build(spec, socksPort = 12345)
-        assertContains(json, "12345")
-        assertTrue(
-            !json.contains("${SingBoxConfig.SINGBOX_SOCKS_PORT}"),
-            "config still references the default port instead of the requested one"
-        )
     }
 
     @Test

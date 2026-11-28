@@ -7,8 +7,6 @@ import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import org.olcbox.app.net.Routing
-import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.SocksLogin
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -21,13 +19,12 @@ import kotlin.io.path.exists
 
 /**
  * macOS TUN: asks the daemon to run the tunnel, and keeps what the app must
- * know of the block behind it. A tunnel for a Go core is a sing-box config;
- * one for ghostlane-engine is hev, asked for in typed fields so that no config
- * of the app's can name a script the daemon would run as root.
+ * know of the block behind it. The tunnel is hev in front of ghostlane-engine,
+ * asked for in typed fields so that no config of the app's can name a script
+ * the daemon would run as root.
  *
- * The routes are deliberately not this class's business. sing-box lays its
- * own, and the helper lays hev's around what the tunnel keeps out, taking them
- * away with the process. That is why there is nothing here resembling the
+ * The routes are deliberately not this class's business. The helper lays hev's
+ * around what the tunnel keeps out, taking them away with the process. That is why there is nothing here resembling the
  * up/down scripts the Linux controller needs and the route bookkeeping the
  * Windows one carries.
  *
@@ -41,7 +38,6 @@ internal class MacOsTunController(
     private val addLog: (String) -> Unit,
     private val client: TunnelDaemonClient = TunnelDaemonClient(),
     private val resolve: (String) -> List<String> = ::resolveAllAddresses,
-    private val defaultInterface: () -> String? = { defaultInterfaceName() },
     /** A name for the tun that no interface has: the block is written for it before it exists. */
     private val tunName: () -> String = ::freeTunName,
     /** The addresses the tun's own resolver gives for a name; empty for none. */
@@ -53,7 +49,7 @@ internal class MacOsTunController(
      * Whether the tun that was last started answers the system's names, which
      * a helper from before [TunnelDaemonProtocol.PROTOCOL_HOLD] cannot be asked
      * for. A line that is started behind such a tun asks the tun as well
-     * ([SingBoxConfig.DESKTOP_TUN_RESOLVER]).
+     * ([DesktopTunNames.RESOLVER]).
      */
     @Volatile var answersNames = false
         private set
@@ -143,147 +139,57 @@ internal class MacOsTunController(
         get() = held && !tunUp
 
     /**
-     * True when the tun that was started lets [bypassProcessPaths] out of
-     * itself, which is what a line for another server needs in order to be
-     * started behind it. False when it lets out only [serverHost], by address,
-     * as every macOS tun did before.
+     * Starts the tunnel in front of the engine that listens on [corePort] and
+     * takes the SOCKS login [username]/[password] (empty for none): hev, asked
+     * of the helper in fields ([DaemonTun]), and the helper has to be the
+     * current one: a helper from before it makes way for the one on disk.
+     * [serverHost] is kept out of the tunnel, every address it resolves to;
+     * null for a line that is started after the tunnel, behind it.
+     *
+     * True: the engine's lines leave by the interface they are bound to, which
+     * needs no rule on a program, so every line of the session can get out.
      */
     suspend fun start(
         corePort: Int,
-        verifyPort: Int,
         username: String,
         password: String,
         serverHost: String?,
-        upstreamUdpIsLossy: Boolean,
-        routing: Routing = Routing.Global,
-        verboseLogs: Boolean = false,
-        /** The rule-set files [routing] names, file name → base64, for the daemon to write. */
-        ruleFiles: Map<String, String> = emptyMap(),
-        /**
-         * Every binary a line of the session can run. What they dial is sent
-         * straight out by the daemon's sing-box, as the Windows tun does it,
-         * so the core of another server than [serverHost], and an olcRTC
-         * engine signing in again, leave the tunnel they are there to carry.
-         */
-        bypassProcessPaths: List<String> = emptyList(),
-        /** Where the tun's sing-box is to say what it has carried; null for nowhere. */
-        trafficApi: SingBoxConfig.LocalApi? = null,
         /** The tunnel is started behind the kill switch's block ([MacKillSwitch]). */
         killSwitch: Boolean = false,
-        /** This app's own program, which the tun is to answer [SingBoxConfig.NAMES_PROGRAMS_PROBE] for. */
-        namesProgramsFor: String? = null,
-        /**
-         * The line behind the tunnel is ghostlane-engine, which listens on
-         * [corePort] and takes the SOCKS login below. The tunnel is then hev's,
-         * asked of the helper in fields ([DaemonTun]) rather than with a
-         * sing-box config, and the helper has to be the current one: a helper
-         * from before it makes way for the one on disk.
-         */
-        rustEngine: Boolean = false,
     ): Boolean {
-        // Under a bypass, and for the lines' own binaries, the daemon's
-        // sing-box dials direct from inside the process that owns the tun, so
-        // those sockets are bound to the physical interface by name. No name,
-        // no direct socket: one with nothing to bind to enters the tun, and
-        // that does not degrade, it loops.
-        val wantsDirect = routing is Routing.Rules || bypassProcessPaths.isNotEmpty()
-        val bindInterface = if (wantsDirect) defaultInterface() else null
-        if (routing is Routing.Rules && bindInterface == null) {
-            addLog("cannot tell which interface carries the internet, so the bypass cannot bind to it")
-            error("no interface to bind direct traffic to")
-        }
-        // Without rules the same lack must not fail a connect that worked
-        // before the lines' binaries were let out: the tun starts as it always
-        // did, and says that it is good for this one server only.
-        val lineBinaries = if (bindInterface != null) bypassProcessPaths else emptyList()
-        if (bypassProcessPaths.isNotEmpty() && bindInterface == null) {
-            addLog(
-                "cannot tell which interface carries the internet, so this tunnel lets only its own server out; " +
-                    "another location will be a full restart"
-            )
-        }
         // What the daemon speaks decides what it is handed. One that does not
         // answer is told so by the start below, in its own words.
         val helper = (client.status() as? DaemonReply.Ok)?.protocol
-        if (!rustEngine) requireHelperFor(helper, wantsFiles = ruleFiles.isNotEmpty(), wantsHold = killSwitch)
 
         val addresses = serverHost?.let { resolve(it) }.orEmpty()
         if (serverHost != null && addresses.isEmpty()) {
-            // Starting anyway would put the core's own packets into the tunnel the
-            // core is building. That does not degrade — it deadlocks, and it reads
+            // Starting anyway would put the engine's own packets into the tunnel the
+            // engine is dialling through. That does not degrade: it deadlocks, and it reads
             // as a broken server rather than as a missing route.
             addLog("cannot resolve $serverHost, so its traffic cannot be kept out of the tunnel")
             error("cannot resolve $serverHost")
         }
 
-        val reply = if (rustEngine) {
-            startEngineTunnel(
-                corePort = corePort,
-                username = username,
-                password = password,
-                addresses = addresses,
-                killSwitch = killSwitch,
-                firstHelper = helper,
-            )
-        } else {
-            suspend fun ask(protocol: Int): DaemonReply {
-                val names = protocol >= TunnelDaemonProtocol.PROTOCOL_HOLD
-                val hold = if (killSwitch) DaemonHold(interfaceName = tunName(), passes = addresses) else null
-                val config = SingBoxConfig.buildDesktopTun(
-                    corePort = corePort,
-                    verifyPort = verifyPort,
-                    username = username,
-                    password = password,
-                    excludeAddresses = excludeCidrs(addresses),
-                    directDnsDomains = listOfNotNull(serverHost?.takeIf { !it.isIpLiteral() }),
-                    upstreamUdpIsLossy = upstreamUdpIsLossy,
-                    routing = routing,
-                    verboseLogs = verboseLogs,
-                    bindInterface = bindInterface,
-                    cacheFilePath = TunnelDaemonProtocol.CACHE_FILE,
-                    bypassProcessPaths = lineBinaries,
-                    interfaceName = hold?.interfaceName,
-                    trafficApi = trafficApi,
-                    answersEveryName = names,
-                    namesProgramsFor = namesProgramsFor.takeIf { names },
-                )
-                answersNames = names
-                return client.start(
-                    config,
-                    ruleFiles,
-                    names = SingBoxConfig.DESKTOP_TUN_RESOLVER.takeIf { names },
-                    hold = hold
-                )
-            }
-
-            var asked = ask(helper ?: TunnelDaemonProtocol.PROTOCOL_FIRST)
-            if (asked is DaemonReply.Failure && asked.restarting) {
-                // An updated app found the previous build's daemon still alive. It
-                // steps aside for the one on disk, which launchd starts in its place,
-                // and which may speak more than the one that was asked.
-                addLog("the tunnel helper was updated; waiting for the new one to come up")
-                val newer = awaitDaemon()
-                if (newer != null) {
-                    requireHelperFor(newer, wantsFiles = ruleFiles.isNotEmpty(), wantsHold = killSwitch)
-                    asked = ask(newer)
-                }
-            }
-            asked
-        }
+        val reply = startEngineTunnel(
+            corePort = corePort,
+            username = username,
+            password = password,
+            addresses = addresses,
+            killSwitch = killSwitch,
+            firstHelper = helper,
+        )
         reportStart(reply, killSwitch)
-        // An engine's line leaves by the interface it is bound to, which needs
-        // no rule on a program: every line of the session can get out.
-        return rustEngine || lineBinaries.isNotEmpty()
+        return true
     }
 
     /**
      * An engine's tunnel: hev from the helper's own fields, handing what it
-     * takes to the engine's SOCKS port on the loopback. No sing-box config is
-     * sent: the daemon writes hev's config itself, and a request with a script
-     * in it is refused there before it can run as root.
+     * takes to the engine's SOCKS port on the loopback. No config is sent: the
+     * daemon writes hev's config itself, and a request with a script in it is
+     * refused there before it can run as root.
      *
-     * A helper from before hev knows no `tun` and would start a sing-box that
-     * cannot carry this line. It is asked to stop, keeping any block it
+     * A helper from before hev knows no `tun` and would carry a different
+     * tunnel. It is asked to stop, keeping any block it
      * loaded (the block is the kernel's and outlives the process), and the one
      * launchd brings up in its place is the one asked.
      */
@@ -317,7 +223,7 @@ internal class MacOsTunController(
                 socksPort = corePort,
                 login = SocksLogin(username, password).takeIf { username.isNotBlank() || password.isNotBlank() },
                 exclude = excludeCidrs(addresses),
-                names = SingBoxConfig.DESKTOP_TUN_RESOLVER.takeIf { names },
+                names = DesktopTunNames.RESOLVER.takeIf { names },
                 hold = if (killSwitch) DaemonHold(interfaceName = interfaceName, passes = addresses) else null,
             )
             answersNames = names
@@ -366,26 +272,6 @@ internal class MacOsTunController(
                 error(reply.message)
             }
         }
-    }
-
-    /**
-     * A daemon from before what is asked of it drops the field and starts a
-     * tunnel that is not the one asked for: one that names files nobody wrote,
-     * or one with no block behind it. It cannot be replaced from here: launchd
-     * keeps it alive, and only root can restart it.
-     */
-    private fun requireHelperFor(helper: Int?, wantsFiles: Boolean, wantsHold: Boolean) {
-        if (helper == null) return
-        val lacks = when {
-            wantsFiles && helper < TunnelDaemonProtocol.PROTOCOL_FILES -> "does not take rule files"
-            wantsHold && helper < TunnelDaemonProtocol.PROTOCOL_HOLD -> "has no kill switch"
-            else -> return
-        }
-        addLog("the tunnel helper is from an older build and $lacks")
-        error(
-            "restart the tunnel helper (sudo launchctl kickstart -k system/${TunnelDaemonProtocol.LABEL}) " +
-                "or the Mac, then connect again"
-        )
     }
 
     /** What the daemon that came up speaks, or null when none did. */
@@ -528,15 +414,15 @@ internal class MacOsTunController(
 
     /**
      * Waits until the tun names the program behind a connection, which it does
-     * not do in its first moments ([SingBoxConfig.NAMES_PROGRAMS_PROBE]). True
+     * not do in its first moments ([DesktopTunNames.NAMES_PROGRAMS_PROBE]). True
      * when it said so within [timeoutMs]. A line is started either way: a tun
      * that never answers is one whose lines will say what is wrong with it.
      */
     suspend fun awaitNamesPrograms(timeoutMs: Long = NAMES_PROGRAMS_TIMEOUT_MS): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
-            val answered = withContext(Dispatchers.IO) { askTun(SingBoxConfig.NAMES_PROGRAMS_PROBE) }
-            if (SingBoxConfig.NAMES_PROGRAMS_ANSWER in answered) return true
+            val answered = withContext(Dispatchers.IO) { askTun(DesktopTunNames.NAMES_PROGRAMS_PROBE) }
+            if (DesktopTunNames.NAMES_PROGRAMS_ANSWER in answered) return true
             if (System.currentTimeMillis() >= deadline) {
                 addLog("macOS TUN: the tunnel has not begun to tell programs apart; starting the line anyway")
                 return false
@@ -619,7 +505,7 @@ internal class MacOsTunController(
         private fun askTheTun(name: String): List<String> = runCatching {
             val environment = Hashtable<String, String>().apply {
                 put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.dns.DnsContextFactory")
-                put(Context.PROVIDER_URL, "dns://${SingBoxConfig.DESKTOP_TUN_RESOLVER}")
+                put(Context.PROVIDER_URL, "dns://${DesktopTunNames.RESOLVER}")
                 put("com.sun.jndi.dns.timeout.initial", "400")
                 put("com.sun.jndi.dns.timeout.retries", "1")
             }

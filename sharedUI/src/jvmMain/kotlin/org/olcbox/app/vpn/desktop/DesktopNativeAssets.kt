@@ -19,21 +19,6 @@ internal object DesktopNativeAssets {
     }
 
     /**
-     * The bundled sing-box carries `.exe` on Windows and nothing elsewhere.
-     */
-    fun singBoxFileName(): String = coreFileName("sing-box")
-
-    private fun coreFileName(base: String): String =
-        if (DesktopPaths.os == DesktopOs.Windows) "$base.exe" else base
-
-    /**
-     * Resolve the bundled `sing-box` core binary. Honors the `OLCBOX_SINGBOX_BINARY`
-     * env override (tests / dev) before falling back to the bundled resource.
-     */
-    fun resolveSingBoxBinary(): Path =
-        resolveExternalCore(singBoxFileName(), "OLCBOX_SINGBOX_BINARY")
-
-    /**
      * hev.exe, for the Windows tun, staged beside the wintun.dll it loads (the
      * two are looked up by the process's own directory). Both are copied only
      * when their bytes differ: Windows locks a program that runs.
@@ -52,15 +37,6 @@ internal object DesktopNativeAssets {
         if (DesktopPaths.os == DesktopOs.Windows) copyRuntimeAsset("wintun.dll")
     }
 
-    private fun resolveExternalCore(fileName: String, envVar: String): Path {
-        System.getenv(envVar)?.takeIf { it.isNotBlank() }?.let { return Path(it) }
-        return resolveBinary(
-            fileName = fileName,
-            resourceName = "native/$fileName",
-            candidates = emptyList()
-        )
-    }
-
     private fun resolveBinary(
         fileName: String,
         resourceName: String,
@@ -71,9 +47,8 @@ internal object DesktopNativeAssets {
 
         val resource = javaClass.classLoader.getResourceAsStream(resourceName)
         if (resource != null) {
-            // Windows locks an executable while it runs. A second sing-box
-            // instance (TUN front or latency probe) must reuse identical bytes,
-            // not overwrite the backend's running executable.
+            // Windows locks an executable while it runs. A second instance
+            // must reuse identical bytes, not overwrite a running executable.
             val staged = Files.createTempFile(target.parent, "native-", ".tmp")
             try {
                 resource.use { Files.copy(it, staged, StandardCopyOption.REPLACE_EXISTING) }

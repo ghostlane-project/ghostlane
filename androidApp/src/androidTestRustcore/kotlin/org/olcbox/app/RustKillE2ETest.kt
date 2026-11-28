@@ -52,7 +52,6 @@ class RustKillE2ETest {
 
     private fun saveSettings(login: SocksLogin) = runBlocking {
         d.context.vpnPrefDataStore.edit {
-            it[RustCore.KEY_DEV_RUST_CORE] = true
             it[KEY_ANDROID_CONNECTION_MODE] = "tun"
             it[KEY_ANDROID_SOCKS_USERNAME] = login.username
             it[KEY_ANDROID_SOCKS_PASSWORD] = login.password
@@ -63,7 +62,6 @@ class RustKillE2ETest {
 
     private fun forgetSettings() = runBlocking {
         d.context.vpnPrefDataStore.edit {
-            it.remove(RustCore.KEY_DEV_RUST_CORE)
             it.remove(KEY_ANDROID_CONNECTION_MODE)
             it.remove(KEY_ANDROID_SOCKS_USERNAME)
             it.remove(KEY_ANDROID_SOCKS_PASSWORD)

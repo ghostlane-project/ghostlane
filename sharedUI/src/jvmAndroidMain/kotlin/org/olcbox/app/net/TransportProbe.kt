@@ -23,8 +23,7 @@ import java.security.SecureRandom
  * on a loopback port nothing holds, behind a login made up for this probe (an open
  * loopback port is anyone's, see [SocksLogin]), asked through [TransportCheck]
  * before any tunnel exists, and stopped whatever happens. A platform only says how
- * to start a core ([Starter]): one of the Go cores, which is handed their config
- * ([coreConfig]), or the Rust core ([RustStarter]), which is handed its own
+ * to start the Rust core ([RustStarter]), which is handed its config
  * ([rustConfig]) and never a line it would refuse.
  */
 internal object TransportProbe {
@@ -34,7 +33,7 @@ internal object TransportProbe {
         suspend fun stop()
     }
 
-    /** Starts [config] (built by [coreConfig]) in the right core for [spec]. */
+    /** Starts [config] in the core for [spec]; only a [RustStarter] is asked. */
     fun interface Starter {
         suspend fun start(spec: OutboundSpec, config: String): Core
     }
@@ -61,12 +60,11 @@ internal object TransportProbe {
         /**
          * [host]'s address on the network underneath, or null when there is
          * none to give. [resolver] is the resolver of that network, the one
-         * the probe was handed ([passes]' serverResolver) and the Go probe
-         * is written with: a failover works it out per call, from the
+         * the probe was handed ([passes]' serverResolver): a failover works it out per call, from the
          * session or from the network it fails over on, and a starter is the
          * engine's and cannot. It is asked in place of the system's resolver,
          * which behind a tun is the tun's. Null when the caller named none,
-         * where the system's resolver is the network's, as for the Go probe.
+         * where the system's resolver is the network's.
          */
         suspend fun serverAddress(host: String, resolver: DirectDns?): String? = null
 
@@ -78,41 +76,6 @@ internal object TransportProbe {
 
     private const val LOOPBACK = "127.0.0.1"
     private const val PORT_WAIT_MS = 5_000L
-
-    /** xhttp is Xray's; everything else a probe sees is sing-box's. */
-    fun usesXray(spec: OutboundSpec): Boolean = spec is OutboundSpec.Vless && spec.transport is TransportSpec.Xhttp
-
-    /**
-     * [serverResolver]: see [SingBoxConfig.build]; Android passes the network's own resolvers.
-     *
-     * [autoDetectInterface] and [bindInterface] are for a probe made while a
-     * session's tun is up, where the tun's rule does not let the core out by
-     * itself, which is the Linux desktop. They are the binding the session's
-     * own core is started with there: `route.auto_detect_interface` for
-     * sing-box ([SingBoxConfig.build]) and `sockopt.interface` for Xray, which
-     * has to be told the name ([XrayConfig.buildXhttp]). Each core takes its
-     * own and ignores the other's. Left as they are, the config is byte for
-     * byte what it was before they existed.
-     */
-    fun coreConfig(
-        spec: OutboundSpec,
-        port: Int,
-        login: SocksLogin,
-        serverResolver: DirectDns? = null,
-        autoDetectInterface: Boolean = false,
-        bindInterface: String? = null
-    ): String =
-        if (spec is OutboundSpec.Vless && usesXray(spec)) {
-            XrayConfig.buildXhttp(spec, socksPort = port, login = login, bindInterface = bindInterface)
-        } else {
-            SingBoxConfig.build(
-                spec,
-                socksPort = port,
-                login = login,
-                serverResolver = serverResolver,
-                autoDetectInterface = autoDetectInterface
-            )
-        }
 
     /**
      * The Rust core's config for a probe of [spec], a line it takes: the
@@ -137,7 +100,8 @@ internal object TransportProbe {
 
     /**
      * The same probe for a core that is started beside a tun and has to be led
-     * out of it ([coreConfig] says how).
+     * out of it by [bindInterface]. [autoDetectInterface] is read by no core
+     * now: it was sing-box's.
      *
      * A function of its own and not two more defaults on the one above: there
      * [starter] is the third argument for a caller that names nothing and the
@@ -171,12 +135,11 @@ internal object TransportProbe {
         val login = SocksLogin(token(), token())
         var core: Core? = null
         try {
-            val started = if (starter is RustStarter) {
-                val line = rustLine(spec, serverResolver, starter) ?: return@withContext false
-                starter.start(line, rustConfig(line, port, login), bindInterface)
-            } else {
-                starter.start(spec, coreConfig(spec, port, login, serverResolver, autoDetectInterface, bindInterface))
-            }
+            // A starter that is not the Rust core's has nothing to start: no
+            // other core is in the app.
+            val rust = starter as? RustStarter ?: return@withContext false
+            val line = rustLine(spec, serverResolver, rust) ?: return@withContext false
+            val started = rust.start(line, rustConfig(line, port, login), bindInterface)
             core = started
             if (!waitForPort(port, started)) return@withContext false
             ask(SubscriptionFetchProxy(LOOPBACK, port, login.username, login.password))

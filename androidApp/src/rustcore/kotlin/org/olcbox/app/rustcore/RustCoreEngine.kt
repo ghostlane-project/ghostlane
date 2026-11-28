@@ -15,7 +15,6 @@ import org.ghostlane.olcrtc.memoryStats as coreMemoryStats
 import org.ghostlane.olcrtc.setByteBudget as coreSetByteBudget
 import org.ghostlane.olcrtc.setLogWriter
 import org.ghostlane.olcrtc.trim as coreTrim
-import org.olcbox.app.BuildConfig
 import org.olcbox.app.vpn.olc.RustCarriers
 import org.olcbox.app.vpn.service.RustCoreBackend
 import org.olcbox.app.vpn.service.RustOlcParams
@@ -68,8 +67,6 @@ object RustCoreEngine : RustCoreBackend, RustProbeBackend, RustGeodataBackend {
     interface LogRelease : Callback {
         fun invoke(user: Pointer?)
     }
-
-    override val defaultOn: Boolean get() = BuildConfig.RUST_CORE_DEFAULT
 
     /**
      * Test hook: the carrier every olcRTC room is started on, in place of the location's.
