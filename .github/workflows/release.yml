@@ -1474,13 +1474,28 @@ jobs:
         with:
           path: olcbox
 
-      - name: Checkout olcrtc
-        uses: actions/checkout@v7
-        with:
-          repository: ghostlane-project/olcrtc
-          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
-          path: olcrtc
-          submodules: recursive
+      # No Go in this build (I2). The runner image carries one; this puts a
+      # `go` and a `gomobile` first on the PATH that fail with a name, so a
+      # step that still wants Go stops the job instead of building it in. The
+      # Xcode phases add only their own directories after this one.
+      - name: Put a failing go on the PATH
+        run: |
+          set -euo pipefail
+          shim="$RUNNER_TEMP/no-go-bin"
+          mkdir -p "$shim"
+          for tool in go gofmt gomobile gobind; do
+            printf '#!/bin/sh\necho "::error::%s was run in the iOS build, which has no Go (I2)" >&2\nexit 1\n' "$tool" > "$shim/$tool"
+            chmod +x "$shim/$tool"
+          done
+          echo "$shim" >> "$GITHUB_PATH"
+
+      - name: The go on the PATH is the failing one
+        run: |
+          set -euo pipefail
+          found="$(command -v go)"
+          echo "go resolves to $found"
+          [ "$found" = "$RUNNER_TEMP/no-go-bin/go" ] || { echo "::error::a real go is first on the PATH: $found" >&2; exit 1; }
+          if go version 2>/dev/null; then echo "::error::go ran" >&2; exit 1; fi
 
       - name: Setup JDK
         uses: actions/setup-java@v6
@@ -1493,24 +1508,8 @@ jobs:
         with:
           xcode-version: '^26.0'
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: olcrtc/go.sum
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
-
-      - name: Install Go mobile tooling
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
-
-      - name: Initialize gomobile
-        working-directory: olcrtc
-        run: |
-          gomobile init
 
       # Not reached in a dry run: its `signed` output is then never written,
       # and the job takes the unsigned path below, as it does for a checkout
@@ -1592,7 +1591,6 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
         run: |
           set -euo pipefail
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           archive="build/ios-archive/ProofKit.xcarchive"
 
           # Manual signing with the distribution identity for both targets; the
@@ -1628,6 +1626,14 @@ jobs:
               exit 1
             fi
           done
+
+          # K1 on the archived app, before anything is uploaded: the app and the
+          # extension inside it, at any nesting. Made into a zip because the
+          # check reads files.
+          rm -rf "$RUNNER_TEMP/k1-ipa" && mkdir -p "$RUNNER_TEMP/k1-ipa/Payload"
+          cp -R "$app_path" "$RUNNER_TEMP/k1-ipa/Payload/"
+          (cd "$RUNNER_TEMP/k1-ipa" && /usr/bin/zip -qry "$RUNNER_TEMP/Ghostlane-ios-archive.ipa" Payload)
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/Ghostlane-ios-archive.ipa"
 
           cat > "$RUNNER_TEMP/export-options.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -1684,7 +1690,6 @@ jobs:
         if: steps.signing.outputs.signed != 'true'
         working-directory: olcbox
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           # The same version every other platform gets, from the same job.
           # Without these two the build falls back to the literals in the
           # pbxproj, which is how the App Store came to show 1.0.0 for a build
@@ -1750,6 +1755,10 @@ jobs:
           cp -R "$app_path" build/ios-ipa/package/Payload/
           (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/olcbox/dist/Ghostlane-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
           unzip -t "dist/Ghostlane-${OLCBOX_VERSION}-ios-unsigned.ipa"
+
+          # K1 on the finished IPA: the app, its extension and every file in
+          # them. A Go core anywhere in it fails the job before the upload.
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" "dist/Ghostlane-${OLCBOX_VERSION}-ios-unsigned.ipa"
 
       - name: Upload artifact
         if: steps.signing.outputs.signed != 'true'
