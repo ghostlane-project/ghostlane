@@ -53,7 +53,7 @@ say "the session's process: $pid1"
 dev dumpsys activity services "$pkg" > "$out/services-before-kill.txt"
 grep -E 'ServiceRecord|startRequested|isForeground|deliveredStarts|restart' "$out/services-before-kill.txt" | head -n 12 | cut -c1-200
 established=$(log_count 'VPN tunnel established')
-on_rust=$(log_count 'Transport engine: Rust core')
+on_rust=$(log_count 'Rust core ready on')
 killed_by=
 dev su 0 kill -9 "$pid1" > /dev/null
 sleep 2
@@ -92,7 +92,7 @@ fi
 if wait_session "Android's restart after the kill" 90 "$established"; then
   android=yes
   pid2=$(app_pid)
-  [ "$(log_count 'Transport engine: Rust core')" -gt "$on_rust" ] || fail "the restarted session is not on the Rust core"
+  [ "$(log_count 'Rust core ready on')" -gt "$on_rust" ] || fail "the restarted session is not on the Rust core"
   adb logcat -d -v time ActivityManager:I '*:S' 2> /dev/null | grep -i -E 'restart.*OlcboxVpnService' | tail -5 | tee -a "$out/results.txt"
   say "android-restart: yes, in process $pid2, $(($(date +%s) - killed_at)) s after the kill"
 else

@@ -231,7 +231,7 @@ up() {
   local n
   n=$(($(cat "$st/next" 2> /dev/null || echo 4000) + 1))
   echo "$n" > "$st/next"; echo "$n" > "$st/pid"; : > "$st/tun"; : > "$st/service"
-  printf 'D/OlcboxVpnService(%s): Transport engine: Rust core\nD/OlcboxVpnService(%s): VPN tunnel established\n' "$n" "$n" >> "$st/log"
+  printf 'D/OlcboxVpnService(%s): Rust core ready on 127.0.0.1:1\nD/OlcboxVpnService(%s): VPN tunnel established\n' "$n" "$n" >> "$st/log"
 }
 down() { rm -f "$st/pid" "$st/tun"; }
 case "$1" in

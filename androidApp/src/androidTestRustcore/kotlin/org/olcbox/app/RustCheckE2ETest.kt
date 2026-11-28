@@ -183,15 +183,15 @@ class RustCheckE2ETest {
         assertEquals(listOf("profile-0", "profile-1"), hub.joined)
     }
 
-    /** With the switch off the same call is the Go runtime's, as it was. */
+    /** The stored switch no longer picks an engine: with it off the Rust client still answers (the Go runtime is gone). */
     @Test
-    fun a6_withTheSwitchOffTheGoRuntimeAnswers() {
+    fun a6_withTheStoredSwitchOffTheRustClientStillAnswers() {
         runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = false } }
         try {
             hub.reset(PipeHub.Room.Silent)
             val r = runBlocking { OlcRtcConnectionChecker.checkRoom(request("go", timeoutMs = 1_000), context) }
-            say("RESULT check with the switch off: engine ${r.engine}")
-            assertEquals(OlcRtcConnectionChecker.ENGINE_GO, r.engine)
+            say("RESULT check with the stored switch off: engine ${r.engine}")
+            assertEquals(OlcRtcConnectionChecker.ENGINE_RUST, r.engine)
         } finally {
             runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = true } }
         }
