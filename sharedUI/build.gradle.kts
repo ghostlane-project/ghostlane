@@ -98,8 +98,6 @@ val olcrtcRepoPath = providers.environmentVariable("OLCRTC_REPO")
 val olcrtcRepoDir = rootProject.file(olcrtcRepoPath.get())
 val olcrtcAndroidAar = layout.buildDirectory.file("generated/olcrtc/olcrtc.aar")
 val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
-val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")
-val olcrtcIosXcframeworkDir = olcrtcIosXcframework.get().asFile
 
 abstract class GenerateAppInfoTask : DefaultTask() {
     @get:Input
@@ -329,60 +327,6 @@ val generateCoreTestIndex by tasks.registering(GenerateCoreIndexTask::class) {
     indexPackage.set("org.olcbox.app.net.core.index")
     fileName.set("CoreTestIndex.kt")
     outputDir.set(layout.buildDirectory.dir("generated/source/coreTestIndex/commonTest"))
-}
-
-// sing-box and Xray come prebuilt from the iOS Frameworks workflow rather than
-// being compiled here: they need Go and the sagernet gomobile fork, and twenty
-// minutes of a macOS runner that has already been spent once.
-//
-// One framework, not two. Each `gomobile bind` carries its own cgo bootstrap
-// and seq glue, so linking two of them into the extension fails with 49
-// duplicate symbols — see scripts/build-cores-ios.sh.
-val coresIosDir = layout.buildDirectory.dir("generated/cores/ios")
-
-val fetchCoresIosXcframework by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Downloads the prebuilt Cores.xcframework (sing-box + Xray) for the packet tunnel extension."
-
-    outputs.dir(coresIosDir)
-    commandLine(
-        "bash",
-        rootProject.file("scripts/fetch-cores-ios.sh").absolutePath,
-        coresIosDir.get().asFile.absolutePath
-    )
-}
-
-val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Builds olcrtc iOS XCFramework from OLCRTC_REPO using gomobile."
-
-    inputs.dir(olcrtcRepoDir.resolve("mobile"))
-    inputs.dir(olcrtcRepoDir.resolve("internal"))
-    inputs.files(olcrtcRepoDir.resolve("go.mod"), olcrtcRepoDir.resolve("go.sum"))
-    outputs.dir(olcrtcIosXcframework)
-
-    workingDir = olcrtcRepoDir
-
-    doFirst {
-        delete(olcrtcIosXcframeworkDir)
-        olcrtcIosXcframeworkDir.parentFile.mkdirs()
-    }
-
-    commandLine(
-        "gomobile",
-        "bind",
-        "-target=ios",
-        // As in scripts/build-cores-ios.sh and the Android bind: no
-        // videochannel transport, for the phone's memory. Every engine
-        // stays in; WB Stream rooms need livekit (olcbox#22).
-        "-tags",
-        "olcrtc_lean",
-        "-ldflags",
-        "-s -w -checklinkname=0",
-        "-o",
-        olcrtcIosXcframeworkDir.absolutePath,
-        "./mobile"
-    )
 }
 
 kotlin {

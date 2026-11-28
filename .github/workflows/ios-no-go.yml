@@ -1,0 +1,49 @@
+name: iOS build without Go
+
+# I2. The iPhone build has no Go in it: the Go frameworks' workflow and scripts
+# are gone, Gradle and the Xcode project ask for no Go, and release.yml's
+# build-ios job puts a failing `go` on the PATH and reads the app for Go (K1).
+# scripts/ios-checks/no-go-build.sh reads all of that off the tree. A Linux
+# job with no secret; the Mac's half is the release's own build-ios job.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rust/all
+    paths: &paths
+      - .github/workflows/ios-no-go.yml
+      - .github/workflows/release.yml
+      - scripts/ios-checks/**
+      - sharedUI/build.gradle.kts
+      - iosApp/iosApp.xcodeproj/project.pbxproj
+      - scripts/no-go-allow.d/**
+  pull_request:
+    branches:
+      - rust/all
+    paths: *paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-no-go-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tree:
+    name: The iOS build names no Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: PyYAML
+        run: python3 -I -c 'import yaml' 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-yaml
+      - name: shellcheck and bash -n
+        run: |
+          set -euo pipefail
+          shellcheck -x scripts/ios-checks/no-go-build.sh
+          bash -n scripts/ios-checks/no-go-build.sh
+      - name: The tree and the release's iOS job
+        run: bash scripts/ios-checks/no-go-build.sh
