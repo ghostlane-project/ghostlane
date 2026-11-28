@@ -9,6 +9,7 @@ pin or on anything outside the machine. Every secret here is made up.
 """
 
 import http.server
+import io
 import importlib.util
 import json
 import os
@@ -1001,7 +1002,7 @@ class Merge(unittest.TestCase):
         green.write_text(json.dumps(rep))
         with redirect_stdout(StringIO()):
             code = merge.main(["decide", "--report", str(green), "--unit-result", "success",
-                               "--suite-result", "success", "--step", "merge=success"])
+                               "--suite-result", "success", "--rust-client", "", "--step", "merge=success"])
         self.assertEqual(0, code)
 
     def test_a_one_provider_run_is_found_like_a_full_one(self):
@@ -1081,7 +1082,7 @@ class Merge(unittest.TestCase):
         buf = StringIO()
         with redirect_stdout(buf):
             code = merge.main(["decide", "--report", str(path), "--unit-result", "success",
-                               "--suite-result", "success", "--step", "merge=success"])
+                               "--suite-result", "success", "--rust-client", "", "--step", "merge=success"])
         return code, buf.getvalue()
 
     def test_known_failures_are_kept_counted_per_leg_and_summed_and_fail_no_verdict(self):
@@ -1202,7 +1203,8 @@ class Decide(unittest.TestCase):
     def decide(self, rep, *extra, unit="success", suite="success"):
         self.path.write_text(json.dumps(rep))
         return subprocess.run(["python3", str(HERE / "gate-merge-reports.py"), "decide", "--report", str(self.path),
-                               "--unit-result", unit, "--suite-result", suite, "--step", "merge=success", *extra],
+                               "--unit-result", unit, "--suite-result", suite, "--rust-client", "",
+                               "--step", "merge=success", *extra],
                               capture_output=True, text=True, timeout=60)
 
     def test_every_reason_is_listed(self):
@@ -1415,6 +1417,191 @@ class Wiring(unittest.TestCase):
         self.assertNotIn("ref: proofkit", checks)
         self.assertIn("ref: ${{ steps.pin.outputs.olcrtc_sha }}", checks)
         self.assertIn("python3 scripts/test_gate_scripts.py", checks)
+
+
+class RustClient(unittest.TestCase):
+    """The gate's Rust leg (D12, K4): ghostlane-engine on the fake carriers."""
+
+    FAKES = {"salutejazz": "fakeroom", "vkcalls": "vkfake", "mtslink": "mtsfake"}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.fakes = self.root / "fakes"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fake_report(self, carrier, status="pass", target=None, client="rust", scenarios=("S0", "S1")):
+        target = target or self.FAKES[carrier]
+        cells = []
+        for sc in scenarios:
+            c = cell(carrier, client, "datachannel", sc, status)
+            c["id"] = f"{target}-linux/{carrier}/datachannel/{client}/{sc}"
+            c["platform"] = f"{target}-linux"
+            cells.append(c)
+        return report(cells, target=target)
+
+    def put(self, carrier, rep):
+        d = self.fakes / carrier
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "gate-report.json").write_text(rep if isinstance(rep, str) else json.dumps(rep))
+
+    def all_green(self):
+        for carrier in self.FAKES:
+            self.put(carrier, self.fake_report(carrier))
+
+    def fold(self, base, *extra):
+        path = self.root / "gate-report.json"
+        path.write_text(json.dumps(base))
+        md_out = io.StringIO()
+        with redirect_stdout(md_out):
+            code = merge.main(["rust", "--report", str(path), "--rust-dir", str(self.fakes), *extra])
+        self.assertEqual(0, code)
+        return json.loads(path.read_text())
+
+    def skipped_base(self):
+        out_json, out_md = self.root / "s.json", self.root / "s.md"
+        with redirect_stdout(StringIO()):
+            merge.main(["skipped", "--reason", "dry run", "--engine-commit", PIN_SHA, "--mode", "release",
+                        "--out-json", str(out_json), "--out-md", str(out_md)])
+        return json.loads(out_json.read_text())
+
+    def decide(self, rep, *extra):
+        path = self.root / "decide.json"
+        path.write_text(json.dumps(rep))
+        return subprocess.run(["python3", str(HERE / "gate-merge-reports.py"), "decide", "--report", str(path),
+                               "--unit-result", "success", "--suite-result", "success", "--step", "merge=success",
+                               *extra], capture_output=True, text=True, timeout=60)
+
+    def go_report(self):
+        cells = [cell("jitsi", "cli", "datachannel", "S0"), cell("jitsi", "mobile", "datachannel", "S0")]
+        return report(cells)
+
+    def test_a_report_with_no_rust_client_fails_the_verdict(self):
+        r = self.decide(self.go_report(), "--fakes-result", "success")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("::error title=Release gate::the gate report has no 'rust' client", r.stdout)
+
+    def test_the_rust_client_must_have_run_its_fakes_job(self):
+        self.all_green()
+        rep = self.fold(self.go_report())
+        r = self.decide(rep, "--fakes-result", "failure")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("the rust client on the fakes: failure", r.stdout)
+        self.assertIn("did not run", self.decide(rep).stdout)
+
+    def test_the_fakes_fold_into_a_report_as_the_rust_client_one_leg_a_carrier(self):
+        self.all_green()
+        rep = self.fold(self.go_report())
+        self.assertEqual((8, 8, 8, 0), (rep["planned"], rep["executed"], rep["passed"], rep["failed"]))
+        legs = [leg for leg in rep["legs"] if leg["client"] == "rust"]
+        self.assertEqual(sorted(self.FAKES), sorted(leg["provider"] for leg in legs))
+        self.assertEqual({"ghostlane-engine"}, {leg["build"] for leg in legs})
+        self.assertEqual(6, len([c for c in rep["cells"] if c["client"] == "rust"]))
+        self.assertEqual(sorted(c["id"] for c in rep["cells"]), [c["id"] for c in rep["cells"]])
+        r = self.decide(rep, "--fakes-result", "success")
+        self.assertEqual(0, r.returncode, r.stdout)
+
+    def test_folding_twice_changes_nothing(self):
+        self.all_green()
+        once = self.fold(self.go_report())
+        twice = self.fold(once)
+        self.assertEqual(once, twice)
+
+    def test_a_carrier_with_no_report_fails_as_a_marker_cell(self):
+        self.put("salutejazz", self.fake_report("salutejazz"))
+        self.put("vkcalls", self.fake_report("vkcalls"))
+        rep = self.fold(self.go_report())
+        marker = {c["id"]: c for c in rep["cells"]}["mtsfake-linux/mtslink/*/rust/*"]
+        self.assertEqual("fail", marker["status"])
+        self.assertTrue(marker["failures"][0].startswith("did not run: the mtslink/rust run on the fakes"), marker)
+        self.assertEqual(1, rep["failed"])
+        r = self.decide(rep, "--fakes-result", "success")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("1 of 7 cells failed", r.stdout)
+
+    def test_a_report_for_another_target_or_client_or_a_broken_one_is_rejected(self):
+        self.put("salutejazz", self.fake_report("salutejazz", target="interop"))
+        self.put("vkcalls", self.fake_report("vkcalls", client="cli"))
+        self.put("mtslink", "{not json")
+        rep = self.fold(self.go_report())
+        legs = {leg["provider"]: leg for leg in rep["legs"] if leg["client"] == "rust"}
+        self.assertEqual("target 'interop', not fakeroom", legs["salutejazz"]["reason"])
+        self.assertIn("the client 'cli'", legs["vkcalls"]["reason"])
+        self.assertEqual("it is not JSON", legs["mtslink"]["reason"])
+        self.assertEqual({"rejected"}, {leg["report"] for leg in legs.values()})
+        self.assertEqual(0, len([c for c in rep["cells"] if c["client"] == "rust" and c["status"] == "pass"]))
+
+    def test_a_failed_rust_cell_fails_the_verdict_unless_it_is_known(self):
+        self.all_green()
+        self.put("vkcalls", self.fake_report("vkcalls", status="fail"))
+        rep = self.fold(self.go_report())
+        self.assertEqual(1, self.decide(rep, "--fakes-result", "success").returncode)
+
+    def test_a_dry_run_takes_the_fakes_leg_and_fails_without_it(self):
+        base = self.skipped_base()
+        self.assertEqual(0, self.decide(base, "--skip", "true").returncode, "a skip by request needs no client")
+        r = self.decide(base, "--skip", "true", "--dry", "true", "--fakes-result", "success")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("the gate report has no 'rust' client", r.stdout)
+        self.all_green()
+        rep = self.fold(base)
+        self.assertTrue(rep["skipped"])
+        self.assertEqual(0, self.decide(rep, "--skip", "true", "--dry", "true", "--fakes-result", "success").returncode)
+        self.assertEqual(1, self.decide(rep, "--skip", "true", "--dry", "true", "--fakes-result", "failure").returncode)
+        self.put("mtslink", self.fake_report("mtslink", status="fail"))
+        red = self.fold(base)
+        r = self.decide(red, "--skip", "true", "--dry", "true", "--fakes-result", "success")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("of the 'rust' client failed", r.stdout)
+
+    def test_the_markdown_table_is_appended_when_asked(self):
+        self.all_green()
+        md_path = self.root / "gate.md"
+        md_path.write_text("skipped\n")
+        self.fold(self.skipped_base(), "--md", str(md_path))
+        text = md_path.read_text()
+        self.assertIn("**Rust client** (`ghostlane-engine` against the fakes, no live room)", text)
+        self.assertIn("| `vkcalls` | present | 2 | 2 | 0 |", text)
+
+    def test_the_harness_runs_each_carrier_and_leaves_one_report_apiece(self):
+        core = self.root / "core"
+        interop = core / "olc" / "interop"
+        interop.mkdir(parents=True)
+        (interop / "lib.sh").write_text(
+            'OLC_WORK=%s/work\nolc_engine_client() { printf "#!/bin/sh\\n" > "$2"; chmod +x "$2"; }\n' % self.root)
+        for script, fake in (("fakeroom.sh", "fakeroom"), ("vkcalls.sh", "vkfake"), ("mtslink.sh", "mtsfake")):
+            (interop / script).write_text(
+                '#!/usr/bin/env bash\nset -e\nmkdir -p "%s/work/gate-artifacts"\n'
+                'echo "$@" > "%s/work/gate-artifacts/args-%s"\n'
+                'echo \'{"target":"%s"}\' > "%s/work/gate-artifacts/gate-report.json"\n%s'
+                % (self.root, self.root, script, fake, self.root, "exit 3\n" if script == "vkcalls.sh" else ""))
+        engine = self.root / "ghostlane-engine"
+        engine.write_text("#!/bin/sh\n")
+        engine.chmod(0o755)
+        out = self.root / "fakes-out"
+        r = subprocess.run(["bash", str(HERE / "gate-fakes.sh"), str(core), str(engine), str(out)],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(1, r.returncode, "a carrier that failed fails the script, after the others ran")
+        self.assertIn("vkcalls: vkcalls.sh gate exited 3", r.stderr)
+        for carrier, fake in self.FAKES.items():
+            self.assertEqual({"target": fake}, json.loads((out / carrier / "gate-report.json").read_text()), carrier)
+        self.assertFalse((out / "olc-engine-client").exists(), "the shim is not uploaded")
+
+    def test_the_workflow_runs_the_fakes_in_every_run_that_is_not_skipped_by_request(self):
+        gate = (REPO / ".github" / "workflows" / "gate.yml").read_text()
+        block = gate.split("\n  fakes:\n", 1)[1].split("\n  verdict:\n", 1)[0]
+        self.assertIn("needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true'", block)
+        self.assertNotIn("secrets.", block)
+        self.assertNotIn("gate-run.sh", block)
+        self.assertIn("scripts/gate-fakes.sh", block)
+        self.assertIn("rust-core-checkout.sh", block)
+        verdict = gate.split("\n  verdict:\n", 1)[1]
+        self.assertRegex(verdict.split("\n", 3)[1], r"needs: \[resolve, unit, suite, fakes\]")
+        self.assertIn("gate-merge-reports.py rust", verdict)
+        self.assertIn('--dry "$DRY"', verdict)
+        self.assertIn("--fakes-result", verdict)
 
 
 class Scope(unittest.TestCase):
