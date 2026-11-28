@@ -1,7 +1,8 @@
 # Ghostlane CLI for Linux
 
 A headless Ghostlane for servers, VPS boxes, routers and anything else that runs
-Linux without a screen: one static binary, a systemd service, and the same
+Linux without a screen: a static program with the Rust core's engine and the
+tun's hev beside it, a systemd service, and the same
 subscription links the app takes — olcRTC rooms, VLESS Reality, Hysteria2 and
 XHTTP lines. Source: `cli/` in this repository; its own
 licence is GPL-3.0-or-later because the binary links sing-box (see
@@ -20,9 +21,9 @@ blocked), `--family deb|rpm|apk|pacman|tar`, `--no-service`.
 
 Packages and tarballs are also on the release page as
 `ghostlane-cli-<version>-linux-<amd64|arm64|arm7>.<deb|rpm|apk|pkg.tar.zst|tar.gz>`.
-`ghostlane version` prints the version, the engine, sing-box and Xray-core
-pins, whether this build reads encrypted (crypt1) lists, and the sha256 of
-the public key every release is signed with.
+`ghostlane version` prints the version, the engine, the commit of the core the
+engine beside it reports, whether this build reads encrypted (crypt1) lists,
+and the sha256 of the public key every release is signed with.
 
 **Package repositories** (updates with the system's package manager; signed
 with the key in `cli/packaging/repo/ghostlane-repo.gpg.asc`, fingerprint
@@ -71,10 +72,13 @@ travel in plaintext), a `ghostlane://add?url=…` link, one `olcrtc://`,
 a list URL or lines) or a list whose body is encrypted, as the app does. A
 release build carries the key; a build without it says so and refuses those.
 
-**Which core carries what.** olcRTC rooms run in the olcRTC engine, XHTTP
-lines in Xray-core, VLESS Reality (tcp) and Hysteria2 in sing-box itself; all
-behind the same sing-box front. Lines this version does not connect (VLESS
-over grpc/ws/httpupgrade, trojan, shadowsocks, vmess) are listed with a note.
+**Which core carries what.** Every line runs in the Rust core, as the program
+`ghostlane-engine` the daemon starts. An olcRTC room and an XHTTP line each get
+an engine process of their own, behind a login of that start. In front of it,
+or alone for VLESS Reality (tcp) and Hysteria2, runs the core that serves the
+proxy or the tun's SOCKS port, and its way out is the line or that engine's
+SOCKS port. Lines this version does not connect (VLESS over grpc/ws/httpupgrade,
+trojan, shadowsocks, vmess) are listed with a note.
 
 ## Modes
 
@@ -84,13 +88,14 @@ privileges. `status` prints the lines to paste:
     export ALL_PROXY=socks5h://127.0.0.1:1080
     export http_proxy=http://127.0.0.1:1080 https_proxy=http://127.0.0.1:1080
 
-**tun** routes the whole machine. The daemon creates `ghostlane0` and sing-box's
-policy rules send everything through it except private and link-local ranges.
+**tun** routes the whole machine. The daemon starts hev-socks5-tunnel, which
+creates `ghostlane0` and hands what it takes to the engine's SOCKS port, and the
+daemon's policy rules send everything through it except private and link-local ranges.
 What stays as it was:
 
 - **Inbound services keep working.** Before the tun comes up the daemon adds a
   policy rule per public address of the host, `from <address> lookup main`,
-  ahead of sing-box's rules. Replies of accepted connections (SSH, web, a
+  ahead of the tun's rules. Replies of accepted connections (SSH, web, a
   database) keep their normal route, also with strict reverse-path filtering.
   The rules follow address changes and go away with the tun.
 - **The daemon's own traffic** to the carriers never enters the tun: the
@@ -137,8 +142,8 @@ a rotated room or key reconnects the running line.
 
 **The device id.** Every list fetch names the machine to the list's host, as
 the app does: `x-hwid` is the content of `device-id` in the state directory (a
-random UUID the daemon makes at its first start; the olcRTC engine keeps its own
-device id in the same file), and `x-device-os` (`Linux`), `x-ver-os` (the
+random UUID the daemon makes at its first start; a room's session is given the
+same id), and `x-device-os` (`Linux`), `x-ver-os` (the
 kernel release) and `x-device-model` (`PC`) say what it is. A provider's device
 limit counts a machine by that id; deleting the file makes the next start a new
 device. An id that cannot be read or made (a full disk, a file in the way) is
