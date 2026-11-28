@@ -53,7 +53,13 @@ class WindowsSystemRealTest {
         val fetched = runCatching {
             URI("https://github.com/").toURL().openStream().use { it.readNBytes(64 * 1024).size }
         }.getOrDefault(0)
-        val second = assertNotNull(reader.read())
+        // Windows refreshes an adapter's counters on its own beat: read until they move.
+        var second = assertNotNull(reader.read())
+        val deadline = System.nanoTime() + 20_000_000_000L
+        while (fetched > 0 && second.bytesIn <= first.bytesIn && System.nanoTime() < deadline) {
+            Thread.sleep(1_000)
+            second = assertNotNull(reader.read())
+        }
         assertTrue(second.bytesIn >= first.bytesIn && second.bytesOut >= first.bytesOut, "$first then $second")
         if (fetched > 0) assertTrue(second.bytesIn > first.bytesIn, "$fetched bytes fetched, $first then $second")
         assertEquals(null, WindowsAdapterTraffic("No such adapter ${System.nanoTime()}").read())
