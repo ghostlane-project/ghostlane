@@ -356,7 +356,7 @@ internal class WindowsTunController(
             §ErrorActionPreference = 'SilentlyContinue'
             for (§i = 0; §i -lt 60; §i++) {
               if ((Get-NetAdapter -Name ${plan.adapter.powershellString()}) -and
-                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '${plan.address}' })) { 'up'; exit 0 }
+                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '${plan.address}' -and §_.AddressState -eq 'Preferred' })) { 'up'; exit 0 }
               Start-Sleep -Milliseconds 500
             }
             §seen = (Get-NetAdapter | ForEach-Object { §_.Name + '=' + §_.Status }) -join ', '
