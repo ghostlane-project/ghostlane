@@ -86,19 +86,45 @@ usage() {
 # and the DTLS method itself.
 BORING_NAMES="SSL_CTX_new DTLS_method"
 
+# pdb_beside <file>: the PDB of a Windows program or library that has one in
+# its own directory (cargo names it with underscores), else nothing.
+pdb_beside() {
+  local f="$1" dir base
+  case "$f" in *.exe | *.dll) ;; *) return 0 ;; esac
+  dir="$(dirname "$f")"
+  base="$(basename "${f%.*}")"
+  for p in "$dir/$base.pdb" "$dir/${base//-/_}.pdb"; do
+    [ -f "$p" ] && { echo "$p"; return 0; }
+  done
+  return 0
+}
+
 # boring_proof <file>: one line saying what was found; 0 when BoringSSL is in
 # the file, 1 when it is not, 2 when the file cannot be read.
 boring_proof() {
-  local file="$1" nm tmp total missing="" n ssl
+  local file="$1" nm tmp total missing="" n ssl pdb pdbdump
   [ -f "$file" ] || { echo "no file $file"; return 2; }
   nm="${NM:-}"
   [ -n "$nm" ] || nm="$(command -v llvm-nm || command -v nm || true)"
-  [ -n "$nm" ] || { echo "no nm to read $(basename "$file") with"; return 2; }
+  [ -n "$nm" ] || [ -n "$(pdb_beside "$file")" ] || { echo "no nm to read $(basename "$file") with"; return 2; }
   tmp="$(mktemp)"
-  # Defined functions only (type T or t). Mach-O names carry one more leading
-  # underscore than ELF and COFF ones.
-  { "$nm" "$file" 2>/dev/null || true; } |
-    awk 'NF >= 3 && $(NF - 1) ~ /^[Tt]$/ { print $NF }' | sed 's/^_//' | sort -u > "$tmp"
+  pdb="$(pdb_beside "$file")"
+  if [ -n "$pdb" ]; then
+    # An MSVC program carries no symbol table: the symbols are in its PDB.
+    # Public function symbols only (flags = function).
+    pdbdump="${PDB_DUMP:-}"
+    [ -n "$pdbdump" ] || pdbdump="$(command -v llvm-pdbutil || ls "/c/Program Files/LLVM/bin/llvm-pdbutil.exe" 2>/dev/null || true)"
+    [ -n "$pdbdump" ] || { rm -f "$tmp"; echo "no llvm-pdbutil to read $(basename "$pdb") with"; return 2; }
+    { "$pdbdump" dump --publics "$pdb" 2>/dev/null || true; } |
+      awk '/S_PUB32/ { n = $0; sub(/^[^`]*`/, "", n); sub(/`[^`]*$/, "", n); next }
+           /flags = / && n != "" { if ($0 ~ /flags = [^,]*function/) print n; n = "" }' |
+      sed 's/^_//' | sort -u > "$tmp"
+  else
+    # Defined functions only (type T or t). Mach-O names carry one more leading
+    # underscore than ELF and COFF ones.
+    { "$nm" "$file" 2>/dev/null || true; } |
+      awk 'NF >= 3 && $(NF - 1) ~ /^[Tt]$/ { print $NF }' | sed 's/^_//' | sort -u > "$tmp"
+  fi
   total="$(wc -l < "$tmp" | tr -d ' ')"
   for n in $BORING_NAMES; do
     grep -qx "$n" "$tmp" || missing="$missing $n"
@@ -106,7 +132,7 @@ boring_proof() {
   ssl="$(grep -c -E '^(SSL|DTLS)[A-Za-z0-9]*_' "$tmp" || true)"
   rm -f "$tmp"
   if [ -n "$missing" ]; then
-    echo "no BoringSSL in $(basename "$file"): $total functions in its symbol table, and none of them is${missing}"
+    echo "no BoringSSL in $(basename "$file"): $total functions in its symbols, and none of them is${missing}"
     return 1
   fi
   echo "BoringSSL is in $(basename "$file"): it defines ${BORING_NAMES// / and } ($ssl SSL_ and DTLS functions among $total)"
