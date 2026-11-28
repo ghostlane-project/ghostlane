@@ -1,1 +1,1 @@
-linux | not-proven | - | -
+linux | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/LinuxFlipTest.kt::theLinuxResourcesCarryTheEngineAndNoGoCores, .github/workflows/release.yml::The engine inside the AppImage prints the pin, .github/workflows/release.yml::No Go in the Linux asset | The AppImage carries ghostlane-engine at the pin, the launcher sweeps the Go cores of earlier builds, and K1 reads the finished asset
