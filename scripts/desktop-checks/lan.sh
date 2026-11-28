@@ -4,32 +4,43 @@
 # desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/DesktopLanProxy*Test.kt
 # desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/host/HostEngine.kt
 # desktop-check-paths: sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/HostEngineTest.kt
+# desktop-check-paths: sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/engine/host/HostLanChain.kt
+# desktop-check-paths: sharedUI/src/commonMain/kotlin/org/olcbox/app/net/core/CoreLanChain.kt
 #
-# LAN sharing on ghostlane-engine (D5), in two network namespaces: HostEngine
-# starts the line's own core at the pin with CoreInbound.Lan on a private
-# address of this machine (the near end of a veth pair) and a VLESS REALITY
-# Vision line to Xray 26.4.25, DesktopLanProxy starts no second process and
-# binds no port of its own, and a client in the namespace at the far end
-# reaches it as another device on the network would (DesktopLanProxyRealTest,
-# which this script runs and holds to: every test of it run, none skipped,
-# none failed):
+# LAN sharing on ghostlane-engine (D5, LS), in two network namespaces, for the
+# three ways a session carries it. A VLESS REALITY Vision line to Xray 26.4.25
+# is the line's server; a client in the namespace at the far end of a veth pair
+# reaches the LAN listener as another device on the network would
+# (DesktopLanProxyRealTest, which this script runs and holds to: every test of
+# it run, none skipped, none failed). Each case below is served in turn, with
+# the same client and the same checks:
+#   - core: a core line in proxy mode. HostEngine writes CoreInbound.Lan into
+#     the line's own core, DesktopLanProxy starts no second process and binds
+#     no port of its own (one ghostlane-engine process);
+#   - room: a SOCKS5 port with a login that is no core, as a room's port is (a
+#     stand-in server of this script; a real room is room-front.sh's). No core
+#     holds the inbound, so one ghostlane-engine run, chained to that port, is
+#     the listener (one process);
+#   - line: a core line started without the inbound, the case the Go fallback
+#     was for (LAN switched on after the connect; a tunnel the helper
+#     started). The line runs untouched and one engine run is chained to its
+#     port (two processes).
+# In every case:
 #   - with the login, the client's SOCKS5 CONNECT carries a download and an
 #     upload byte for byte, and its UDP ASSOCIATE (the client binding first and
-#     declaring its port) carries a datagram out and the answer back, all over
-#     the line's own core (one ghostlane-engine process, no second one);
+#     declaring its port) carries a datagram out and the answer back;
 #   - with no login at all, with the wrong password, with the wrong username,
 #     and with a method list that offers no login first, every attempt is
 #     refused, TCP and datagram alike;
 #   - a stop closes the LAN port, and no engine is left;
-#   - a LAN port another program holds leaves the line running, with LAN sharing
-#     unavailable: the line leaves that inbound out and the proxy's own port
-#     check then fails.
+#   - no sing-box runs on the machine at any moment.
+# A LAN port another program holds leaves the line running, with LAN sharing
+# unavailable and a sentence saying why (the last test of the class).
 #
 # Target 203.0.113.10 (TEST-NET-3) sits on this machine's loopback and is
 # unreachable from the client namespace except through the line's Xray server.
 # The addresses of the pair are 192.168.77.1 (this machine's end) and
-# 192.168.77.2 (the namespace's); everything added is removed on exit. A room's
-# leg of LAN sharing is S10's.
+# 192.168.77.2 (the namespace's); everything added is removed on exit.
 #
 # Run by rust-desktop.yml on the Linux leg:
 #   bash scripts/desktop-checks/lan.sh
@@ -146,13 +157,14 @@ gateway="$(ip route show default | awk '/dev/ {print $3; exit}')"
 # The servers: the HTTP page and the UDP echo on 203.0.113.10, and Xray 26.4.25
 # in front of them as the VLESS REALITY Vision line's server.
 cat > "$work/servers.py" <<'PY'
-import hashlib, http.server, json, os, secrets, socket, ssl, subprocess, sys, threading, time
+import hashlib, http.server, json, os, secrets, socket, ssl, struct, subprocess, sys, threading, time
 
 work, xray, lan_address, target_ip = sys.argv[1:5]
 DOWN, UP = 2 * 1024 * 1024, 1024 * 1024
 SNI = "reality.lan-check.test"
 UUID = "5a4e8c2d-6a1f-4c3b-9d7e-2f1b0c9a8e71"
 LAN_USER, LAN_PASS = "lan-" + secrets.token_hex(4), secrets.token_hex(16)
+ROOM_USER, ROOM_PASS = "room-" + secrets.token_hex(4), secrets.token_hex(16)
 origin_log = open(os.path.join(work, "origin.log"), "a", buffering=1)
 log_lock = threading.Lock()
 
@@ -242,6 +254,137 @@ def reality_target():
     return "127.0.0.1:%d" % listener.getsockname()[1]
 
 
+def recv_exact(conn, n):
+    out = b""
+    while len(out) < n:
+        chunk = conn.recv(n - len(out))
+        if not chunk:
+            raise ConnectionError("closed")
+        out += chunk
+    return out
+
+
+def read_address(conn, atyp):
+    if atyp == 1:
+        return socket.inet_ntoa(recv_exact(conn, 4))
+    if atyp == 3:
+        return recv_exact(conn, recv_exact(conn, 1)[0]).decode()
+    return socket.inet_ntop(socket.AF_INET6, recv_exact(conn, 16))
+
+
+def room_port_server():
+    """A SOCKS5 port with a login that is no core: what a room's port is to the app (CONNECT and UDP ASSOCIATE)."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+
+    def pump(a, b):
+        try:
+            while True:
+                data = a.recv(65536)
+                if not data:
+                    break
+                b.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for s in (a, b):
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def udp_relay(conn):
+        relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        relay.bind(("127.0.0.1", 0))
+        relay.settimeout(0.5)
+        conn.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", relay.getsockname()[1]))
+        out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        out.settimeout(0.5)
+        client = None
+        conn.settimeout(0.2)
+        while True:
+            try:
+                if conn.recv(1) == b"":
+                    break
+            except socket.timeout:
+                pass
+            except OSError:
+                break
+            try:
+                data, peer = relay.recvfrom(65535)
+                client = peer
+                atyp = data[3]
+                if atyp == 1:
+                    host, rest = socket.inet_ntoa(data[4:8]), data[8:]
+                elif atyp == 3:
+                    n = data[4]
+                    host, rest = data[5:5 + n].decode(), data[5 + n:]
+                else:
+                    continue
+                port = struct.unpack(">H", rest[:2])[0]
+                note("room udp %d" % len(rest[2:]))
+                out.sendto(rest[2:], (host, port))
+            except (socket.timeout, OSError):
+                pass
+            try:
+                reply, source = out.recvfrom(65535)
+                if client is not None:
+                    head = b"\x00\x00\x00\x01" + socket.inet_aton(source[0]) + struct.pack(">H", source[1])
+                    relay.sendto(head + reply, client)
+            except (socket.timeout, OSError):
+                pass
+        relay.close()
+        out.close()
+
+    def serve(conn):
+        try:
+            conn.settimeout(30)
+            recv_exact(conn, 1)
+            methods = recv_exact(conn, recv_exact(conn, 1)[0])
+            if 2 not in methods:
+                conn.sendall(b"\x05\xff")
+                return
+            conn.sendall(b"\x05\x02")
+            recv_exact(conn, 1)
+            user = recv_exact(conn, recv_exact(conn, 1)[0]).decode()
+            password = recv_exact(conn, recv_exact(conn, 1)[0]).decode()
+            if user != ROOM_USER or password != ROOM_PASS:
+                note("room login refused")
+                conn.sendall(b"\x01\x01")
+                return
+            conn.sendall(b"\x01\x00")
+            head = recv_exact(conn, 4)
+            host = read_address(conn, head[3])
+            port = struct.unpack(">H", recv_exact(conn, 2))[0]
+            if head[1] == 1:
+                remote = socket.create_connection((host, port), timeout=10)
+                note("room tcp %s" % port)
+                conn.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", 0))
+                threading.Thread(target=pump, args=(remote, conn), daemon=True).start()
+                pump(conn, remote)
+            elif head[1] == 3:
+                udp_relay(conn)
+            else:
+                conn.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+        except (OSError, ConnectionError):
+            pass
+        finally:
+            conn.close()
+
+    def accept():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=serve, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+room_port = room_port_server()
 page = PageServer((target_ip, 0), Page)
 threading.Thread(target=page.serve_forever, daemon=True).start()
 
@@ -302,18 +445,22 @@ while True:
             sys.exit("Xray did not open its port in 20 s")
         time.sleep(0.2)
 
-while True:
-    with socket.socket() as probe:
-        probe.bind((lan_address, 0))
-        lan_port = probe.getsockname()[1]
-    if lan_port != 10808:
-        break
+lan_ports = {}
+for case in ("core", "room", "line"):
+    while True:
+        with socket.socket() as probe:
+            probe.bind((lan_address, 0))
+            candidate = probe.getsockname()[1]
+        if candidate != 10808 and candidate not in lan_ports.values():
+            lan_ports[case] = candidate
+            break
 
 link = ("vless://%s@127.0.0.1:%d?security=reality&encryption=none&pbk=%s&sid=ab12cd34&fp=chrome"
         "&sni=%s&flow=xtls-rprx-vision&type=tcp#lan-check") % (UUID, xray_port, public, SNI)
 check = {
     "link": link,
-    "lan_address": lan_address, "lan_port": lan_port, "lan_user": LAN_USER, "lan_pass": LAN_PASS,
+    "lan_address": lan_address, "lan_ports": lan_ports, "lan_user": LAN_USER, "lan_pass": LAN_PASS,
+    "room_port": room_port, "room_user": ROOM_USER, "room_pass": ROOM_PASS,
     "target": target_ip, "page_port": page.server_address[1], "echo_port": echo.getsockname()[1],
     "down_bytes": DOWN, "down_sha256": hashlib.sha256(Page.down).hexdigest(), "up_bytes": UP,
     "ready": os.path.join(work, "ready"), "done": os.path.join(work, "done"),
@@ -321,8 +468,8 @@ check = {
 with open(os.path.join(work, "check.json.part"), "w") as f:
     json.dump(check, f, indent=2)
 os.replace(os.path.join(work, "check.json.part"), os.path.join(work, "check.json"))
-print("servers: Xray on 127.0.0.1:%d, the page on %s:%d, the echo on %s:%d, the LAN on %s:%d"
-      % (xray_port, target_ip, check["page_port"], target_ip, check["echo_port"], lan_address, lan_port), flush=True)
+print("servers: Xray on 127.0.0.1:%d, the page on %s:%d, the echo on %s:%d, the LAN on %s:%d, the room's port on 127.0.0.1:%d"
+      % (xray_port, target_ip, check["page_port"], target_ip, check["echo_port"], lan_address, lan_ports["core"], room_port), flush=True)
 while not os.path.exists(os.path.join(work, "stop")) and server.poll() is None:
     time.sleep(0.5)
 code = server.poll()
@@ -340,13 +487,14 @@ cat > "$work/client.py" <<'PY'
 import hashlib, json, socket, struct, sys
 
 check = json.load(open(sys.argv[1]))
-HOST, PORT = check["lan_address"], check["lan_port"]
+CASE = sys.argv[2]
+HOST, PORT = check["lan_address"], check["lan_ports"][CASE]
 TARGET, PAGE_PORT, ECHO_PORT = check["target"], check["page_port"], check["echo_port"]
 failed = []
 
 
 def outcome(name, ok, detail=""):
-    print(("- %s: %s%s" % (name, "ok" if ok else "FAILED", (" (" + detail + ")") if detail else "")), flush=True)
+    print(("- [%s] %s: %s%s" % (CASE, name, "ok" if ok else "FAILED", (" (" + detail + ")") if detail else "")), flush=True)
     if not ok:
         failed.append(name)
 
@@ -555,8 +703,8 @@ done
 say "$(cat "$work/servers.out")"
 
 # DesktopLanProxyRealTest, as the app's build runs its tests, in the
-# background: it starts the line's own core and DesktopLanProxy, writes `ready`,
-# waits for `done`. --rerun: what it reads is no input Gradle knows of.
+# background: each of its three tests starts what its case runs and
+# DesktopLanProxy, writes `ready.<case>`, waits for `done.<case>`. --rerun: what it reads is no input Gradle knows of.
 results="$root/sharedUI/build/test-results/jvmTest"
 class=org.olcbox.app.vpn.DesktopLanProxyRealTest
 rm -f "$results/TEST-$class.xml"
@@ -567,27 +715,65 @@ rm -f "$results/TEST-$class.xml"
 ) > "$work/gradle.out" 2>&1 &
 gradle_pid=$!
 
-client=-1
-running_count=0
-for _ in $(seq 1800); do
-  [ -f "$work/ready" ] && break
-  kill -0 "$gradle_pid" 2> /dev/null || break
-  sleep 1
+# The tests may run in any order: whichever says `ready.<case>` is served. A
+# case's expected engine processes: core 1 (the line's own, LAN in its core),
+# room 1 (the engine run chained to the room's port), line 2 (the line's, and
+# the engine run chained to its port).
+cases="core room line"
+expected_core=1
+expected_room=1
+expected_line=2
+pending="$cases"
+client_failed=""
+line_check=""
+started_at=$SECONDS
+while [ -n "$pending" ] && [ $((SECONDS - started_at)) -lt 1800 ]; do
+  progressed=""
+  for kase in $pending; do
+    [ -f "$work/ready.$kase" ] || continue
+    pending="$(echo " $pending " | sed "s/ $kase / /; s/^ *//; s/ *$//")"
+    progressed=1
+    running_count="$(pgrep -f 'ghostlane-engine run --session' | wc -l | tr -d ' ' || true)"
+    want_var="expected_$kase"
+    want="${!want_var}"
+    say "[$kase] the listener is up ($running_count ghostlane-engine processes, $want expected); a client from the namespace"
+    [ "$running_count" -eq "$want" ] || line_check="$line_check; [$kase] $running_count ghostlane-engine processes ran while serving (expected $want)"
+    ! pgrep -x sing-box > /dev/null || line_check="$line_check; [$kase] sing-box ran while serving"
+    set +e
+    sudo -n ip netns exec "$ns" "$py" -I "$work/client.py" "$work/check.json" "$kase" > "$work/client-$kase.out" 2>&1
+    rc=$?
+    set -e
+    cat "$work/client-$kase.out"
+    [ "$rc" -eq 0 ] || client_failed="$client_failed $kase"
+    touch "$work/done.$kase"
+    # The case ends when its test stops the listener: no engine is left, the port is closed.
+    for _ in $(seq 60); do
+      [ -z "$(pgrep -f 'ghostlane-engine run --session' || true)" ] && break
+      sleep 1
+    done
+    left="$(pgrep -f 'ghostlane-engine run --session' || true)"
+    [ -z "$left" ] || line_check="$line_check; [$kase] an engine is still running after the stop (pid $(echo "$left" | tr '\n' ' '))"
+    port="$("$py" -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["lan_ports"][sys.argv[2]])' "$work/check.json" "$kase")"
+    sudo -n ip netns exec "$ns" "$py" -I -c '
+import socket, sys
+s = socket.socket(); s.settimeout(2)
+try:
+    s.connect((sys.argv[1], int(sys.argv[2])))
+except OSError:
+    sys.exit(0)
+sys.exit(1)' "$lan_address" "$port" || line_check="$line_check; [$kase] the namespace still reaches the LAN port after the stop"
+  done
+  if [ -z "$progressed" ]; then
+    kill -0 "$gradle_pid" 2> /dev/null || break
+    sleep 1
+  fi
 done
-if [ -f "$work/ready" ]; then
-  running_pids="$(pgrep -f 'ghostlane-engine run --session' || true)"
-  running_count="$(printf '%s\n' "$running_pids" | sed '/^$/d' | wc -l | tr -d ' ')"
-  say "the line's core is up ($running_count ghostlane-engine process); a client from the namespace"
-  set +e
-  sudo -n ip netns exec "$ns" "$py" -I "$work/client.py" "$work/check.json" > "$work/client.out" 2>&1
-  client=$?
-  set -e
-  cat "$work/client.out"
-  touch "$work/done"
-else
-  say "the line's core never came up (Gradle ended first)"
-  touch "$work/done"
-fi
+for kase in $pending; do
+  line_check="$line_check; [$kase] its listener never came up (Gradle ended first)"
+  touch "$work/done.$kase"
+done
+client=0
+[ -z "$client_failed" ] || client=1
 set +e
 wait "$gradle_pid"
 gradle=$?
@@ -631,25 +817,14 @@ sys.exit(1 if bad else 0)
 PY
 )" && held=0 || held=1
 
-# What the line's own core carried, with no second engine process.
-line_check=""
-[ "$running_count" -eq 1 ] || line_check="$line_check; $running_count ghostlane-engine processes ran while serving (expected 1)"
+# What the three listeners carried.
 for want in "http GET /down" "http POST /up"; do
   grep -qxF "$want" "$work/origin.log" || line_check="$line_check; the origin never saw \`$want\`"
 done
 grep -q '^udp ' "$work/origin.log" || line_check="$line_check; the origin never saw a datagram"
+grep -q '^room tcp ' "$work/origin.log" || line_check="$line_check; the room's port never carried a connection"
+grep -q '^room udp ' "$work/origin.log" || line_check="$line_check; the room's port never carried a datagram"
 grep -qF "$target_ip:" "$work/xray-access.log" || line_check="$line_check; Xray's access log never saw $target_ip"
-# No engine is left once the line is stopped.
-left="$(pgrep -f 'ghostlane-engine run --session' || true)"
-[ -z "$left" ] || line_check="$line_check; an engine is still running (pid $(echo "$left" | tr '\n' ' '))"
-sudo -n ip netns exec "$ns" "$py" -I -c '
-import socket, sys
-s = socket.socket(); s.settimeout(2)
-try:
-    s.connect((sys.argv[1], int(sys.argv[2])))
-except OSError:
-    sys.exit(0)
-sys.exit(1)' "$lan_address" "$(sed -n 's/.*"lan_port": \([0-9]*\).*/\1/p' "$work/check.json")" || line_check="$line_check; the namespace still reaches the LAN port after the stop"
 
 {
   echo "#### LAN sharing on ghostlane-engine ($os)"
@@ -657,12 +832,12 @@ sys.exit(1)' "$lan_address" "$(sed -n 's/.*"lan_port": \([0-9]*\).*/\1/p' "$work
   echo "- $said"
   echo "- the line's server: $xray_said"
   echo "- DesktopLanProxyRealTest: $verdict"
-  echo "- the client in the namespace: $([ "$client" -eq 0 ] && echo passed || echo "failed ($client)")"
+  echo "- the client in the namespace: $([ "$client" -eq 0 ] && echo "passed (core, room, line)" || echo "failed in:$client_failed")"
   [ -z "$line_check" ] || echo "- the line: ${line_check#; }"
-  sed 's/^/  /' "$work/client.out" 2> /dev/null || true
+  cat "$work"/client-*.out 2> /dev/null | sed 's/^/  /' || true
 } >> "$summary"
 say "DesktopLanProxyRealTest: $verdict"
-[ "$client" -eq 0 ] || die "the client failed ($client)"
+[ "$client" -eq 0 ] || die "the client failed in:$client_failed"
 [ "$gradle" -eq 0 ] || die "Gradle failed ($gradle)"
 [ "$held" -eq 0 ] || die "DesktopLanProxyRealTest did not pass whole: $verdict"
 [ -z "$line_check" ] || die "the line: ${line_check#; }"

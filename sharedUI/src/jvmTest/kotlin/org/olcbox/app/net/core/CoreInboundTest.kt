@@ -20,7 +20,6 @@ import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.net.XrayRustSurface
-import org.olcbox.app.vpn.DesktopLanProxy
 import java.net.InetAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -168,20 +167,11 @@ class CoreInboundTest {
             assertEquals(first.obj("sniffing"), second.obj("sniffing"))
             assertEquals(parse(alone) - "inbounds", parse(shared) - "inbounds")
         }
-        // The same listener the Go cores' LAN sharing opens for these settings.
-        val go = DesktopLanProxy.config(
-            "192.168.50.10", 10818, lanLogin.username, lanLogin.password,
-            SubscriptionFetchProxy("127.0.0.1", 10810, tunLogin.username, tunLogin.password),
-        )
-        assertEquals(
-            singBox(inbounds(go).single { it.str("tag") == "lan-in" }),
-            xray(inbounds(CoreInbound.build(reality, plan(CoreInbound.Tunnel(10810, tunLogin), lan()))).last()),
-        )
     }
 
-    // What the Go cores' LAN builder refuses, the Rust core's refuses, in a
+    // What a LAN listener may not be given, the Rust core refuses in a
     // sentence; and what it takes, this takes.
-    @Test fun whatTheGoLanBuilderRefusesIsRefused() {
+    @Test fun whatNoLanListenerMayBeGivenIsRefused() {
         val upstream = SubscriptionFetchProxy("127.0.0.1", 10810, tunLogin.username, tunLogin.password)
         val own = CoreInbound.Tunnel(upstream.port, tunLogin)
         val refused = listOf(
@@ -195,9 +185,6 @@ class CoreInboundTest {
         )
         for ((address, port, login) in refused) {
             val what = "$address:$port"
-            assertFailsWith<IllegalArgumentException>("Go: $what") {
-                DesktopLanProxy.config(address, port, login.username, login.password, upstream)
-            }
             val why = CoreInbound.refusal(plan(own, lan(address, port, login)))
             assertTrue(
                 why in setOf<String?>(CoreInbound.LAN_ADDRESS_REFUSAL, CoreInbound.LAN_PORT_REFUSAL, CoreInbound.LAN_LOGIN_REFUSAL),
@@ -210,7 +197,6 @@ class CoreInboundTest {
             "192.168.0.1" to 10818, "192.168.255.254" to 10818,
         )
         for ((address, port) in taken) {
-            DesktopLanProxy.config(address, port, lanLogin.username, lanLogin.password, upstream)
             assertNull(CoreInbound.refusal(plan(own, lan(address, port))), "$address:$port")
         }
     }
