@@ -5,7 +5,12 @@
 # build-ghostlane-core-ios.sh. Moving the core is a change of this one line
 # (the UniFFI Swift is generated from the library at each build).
 #
-# Now: ghostlane-project/xray-rust 8b8abe9e (p6/integ, pin move PM2b): add3245c +
+# Now: ghostlane-project/xray-rust 6d41fcc2 (p6/integ, pin move PM3): 8b8abe9e +
+# the engine on Windows (F9a: the net layer and socket handles by platform; F9b: rooms
+# build and run there, the escape binds by IP_UNICAST_IF; F9c: gotatun for Windows) and
+# the engine bound to an interface in a namespace, rooms through TURN (F10). iOS closure:
+# changed, the library is 107752 bytes larger (235594376).
+# Before it: 8b8abe9e (p6/integ, pin move PM2b): add3245c +
 # the AWS-LC entropy wait on kernels without getrandom (F13); Android 6 and 7
 # (API 23 and 24) now write their REALITY and shaped TLS hellos. iOS closure:
 # the same, the library is 8 bytes smaller.
@@ -29,5 +34,5 @@
 # end logged at info + ghostlane-core's `boring` feature (1.0.476: VK Calls'
 # SFU refused str0m's own DTLS hello with handshake_failure) + the VK, MTS and DTLS diagnostics at info (1.0.477: VK's hello unanswered; 1.0.478: no data channel opened, audio only; 1.0.479: none still) + sctp-proto vendored, reading the INIT ACK's Unrecognized Parameter VK's SFU sends (the channels open) + a VK signalling socket silent for 30 s is ended and the call rejoined; the debugging diagnostics back at debug (store build).
 GHOSTLANE_CORE_REPO="${GHOSTLANE_CORE_REPO:-ghostlane-project/xray-rust}"
-GHOSTLANE_CORE_COMMIT=8b8abe9e0d4c22d476290acba9fc9ee1da1a863d
+GHOSTLANE_CORE_COMMIT=6d41fcc24434d76675f4f35465dde1f457452558
 GHOSTLANE_CORE_TOOLCHAIN="${GHOSTLANE_CORE_TOOLCHAIN:-1.96.0}"
