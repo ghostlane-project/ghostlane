@@ -107,7 +107,7 @@ class DesktopManagerRealTest {
             // The engine the manager started is the program of this run's pin; the tun's hev runs as root.
             val running = ours(check)
             assertTrue(
-                running.any { it.contains(check.engine) } && running.any { it.contains(check.hev) },
+                running.any { it.contains(File(check.engine).name) } && running.any { it.contains(File(check.hev).name) },
                 "the session runs ghostlane-engine and hev: $running\n${logs(manager)}"
             )
             assertTrue(
@@ -200,6 +200,8 @@ class DesktopManagerRealTest {
             .filter { it.name != LinuxTunController.TUN_NAME && it.name != LinuxTunController.KILL_SWITCH_DEVICE }
             .associate { it.name to File(it, "rp_filter").readText().trim() }
 
+    private fun programs(check: Check): Set<String> = setOf(File(check.engine).name, File(check.hev).name)
+
     private val assignment = Regex("^[A-Za-z_][A-Za-z0-9_]*=.*", RegexOption.DOT_MATCHES_ALL)
 
     /** The command lines of the processes of the engine's program and of hev (under the sudo that runs it). */
@@ -207,10 +209,11 @@ class DesktopManagerRealTest {
         File("/proc").listFiles().orEmpty()
             .filter { it.name.all(Char::isDigit) }
             .mapNotNull { runCatching { File(it, "cmdline").readBytes().decodeToString().split('\u0000') }.getOrNull() }
-            // An argument naming the program, not as a `KEY=value` assignment: the test's own
+            // An argument that is the program, not a `KEY=value` assignment: the test's own
             // `sudo env HEV_..._BINARY=<path> gradle` names the paths only that way and must not count,
             // while hev runs under sudo through a shell line that names its path.
-            .filter { args -> args.any { a -> !assignment.matches(a) && (a.contains(check.engine) || a.contains(check.hev)) } }
+            // By file name: the manager runs hev from the copy it stages in the app's data directory.
+            .filter { args -> args.any { a -> !assignment.matches(a) && a.substringAfterLast('/') in programs(check) } }
             .map { it.joinToString(" ") }
 
     private fun world(service: String, check: Check): List<List<String>> =
