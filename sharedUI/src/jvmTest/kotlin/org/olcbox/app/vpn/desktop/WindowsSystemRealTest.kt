@@ -38,30 +38,28 @@ class WindowsSystemRealTest {
 
     @Test fun anAdaptersCountersAreReadAndGrowWithTraffic() = runBlocking {
         Assume.assumeTrue(on)
-        val name = powershell(
-            "(Get-NetAdapter | Where-Object Status -eq 'Up' | Where-Object { \$_.InterfaceDescription -notmatch 'Loopback' } | " +
-                "Select-Object -First 1).Name"
-        )
-        assertTrue(name.isNotBlank(), "no adapter is up")
-        val reader = WindowsAdapterTraffic(name)
-        val first = reader.read() ?: run {
-            val said = runCatching { powershell(WindowsAdapterTraffic.script(name)) }.getOrElse { "failed: ${it.message}" }
-            val up = runCatching { powershell("Get-NetAdapter | Format-Table Name, Status, InterfaceDescription -AutoSize | Out-String") }.getOrNull()
-            kotlin.test.fail("no counters for '$name': $said; adapters: $up")
-        }
-        // Some real traffic out and in: the runner reaches the internet.
+        // The adapters Windows keeps counters for (a virtual function of a NIC may have none), and which of
+        // them carries a fetch is the host's business: one of them must move.
+        val names = powershell("Get-NetAdapterStatistics | ForEach-Object { \$_.Name }")
+            .lines().map { it.trim() }.filter { it.isNotEmpty() }
+        assertTrue(names.isNotEmpty(), "Windows keeps counters for no adapter")
+        val readers = names.associateWith { WindowsAdapterTraffic(it) }
+        val first = readers.mapValues { (name, reader) -> assertNotNull(reader.read(), "no counters for '$name'") }
         val fetched = runCatching {
             URI("https://github.com/").toURL().openStream().use { it.readNBytes(64 * 1024).size }
         }.getOrDefault(0)
-        // Windows refreshes an adapter's counters on its own beat: read until they move.
-        var second = assertNotNull(reader.read())
+        var moved = false
         val deadline = System.nanoTime() + 20_000_000_000L
-        while (fetched > 0 && second.bytesIn <= first.bytesIn && System.nanoTime() < deadline) {
+        do {
             Thread.sleep(1_000)
-            second = assertNotNull(reader.read())
-        }
-        assertTrue(second.bytesIn >= first.bytesIn && second.bytesOut >= first.bytesOut, "$first then $second")
-        if (fetched > 0) assertTrue(second.bytesIn > first.bytesIn, "$fetched bytes fetched, $first then $second")
+            for ((name, reader) in readers) {
+                val now = assertNotNull(reader.read(), "no counters for '$name'")
+                val was = first.getValue(name)
+                assertTrue(now.bytesIn >= was.bytesIn && now.bytesOut >= was.bytesOut, "$name: $was then $now")
+                if (now.bytesIn > was.bytesIn) moved = true
+            }
+        } while (fetched > 0 && !moved && System.nanoTime() < deadline)
+        if (fetched > 0) assertTrue(moved, "$fetched bytes fetched and no adapter's received count moved: $first")
         assertEquals(null, WindowsAdapterTraffic("No such adapter ${System.nanoTime()}").read())
     }
 
