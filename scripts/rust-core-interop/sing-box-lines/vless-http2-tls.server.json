@@ -1,0 +1,42 @@
+{
+  "about": "VLESS over HTTP/2 (type=http, host and path) over TLS, a sing-box server; the run's certificate pinned for the test",
+  "shape": "vless-http2-tls",
+  "expect": "page",
+  "tls_name": "vless.interop.test",
+  "trust": "pin",
+  "link": "vless://66666666-6666-6666-6666-666666666666@127.0.0.1:{port}?security=tls&encryption=none&sni=vless.interop.test&fp=chrome&type=http&path=%2Fmedia%2Fh2&host=front.interop.test#interop-vless-http2-tls",
+  "mutant": {
+    "pointer": "/outbounds/0/settings/vnext/0/users/0/id",
+    "value": "66666666-6666-6666-6666-666666666667"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "in",
+      "listen": "127.0.0.1",
+      "listen_port": "{port}",
+      "users": [
+        {
+          "name": "u",
+          "uuid": "66666666-6666-6666-6666-666666666666"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "vless.interop.test",
+        "alpn": [
+          "h2"
+        ],
+        "certificate_path": "{cert_file}",
+        "key_path": "{key_file}"
+      },
+      "transport": {
+        "type": "http",
+        "host": [
+          "front.interop.test"
+        ],
+        "path": "/media/h2"
+      }
+    }
+  ]
+}

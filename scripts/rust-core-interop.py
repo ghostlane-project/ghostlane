@@ -102,6 +102,18 @@ A mode's cells are named "<line>, <mode>" and "<line>, <mode> (mutated)",
 and are held to the same rules as a line's: no dump, a refusal, a dump that
 names no list or names one the run does not have, all fail.
 
+A second set of lines, scripts/rust-core-interop/sing-box-lines/, has the same
+files for servers Xray cannot be: sing-box's, for the transports Xray removed
+(VLESS over HTTP/2, `type=http`). It is its own run (`prepare --engine
+sing-box`, then the builder's dump of those links, then `run --engine
+sing-box --servers "<version>=<sing-box>"`). A line file there holds
+`inbounds` as sing-box writes them ({listen_port} as "{port}", and the
+placeholders above with {target_host} and {target_port} for a REALITY
+handshake); the driver adds the one outbound, `direct`, and a route rule that
+sends every connection to the page on loopback. A shape that only a line of
+the other set carries is not a failure in a run: each set's shapes count as
+carried for the other's run.
+
 A cell gets three tries over the same pair of processes when it must reach
 the page (a REALITY server may spend its first connection on the target),
 one when it must not. Every cell is named: one that cannot run (no dump, a
@@ -133,11 +145,13 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINES_DIR = os.path.join(HERE, "rust-core-interop", "lines")
+SING_BOX_DIR = os.path.join(HERE, "rust-core-interop", "sing-box-lines")
+ENGINES = ("xray", "sing-box")
 SUFFIX = ".server.json"
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 LINK_VALUES = ("port", "public_key", "other_public_key", "pin", "pin_colons", "other_pin_colons")
-SERVER_VALUES = LINK_VALUES + ("private_key", "target", "cert_file", "key_file")
+SERVER_VALUES = LINK_VALUES + ("private_key", "target", "target_host", "target_port", "cert_file", "key_file")
 KEYS = {"about", "shape", "link", "expect", "against", "mutant", "network", "tls_name", "trust", "inbounds"}
 LINE_OUTBOUND = "out"  # CoreConfig.LINE: the tag of the line's outbound in a dump
 VMESS = "vmess://"
@@ -197,6 +211,20 @@ def load_lines(directory):
             if other is None or other["expect"] != "page":
                 raise Refused("%s: `against` must name a line that reaches the page, not %r" % (name, line["against"]))
     return lines
+
+
+def line_shapes(directory):
+    """The shapes the lines of <directory> carry to the page; none for a directory that is not there."""
+    if not os.path.isdir(directory):
+        return set()
+    shapes = set()
+    for name in os.listdir(directory):
+        if name.endswith(SUFFIX):
+            with open(os.path.join(directory, name)) as f:
+                line = json.load(f)
+            if isinstance(line, dict) and line.get("expect") == "page":
+                shapes.add(line.get("shape"))
+    return shapes
 
 
 def check_line(name, line):
@@ -936,7 +964,7 @@ class Cell:
         return True, "refused, as it must"
 
 
-def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, network, probe, beside=()):
+def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, network, probe, beside=(), engine="xray"):
     """Runs <cell>: the server, then the client from <client_config> with the files <beside> copied next to
     it, then <probe>(seconds) (None when the page came back right, else what went wrong)."""
     cell.dir = os.path.join(cells_dir, "%s-%s" % (cell.version, re.sub(r"[^a-z0-9.-]+", "-", cell.row).strip("-")))
@@ -946,12 +974,14 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
             f.write(config) if isinstance(config, bytes) else json.dump(config, f, indent=1)
     for path in beside:
         shutil.copyfile(path, os.path.join(cell.dir, os.path.basename(path)))
-    port = server_config["inbounds"][0]["port"]
+    inbound = server_config["inbounds"][0]
+    port = inbound["listen_port"] if engine == "sing-box" else inbound["port"]
     server = client_process = None
     start = time.monotonic()
     try:
         with open(os.path.join(cell.dir, "server.log"), "w") as log:
-            server = subprocess.Popen([xray, "run", "-config", os.path.join(cell.dir, "server.json")], stdout=log, stderr=log)
+            flag = "-c" if engine == "sing-box" else "-config"
+            server = subprocess.Popen([xray, "run", flag, os.path.join(cell.dir, "server.json")], stdout=log, stderr=log)
         if network == "udp":
             time.sleep(1.5)
             if server.poll() is not None:
@@ -993,7 +1023,7 @@ def run_cell(cell, cells_dir, client, xray, server_config, client_config, socks,
         stop(server)
 
 
-def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
+def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA, engine="xray"):
     with open(os.path.join(work, "run.json")) as f:
         whole = json.load(f)
     plan, modes = whole["lines"], whole.get("modes") or []
@@ -1114,7 +1144,13 @@ def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
             problems.append("the builder's manifest names the mode %s, which is no mode of this run" % name)
 
     def server_for(entry):
-        values = dict(entry["values"], target=target)
+        host, _, target_port = target.rpartition(":")
+        values = dict(entry["values"], target=target, target_host=host, target_port=int(target_port))
+        if engine == "sing-box":
+            return {"log": {"level": "warn"}, "inbounds": fill(entry["line"]["inbounds"], values),
+                    "outbounds": [{"type": "direct", "tag": "direct"}],
+                    "route": {"rules": [{"action": "route-options", "override_address": "127.0.0.1",
+                                         "override_port": page.server_address[1]}], "final": "direct"}}
         return {"log": {"loglevel": "warning"}, "inbounds": fill(entry["line"]["inbounds"], values), "outbounds": [{
             "tag": "direct", "protocol": "freedom",
             "settings": {"redirect": "127.0.0.1:%d" % page.server_address[1], "ipsBlocked": [],
@@ -1122,7 +1158,7 @@ def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
 
     for version, xray in servers:
         head = subprocess.run([xray, "version"], capture_output=True, text=True).stdout.splitlines()
-        say("== Xray %s: %s" % (version, head[0] if head else "(no version)"))
+        say("== %s %s: %s" % ("sing-box" if engine == "sing-box" else "Xray", version, head[0] if head else "(no version)"))
         for entry in plan:
             name, line = entry["name"], entry["line"]
             server_config = server_for(entry)
@@ -1145,7 +1181,7 @@ def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
                     else:
                         client_config = raw  # the builder's bytes, as they are
                     run_cell(cell, cells_dir, client, xray, server_config, client_config, socks, line.get("network", "tcp"),
-                             lambda seconds, s=socks: through(s, upload, seconds))
+                             lambda seconds, s=socks: through(s, upload, seconds), engine=engine)
                 say("%-8s %-36s %s" % (version, row, cell.verdict(cells)[1]))
         # Each mode: its two pages through the dump, then the mutant's listed page, which must not come.
         for mode, row in mode_rows:
@@ -1168,13 +1204,16 @@ def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
                     def probe(seconds, s=socks, p=pages, res=resolver):
                         return routed(s, direct.server_address[1], p, seconds, res)
                     run_cell(cell, cells_dir, client, xray, server_for(entry), client_config, socks,
-                             entry["line"].get("network", "tcp"), probe, beside)
+                             entry["line"].get("network", "tcp"), probe, beside, engine=engine)
                 say("%-8s %-36s %s" % (version, r, cell.verdict(cells)[1]))
 
     # A shape the builder writes that no line carries to the page on every server.
     if manifest is not None:
+        elsewhere = line_shapes(LINES_DIR if engine == "sing-box" else SING_BOX_DIR)
         for shape in manifest.get("shapes") or []:
             carriers = [e["name"] for e in plan if e["line"]["shape"] == shape and e["line"]["expect"] == "page"]
+            if not carriers and shape in elsewhere:
+                continue
             if not carriers:
                 problems.append("the builder writes the shape %s and no line under lines/ carries it to the page" % shape)
             elif not any(all(cells[(v, c)].verdict(cells)[0] for v, _ in servers) for c in carriers):
@@ -1183,8 +1222,9 @@ def run(work, dumps, client, servers, out=sys.stdout, geodata=GEODATA):
             problems.append("the builder's manifest names no shape")
 
     failed = [(key, cell) for key, cell in cells.items() if not cell.verdict(cells)[0]]
-    header = "| line | " + " | ".join("Xray " + v for v, _ in servers) + " |"
-    table = ["### The builder's dumps through xray-rust against official Xray servers", "",
+    label = "sing-box" if engine == "sing-box" else "Xray"
+    header = "| line | " + " | ".join("%s %s" % (label, v) for v, _ in servers) + " |"
+    table = ["### The builder's dumps through xray-rust against official %s servers" % label, "",
              "A 2 MiB download and a 1 MiB upload through each line, checked by sha256; the client config is the "
              "builder's dump of the run's link. A mutated dump and a line marked to fail must not reach the page. "
              "A routing mode's row fetches its names through the dump of the line's link under the mode: a listed "
@@ -1732,12 +1772,14 @@ def main():
     pr = sub.add_parser("prepare")
     pr.add_argument("--work", required=True)
     pr.add_argument("--xray", required=True, help="an Xray binary, for `xray x25519`")
-    pr.add_argument("--lines", default=LINES_DIR)
+    pr.add_argument("--lines", default=None, help="the lines' directory (default: the engine's)")
+    pr.add_argument("--engine", choices=ENGINES, default="xray", help="whose servers the lines are for")
     rn = sub.add_parser("run")
     rn.add_argument("--work", required=True)
     rn.add_argument("--dumps", required=True)
     rn.add_argument("--client", required=True, help="the xray-rust CLI")
     rn.add_argument("--servers", required=True, help='"<version>=<xray binary> ..."')
+    rn.add_argument("--engine", choices=ENGINES, default="xray", help="whose servers --servers names")
     sub.add_parser("selftest")
     a = p.parse_args()
     for tool in ("curl", "openssl"):
@@ -1747,8 +1789,11 @@ def main():
         if a.command == "selftest":
             return selftest()
         if a.command == "prepare":
-            return prepare(os.path.abspath(a.work), a.xray, a.lines)
-        return run(os.path.abspath(a.work), os.path.abspath(a.dumps), os.path.abspath(a.client), parse_servers(a.servers))
+            lines = a.lines or (SING_BOX_DIR if a.engine == "sing-box" else LINES_DIR)
+            # The routing modes ride a line of the Xray set.
+            return prepare(os.path.abspath(a.work), a.xray, lines, modes={} if a.engine == "sing-box" else None)
+        return run(os.path.abspath(a.work), os.path.abspath(a.dumps), os.path.abspath(a.client), parse_servers(a.servers),
+                   engine=a.engine)
     except Refused as e:
         print("::error::%s" % e)
         return 2

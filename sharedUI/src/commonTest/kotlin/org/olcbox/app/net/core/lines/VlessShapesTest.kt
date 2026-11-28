@@ -158,7 +158,7 @@ class VlessShapesTest {
         }
     }
 
-    @Test fun http2IsRefusedWithASentence() {
+    @Test fun http2IsVlessHttp2sAndNoLongerRefusedHere() {
         val links = listOf(
             "$tls&type=http&path=%2Fh&host=a.example.com,b.example.com",
             "$tls&type=h2&path=%2Fh",
@@ -167,14 +167,9 @@ class VlessShapesTest {
         )
         for (link in links) {
             val spec = spec(link)
-            assertSame(VlessShapes, CoreLines.of(spec), link)
-            assertEquals(VlessShapes.HTTP2, VlessShapes.shape(spec), link)
-            assertEquals(VlessShapes.HTTP2_REFUSAL, CoreRefusal.of(spec), link)
-            val thrown = assertFailsWith<IllegalArgumentException>(link) { CoreConfig.build(spec, CoreFixtures.login) }
-            assertTrue(VlessShapes.HTTP2_REFUSAL in thrown.message.orEmpty(), link)
+            assertSame(VlessHttp2, CoreLines.of(spec), link)
+            assertNull(VlessShapes.shape(spec), link)
         }
-        // A shape this kind names but never writes.
-        assertTrue(VlessShapes.HTTP2 !in VlessShapes.shapes)
     }
 
     @Test fun visionNeedsTlsAndNoOtherFlowIsKnown() {
