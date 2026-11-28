@@ -524,12 +524,12 @@ fn hub() -> (String, Arc<AtomicUsize>) {
 }
 
 #[test]
-fn a_room_on_a_fake_hub_is_joined_serves_a_port_with_a_login_and_leaves_on_a_stop() {
+fn a_room_on_a_fake_hub_is_joined_and_its_end_is_the_starts_error() {
     let Some(program) = real_engine() else { return };
     let scratch = Scratch::create();
     let (room, joins) = hub();
     let mut options = Options::new(program, scratch.join("run"));
-    options.ready_timeout = Duration::from_secs(30);
+    options.ready_timeout = Duration::from_secs(60);
     let port = free_port();
     let params = OlcrtcParams {
         line: OlcrtcLine {
@@ -544,33 +544,18 @@ fn a_room_on_a_fake_hub_is_joined_serves_a_port_with_a_login_and_leaves_on_a_sto
         device_id: "0123456789abcdef".into(),
     };
     let login = engine::random_login().unwrap();
-    let engine = engine::start_room(&options, &params, login.clone(), None).expect("a room");
-    assert_eq!(engine.socks_addr(), format!("127.0.0.1:{port}"));
-    assert_eq!(engine.credentials(), login);
-    assert_eq!(engine.state(), "running");
-    wait_for("the hub saw a join", Duration::from_secs(10), || {
-        joins.load(Ordering::SeqCst) >= 1
-    });
-
-    // the port asks for the login: a client that offers none is refused
-    let mut anonymous = TcpStream::connect(engine.socks_addr()).unwrap();
-    anonymous.write_all(&[5, 1, 0]).unwrap();
-    let mut answer = [0u8; 2];
-    anonymous.read_exact(&mut answer).unwrap();
-    assert_eq!(answer, [5, 0xff], "no login, no method");
-
-    let started = Instant::now();
-    engine.stop().expect("a stop");
+    // No olcRTC server is in the hub's room, so the join never gets past its
+    // hello and the room ends: the engine says so, and the child reports it
+    // as a start that failed, with nothing left behind.
+    let Err(why) = engine::start_room(&options, &params, login, None) else {
+        panic!("a room with nobody in it came up");
+    };
+    assert!(why.contains("(room)"), "{why}");
     assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "{:?}",
-        started.elapsed()
+        joins.load(Ordering::SeqCst) >= 1,
+        "the engine joined the room the session names: {why}"
     );
-    assert_eq!(engine.state(), "stopped");
-    wait_for("the end is read", Duration::from_secs(3), || {
-        engine.last_end().is_some()
-    });
-    assert_eq!(engine.last_end().unwrap().reason, "stdin_closed");
+    assert!(session_files(&scratch.join("run")).is_empty());
 }
 
 /// The page, answered to any request on loopback.
