@@ -1,0 +1,142 @@
+name: Gate fakes
+
+# The Rust client of the release gate (decision D12, check K4): the shipped
+# `ghostlane-engine`, built from the core at the pin, runs the engine's suite as
+# the client `rust` against the three fake carriers (SaluteJazz, VK Calls, MTS
+# Link). No room and no secret: scripts/gate-fakes.sh drives the core's own
+# olc/interop harness, and the reports it leaves are checked the way the gate's
+# verdict checks them (scripts/gate-merge-reports.py rust, then decide).
+#
+# gate.yml calls it (job `fakes`) in every run that is not skipped by request, a
+# dry run included. By itself it runs on rust/all, on a pull request into it and
+# on a push that changes its own paths, which include the pin; `pin=<sha>` gates
+# another commit of the core. It reads the pin, so its paths name the pin file.
+on:
+  workflow_call:
+    inputs:
+      pin:
+        description: A commit of the core to build instead of the pin (empty = the pin)
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: A commit of the core to build instead of the pin (empty = the pin)
+        type: string
+        default: ''
+  push:
+    branches:
+      - rust/all
+      - 'rust/t/**'
+    paths:
+      - scripts/ghostlane-core-pin.sh
+      - scripts/gate-fakes.sh
+      - scripts/gate-merge-reports.py
+      - scripts/rust-core-checkout.sh
+      - .github/workflows/gate-fakes.yml
+  pull_request:
+    branches:
+      - rust/all
+    paths:
+      - scripts/ghostlane-core-pin.sh
+      - scripts/gate-fakes.sh
+      - scripts/gate-merge-reports.py
+      - scripts/rust-core-checkout.sh
+      - .github/workflows/gate-fakes.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-fakes-${{ github.workflow }}-${{ github.ref }}-${{ inputs.pin }}
+  cancel-in-progress: false
+
+jobs:
+  fakes:
+    name: The Rust client on the fakes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      FAKES_DIR: ${{ github.workspace }}/gate-fakes
+    steps:
+      - name: Checkout ghostlane
+        uses: actions/checkout@v7
+        with:
+          path: olcbox
+          sparse-checkout: scripts
+
+      - name: Check the core out at the pin
+        env:
+          PIN: ${{ inputs.pin }}
+        run: |
+          set -euo pipefail
+          olcbox/scripts/rust-core-checkout.sh "$RUNNER_TEMP/core" "$PIN" | tail -n 1
+
+      - name: Install the core's toolchain and build dependencies
+        run: |
+          set -euo pipefail
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$RUNNER_TEMP/core/rust-toolchain.toml")"
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake clang libclang-dev >/dev/null
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ runner.temp }}/core/target
+          key: gate-fakes-${{ hashFiles('olcbox/scripts/ghostlane-core-pin.sh') }}-${{ inputs.pin }}
+          restore-keys: gate-fakes-
+
+      - name: Build the engine as it ships
+        working-directory: ${{ runner.temp }}/core
+        run: cargo build --locked --release -p ghostlane-engine --features boring
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: The suite against the fake carriers
+        run: |
+          olcbox/scripts/gate-fakes.sh "$RUNNER_TEMP/core" "$RUNNER_TEMP/core/target/release/ghostlane-engine" "$FAKES_DIR"
+
+      # What a dry run's verdict does with them, on a stub report: the reports
+      # fold in as the client `rust`, and decide takes them for the dry leg.
+      - name: The reports pass the gate's own decision
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stub"
+          python3 olcbox/scripts/gate-merge-reports.py skipped --reason "gate-fakes.yml, on its own" \
+            --engine-commit "$GITHUB_SHA" --mode release \
+            --out-json "$RUNNER_TEMP/stub/gate-report.json" --out-md "$RUNNER_TEMP/stub/gate-report.md"
+          python3 olcbox/scripts/gate-merge-reports.py rust --report "$RUNNER_TEMP/stub/gate-report.json" \
+            --rust-dir "$FAKES_DIR" --md "$RUNNER_TEMP/stub/gate-report.md"
+          cat "$RUNNER_TEMP/stub/gate-report.md" >> "$GITHUB_STEP_SUMMARY"
+          python3 olcbox/scripts/gate-merge-reports.py decide --report "$RUNNER_TEMP/stub/gate-report.json" \
+            --skip true --dry true --fakes-result success
+
+      # Reports only: a fake has no room or key for them to carry, and the
+      # verdict's leak check reads what it merges all the same.
+      - name: Upload the fakes' reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-fakes
+          path: gate-fakes/*/gate-report.json
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: true
+
+      - name: Upload the fakes' logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-fakes-logs
+          path: gate-fakes/*/run.log
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true

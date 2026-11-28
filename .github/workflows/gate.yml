@@ -17,7 +17,7 @@ name: Release gate
 # - push: the pin or the gate changed ("pin"), on any branch but those under
 #   rust/.
 #
-# The Rust client (D12, K4): the `fakes` job runs the shipped ghostlane-engine
+# The Rust client (D12, K4): the `fakes` job (gate-fakes.yml) runs the shipped ghostlane-engine
 # as the engine suite's client against the three fake carriers, with no room
 # and no secret, in every run that is not skipped by request, a dry run
 # included: it is the dry run's only leg. The verdict folds its reports into
@@ -378,86 +378,15 @@ jobs:
           # "Re-run failed jobs" uploads again under the same name.
           overwrite: true
 
-  # The Rust client on the fakes. No secret, no live room, no gate-run.sh `run`:
-  # it is the one leg a dry run walks, so it carries none of the suite's three
-  # guards. scripts/gate-fakes.sh holds the harness's names; the core is the
-  # commit scripts/ghostlane-core-pin.sh names, and the Go engine the harness
-  # serves with is the core's own olc/interop pin.
+  # The Rust client on the fakes: .github/workflows/gate-fakes.yml, which holds
+  # no secret and joins no room. It reads the core's pin, so it has the pin's
+  # paths and a `pin` input of its own, and this file keeps the gate's. It is
+  # the one leg a dry run walks, so it carries none of the suite's three guards.
   fakes:
     name: Rust client on the fakes (ghostlane-engine)
     needs: resolve
     if: ${{ needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      FAKES_DIR: ${{ github.workspace }}/gate-fakes
-    steps:
-      - name: Checkout ghostlane
-        uses: actions/checkout@v7
-        with:
-          path: olcbox
-          sparse-checkout: scripts
-
-      - name: Check the core out at the pin
-        run: |
-          set -euo pipefail
-          olcbox/scripts/rust-core-checkout.sh "$RUNNER_TEMP/core" | tail -n 1
-
-      - name: Install the core's toolchain and build dependencies
-        run: |
-          set -euo pipefail
-          toolchain="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' "$RUNNER_TEMP/core/rust-toolchain.toml")"
-          rustup toolchain install "$toolchain" --profile minimal
-          rustup default "$toolchain"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake clang libclang-dev >/dev/null
-
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            ${{ runner.temp }}/core/target
-          key: gate-fakes-${{ hashFiles('scripts/ghostlane-core-pin.sh') }}
-          restore-keys: gate-fakes-
-
-      - name: Build the engine as it ships
-        working-directory: ${{ runner.temp }}/core
-        run: cargo build --locked --release -p ghostlane-engine --features boring
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.5'
-          cache: false
-
-      - name: The suite against the fake carriers
-        run: |
-          olcbox/scripts/gate-fakes.sh "$RUNNER_TEMP/core" "$RUNNER_TEMP/core/target/release/ghostlane-engine" "$FAKES_DIR"
-
-      # Reports only: a fake has no room or key for them to carry, and the
-      # verdict's leak check reads what it merges all the same.
-      - name: Upload the fakes' reports
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: gate-fakes
-          path: |
-            gate-fakes/*/gate-report.json
-          if-no-files-found: warn
-          retention-days: 14
-          overwrite: true
-
-      - name: Upload the fakes' logs
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: gate-fakes-logs
-          path: |
-            gate-fakes/*/run.log
-          if-no-files-found: warn
-          retention-days: 7
-          overwrite: true
+    uses: ./.github/workflows/gate-fakes.yml
 
   verdict:
     name: Verdict

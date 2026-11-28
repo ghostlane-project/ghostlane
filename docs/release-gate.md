@@ -112,7 +112,9 @@ The gate's client is moving from Go to the Rust core (decision D12). The Go
 flavours, `cli` and `mobile`, stay until the last Go client leaves; the `rust`
 flavour is already part of every verdict.
 
-- The `fakes` job checks the core out at the pin of `scripts/ghostlane-core-pin.sh`
+- The `fakes` job is `.github/workflows/gate-fakes.yml`, called by `gate.yml` (it reads the
+  core's pin, so it has the pin in its paths and a `pin` input; the gate's own file keeps
+  the gate's). It checks the core out at the pin of `scripts/ghostlane-core-pin.sh`
   (`scripts/rust-core-checkout.sh`), builds `ghostlane-engine` with `boring` as it
   ships, and runs `scripts/gate-fakes.sh`. That script calls the core's own
   `olc/interop` harness for each carrier: the Go server at the harness's engine
@@ -442,6 +444,7 @@ Nothing in the workflows refers to it yet. When it comes:
 | File | Role |
 | --- | --- |
 | `.github/workflows/gate.yml` | The gate: resolve, unit, suite, fakes, verdict |
+| `.github/workflows/gate-fakes.yml` | The Rust client's leg: the core's engine against the fake carriers; called by `gate.yml`, and on its own on `rust/all` |
 | `.github/workflows/release.yml` | Calls it (`gate` job); builds and publish need it; the pin as a commit; the report in the notes and assets |
 | `.github/workflows/pr-checks.yml` | Builds against the pinned commit and Go; runs the scripts' tests |
 | `scripts/olcrtc-pin.sh` | The pin (or `--ref`) to a full commit, with checks |

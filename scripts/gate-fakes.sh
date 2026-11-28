@@ -9,7 +9,7 @@
 #
 #   gate-fakes.sh <core dir> <ghostlane-engine binary> <out dir>
 #
-# <core dir> is a checkout of the core at the pin (scripts/rust-core-checkout.sh).
+# <core dir> is a checkout of the core at the pin (the core checkout the pin names).
 # For each carrier the suite's report is copied to <out dir>/<carrier>/gate-report.json
 # and its log to <out dir>/<carrier>/run.log; a carrier that fails does not stop
 # the others, the script then leaves with 1. gate-merge-reports.py rust reads

@@ -205,10 +205,15 @@ Every file under `.github/workflows/` is named here, with what it is for.
   violation in a copy. A dry run must be unable to sign, upload or publish.
 - `release.yml`: the release build, by hand only. Never dispatched from a task branch.
 - `gate.yml`: the release gate against live rooms; called by `release.yml`, by hand, daily and
-  on a pin change off `rust/`. Dry on any `rust/` branch. Its `fakes` job is K4's: the engine's
+  on a pin change off `rust/`. Dry on any `rust/` branch. Its `fakes` job is `gate-fakes.yml`, K4's: the engine's
   suite with `ghostlane-engine` as the client `rust` against the fake carriers, no room and no
   secret, in every run that is not skipped by request, a dry run included; a report with no
   `rust` client fails the verdict (`docs/release-gate.md`, "The Rust client").
+- `gate-fakes.yml`: K4 on its own and as the `fakes` job of `gate.yml`: the core at the pin
+  (or `pin=<sha>`) builds `ghostlane-engine`, which runs the engine's suite as the client `rust`
+  against the SaluteJazz, VK Calls and MTS Link fakes, then the reports go through the gate's
+  own fold and decision. No room, no secret; it runs on `rust/all`, on pull requests into it
+  and on its own paths, which include the pin.
 - `singbox-verify.yml`: the config builders' output against the pinned Go cores' own schema
   check (the Go side that still ships).
 - `hev-tunnel.yml`, `ios-frameworks.yml`: the tun2socks and the Go frameworks for iOS, built by

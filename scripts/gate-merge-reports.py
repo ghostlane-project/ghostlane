@@ -30,7 +30,7 @@ are not known. A cell merge fails itself ("did not run: ...") never carries
 `known`, whatever its id: the engine's docs/gate.md, "Known failures".
 
 The Rust client (decision D12): the shipped ghostlane-engine runs the engine's
-suite against the three fake carriers (scripts/gate-fakes.sh), one report per
+suite against the three fake carriers (the fakes script), one report per
 carrier, and `rust` folds them into the report as the client `rust`, one leg per
 carrier. A carrier that left no usable report becomes a failed marker cell, as
 a Go leg does. decide fails a report with no `rust` client unless the gate was

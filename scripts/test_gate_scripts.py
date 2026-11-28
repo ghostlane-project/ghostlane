@@ -1593,15 +1593,23 @@ class RustClient(unittest.TestCase):
         gate = (REPO / ".github" / "workflows" / "gate.yml").read_text()
         block = gate.split("\n  fakes:\n", 1)[1].split("\n  verdict:\n", 1)[0]
         self.assertIn("needs.resolve.outputs.skip != 'true' || needs.resolve.outputs.dry == 'true'", block)
-        self.assertNotIn("secrets.", block)
-        self.assertNotIn("gate-run.sh", block)
-        self.assertIn("scripts/gate-fakes.sh", block)
-        self.assertIn("rust-core-checkout.sh", block)
+        self.assertIn("uses: ./.github/workflows/gate-fakes.yml", block)
+        self.assertNotIn("secrets", block)
         verdict = gate.split("\n  verdict:\n", 1)[1]
         self.assertRegex(verdict.split("\n", 3)[1], r"needs: \[resolve, unit, suite, fakes\]")
         self.assertIn("gate-merge-reports.py rust", verdict)
         self.assertIn('--dry "$DRY"', verdict)
         self.assertIn("--fakes-result", verdict)
+
+    def test_the_fakes_workflow_holds_no_secret_and_joins_no_room(self):
+        fakes = (REPO / ".github" / "workflows" / "gate-fakes.yml").read_text()
+        self.assertNotIn("secrets", fakes)
+        self.assertNotIn("gate-run.sh", fakes)
+        self.assertIn("scripts/gate-fakes.sh", fakes)
+        self.assertIn("-checkout.sh", fakes)
+        self.assertNotRegex(fakes, Wiring.ENGINE_NAMES)
+        self.assertIn("workflow_call:", fakes)
+        self.assertIn("workflow_dispatch:", fakes)
 
 
 class Scope(unittest.TestCase):

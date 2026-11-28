@@ -39,7 +39,7 @@
 # room that rotted is replaced (docs/release-gate.md).
 #
 # The Rust client's leg (the shipped ghostlane-engine against the fake carriers)
-# is scripts/gate-fakes.sh, not an entry here: it joins no room, so a dry run
+# is a script of its own, not an entry here: it joins no room, so a dry run
 # walks it, and scripts/test-release-dry.sh reads every other word after this
 # file's name in gate.yml as a call that may join one.
 #
