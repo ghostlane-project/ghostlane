@@ -733,7 +733,10 @@ while [ -n "$pending" ] && [ $((SECONDS - started_at)) -lt 1800 ]; do
     [ -f "$work/ready.$kase" ] || continue
     pending="$(echo " $pending " | sed "s/ $kase / /; s/^ *//; s/ *$//")"
     progressed=1
-    running_count="$(pgrep -f 'ghostlane-engine run --session' | wc -l | tr -d ' ' || true)"
+    # The engines of this case, by pid: the next test starts its own while this
+    # one is still being stopped, so "none left" can only be asked of these.
+    case_pids="$(pgrep -f 'ghostlane-engine run --session' || true)"
+    running_count="$(printf '%s\n' "$case_pids" | sed '/^$/d' | wc -l | tr -d ' ')"
     want_var="expected_$kase"
     want="${!want_var}"
     say "[$kase] the listener is up ($running_count ghostlane-engine processes, $want expected); a client from the namespace"
@@ -747,12 +750,15 @@ while [ -n "$pending" ] && [ $((SECONDS - started_at)) -lt 1800 ]; do
     [ "$rc" -eq 0 ] || client_failed="$client_failed $kase"
     touch "$work/done.$kase"
     # The case ends when its test stops the listener: no engine is left, the port is closed.
-    for _ in $(seq 60); do
-      [ -z "$(pgrep -f 'ghostlane-engine run --session' || true)" ] && break
-      sleep 1
+    left=""
+    for pid in $case_pids; do
+      for _ in $(seq 60); do
+        kill -0 "$pid" 2> /dev/null || continue 2
+        sleep 1
+      done
+      left="$left $pid"
     done
-    left="$(pgrep -f 'ghostlane-engine run --session' || true)"
-    [ -z "$left" ] || line_check="$line_check; [$kase] an engine is still running after the stop (pid $(echo "$left" | tr '\n' ' '))"
+    [ -z "$left" ] || line_check="$line_check; [$kase] an engine is still running after the stop (pid$left)"
     port="$("$py" -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["lan_ports"][sys.argv[2]])' "$work/check.json" "$kase")"
     sudo -n ip netns exec "$ns" "$py" -I -c '
 import socket, sys
