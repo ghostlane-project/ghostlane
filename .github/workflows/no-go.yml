@@ -46,19 +46,8 @@ on:
         description: Id of a run (a dry release run) whose artifacts are checked instead of a release's assets
         type: string
         default: ''
-  pull_request:
-    branches:
-      - main
-      - rust/all
-    paths:
-      - scripts/check-no-go.sh
-      - scripts/test-check-no-go.sh
-      - scripts/no-go-allow.d/**
-      - .github/workflows/no-go.yml
   push:
-    # A push trigger with paths and no branches also runs on every tag push,
-    # where GitHub evaluates no path filter: name the branches.
-    branches: ['**']
+    branches: [rust/all, main, ghostlane]
     paths:
       - scripts/check-no-go.sh
       - scripts/test-check-no-go.sh

@@ -26,6 +26,7 @@ on:
       - scripts/gate-merge-reports.py
       - scripts/olcrtc-pin.sh
   push:
+    branches: [rust/all, main, ghostlane]
     paths:
       - .github/workflows/release.yml
       - .github/workflows/gate.yml

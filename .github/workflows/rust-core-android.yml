@@ -61,26 +61,6 @@ on:
       - 'gradle/**'
       - '*.gradle.kts'
       - gradle.properties
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - .github/workflows/rust-core-android.yml
-      - scripts/ghostlane-core-pin.sh
-      - scripts/ghostlane-core-resolve.sh
-      - scripts/build-ghostlane-core-android.sh
-      - 'scripts/rust-core-android-*.sh'
-      - scripts/rust-core-android-host.py
-      - scripts/xray-servers.txt
-      - scripts/fetch-xray-servers.sh
-      - scripts/olcrtc-pin.sh
-      - scripts/cores-pins.sh
-      - 'lab/rust-core-android/**'
-      - 'androidApp/**'
-      - 'sharedUI/**'
-      - 'gradle/**'
-      - '*.gradle.kts'
-      - gradle.properties
   workflow_dispatch:
     inputs:
       pin:
