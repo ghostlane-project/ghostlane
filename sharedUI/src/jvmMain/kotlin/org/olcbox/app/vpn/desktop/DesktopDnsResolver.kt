@@ -2,7 +2,6 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
-import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.UpstreamDns
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -267,6 +266,6 @@ internal object DesktopDnsResolver {
     }
 
     private val DEFAULT_ROUTE_DEVICE = Regex("(?:^|\\s)dev\\s+(\\S+)")
-    private val TUN_NETWORKS = listOf(SingBoxConfig.DESKTOP_TUN_ADDRESS, SingBoxConfig.DESKTOP_TUN_ADDRESS6)
+    private val TUN_NETWORKS = listOf(DesktopTunNames.ADDRESS, DesktopTunNames.ADDRESS6)
     private const val COMMAND_TIMEOUT_SECONDS = 2L
 }

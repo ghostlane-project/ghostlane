@@ -28,11 +28,8 @@ object XrayConfig {
     /**
      * Kept off the PAC port 10809.
      *
-     * The same number as [SingBoxConfig.SINGBOX_SOCKS_PORT] and safely so:
-     * one core runs at a time on every platform. On iOS hev-socks5-tunnel
-     * fronts Xray on xhttp and sing-box is not started there (since 1.0.426);
-     * on sing-box's own lines sing-box listens here and Xray is not started
-     * (since 2026-11-13). So this port has exactly one listener either way.
+     * One core runs at a time on every platform, so this port has exactly one
+     * listener.
      */
     const val XRAY_SOCKS_PORT = 10810
 
@@ -44,7 +41,7 @@ object XrayConfig {
 
     /**
      * The tunnel-side resolver under [answersDns], reached through `out`. The
-     * same address SingBoxConfig uses for the same job, and the one core.json's
+     * same address as the one core.json's
      * `dns` outbound forwards to through the line ([IosCore]).
      */
     internal const val REMOTE_DNS_SERVER = "1.1.1.1"
@@ -66,9 +63,9 @@ object XrayConfig {
      * Build an Xray config for a vless+xhttp+reality location. Requires the spec's
      * transport to be [TransportSpec.Xhttp] (Xray's role here is xhttp only).
      *
-     * [routing] and [directDns] are the same choices [SingBoxConfig] takes, for
-     * the platform where Xray is the only router in the path: iOS with a
-     * tun2socks in front of it instead of sing-box. Under [Routing.BypassRussia]
+     * [routing] and [directDns] are the routing choices, for the platform
+     * where Xray is the only router in the path: iOS with a tun2socks in front
+     * of it. Under [Routing.BypassRussia]
      * the config carries the lists in [geodata] inline — Russian names and
      * addresses and the local network go to a `freedom` outbound, everything
      * else through the tunnel — and answers the system's DNS itself, Russian
@@ -85,8 +82,7 @@ object XrayConfig {
      *
      * [bindInterface] names the interface the connection to the server leaves
      * by, for a core beside a tun whose rules do not exempt it (the Linux
-     * desktop; `autoDetectInterface` in [SingBoxConfig.build] is the same thing
-     * for sing-box, which finds the interface itself).
+     * desktop).
      */
     fun buildXhttp(
         spec: OutboundSpec.Vless,
@@ -226,9 +222,8 @@ object XrayConfig {
                         // being dialled. `dns-direct` answers it underneath.
                         // [bindInterface]: the interface the connection to the
                         // server leaves by, for a core beside a tun whose rules
-                        // do not exempt it (the Linux desktop; see
-                        // SingBoxConfig.build, which has sing-box find the
-                        // interface itself). Xray has to be told its name.
+                        // do not exempt it (the Linux desktop). Xray has
+                        // to be told its name.
                         if (serverByName || bindInterface != null) {
                             putJsonObject("sockopt") {
                                 if (serverByName) put("domainStrategy", "UseIPv4")
@@ -325,8 +320,7 @@ object XrayConfig {
     }
 
     /**
-     * Where "direct" resolution goes. Mirrors [SingBoxConfig]: the placeholder
-     * on iOS, replaced by the extension with the network's own resolver before
+     * Where "direct" resolution goes. The placeholder on iOS, replaced by the extension with the network's own resolver before
      * the core starts (`DirectResolver.substitute`, a quoted-string
      * substitution — it replaces every occurrence, and this config carries
      * the address once); the platform's explicit servers elsewhere; and
@@ -336,7 +330,7 @@ object XrayConfig {
     private fun directDnsAddress(direct: DirectDns): String = when (direct) {
         DirectDns.System -> "localhost"
         is DirectDns.Servers -> direct.pick()
-        DirectDns.Placeholder -> SingBoxConfig.DIRECT_DNS_PLACEHOLDER
+        DirectDns.Placeholder -> RoutingDefaults.DIRECT_DNS_PLACEHOLDER
     }
 
     /**

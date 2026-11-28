@@ -19,14 +19,11 @@ these carry obligations the MIT licence does not.
 | [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its sing-box rule-sets, bundled unmodified (`files/rules/refilter-*.srs`, pinned in `scripts/rule-sets.lock`). |
 
 Their sources are the upstream repositories above, at the versions pinned in
-`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Two components are modified,
-and both patches are published in `scripts/patches/`, as their licences require:
-sing-box carries `sing-box-reality-hello.patch` (since 2026-11-11: a Reality
-hello keeps its post-quantum key share and announces the version current Xray
-servers accept), applied to the pinned module by `scripts/patched-singbox.sh`
-for every platform's build, so the pinned upstream source plus that patch is
-the source of every sing-box we ship; Xray-core carries
-`xray-core-h2-window.patch`.
+`scripts/cores-pins.sh` and `scripts/hev-pins.sh`. Xray-core is modified, and
+its patch is published in `scripts/patches/`, as its licence requires:
+`xray-core-h2-window.patch`. No build of the app carries a modified sing-box
+any more; the sing-box patch of earlier releases (`sing-box-reality-hello.patch`)
+is in the repository's history.
 
 **MSYS2** (the MSYS2 project's toolchain and its Cygwin-based runtime, `msys-2.0.dll`, LGPL-3.0-or-later with the Cygwin linking exception) is a build tool for the Windows hev-socks5-tunnel, `hev.exe`, and is not part of the Ghostlane source. A `hev.exe` built under the MSYS environment imports `msys-2.0.dll`, and then that DLL ships beside it with its licence; the MinGW build imports only Windows system DLLs and ships no MSYS2 file. `docs/spikes/windows-hev.md` records which of the two a build was. hev-socks5-tunnel (MIT) and Wintun (above) are the two other files of the Windows tunnel bundle.
 

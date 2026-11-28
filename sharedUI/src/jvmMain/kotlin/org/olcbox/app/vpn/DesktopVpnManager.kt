@@ -43,7 +43,6 @@ import org.olcbox.app.net.DesktopChannelProbe
 import org.olcbox.app.net.TransportProbe
 import org.olcbox.app.net.LinkParser
 import org.olcbox.app.net.LocationKind
-import org.olcbox.app.net.OlcrtcDirectRules
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SessionFailover
@@ -55,6 +54,7 @@ import org.olcbox.app.desktop.DesktopOs
 import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.util.nowMillis
 import org.olcbox.app.vpn.desktop.DeadProcess
+import org.olcbox.app.vpn.desktop.DesktopTunNames
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.DesktopProxyController
@@ -83,7 +83,6 @@ import org.olcbox.app.vpn.desktop.WindowsTunPlan
 import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.DesktopEngines
-import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
 import org.olcbox.app.vpn.desktop.engine.LineRequest
@@ -150,8 +149,8 @@ class DesktopVpnManager private constructor(
 
     private val _socksProxySettings = MutableStateFlow(DesktopSocksProxySettings())
     val socksProxySettings: StateFlow<DesktopSocksProxySettings> = _socksProxySettings.asStateFlow()
-    // The line's core writes its LAN inbound from these settings when it is the
-    // Rust engine; the proxy keeps the same settings for its Go listener.
+    // The line's core writes its LAN inbound from these settings; the proxy
+    // keeps the same settings for its own listener.
     private val lanProxy = DesktopLanProxy(::addLog, settings = { _socksProxySettings.value })
     private var lanWatchJob: Job? = null
     private var lanControlJob: Job? = null
@@ -219,7 +218,6 @@ class DesktopVpnManager private constructor(
     private var watchedEngine: Process? = null
     private var tunProcess: Process? = null
     private var olcRtcConfigPath: Path? = null
-    private var olcRtcDirectRulesPath: Path? = null
     private var generation = 0L
 
     /**
@@ -326,12 +324,6 @@ class DesktopVpnManager private constructor(
         /** What the tun, or the system's proxy setting, points at. Every line listens there. */
         val endpoint: SessionEndpoint,
         /**
-         * The tun's own inbound, where the tun has one for the check to go
-         * through (Windows and macOS). Null where the check goes to the
-         * endpoint itself.
-         */
-        val tunListener: SubscriptionFetchProxy?,
-        /**
          * The machine's own resolvers as they were read before the tun came
          * up, for a core started beside it later. Null in proxy mode, where
          * the system's resolver is behind nothing.
@@ -348,8 +340,7 @@ class DesktopVpnManager private constructor(
      * Remembered, not read again, because every value here was built into
      * something that outlives the process it describes. The tun's upstream is
      * [corePort], with the login in [socksSettings] for olcRTC, for as long as
-     * the tun lives; the system proxy points at [frontPort]; the engine's yaml
-     * names [engineRules]. The settings behind them can change while a session
+     * the tun lives; the system proxy points at [frontPort]. The settings behind them can change while a session
      * runs (the SOCKS port, the routing, the handshake), and a process brought
      * back with today's values would listen where the tun no longer looks.
      *
@@ -377,11 +368,9 @@ class DesktopVpnManager private constructor(
         val corePort: Int,
         val coreRouting: Routing,
         val verboseLogs: Boolean,
-        /** The engine's direct-rules file, written at connect and kept until the session stops. */
-        val engineRules: Path?,
         val dtlsProfile: String,
         val desktopMode: DesktopMode,
-        /** The sing-box front before the engine, in proxy mode under rules; null otherwise. */
+        /** The port of the front before the engine, in proxy mode under rules; null otherwise. */
         val frontPort: Int?,
         /**
          * Whether this line's own core, rather than a listener of its own,
@@ -399,7 +388,7 @@ class DesktopVpnManager private constructor(
         /** On Windows the check also asks whose the default routes are; null elsewhere. */
         val windowsTunInterface: String?,
         /**
-         * Whether the sing-box and Xray processes of this line are all running,
+         * Whether the core processes of this line are all running,
          * as whoever started them tells it; null for a room reached directly,
          * which has none.
          */
@@ -670,9 +659,9 @@ class DesktopVpnManager private constructor(
      * health check of that restart starts the LAN proxy again, once the core
      * with its new inbound answers.
      *
-     * On a Go line none of this is needed: its listener is a separate process
-     * the LAN proxy stops and starts, and [applyLanSharingSettings] keeps the
-     * way it has always worked.
+     * A line whose listener is a process of its own, which the LAN proxy stops
+     * and starts, needs none of this: [applyLanSharingSettings] keeps the way
+     * it has always worked.
      */
     private fun restartOnLanChange() {
         val requestGeneration = generation
@@ -742,7 +731,7 @@ class DesktopVpnManager private constructor(
         Runtime.getRuntime().addShutdownHook(lanShutdownHook)
         runCatching { lanProxy.cleanupStaleFirewallRules() }
             .onFailure { addLog("LAN sharing: stale firewall cleanup failed: ${it.message}") }
-        // The Go cores an earlier version staged in the app's bin directory are
+        // The cores an earlier version staged in the app's bin directory are
         // taken away here, on every system: the Linux launcher script does the
         // same on a new install, and Windows and macOS have none.
         runCatching { StaleBinarySweep.sweepAppData() }
@@ -855,15 +844,12 @@ class DesktopVpnManager private constructor(
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             // Where the rules apply, if anywhere (desktopRulesHome). Global with
             // no rules of the user's keeps every core and tunnel as it was.
-            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
-            if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
-                addLog("Routing: $desktopMode carries everything for this server")
-            } else if (rulesHome != DesktopRulesHome.Nowhere) {
+            val rulesHome = desktopRulesHome(routingSettings.needsRules)
+            if (rulesHome != DesktopRulesHome.Nowhere) {
                 addLog("Routing: ${routingSettings.mode.hubSummary()}")
             }
-            // In the proxy the rules live in the core, or for olcRTC in the front
-            // before it; in the macOS tunnel they live in the daemon, and the core
-            // stays as it was.
+            // The rules live in the engine's core: for a room, in the front of
+            // the session in the same process.
             val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
                 val routing = routingSettings.toRules(
                     DesktopPaths.appDataDir().resolve("rulesets").toString(),
@@ -872,13 +858,6 @@ class DesktopVpnManager private constructor(
                 routing
             } else {
                 Routing.Global
-            }
-            // In the Linux tunnel the engine takes them itself, from a file its
-            // yaml names.
-            val engineRules = if (rulesHome == DesktopRulesHome.Engine) {
-                writeOlcRtcDirectRules(routingSettings)
-            } else {
-                null
             }
             val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
             var frontPort: Int? = null
@@ -889,8 +868,8 @@ class DesktopVpnManager private constructor(
                 stopDesktopCores()
                 frontPort = allocateCorePort().let { if (it == socksSettings.port) allocateVerifyPort(it) else it }
             }
-            // Which sing-box and Xray processes the line cannot do without, as
-            // whoever starts them says it; none for a room reached directly.
+            // Which core processes the line cannot do without, as whoever
+            // starts them says it; none for a room reached directly.
             var coresAlive: (() -> Boolean)? = null
 
             if (desktopMode == DesktopMode.WindowsTun) {
@@ -903,8 +882,7 @@ class DesktopVpnManager private constructor(
             }
 
             // Branch on location kind: olcrtc uses the existing engine path
-            // (unchanged); vless/hy2/xhttp start a sing-box/Xray core on the core
-            // SOCKS port. The tun/PAC then targets whichever port is active.
+            // (unchanged); the other kinds start a core on the core SOCKS port. The tun/PAC then targets whichever port is active.
             connectedLocation = location.normalized()
             val effectiveSocksPort =
                 if (isOlcrtc) {
@@ -937,14 +915,13 @@ class DesktopVpnManager private constructor(
             val order = MacKillSwitch.order(helper, _socksProxySettings.value.killSwitch, isRoom = isOlcrtc)
             val engineByHelper = order.engineByHelper
             val tunFirst = order.tunFirst
-            val tunResolver = listOf(org.olcbox.app.net.SingBoxConfig.DESKTOP_TUN_RESOLVER)
+            val tunResolver = listOf(DesktopTunNames.RESOLVER)
             // What the session's first line asks for names. Behind its tunnel,
             // the tunnel. Before it, the machine's own, as ever, except a
-            // sing-box core under the switch: what it asks later in the
-            // session, when it dials again, would go to the router beside the
-            // tunnel, on the port the block refuses. Its first dial is the
-            // session's check, made once the tunnel is up. Xray asks the
-            // system whatever it is told, and the system asks the tunnel.
+            // core under the switch: what it asks later in the session, when
+            // it dials again, would go to the router beside the tunnel, on
+            // the port the block refuses. Its first dial is the session's
+            // check, made once the tunnel is up.
             val firstLineResolvers = when {
                 tunFirst -> tunResolver
                 underSwitch && !isOlcrtc && !isXhttp(location) -> tunResolver
@@ -967,7 +944,6 @@ class DesktopVpnManager private constructor(
                         logOutput = true,
                         privileged = desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun,
                         byHelper = engineByHelper,
-                        directRulesFile = engineRules,
                         dtlsProfile = dtlsProfile,
                         dnsServer = tunResolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
                         front = frontPort?.takeIf { frontInRoom }?.let {
@@ -1055,7 +1031,6 @@ class DesktopVpnManager private constructor(
                         isOlcrtc = isOlcrtc,
                         socksSettings = socksSettings,
                         location = location,
-                        verboseLogs = verboseLogs,
                         lineComesAfter = tunFirst
                     )
                     if (tunFirst) {
@@ -1122,7 +1097,7 @@ class DesktopVpnManager private constructor(
                 }
             }
             if (frontPort != null && !frontInRoom && !engine.line.frontAlive()) {
-                error("sing-box front exited before desktop proxy was enabled")
+                error("the front exited before desktop proxy was enabled")
             }
 
             if (desktopMode == DesktopMode.MacTun) {
@@ -1203,7 +1178,6 @@ class DesktopVpnManager private constructor(
                         username = socksSettings.username,
                         password = socksSettings.password
                     ),
-                    tunListener = null,
                     // A Mac's tun that answers names answers a line's own as
                     // well, with real addresses, and under the kill switch is
                     // the only resolver a line can reach: its own would be
@@ -1223,7 +1197,6 @@ class DesktopVpnManager private constructor(
                 corePort = effectiveSocksPort,
                 coreRouting = coreRouting,
                 verboseLogs = verboseLogs,
-                engineRules = engineRules,
                 dtlsProfile = dtlsProfile,
                 desktopMode = desktopMode,
                 frontPort = frontPort,
@@ -1434,7 +1407,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * Start the macOS tunnel: the daemon runs a sing-box whose tun feeds the core
+     * Start the macOS tunnel: the daemon runs hev, whose tun feeds the engine
      * this manager has already started on localhost.
      *
      * olcRTC has no server host in a link — it is addressed by a room on somebody
@@ -1454,7 +1427,6 @@ class DesktopVpnManager private constructor(
         isOlcrtc: Boolean,
         socksSettings: DesktopSocksProxySettings,
         location: LocationConfig,
-        verboseLogs: Boolean,
         /**
          * The line is started after this tunnel, behind it, because the kill
          * switch's block stands ([startDesktopMode]). Its server is then not
@@ -1465,24 +1437,17 @@ class DesktopVpnManager private constructor(
         lineComesAfter: Boolean = false
     ): Boolean {
         // The Mac's tunnel is hev behind ghostlane-engine, asked of the helper
-        // in fields. The helper has no sing-box and no `start` verb, so there
-        // is no config, no rule-set file, no verify inbound and no local API:
-        // the line is checked through its own port, and the tunnel's bytes are
-        // read from its interface.
+        // in fields. The helper takes no config and no rule-set file, and has
+        // no verify inbound or local API: the line is checked through its own
+        // port, and the tunnel's bytes are read from its interface.
         val letsEveryLineOut = macOsTunController.start(
             corePort = corePort,
-            verifyPort = 0,
             // The tun's hev signs in to the engine's port with the login the
             // olcRTC engine demands; the cores' own inbounds have no auth.
             username = if (isOlcrtc && !frontStands) socksSettings.username else "",
             password = if (isOlcrtc && !frontStands) socksSettings.password else "",
             serverHost = if (lineComesAfter) null else serverEndpoint(location)?.first,
-            upstreamUdpIsLossy = isOlcrtc,
-            routing = Routing.Global,
-            verboseLogs = verboseLogs,
             killSwitch = _socksProxySettings.value.killSwitch,
-            namesProgramsFor = ownProgram(),
-            rustEngine = true,
         )
         macTunActive = true
         tunnelTraffic = macOsTunController.engineTunName?.let { MacTunTraffic(it) }
@@ -1491,7 +1456,7 @@ class DesktopVpnManager private constructor(
 
     /**
      * What stands behind "no traffic reached the internet" on a Mac's tunnel:
-     * what the tunnel's own sing-box said of a trouble, and what the line
+     * what the tunnel helper said of a trouble, and what the line
      * answers when it is asked on its own port, with no tunnel in front of it.
      * One of the two is the half that does not carry.
      */
@@ -1520,23 +1485,15 @@ class DesktopVpnManager private constructor(
     private suspend fun logWhatTheTunnelSaid() {
         val troubles = TunnelSettle.troubles(runCatching { macOsTunController.diagnostics() }.getOrDefault(""))
         if (troubles.isEmpty()) {
-            addLog("macOS TUN: the tunnel's sing-box said nothing of a trouble")
+            addLog("macOS TUN: the tunnel helper said nothing of a trouble")
         } else {
-            troubles.forEach { addLog("macOS TUN, the tunnel's sing-box: $it") }
+            troubles.forEach { addLog("macOS TUN, the tunnel helper: $it") }
         }
     }
 
     /** Whether [location] is carried by Xray, which asks the system for names whatever it is told. */
     private fun isXhttp(location: LocationConfig): Boolean =
         location.rawLink?.let(LinkParser::parse)?.let(LineConfigs::xhttpOf) != null
-
-    /**
-     * This app's own program as a tun names it: the path of what is running,
-     * with its links resolved. Null where the system does not say.
-     */
-    private fun ownProgram(): String? = runCatching {
-        ProcessHandle.current().info().command().orElse(null)?.let { Path.of(it).toRealPath().toString() }
-    }.getOrNull()
 
     /**
      * A port for the TUN process's own verification inbound, never the carrier core's.
@@ -1560,7 +1517,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * Start a sing-box (reality/hy2) or Xray (xhttp) core on the core SOCKS port.
+     * Start a core on the core SOCKS port.
      *
      * Returns the question of whether what it started is still running. It is
      * handed back rather than worked out again by the session's watcher because
@@ -1574,21 +1531,15 @@ class DesktopVpnManager private constructor(
      * came back to its own port, and no line a core carries could connect
      * there. So the core is bound to the physical interface, which a socket
      * needs no privilege for since Linux 5.7 and which the tun's route does
-     * not match. sing-box finds the interface itself and follows it when it
-     * changes; Xray is told its name once. A server that is a name also gets a
-     * resolver of its own, because the system's answers with hev's fake
-     * addresses for as long as the tun is up; that part exists for sing-box
-     * only.
+     * not match. The core is told the interface's name once.
      *
      * [login] and [resolvers] are for a line that comes later in a session,
      * when another location is chosen ([lineBehindTun]). The login is the
      * endpoint's, demanded by whatever listens on [port]. The resolvers are
      * the machine's own, read before the tun came up: with the tun up, a
      * question to the system's resolver goes into the tun, and the tun's way
-     * out is this core, which is asking because it is not up yet. sing-box
-     * asks them itself, and its own query leaves by the tun's rule on its
-     * binary. Xray has no such part, and an XHTTP server that is a name may
-     * not come up as a later line. They are for Windows and macOS, where the
+     * out is this core, which is asking because it is not up yet. They are
+     * for Windows and macOS, where the
      * system's list is the tun's once it is up; under [besideTun] they are
      * read again every time.
      */
@@ -1672,7 +1623,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * sing-box between the proxy and olcRTC, so the routing rules see every
+     * A core between the proxy and olcRTC, so the routing rules see every
      * connection before the relay does. The engine keeps its own port and its
      * credentials; the front listens without any, like the cores do.
      *
@@ -1705,20 +1656,20 @@ class DesktopVpnManager private constructor(
             )
         )
         lineStartDone()
-        addLog("sing-box front for olcRTC starting on 127.0.0.1:$port")
+        addLog("front for olcRTC starting on 127.0.0.1:$port")
         if (!waitForCoreSocks(port) || !engine.line.frontAlive()) {
             error(
-                "sing-box front not running on 127.0.0.1:$port" +
+                "front not running on 127.0.0.1:$port" +
                     (engine.line.frontExitCode()?.let { " (exited with code $it — see the lines above)" } ?: "")
             )
         }
         activeCorePort = port
-        addLog("sing-box front ready on 127.0.0.1:$port")
+        addLog("front ready on 127.0.0.1:$port")
         return port
     }
 
     /**
-     * Port for the sing-box/Xray SOCKS listener.
+     * Port for the core's SOCKS listener.
      *
      * Prefers the well-known core port so logs stay predictable, but never insists
      * on it: the PAC server, an olcRTC session or an unrelated app on the user's
@@ -1726,7 +1677,7 @@ class DesktopVpnManager private constructor(
      * connect with a bare "Address already in use".
      */
     private suspend fun allocateCorePort(): Int {
-        val preferred = org.olcbox.app.net.SingBoxConfig.SINGBOX_SOCKS_PORT
+        val preferred = org.olcbox.app.net.XrayConfig.XRAY_SOCKS_PORT
         // A core that was just told to stop can hold its listener for a moment;
         // wait that out before giving up on the predictable port.
         val deadline = System.currentTimeMillis() + CORE_PORT_RELEASE_TIMEOUT_MS
@@ -1753,16 +1704,11 @@ class DesktopVpnManager private constructor(
     }.getOrDefault(false)
 
     /**
-     * Where the rules' direct names are asked. The Rust core cannot name the system's resolver, so on
-     * ghostlane-engine it is given the machine's own servers, read outside the tunnel
-     * ([DesktopDnsResolver.ownServers]; none left gives the public fallback). The Go cores ask the system.
+     * Where the rules' direct names are asked. The core cannot name the system's resolver, so it is
+     * given the machine's own servers, read outside the tunnel
+     * ([DesktopDnsResolver.ownServers]; none left gives the public fallback).
      */
-    private fun coreDirectDns(): DirectDns =
-        if (DesktopEngines.runsOnRust(engine)) DirectDns.Servers(DesktopDnsResolver.ownServers()) else DirectDns.System
-
-    /** Which engine carries a session's line or room, for [desktopRulesHome]. */
-    private fun lineEngineKind(): DesktopLineEngine =
-        if (DesktopEngines.runsOnRust(engine)) DesktopLineEngine.Rust else DesktopLineEngine.Go
+    private fun coreDirectDns(): DirectDns = DirectDns.Servers(DesktopDnsResolver.ownServers())
 
     private fun stopDesktopCores() {
         engine.line.stopNow()
@@ -1770,10 +1716,10 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * Marks a line start before the engine runs. A Go line leaves the mark
-     * where it is; ghostlane-engine writes what its core holds when it starts
-     * ([LanCores.lineStarted]), which is how a session knows whether a LAN
-     * change has to reach the line itself or only the LAN proxy's listener.
+     * Marks a line start before the engine runs. ghostlane-engine writes what
+     * its core holds when it starts ([LanCores.lineStarted]), which is how a
+     * session knows whether a LAN change has to reach the line itself or only
+     * the LAN proxy's listener.
      */
     private fun markLineStart() {
         LanCores.lineStarted(null, LAN_ENGINE_START_MARK)
@@ -1920,7 +1866,6 @@ class DesktopVpnManager private constructor(
         privileged: Boolean,
         /** Run by the Mac's tunnel helper, in the group the kill switch's block lets out. */
         byHelper: Boolean = false,
-        directRulesFile: Path?,
         dtlsProfile: String,
         dnsServer: String = DesktopDnsResolver.current(),
         front: RoomFront? = null,
@@ -1943,7 +1888,6 @@ class DesktopVpnManager private constructor(
                     privileged = privileged,
                     byHelper = byHelper,
                     dnsServer = dnsServer,
-                    directRulesFile = directRulesFile,
                     dtlsProfile = dtlsProfile,
                     front = front,
                     bindToWayOut = bindToWayOut
@@ -2077,7 +2021,6 @@ class DesktopVpnManager private constructor(
         stopProcess(process)
         process = null
         deleteOlcRtcConfig()
-        deleteOlcRtcDirectRules()
 
         if (finalStatus) {
             _exitInfo.value = null
@@ -2131,7 +2074,6 @@ class DesktopVpnManager private constructor(
         privileged: Boolean,
         byHelper: Boolean,
         dnsServer: String,
-        directRulesFile: Path?,
         dtlsProfile: String,
         front: RoomFront? = null,
         bindToWayOut: Boolean = false
@@ -2146,7 +2088,6 @@ class DesktopVpnManager private constructor(
                 socksUser = socksSettings.username,
                 socksPass = socksSettings.password,
                 dnsServer = dnsServer,
-                directRulesFile = directRulesFile,
                 dtlsProfile = dtlsProfile,
                 deviceId = locationsRepository.getDeviceIdentity(),
                 front = front,
@@ -2262,32 +2203,6 @@ class DesktopVpnManager private constructor(
         olcRtcConfigPath = null
     }
 
-    /**
-     * The engine's direct rules for [settings] ([OlcrtcDirectRules.forRouting], the
-     * text Android hands `setDirectRules`), in a file next to the yaml; null when
-     * they come to nothing. The engine reads it once, at start, and it goes with the
-     * yaml when the session ends.
-     */
-    private suspend fun writeOlcRtcDirectRules(settings: RoutingSettings): Path? {
-        deleteOlcRtcDirectRules()
-        // The engine reads no rule-set files; the directory is sing-box's alone.
-        val text = OlcrtcDirectRules.forRouting(settings.toRules(ruleSetDir = "", directDns = DirectDns.System))
-        if (text.isEmpty()) return null
-        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
-        Files.createDirectories(runtimeDir)
-        val path = Files.createTempFile(runtimeDir, "olcrtc-direct-", ".txt")
-        Files.writeString(path, text, StandardCharsets.UTF_8)
-        olcRtcDirectRulesPath = path
-        return path
-    }
-
-    private fun deleteOlcRtcDirectRules() {
-        olcRtcDirectRulesPath?.let { path ->
-            runCatching { Files.deleteIfExists(path) }
-        }
-        olcRtcDirectRulesPath = null
-    }
-
     private fun startTunLogReader(target: Process) {
         tunLogJob?.cancel()
 
@@ -2358,7 +2273,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * Notices when the daemon's sing-box dies.
+     * Notices when the daemon's tunnel process dies.
      *
      * Linux and Windows own their tun process and learn of its death from the
      * OS. Here the tun belongs to a root daemon, this process holds no handle on
@@ -2398,7 +2313,7 @@ class DesktopVpnManager private constructor(
                         if (requestGeneration != generation) return@withLock
                         handleUnexpectedProcessExit(
                             which = DeadProcess.Tun,
-                            logMessage = "the tunnel daemon is no longer running sing-box",
+                            logMessage = "the tunnel daemon is no longer running the tunnel",
                             errorMessage = "the system-wide tunnel stopped unexpectedly",
                             requestGeneration = requestGeneration
                         )
@@ -2439,7 +2354,7 @@ class DesktopVpnManager private constructor(
     }
 
     /**
-     * Notices when a sing-box or Xray core of the session's line dies.
+     * Notices when a core of the session's line dies.
      *
      * Until this existed nothing did. A core was asked whether it runs once, at
      * connect, and its death after that left the tun up, the status Connected
@@ -2680,7 +2595,7 @@ class DesktopVpnManager private constructor(
             val tunAnswersNames =
                 next.desktopMode == DesktopMode.WindowsTun || next.desktopMode == DesktopMode.MacTun
             if (next.isOlcrtc && !session.startedInRoom && tunAnswersNames) {
-                // What lineBehindTun says about `upstreamUdpIsLossy`, where
+                // What lineBehindTun says about how the tun answers names, where
                 // the user will look when pages are slow to start loading.
                 addLog(
                     "This tunnel was started for a server that carries UDP, so names are looked up through the " +
@@ -2715,10 +2630,6 @@ class DesktopVpnManager private constructor(
         // is a line that is not up: nothing thrown below may leave the session
         // Reconnecting with nobody trying.
         val started = try {
-            // The line the user left is not coming back, so the rules its
-            // engine read go with it, unless the new line's engine reads them
-            // too. The engine reads them once, when it starts.
-            if (line.engineRules == null) deleteOlcRtcDirectRules()
             replaceRunningLine(line, requestGeneration)
         } catch (e: CancellationException) {
             throw e
@@ -2838,7 +2749,7 @@ class DesktopVpnManager private constructor(
      * written again under a core that has them open.
      *
      * How the tun answers names is the first line's for the whole session,
-     * since `upstreamUdpIsLossy` is written into its config. A session that
+     * since the tun is built once, for it. A session that
      * started in a room and moves to a core keeps the room's way, names
      * answered by the tun and asked over TCP, at the price of a slower first
      * lookup. One that started on a core and moves into a room keeps the
@@ -2872,7 +2783,7 @@ class DesktopVpnManager private constructor(
         val mode = current.desktopMode
         val socks = session.built.socks
         val isOlcrtc = location.kind == LocationKind.Olcrtc
-        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
+        val rulesHome = desktopRulesHome(routingSettings.needsRules)
         val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
             routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), coreDirectDns())
         } else {
@@ -2904,11 +2815,6 @@ class DesktopVpnManager private constructor(
             corePort = if (fronted) engineSettings.port else endpoint.port,
             coreRouting = coreRouting,
             verboseLogs = routingSettings.verboseDebugLogs,
-            engineRules = if (rulesHome == DesktopRulesHome.Engine) {
-                current.engineRules ?: writeOlcRtcDirectRules(routingSettings)
-            } else {
-                null
-            },
             dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls),
             desktopMode = mode,
             frontPort = if (fronted) endpoint.port else null,
@@ -2916,7 +2822,7 @@ class DesktopVpnManager private constructor(
             // The listener the session was verified through: the tun's own
             // where it has one, and otherwise the endpoint, with the login it
             // demands now.
-            verifiedThrough = session.tunListener ?: SubscriptionFetchProxy(
+            verifiedThrough = SubscriptionFetchProxy(
                 socks.host,
                 endpoint.port,
                 endpoint.login?.username.orEmpty(),
@@ -3413,8 +3319,8 @@ class DesktopVpnManager private constructor(
             "The line is not answering; trying ${toTry.steps.size} other line(s) of the same country " +
                 "behind the ${line.heldName()}, which stays as it is"
         )
-        // What Xray is bound to in the Linux tunnel, as startDesktopCore reads
-        // it for the session's own core; sing-box finds it by itself.
+        // What the core is bound to in the Linux tunnel, as startDesktopCore reads
+        // it for the session's own core.
         val boundInterface = when (line.desktopMode) {
             DesktopMode.LinuxTun -> DesktopDnsResolver.linuxDefaultInterface()
             DesktopMode.WindowsTun -> windowsWayOut
@@ -3655,9 +3561,6 @@ class DesktopVpnManager private constructor(
             "Moved to another line of the same country, $name, behind the ${own.heldName()}, " +
                 "which stayed as it was"
         )
-        // The rules the engine of the line that was left had read, unless the
-        // new line's engine reads them too, as after a change of location.
-        if (next.engineRules == null) deleteOlcRtcDirectRules()
         if (requestGeneration != generation) return Trial.Over
         try {
             lineIsUp(next, exit, requestGeneration)
@@ -3769,7 +3672,6 @@ class DesktopVpnManager private constructor(
             privileged = line.desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun,
             byHelper = line.desktopMode == DesktopMode.MacTun &&
                 macOsTunController.runsLineUnder(_socksProxySettings.value.killSwitch),
-            directRulesFile = line.engineRules,
             dtlsProfile = line.dtlsProfile,
             dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
             front = (line.coreRouting as? Routing.Rules)?.let { rules ->
@@ -3965,8 +3867,8 @@ class DesktopVpnManager private constructor(
 
     private companion object {
         /**
-         * Written to [LanCores] before a line is started. A Go line leaves it
-         * there; ghostlane-engine writes what its core holds instead.
+         * Written to [LanCores] before a line is started; ghostlane-engine
+         * writes what its core holds instead.
          */
         const val LAN_ENGINE_START_MARK = "a line is being started"
         const val DIAGNOSTICS_TIMEOUT_MS = 2_000L
@@ -4052,8 +3954,8 @@ internal enum class DesktopMode {
 
     /**
      * Whether a session in this mode has its traffic counted. A tunnel does:
-     * what crosses it is counted by its owner, the kernel or the tun's
-     * sing-box ([org.olcbox.app.vpn.desktop.TunnelTraffic]). A proxy session
+     * what crosses it is counted by its owner, the kernel
+     * ([org.olcbox.app.vpn.desktop.TunnelTraffic]). A proxy session
      * has nothing in its path that keeps count — the system's proxy setting
      * points at the line itself.
      */
@@ -4105,16 +4007,3 @@ internal fun preferredVerifyPort(corePort: Int): Int {
  */
 internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
     if (daemon == MacOsTunnelDaemon.Registration.Enabled) DesktopMode.MacTun else DesktopMode.SystemProxy
-
-/**
- * [desktopRulesHome] as the macOS tunnel now is: hev behind the engine, with no
- * sing-box in the helper to hold rules. What that answers for the daemon is
- * nowhere, and a session says so in its log.
- */
-internal fun rulesHomeWithoutDaemon(
-    mode: DesktopMode,
-    isOlcrtc: Boolean,
-    needsRules: Boolean,
-    engine: DesktopLineEngine = DesktopLineEngine.Go
-): DesktopRulesHome =
-    desktopRulesHome(mode, isOlcrtc, needsRules, engine).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }

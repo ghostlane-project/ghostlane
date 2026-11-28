@@ -227,7 +227,6 @@ class PhysicalInterfaceWatchTest {
         socksUser = "desktop-user",
         socksPass = "desktop-pass",
         dnsServer = "127.0.0.1",
-        directRulesFile = null,
         dtlsProfile = "off",
     )
 

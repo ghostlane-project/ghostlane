@@ -35,11 +35,7 @@ import kotlin.test.assertTrue
 class XrayConfigIosCoreTest {
     private val login = IosCoreFixtures.login
 
-    /**
-     * The six lines the extension shipped first, which Phase 0 (sing-box
-     * behind hev, Go's Xray for XHTTP) also ran: the comparisons with it are
-     * for these.
-     */
+    /** The six lines the extension shipped first. */
     private val firstSix = listOf(
         IosCoreLine.RealityVision, IosCoreLine.RealityGrpc, IosCoreLine.WebTunnelWs,
         IosCoreLine.WebTunnelHttpUpgrade, IosCoreLine.Hysteria2, IosCoreLine.XhttpReality,
@@ -111,7 +107,7 @@ class XrayConfigIosCoreTest {
             assertEquals("socks", socks.str("protocol"))
             assertEquals("127.0.0.1", socks.str("listen"))
             assertEquals(XrayConfig.XRAY_SOCKS_PORT, socks.int("port"))
-            assertEquals(SingBoxConfig.SINGBOX_SOCKS_PORT, socks.int("port"), "the port hev is given on every line")
+            assertEquals(XrayConfig.XRAY_SOCKS_PORT, socks.int("port"), "the port hev is given on every line")
             val settings = socks.obj("settings")
             assertEquals("password", settings.str("auth"))
             val account = settings["accounts"]!!.jsonArray.single().jsonObject
@@ -185,7 +181,7 @@ class XrayConfigIosCoreTest {
             assertEquals("198.18.0.0/15", dns.obj("fakeIp").str("ipv4Pool"))
             val server = dns["servers"]!!.jsonArray.single().jsonObject
             assertEquals("dns-direct", server.str("tag"))
-            assertEquals(SingBoxConfig.DIRECT_DNS_PLACEHOLDER, server.str("address"))
+            assertEquals(RoutingDefaults.DIRECT_DNS_PLACEHOLDER, server.str("address"))
             assertEquals(53, server.int("port"))
             assertNull(server["domains"])
 
@@ -194,7 +190,7 @@ class XrayConfigIosCoreTest {
             assertEquals("freedom", direct.str("protocol"))
             assertNull(direct["settings"])
             val dnsOut = config.outbounds()[2].obj("settings")
-            assertEquals(SingBoxConfig.DIRECT_DNS_PLACEHOLDER, dnsOut.str("rewriteAddress"))
+            assertEquals(RoutingDefaults.DIRECT_DNS_PLACEHOLDER, dnsOut.str("rewriteAddress"))
             assertEquals(53, dnsOut.int("rewritePort"))
             // The first rule that matches wins: a Russian name of any type is
             // asked underneath before the forward rule, last, can claim it.
@@ -230,7 +226,7 @@ class XrayConfigIosCoreTest {
     @Test fun thePlaceholderIsWhereTheExtensionReplacesIt() {
         // DirectResolver.substitute replaces every quoted occurrence: the
         // resolver and where the dns outbound forwards Russian names.
-        val placeholder = "\"${SingBoxConfig.DIRECT_DNS_PLACEHOLDER}\""
+        val placeholder = "\"${RoutingDefaults.DIRECT_DNS_PLACEHOLDER}\""
         assertEquals(2, Regex(Regex.escape(placeholder)).findAll(text(IosCoreLine.RealityVision, bypass)).count())
         assertEquals(0, Regex(Regex.escape(placeholder)).findAll(text(IosCoreLine.RealityVision)).count())
     }
@@ -243,7 +239,7 @@ class XrayConfigIosCoreTest {
         ).jsonObject.obj("dns")["servers"]!!.jsonArray.single().jsonObject.str("address")
         assertEquals("10.20.30.40", resolver(DirectDns.Servers(listOf("10.20.30.40"))))
         // The core's parser refuses a scoped address: the public one stands in.
-        assertEquals(SingBoxConfig.DIRECT_DNS_FALLBACK, resolver(DirectDns.Servers(listOf("fe80::1%en0"))))
+        assertEquals(RoutingDefaults.DIRECT_DNS_FALLBACK, resolver(DirectDns.Servers(listOf("fe80::1%en0"))))
         assertFailsWith<IllegalArgumentException> { resolver(DirectDns.System) }
     }
 
@@ -358,9 +354,6 @@ class XrayConfigIosCoreTest {
         assertEquals(IosEngineChoice(IosEngine.RUST, IosCoreLine.WebTunnelHttpUpgrade), IosCore.choose(spec))
         val tls = Json.parseToJsonElement(XrayConfig.buildIosCore(spec, login)).jsonObject.stream().obj("tlsSettings")
         assertEquals(listOf("h2", "http/1.1"), tls["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
-        // Phase 0 offers the same.
-        val sb = Json.parseToJsonElement(SingBoxConfig.buildIosSocks(spec, login)).jsonObject.outbounds().first()
-        assertEquals(listOf("h2", "http/1.1"), sb.obj("tls")["alpn"]!!.jsonArray.map { it.jsonPrimitive.content })
     }
 
     @Test fun alpnIsReadForUpgradeHandshakesOnly() {
@@ -452,12 +445,8 @@ class XrayConfigIosCoreTest {
         )
     }
 
-    /** What Phase 0 (sing-box behind hev) is given for the same link. */
-    private fun phase0(line: IosCoreLine, routing: Routing = Routing.Global): JsonObject =
-        Json.parseToJsonElement(SingBoxConfig.buildIosSocks(spec(line), login, routing = routing)).jsonObject
-
     @Test fun xhttpIsWhatGosXrayIsGivenPlusItsWindow() {
-        // Phase 0 runs XHTTP on Go's Xray (buildXhttp), not on sing-box.
+        // XHTTP's Xray config (buildXhttp) is what the core's is compared with.
         val xhttp = spec(IosCoreLine.XhttpReality) as OutboundSpec.Vless
         val go = Json.parseToJsonElement(XrayConfig.buildXhttp(xhttp, answersDns = true, login = login)).jsonObject.out()
         val out = build(IosCoreLine.XhttpReality).out()
@@ -467,75 +456,9 @@ class XrayConfigIosCoreTest {
         assertEquals(go.obj("streamSettings"), withoutWindow)
     }
 
-    @Test fun theSameLinkMeansWhatItMeansToPhase0() {
-        for (line in firstSix - IosCoreLine.XhttpReality) {
-            val sb = phase0(line).outbounds().first()
-            val out = build(line).out()
-            val stream = out.obj("streamSettings")
-            when (line) {
-                IosCoreLine.Hysteria2 -> {
-                    val settings = out.obj("settings")
-                    assertEquals(sb.str("server"), settings.str("address"))
-                    assertEquals(sb.int("server_port"), settings.int("port"))
-                    assertEquals(sb.str("password"), stream.obj("hysteriaSettings").str("auth"))
-                    assertEquals(sb.obj("obfs").str("password"), stream.obj("finalmask")["udp"]!!.jsonArray[0].jsonObject.obj("settings").str("password"))
-                    assertEquals(sb.obj("tls").str("server_name"), stream.obj("tlsSettings").str("serverName"))
-                }
-                else -> {
-                    val server = out.obj("settings")["vnext"]!!.jsonArray[0].jsonObject
-                    val user = server["users"]!!.jsonArray[0].jsonObject
-                    assertEquals(sb.str("server"), server.str("address"))
-                    assertEquals(sb.int("server_port"), server.int("port"))
-                    assertEquals(sb.str("uuid"), user.str("id"))
-                    assertEquals(sb["flow"] != null, user["flow"] != null, "$line flow")
-                    val tls = sb.obj("tls")
-                    val security = stream.obj(if (tls["reality"] != null) "realitySettings" else "tlsSettings")
-                    assertEquals(tls.str("server_name"), security.str("serverName"), "$line")
-                    assertEquals(tls.obj("utls").str("fingerprint"), security.str("fingerprint"), "$line")
-                    assertEquals(tls["alpn"], security["alpn"], "$line alpn")
-                    tls["reality"]?.jsonObject?.let { reality ->
-                        assertEquals(reality.str("public_key"), security.str("publicKey"))
-                        assertEquals(reality.str("short_id"), security.str("shortId"))
-                    }
-                    sb["transport"]?.jsonObject?.let { transport ->
-                        assertEquals(transport.str("type"), stream.str("network"), "$line")
-                        when (transport.str("type")) {
-                            "grpc" -> assertEquals(transport.str("service_name"), stream.obj("grpcSettings").str("serviceName"))
-                            "ws" -> {
-                                assertEquals(transport.str("path"), stream.obj("wsSettings").str("path"))
-                                assertEquals(transport.obj("headers").str("Host"), stream.obj("wsSettings").str("host"))
-                            }
-                            "httpupgrade" -> {
-                                assertEquals(transport.str("path"), stream.obj("httpupgradeSettings").str("path"))
-                                assertEquals(transport.str("host"), stream.obj("httpupgradeSettings").str("host"))
-                            }
-                            else -> error("no comparison for ${transport.str("type")}")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Test fun theSameResolverPlaceholderFakeRangeAndPortAsPhase0() {
-        val sb = phase0(IosCoreLine.RealityVision, bypass)
-        val servers = sb.obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(
-            servers.single { it.str("tag") == "dns-direct" }.str("server"),
-            build(IosCoreLine.RealityVision, bypass).obj("dns")["servers"]!!.jsonArray[0].jsonObject.str("address"),
-        )
-        assertEquals(servers.single { it.str("type") == "fakeip" }.str("inet4_range"), IosCore.FAKE_IP_POOL)
-        assertEquals(sb["inbounds"]!!.jsonArray[0].jsonObject.int("listen_port"), XrayConfig.XRAY_SOCKS_PORT)
-        // Both refuse HTTPS-type queries.
-        assertTrue(sb.obj("dns")["rules"]!!.jsonArray.any { rule ->
-            rule.jsonObject["query_type"]?.jsonArray?.strings() == listOf("HTTPS") && rule.jsonObject.str("action") == "reject"
-        })
-    }
-
     @Test fun theRestIsAskedOfTheResolverTheGoEnginesAskThroughTheLine() {
-        // Phase 0 asks `dns-remote` through `out` for what no rule claims:
-        // sing-box on every line but XHTTP, Go's Xray on XHTTP. core.json
-        // asks the same server through the same outbound.
+        // XHTTP's Xray config asks `dns-remote` through `out` for what no rule
+        // claims. core.json asks the same server through the same outbound.
         val xhttp = spec(IosCoreLine.XhttpReality) as OutboundSpec.Vless
         val go = Json.parseToJsonElement(XrayConfig.buildXhttp(xhttp, answersDns = true, login = login)).jsonObject
         val goRemote = go.obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }.single { it.str("tag") == "dns-remote" }
@@ -544,12 +467,6 @@ class XrayConfigIosCoreTest {
             val forward = build(line, routing).dnsRules().last()
             assertEquals(goRemote.str("address"), forward.str("address"), "$line $routing")
             assertEquals(goRemote.int("port"), forward.int("port"), "$line $routing")
-            if (line == IosCoreLine.XhttpReality || line !in firstSix) continue
-            val sbRemote = phase0(line, routing).obj("dns")["servers"]!!.jsonArray.map { it.jsonObject }
-                .single { it.str("tag") == "dns-remote" }
-            assertEquals(sbRemote.str("server"), forward.str("address"), "$line $routing")
-            assertEquals(sbRemote.str("detour"), forward.str("outboundTag"), "$line $routing")
-            assertNull(sbRemote["server_port"], "sing-box's default, 53")
         }
     }
 
@@ -779,9 +696,8 @@ class XrayConfigIosCoreTest {
     }
 
     @Test fun theForwardRuleIsCoreJsonsAlone() {
-        // Go's Xray refuses a `dns` rule action it does not know, so the
-        // configs the Go engines run never carry one: XHTTP's xray.json and
-        // Phase 0's sing-box, under either routing.
+        // Xray refuses a `dns` rule action it does not know, so XHTTP's
+        // xray.json never carries one, under either routing.
         val forward = "\"action\":\"forward\""
         val xhttp = spec(IosCoreLine.XhttpReality) as OutboundSpec.Vless
         for (answersDns in listOf(false, true)) {
@@ -789,9 +705,6 @@ class XrayConfigIosCoreTest {
         }
         assertTrue(forward !in XrayConfig.buildXhttp(xhttp, routing = bypass, geodata = lists, login = login))
         for (line in IosCoreLine.entries) for (routing in routings) {
-            if (line != IosCoreLine.XhttpReality && line in firstSix) {
-                assertTrue(forward !in SingBoxConfig.buildIosSocks(spec(line), login, routing = routing), "$line $routing")
-            }
             assertTrue(forward in text(line, routing), "$line $routing")
         }
     }

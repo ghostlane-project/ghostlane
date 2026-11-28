@@ -1,12 +1,6 @@
 package org.olcbox.app.vpn.service
 
-import android.content.Context
-import android.content.Intent
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import org.olcbox.app.net.SocksLogin
-import org.olcbox.app.vpn.data.vpnPrefDataStore
 
 /**
  * The seam between the VpnService and ghostlane-core (the Rust library: xray-rust's
@@ -25,9 +19,6 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
  * handed to [protect] first (VpnService.protect, as iOS pins to the physical interface).
  */
 interface RustCoreBackend {
-    /** `BuildConfig` flag of the app build: whether the switch is on when nothing else says. */
-    val defaultOn: Boolean
-
     /** Loads the library; throws with the reason when it cannot. */
     fun load()
 
@@ -104,14 +95,10 @@ data class RustOlcParams(
 }
 
 /**
- * The Rust core is the app's only engine; it is chosen at every start. The
- * members below are the test hooks the instrumented suite still reads: an
- * intent extra, a hidden preference and the build's default flag. They no
- * longer choose an engine, only report what a test asked for.
+ * The Rust core is the app's only engine. What is here is the way to it and a
+ * hook of the instrumented suite.
  */
 object RustCore {
-    val KEY_DEV_RUST_CORE = booleanPreferencesKey("dev_rust_core")
-
     private const val ENGINE_CLASS = "org.olcbox.app.rustcore.RustCoreEngine"
 
     /** Test hook: a complete core.json for the given SOCKS port and login, in place of the profile's. Never set outside tests. */
@@ -123,15 +110,5 @@ object RustCore {
         runCatching {
             Class.forName(ENGINE_CLASS).getField("INSTANCE").get(null) as RustCoreBackend
         }.getOrNull()
-    }
-
-    fun resolve(intent: Intent, context: Context): Boolean {
-        if (intent.hasExtra(OlcboxVpnActions.EXTRA_RUST_CORE)) {
-            return intent.getBooleanExtra(OlcboxVpnActions.EXTRA_RUST_CORE, false)
-        }
-        val stored = runCatching {
-            runBlocking { context.vpnPrefDataStore.data.first()[KEY_DEV_RUST_CORE] }
-        }.getOrNull()
-        return stored ?: (backend?.defaultOn ?: false)
     }
 }

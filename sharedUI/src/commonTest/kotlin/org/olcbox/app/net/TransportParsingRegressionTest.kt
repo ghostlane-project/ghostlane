@@ -1,12 +1,7 @@
 package org.olcbox.app.net
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
@@ -25,11 +20,6 @@ class TransportParsingRegressionTest {
             rawLink = "$base&type=grpc&servicename=media%2Fsync"
         ).transportKind())
 
-        val outbound = Json.parseToJsonElement(SingBoxConfig.build(spec))
-            .jsonObject["outbounds"]!!.jsonArray.first().jsonObject
-        assertEquals("grpc", outbound["transport"]!!.jsonObject["type"]!!.jsonPrimitive.content)
-        assertEquals("media/sync", outbound["transport"]!!.jsonObject["service_name"]!!.jsonPrimitive.content)
-        assertFalse("flow" in outbound)
     }
 
     @Test fun percentEscapesAreDecodedOnce() {

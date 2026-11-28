@@ -9,37 +9,11 @@ class TunnelDaemonProtocolTest {
 
     @Test
     fun requestsAreOneLineEachBecauseTheDaemonReadsByLine() {
-        val start = TunnelDaemonProtocol.startRequest("{\"log\":{\"level\":\"info\"}}")
-        assertEquals(1, start.count { it == '\n' })
-        assertTrue(start.endsWith("\n"))
-        assertTrue(start.startsWith("{"))
-        // The config is a JSON *string* inside the request, not spliced in raw:
-        // spliced, its own newlines would end the request half-written.
-        assertTrue("\\\"level\\\"" in start)
-    }
-
-    @Test
-    fun aStartCarriesItsRuleFilesByNameUnderFiles() {
-        val start = TunnelDaemonProtocol.startRequest("{}", mapOf("geoip-ru.srs" to "AAEC"))
-        assertTrue("\"files\":{\"geoip-ru.srs\":\"AAEC\"}" in start)
-        // And none at all when there are none: the first daemons never look.
-        assertTrue("files" !in TunnelDaemonProtocol.startRequest("{}"))
-    }
-
-    // What the third daemon takes beside a config: who the system is to ask
-    // for names while the tunnel runs, and the kill switch's block.
-    @Test
-    fun aStartSaysWhoAnswersNamesAndWhatTheBlockLetsOut() {
-        val start = TunnelDaemonProtocol.startRequest(
-            "{}",
-            names = "172.19.0.2",
-            hold = DaemonHold(interfaceName = "utun225", passes = listOf("203.0.113.7", "2001:db8::1"))
-        )
-        assertTrue("\"names\":\"172.19.0.2\"" in start, start)
-        assertTrue("\"hold\":{\"interface\":\"utun225\",\"pass\":[\"203.0.113.7\",\"2001:db8::1\"]}" in start, start)
-        // And neither when not asked for: that request is the one every daemon
-        // before this was sent, byte for byte.
-        assertEquals("{\"verb\":\"start\",\"config\":\"{}\"}\n", TunnelDaemonProtocol.startRequest("{}"))
+        val tun = TunnelDaemonProtocol.tunRequest(DaemonTun(interfaceName = "utun225", socksPort = 10810))
+        assertEquals(1, tun.count { it == '\n' })
+        assertTrue(tun.endsWith("\n"))
+        assertTrue(tun.startsWith("{"))
+        assertTrue("\"verb\":\"tun\"" in tun, tun)
     }
 
     @Test
@@ -59,7 +33,7 @@ class TunnelDaemonProtocolTest {
         assertEquals(TunnelDaemonProtocol.PROTOCOL_HOLD, held.protocol)
         // A start that failed after the block was loaded leaves it loaded.
         val failed = TunnelDaemonProtocol.parseReply(
-            """{"ok":false,"error":"sing-box exited at once","logTail":"","protocol":3,"hold":true}"""
+            """{"ok":false,"error":"hev exited at once","logTail":"","protocol":3,"hold":true}"""
         )
         assertIs<DaemonReply.Failure>(failed)
         assertTrue(failed.holds)
@@ -77,7 +51,7 @@ class TunnelDaemonProtocolTest {
         assertEquals(TunnelDaemonProtocol.PROTOCOL_FIRST, first.protocol)
         val current = TunnelDaemonProtocol.parseReply("""{"ok":true,"state":"idle","logTail":"","protocol":2}""")
         assertIs<DaemonReply.Ok>(current)
-        assertEquals(TunnelDaemonProtocol.PROTOCOL_FILES, current.protocol)
+        assertEquals(2, current.protocol)
     }
 
     @Test
@@ -87,7 +61,7 @@ class TunnelDaemonProtocolTest {
         )
         assertIs<DaemonReply.Failure>(stepping)
         assertTrue(stepping.restarting)
-        val plain = TunnelDaemonProtocol.parseReply("""{"ok":false,"error":"sing-box exited","logTail":""}""")
+        val plain = TunnelDaemonProtocol.parseReply("""{"ok":false,"error":"hev exited","logTail":""}""")
         assertIs<DaemonReply.Failure>(plain)
         assertTrue(!plain.restarting)
     }
@@ -103,12 +77,12 @@ class TunnelDaemonProtocolTest {
     }
 
     @Test
-    fun anErrorKeepsTheTailBecauseTheReasonIsInSingBoxOutputNotInOurMessage() {
+    fun anErrorKeepsTheTailBecauseTheReasonIsInTheTunnelsOutputNotInOurMessage() {
         val reply = TunnelDaemonProtocol.parseReply(
-            """{"ok":false,"error":"sing-box exited","logTail":"FATAL bind: permission denied"}"""
+            """{"ok":false,"error":"hev exited","logTail":"FATAL bind: permission denied"}"""
         )
         assertIs<DaemonReply.Failure>(reply)
-        assertEquals("sing-box exited", reply.message)
+        assertEquals("hev exited", reply.message)
         assertTrue("permission denied" in reply.logTail)
     }
 

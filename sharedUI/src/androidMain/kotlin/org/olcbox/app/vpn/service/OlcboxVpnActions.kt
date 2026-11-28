@@ -12,6 +12,4 @@ object OlcboxVpnActions {
     const val EXTRA_SPLIT_TUNNEL_MODE = "org.olcbox.app.vpn.service.OlcboxVpnService.SPLIT_TUNNEL_MODE"
     const val EXTRA_SPLIT_TUNNEL_PROXY_APPS = "org.olcbox.app.vpn.service.OlcboxVpnService.SPLIT_TUNNEL_PROXY_APPS"
     const val EXTRA_SPLIT_TUNNEL_BYPASS_APPS = "org.olcbox.app.vpn.service.OlcboxVpnService.SPLIT_TUNNEL_BYPASS_APPS"
-    /** Boolean: run the transport on the Rust core engine (see [RustCore]); absent = the stored setting, then the build flag. */
-    const val EXTRA_RUST_CORE = "org.olcbox.app.vpn.service.OlcboxVpnService.RUST_CORE"
 }

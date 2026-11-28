@@ -1,7 +1,6 @@
 package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.runBlocking
-import org.olcbox.app.net.ProbeFailure
 import java.net.InetAddress
 import java.net.ServerSocket
 import kotlin.concurrent.thread
@@ -21,37 +20,9 @@ import kotlin.test.assertTrue
  * the connect ended a few seconds later. With the tunnel started first and its
  * line behind it, as a core's is there, the same tunnel was asked seconds
  * later and answered. "The helper says its process runs" was read as "the
- * tunnel serves", and a check that was refused was read as an answer about
- * the far end.
+ * tunnel serves".
  */
 class TunnelSettleTest {
-
-    private fun refused(ms: Long, url: String = "https://1.1.1.1/cdn-cgi/trace") =
-        ProbeFailure(url = url, reason = "ConnectException: Connection refused", tookMs = ms)
-
-    @Test
-    fun aCheckThatWasRefusedAtOnceIsAskedAgain() {
-        assertTrue(TunnelSettle.asksAgain(listOf(refused(12), refused(9)), sinceStartMs = 300))
-    }
-
-    @Test
-    fun aCheckTheFarEndDidNotAnswerIsAnAnswer() {
-        // Eight seconds of silence is what a dead server looks like. Asked again
-        // it is silent again, and the connect would end a minute later saying the same.
-        assertFalse(TunnelSettle.asksAgain(listOf(refused(8_004), refused(8_001)), sinceStartMs = 16_100))
-        assertFalse(TunnelSettle.asksAgain(listOf(refused(14), refused(8_001)), sinceStartMs = 8_100))
-    }
-
-    @Test
-    fun aTunnelThatNeverServesIsNotAskedForEver() {
-        assertTrue(TunnelSettle.asksAgain(listOf(refused(10)), sinceStartMs = TunnelSettle.BUDGET_MS - 2_000))
-        assertFalse(TunnelSettle.asksAgain(listOf(refused(10)), sinceStartMs = TunnelSettle.BUDGET_MS))
-    }
-
-    @Test
-    fun aCheckThatSaidNothingAtAllIsNotARefusal() {
-        assertFalse(TunnelSettle.asksAgain(emptyList(), sinceStartMs = 100))
-    }
 
     @Test
     fun aListenerThatOpensLaterIsWaitedFor() {

@@ -744,17 +744,6 @@ jobs:
         with:
           path: olcbox
 
-      # Not read by this job's build any more; the release's own test counts
-      # the pinned checkouts (test_gate_scripts.py), and the gate's pin is the
-      # same for every platform job.
-      - name: Checkout olcrtc
-        uses: actions/checkout@v7
-        with:
-          repository: ghostlane-project/olcrtc
-          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
-          path: olcrtc
-          submodules: recursive
-
       - name: The commit of the core
         id: pin
         working-directory: olcbox
@@ -1102,14 +1091,6 @@ jobs:
         with:
           path: olcbox
 
-      - name: Checkout olcrtc
-        uses: actions/checkout@v7
-        with:
-          repository: ghostlane-project/olcrtc
-          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
-          path: olcrtc
-          submodules: recursive
-
       - name: The commit of the core
         id: pin
         working-directory: olcbox
@@ -1138,12 +1119,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: olcrtc/go.sum
 
       - name: Setup appimagetool
         run: |
@@ -1210,7 +1185,6 @@ jobs:
       - name: Build Linux AppImage
         working-directory: olcbox
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export APPIMAGETOOL=/tmp/appimagetool.AppImage
           export APPIMAGE_EXTRACT_AND_RUN=1
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" :desktopApp:packageReleaseLinuxAppImage --stacktrace
@@ -1450,25 +1424,11 @@ jobs:
         with:
           path: olcbox
 
-      - name: Checkout olcrtc
-        uses: actions/checkout@v7
-        with:
-          repository: ghostlane-project/olcrtc
-          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
-          path: olcrtc
-          submodules: recursive
-
       - name: Setup JDK
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: olcrtc/go.sum
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -1529,19 +1489,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
-
-      - name: Install Go mobile tooling
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install github.com/magefile/mage@latest
-
-      - name: Initialize gomobile
-        working-directory: olcrtc
-        run: |
-          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
-          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          gomobile init
 
       - name: Configure Android release signing
         working-directory: olcbox
@@ -1608,7 +1555,6 @@ jobs:
       - name: Build production APK
         working-directory: olcbox
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" \
@@ -1708,7 +1654,6 @@ jobs:
       - name: Build armeabi-v7a production APK
         working-directory: olcbox
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" \

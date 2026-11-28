@@ -205,8 +205,6 @@ internal data class RoomRequest(
     val socksUser: String,
     val socksPass: String,
     val dnsServer: String,
-    /** A file of the destinations the room's program dials itself, or null for none. */
-    val directRulesFile: Path?,
     val dtlsProfile: String,
     /** The device's identity, for an engine that names it to the carrier. */
     val deviceId: String = "",

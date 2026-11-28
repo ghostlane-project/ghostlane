@@ -92,7 +92,6 @@ class HostRoomRealTest {
         socksUser = "room-user",
         socksPass = "room-pass",
         dnsServer = "192.0.2.53:53",
-        directRulesFile = null,
         dtlsProfile = OlcrtcDtls.OFF,
         deviceId = "room-check",
         front = front,

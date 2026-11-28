@@ -155,9 +155,8 @@ fun RoutingSettings.toRules(ruleSetDir: String, directDns: DirectDns): Routing.R
     )
 
 /**
- * The two resolver addresses a rule-based routing falls back on. Same values as
- * the sing-box builder's constants (a test holds them equal), kept here so the routing
- * model does not depend on that builder.
+ * The two resolver addresses a rule-based routing falls back on. The Rust core's
+ * writers and the iOS extension read them.
  */
 object RoutingDefaults {
     /** What the iOS builder writes for the direct resolver; the extension replaces it. TEST-NET-2, so it can only fail loudly. */

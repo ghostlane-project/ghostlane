@@ -26,8 +26,6 @@ import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.XrayGeodata
 import org.olcbox.app.net.XrayRustSurface
 import org.olcbox.app.net.toRules
-import org.olcbox.app.vpn.DesktopMode
-import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
 import java.io.File
@@ -322,46 +320,9 @@ class RoomFrontDumpTest {
     // ---- where a session's rules live on ghostlane-engine ----
 
     @Test
-    fun onTheEngineARoomsRulesAreItsFrontsInTheProxyAndEveryTunnel() {
-        for (mode in listOf(DesktopMode.SystemProxy, DesktopMode.LinuxTun, DesktopMode.MacTun, DesktopMode.WindowsTun)) {
-            assertEquals(
-                DesktopRulesHome.Core,
-                desktopRulesHome(mode, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
-                "a room in $mode on ghostlane-engine",
-            )
-        }
-        for (mode in DesktopMode.entries) {
-            assertEquals(
-                DesktopRulesHome.Nowhere,
-                desktopRulesHome(mode, isOlcrtc = true, needsRules = false, engine = DesktopLineEngine.Rust),
-                "no rules asked for in $mode",
-            )
-        }
-    }
-
-    @Test
-    fun theGoEnginesAndACoreLineAreAnsweredAsBefore() {
-        for (mode in DesktopMode.entries) for (needsRules in listOf(true, false)) {
-            for (olcrtc in listOf(true, false)) {
-                assertEquals(
-                    desktopRulesHome(mode, olcrtc, needsRules),
-                    desktopRulesHome(mode, olcrtc, needsRules, DesktopLineEngine.Go),
-                    "the Go engines, $mode olcrtc=$olcrtc rules=$needsRules",
-                )
-            }
-            // The tunnels' core lines are the exceptions (MacRoutingTest, WindowsDefaultTest): in the macOS,
-            // the Linux and the Windows tunnel their rules are the core's.
-            if ((mode == DesktopMode.MacTun || mode == DesktopMode.LinuxTun || mode == DesktopMode.WindowsTun) && needsRules) continue
-            assertEquals(
-                desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules),
-                desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules, engine = DesktopLineEngine.Rust),
-                "a core line on ghostlane-engine, $mode rules=$needsRules",
-            )
-        }
-        // What the Go engines did for a room in the tunnels, the root olcRTC engine's own rules and the macOS
-        // daemon's sing-box, is still theirs.
-        assertEquals(DesktopRulesHome.Engine, desktopRulesHome(DesktopMode.LinuxTun, true, true, DesktopLineEngine.Go))
-        assertEquals(DesktopRulesHome.Daemon, desktopRulesHome(DesktopMode.MacTun, true, true, DesktopLineEngine.Go))
+    fun onTheEngineTheRulesAreTheCoresInTheProxyAndEveryTunnel() {
+        assertEquals(DesktopRulesHome.Core, desktopRulesHome(needsRules = true))
+        assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(needsRules = false), "no rules asked for")
     }
 
     // ---- the check's fronts ----

@@ -16,10 +16,9 @@ internal object CoreSupport {
     private val VISION_FLOWS = setOf("xtls-rprx-vision", "xtls-rprx-vision-udp443")
 
     /**
-     * A link's `fp` as the core is given it: the name sing-box has for it,
-     * which is what the Go engines send for the same link, with sing-box's
-     * chrome variants (`chrome_psk`, `chrome_pq`, …) read as chrome, the only
-     * names of theirs the core lacks. Links carry Xray's names too
+     * A link's `fp` as the core is given it: one of the uTLS names in
+     * [HELLO_NAMES], with the chrome variants (`chrome_psk`, `chrome_pq`, …)
+     * read as chrome, the only names of theirs the core lacks. Links carry Xray's names too
      * (`hellochrome_133`, `hellofirefox_148`, `randomizednoalpn`, `unsafe`, or
      * `Chrome`): each is read as the nearest name here, and a name with none,
      * or no `fp` at all, as chrome.

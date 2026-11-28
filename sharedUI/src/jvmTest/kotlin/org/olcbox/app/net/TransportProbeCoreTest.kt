@@ -24,7 +24,6 @@ import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -328,26 +327,18 @@ class TransportProbeCoreTest {
         assertTrue(probing.isCancelled)
     }
 
-    // The Go cores' starters are what every platform runs today and are
-    // handed what they always were: the Go config for the line.
-    @Test fun aGoStarterIsStillHandedTheGoConfig() {
-        val handed = mutableListOf<String>()
-        val go = TransportProbe.Starter { _, config ->
-            handed += config
+    // No other core is in the app: a starter that is not the Rust core's is
+    // never handed a line, and the probe does not pass.
+    @Test fun aStarterThatIsNotTheRustCoresIsNeverStarted() {
+        var asked = 0
+        val other = TransportProbe.Starter { _, _ ->
+            asked++
             object : TransportProbe.Core {
                 override fun isRunning(): Boolean = false
                 override suspend fun stop() {}
             }
         }
-        assertFalse(probe(go))
-        val config = assertNotNull(handed.singleOrNull())
-        val goInbound = inbound(config)
-        val port = goInbound["listen_port"]!!.jsonPrimitive.int
-        val user = goInbound["users"]!!.jsonArray.single().jsonObject
-        val login = SocksLogin(user["username"]!!.jsonPrimitive.content, user["password"]!!.jsonPrimitive.content)
-        assertEquals(
-            TransportProbe.coreConfig(LinkParser.parse(realityLink)!!, port, login, underneath),
-            config,
-        )
+        assertFalse(probe(other))
+        assertEquals(0, asked)
     }
 }

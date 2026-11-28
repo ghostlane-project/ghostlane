@@ -10,13 +10,13 @@ import org.olcbox.app.vpn.DesktopSocksProxySettings
 
 /** Which of a connected desktop session's processes died. */
 internal enum class DeadProcess {
-    /** A sing-box or Xray core: the line's own, or the sing-box front before the olcRTC engine. */
+    /** A core: the line's own, or the front before the olcRTC engine. */
     Core,
 
     /** The olcRTC engine. */
     Engine,
 
-    /** What holds the tun: hev-socks5-tunnel on Linux, the tun's own sing-box on Windows and macOS. */
+    /** What holds the tun: hev-socks5-tunnel. */
     Tun
 }
 
@@ -117,9 +117,8 @@ internal data class LinesToTry(
  * without a desktop.
  *
  * A session is two halves: the tun, which claims the machine's traffic, and
- * the line behind it, which carries it, a sing-box or Xray core or the olcRTC
- * engine. The tun's upstream is one local port, written into its config when it
- * starts (`SingBoxConfig.buildDesktopTun`; hev's yaml on Linux) and fixed for as
+ * the line behind it, which carries it: the engine. The tun's upstream is one
+ * local port, written into its config when it starts (hev's) and fixed for as
  * long as it lives. So a line that dies leaves the tun pointing at a port nobody
  * listens on: packets still enter it and have nowhere to go, which is closed.
  * What opens it is taking the tun down, to recover or to go to another
@@ -130,11 +129,11 @@ internal object LineSupervision {
      * The endpoint a session gets from its first line: what its tun, or its
      * system proxy setting, is pointed at when it starts.
      *
-     * A core listens without a login, and so does the sing-box front that
+     * A core listens without a login, and so does the front that
      * stands before the engine in proxy mode under rules ([frontPort]). Only
      * the engine reached directly asks for one, the one in the SOCKS settings,
-     * and whatever points at it sends it: the tun's outbound on Windows and
-     * macOS, hev's config on Linux, the system's proxy setting.
+     * and whatever points at it sends it: hev's config in every
+     * tunnel, the system's proxy setting.
      *
      * A login is a username. The tun's outbound, the system's proxy setting
      * and the engine's own yaml all send or demand one exactly when the

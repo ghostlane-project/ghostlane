@@ -72,7 +72,7 @@ import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SessionFailover
-import org.olcbox.app.net.SingBoxConfig
+import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.net.SmartConnect
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportGroup
@@ -1219,7 +1219,7 @@ class OlcboxVpnService : VpnService() {
      */
     private fun freeLoopbackPort(): Int = runCatching {
         ServerSocket(0, 1, InetAddress.getByName(AndroidSocksProxySettings.DEFAULT_HOST)).use { it.localPort }
-    }.getOrDefault(SingBoxConfig.SINGBOX_SOCKS_PORT)
+    }.getOrDefault(XrayConfig.XRAY_SOCKS_PORT)
 
     /**
      * The login the SOCKS server behind the tun demands, as (username, password):

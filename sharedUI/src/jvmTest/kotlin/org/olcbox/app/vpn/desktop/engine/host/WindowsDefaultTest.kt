@@ -5,12 +5,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.OlcrtcDtls
-import org.olcbox.app.vpn.DesktopMode
-import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.RoomRequest
 import org.olcbox.app.vpn.desktop.engine.desktopRulesHome
-import org.olcbox.app.vpn.rulesHomeWithoutDaemon
 import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -39,28 +36,9 @@ class WindowsDefaultTest {
     private val main = "src/jvmMain/kotlin/org/olcbox/app/vpn"
 
     @Test
-    fun theWindowsTunnelKeepsARoomsRulesInItsFrontAndACoreLinesInTheCore() {
-        for (olcrtc in listOf(true, false)) {
-            assertEquals(
-                DesktopRulesHome.Core,
-                desktopRulesHome(DesktopMode.WindowsTun, olcrtc, needsRules = true, engine = DesktopLineEngine.Rust),
-                "olcrtc=$olcrtc on ghostlane-engine",
-            )
-            assertEquals(
-                DesktopRulesHome.Core,
-                rulesHomeWithoutDaemon(DesktopMode.WindowsTun, olcrtc, needsRules = true, engine = DesktopLineEngine.Rust),
-            )
-            assertEquals(
-                DesktopRulesHome.Nowhere,
-                desktopRulesHome(DesktopMode.WindowsTun, olcrtc, needsRules = false, engine = DesktopLineEngine.Rust),
-                "no rules asked for",
-            )
-            // The Go engines bound no socket of theirs on Windows: what they answered stays.
-            assertEquals(
-                DesktopRulesHome.Nowhere,
-                desktopRulesHome(DesktopMode.WindowsTun, olcrtc, needsRules = true, engine = DesktopLineEngine.Go),
-            )
-        }
+    fun theRulesLiveInTheCoreInEveryMode() {
+        assertEquals(DesktopRulesHome.Core, desktopRulesHome(needsRules = true))
+        assertEquals(DesktopRulesHome.Nowhere, desktopRulesHome(needsRules = false), "no rules asked for")
     }
 
     private val location = LocationConfig(
@@ -77,7 +55,6 @@ class WindowsDefaultTest {
         socksUser = "room-user",
         socksPass = "room-pass",
         dnsServer = "192.0.2.53:53",
-        directRulesFile = null,
         dtlsProfile = OlcrtcDtls.OFF,
         deviceId = "device-1",
         bindInterface = bindInterface,

@@ -57,15 +57,13 @@ class RustCheckE2ETest {
 
         @BeforeClass
         @JvmStatic
-        fun switchOn() {
-            runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = true } }
+        fun startHub() {
             hub = PipeHub()
         }
 
         @AfterClass
         @JvmStatic
-        fun switchOff() {
-            runBlocking { context.vpnPrefDataStore.edit { it.remove(RustCore.KEY_DEV_RUST_CORE) } }
+        fun stopHub() {
             hub.stop()
         }
     }
@@ -181,20 +179,6 @@ class RustCheckE2ETest {
         assertFailedOnRust(refused)
         assertTrue(refused.reason.orEmpty(), refused.reason.orEmpty().contains("no-such-profile"))
         assertEquals(listOf("profile-0", "profile-1"), hub.joined)
-    }
-
-    /** The stored switch no longer picks an engine: with it off the Rust client still answers (the Go runtime is gone). */
-    @Test
-    fun a6_withTheStoredSwitchOffTheRustClientStillAnswers() {
-        runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = false } }
-        try {
-            hub.reset(PipeHub.Room.Silent)
-            val r = runBlocking { OlcRtcConnectionChecker.checkRoom(request("go", timeoutMs = 1_000), context) }
-            say("RESULT check with the stored switch off: engine ${r.engine}")
-            assertEquals(OlcRtcConnectionChecker.ENGINE_RUST, r.engine)
-        } finally {
-            runBlocking { context.vpnPrefDataStore.edit { it[RustCore.KEY_DEV_RUST_CORE] = true } }
-        }
     }
 }
 

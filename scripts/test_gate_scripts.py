@@ -1406,16 +1406,22 @@ class Wiring(unittest.TestCase):
         self.assertIn("uses: ./.github/workflows/gate.yml", release)
         self.assertNotIn("secrets: inherit", release)
 
-    def test_release_checks_the_pinned_commit_out_everywhere(self):
+    def test_release_resolves_the_pinned_commit_and_checks_it_out_nowhere(self):
         release = self.read("release.yml")
         self.assertNotIn("OLCBOX_OLCRTC_REF", release)
+        # The pin is resolved once and handed to the Core build and the notes...
         self.assertIn("olcrtc_ref: ${{ steps.pin.outputs.olcrtc_sha }}", release)
-        self.assertEqual(3, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
+        self.assertIn("engine_sha: ${{ needs.release_version.outputs.olcrtc_ref }}", release)
+        # ...and no platform job checks the Go engine out or sets Go up for it.
+        self.assertEqual(0, release.count("ref: ${{ needs.release_version.outputs.olcrtc_ref }}"))
+        self.assertNotIn("repository: ghostlane-project/olcrtc", release)
+        self.assertNotIn("actions/setup-go", release)
 
-    def test_pr_checks_build_the_pinned_commit(self):
+    def test_pr_checks_build_nothing_of_the_go_engine(self):
         checks = self.read("pr-checks.yml")
         self.assertNotIn("ref: proofkit", checks)
-        self.assertIn("ref: ${{ steps.pin.outputs.olcrtc_sha }}", checks)
+        self.assertNotIn("repository: ghostlane-project/olcrtc", checks)
+        self.assertNotIn("actions/setup-go", checks)
         self.assertIn("python3 scripts/test_gate_scripts.py", checks)
 
 

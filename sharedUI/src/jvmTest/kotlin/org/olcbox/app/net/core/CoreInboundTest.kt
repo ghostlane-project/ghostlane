@@ -16,7 +16,6 @@ import org.olcbox.app.net.IosCoreFixtures
 import org.olcbox.app.net.IosCoreLine
 import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
-import org.olcbox.app.net.SingBoxConfig
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.XrayConfig
 import org.olcbox.app.net.XrayRustSurface
@@ -54,23 +53,13 @@ class CoreInboundTest {
     /** A listener as both families of config name it: where, which port, and the logins it takes. */
     private data class Listener(val tag: String?, val listen: String, val port: Int, val logins: List<Pair<String, String>>)
 
-    /** Xray's spelling, the Rust core's and the Go Xray's: `port`, `settings.accounts[] {user, pass}`. */
+    /** Xray's spelling, the Rust core's: `port`, `settings.accounts[] {user, pass}`. */
     private fun xray(inbound: JsonObject): Listener = Listener(
         inbound.str("tag"),
         inbound.str("listen")!!,
         inbound["port"]!!.jsonPrimitive.int,
         inbound["settings"]?.jsonObject?.get("accounts")?.jsonArray.orEmpty().map {
             it.jsonObject.str("user")!! to it.jsonObject.str("pass")!!
-        },
-    )
-
-    /** sing-box's spelling: `listen_port`, `users[] {username, password}`. */
-    private fun singBox(inbound: JsonObject): Listener = Listener(
-        inbound.str("tag"),
-        inbound.str("listen")!!,
-        inbound["listen_port"]!!.jsonPrimitive.int,
-        inbound["users"]?.jsonArray.orEmpty().map {
-            it.jsonObject.str("username")!! to it.jsonObject.str("password")!!
         },
     )
 
@@ -95,16 +84,12 @@ class CoreInboundTest {
         }
     }
 
-    // Proxy mode as the Go cores listen in it: 127.0.0.1, the settings' port,
+    // Proxy mode as the cores have always listened in it: 127.0.0.1, the settings' port,
     // no login (the core line never took the proxy settings' login), UDP on.
-    @Test fun proxyModeListensWhereTheGoCoresListenAndAsksNoLogin() {
+    @Test fun proxyModeListensOnTheLoopbackPortAndAsksNoLogin() {
         val config = CoreInbound.build(reality, plan(CoreInbound.Proxy(10808)))
         val inbound = inbounds(config).single()
         assertEquals(Listener("in", "127.0.0.1", 10808, emptyList()), xray(inbound))
-        assertEquals(
-            singBox(inbounds(SingBoxConfig.build(reality, socksPort = 10808, login = null)).single()),
-            xray(inbound),
-        )
         assertEquals(
             xray(inbounds(XrayConfig.buildXhttp(xhttp, socksPort = 10808)).single()),
             xray(inbounds(CoreInbound.build(xhttp, plan(CoreInbound.Proxy(10808)))).single()),
@@ -123,7 +108,6 @@ class CoreInboundTest {
     @Test fun proxyModeWithTheUsersLoginDemandsIt() {
         val inbound = inbounds(CoreInbound.build(reality, plan(CoreInbound.Proxy(10808, userLogin)))).single()
         assertEquals(Listener("in", "127.0.0.1", 10808, listOf("proxy-user" to "proxy-password")), xray(inbound))
-        assertEquals(singBox(inbounds(SingBoxConfig.build(reality, socksPort = 10808, login = userLogin)).single()), xray(inbound))
         assertEquals("password", inbound.obj("settings").str("auth"))
     }
 

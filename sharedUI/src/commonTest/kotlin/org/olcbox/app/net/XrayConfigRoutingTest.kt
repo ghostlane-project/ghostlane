@@ -82,7 +82,7 @@ class XrayConfigRoutingTest {
         // The direct one answers the Russian lists, on the network underneath,
         // and only them: skipFallback keeps it out of the fallback chain for
         // every other name.
-        assertEquals(SingBoxConfig.DIRECT_DNS_PLACEHOLDER, servers[0].str("address"))
+        assertEquals(RoutingDefaults.DIRECT_DNS_PLACEHOLDER, servers[0].str("address"))
         assertEquals(lists.domains, servers[0]["domains"]!!.jsonArray.strings())
         assertEquals("true", servers[0].str("skipFallback"))
         // The remote one, last, claims nothing and therefore gets the rest.
@@ -95,7 +95,7 @@ class XrayConfigRoutingTest {
         // appears; one occurrence is what keeps that a substitution rather
         // than a parser.
         val config = XrayConfig.buildXhttp(xhttp(), routing = bypass(), geodata = lists)
-        assertEquals(1, Regex("\"${SingBoxConfig.DIRECT_DNS_PLACEHOLDER}\"").findAll(config).count())
+        assertEquals(1, Regex("\"${RoutingDefaults.DIRECT_DNS_PLACEHOLDER}\"").findAll(config).count())
     }
 
     @Test fun bypassRoutesInTheOrderThatMatters() {
@@ -143,7 +143,7 @@ class XrayConfigRoutingTest {
         assertEquals(listOf("dns-remote"), servers.map { it.str("tag") })
         assertEquals(listOf("dns-out", "out"), json.rules().map { it.str("outboundTag") })
         assertTrue(json["inbounds"]!!.jsonArray[0].jsonObject["sniffing"] != null)
-        assertFalse(XrayConfig.buildXhttp(xhttp(), answersDns = true).contains(SingBoxConfig.DIRECT_DNS_PLACEHOLDER))
+        assertFalse(XrayConfig.buildXhttp(xhttp(), answersDns = true).contains(RoutingDefaults.DIRECT_DNS_PLACEHOLDER))
     }
 
     @Test fun aServerNamedByHostnameResolvesUnderneath() {
