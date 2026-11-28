@@ -1,6 +1,9 @@
 name: GR scratch
 on:
   workflow_dispatch:
+  push:
+    branches: [rust/t/GR-gate-report]
+    paths: [.github/workflows/gr-scratch.yml]
 permissions:
   contents: read
   actions: read
