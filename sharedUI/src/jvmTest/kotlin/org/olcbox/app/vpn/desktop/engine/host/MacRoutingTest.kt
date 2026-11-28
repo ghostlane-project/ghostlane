@@ -100,11 +100,11 @@ class MacRoutingTest {
         val rules = core.getValue("routing").jsonObject.getValue("rules").jsonArray.map { it.jsonObject }
         val byLine = rules.filter { it["outboundTag"]?.jsonPrimitive?.content == "out" }
         assertTrue(
-            byLine.any { CoreBlockedOnly.NAMES in it.getValue("domain").jsonArray.map { d -> d.jsonPrimitive.content } },
+            byLine.any { CoreBlockedOnly.NAMES in it["domain"]?.jsonArray?.map { d -> d.jsonPrimitive.content }.orEmpty() },
             "the listed names go by the line",
         )
         assertTrue(
-            byLine.any { CoreBlockedOnly.ADDRESSES in it.getValue("ip").jsonArray.map { d -> d.jsonPrimitive.content } },
+            byLine.any { CoreBlockedOnly.ADDRESSES in it["ip"]?.jsonArray?.map { d -> d.jsonPrimitive.content }.orEmpty() },
             "the listed addresses go by the line",
         )
         val last = rules.last()
