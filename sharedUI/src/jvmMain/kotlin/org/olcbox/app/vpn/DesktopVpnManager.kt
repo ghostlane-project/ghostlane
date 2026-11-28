@@ -1493,9 +1493,6 @@ class DesktopVpnManager private constructor(
         return letsEveryLineOut
     }
 
-        return letsEveryLineOut
-    }
-
     /**
      * The session's check through a Mac tunnel's own listener. Every probe
      * that brings nothing back is written down with what it said and how soon,
