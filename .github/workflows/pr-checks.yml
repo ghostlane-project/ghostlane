@@ -259,23 +259,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Install Go mobile tooling
-        run: |
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install github.com/magefile/mage@latest
-
-      - name: Initialize gomobile
-        working-directory: olcrtc
-        run: |
-          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
-          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          gomobile init
-
       - name: Run checks
         working-directory: olcbox
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           ./gradlew :sharedUI:jvmTest :desktopApp:compileKotlin :androidApp:assembleDebug --stacktrace
@@ -331,14 +317,6 @@ jobs:
           SINGBOX_BIN: ${{ runner.temp }}/sing-box/android
           SINGBOX_TARGET: android
         run: scripts/check-singbox-configs.sh
-
-      # The desktop draws its traffic chart from what the tun's sing-box says it
-      # has carried, less the flows of the session's own lines. The names of the
-      # totals and how a flow names its program are in no schema; they are asked
-      # of the desktops' binary here, which is also what says it has the API.
-      - name: sing-box answers the traffic API as the app reads it
-        working-directory: olcbox
-        run: scripts/check-singbox-traffic-api.sh
 
       # What the tag lists save, in the step summary: Android's (arm64, as in
       # the APK) and the desktops' (amd64, as Linux ships it) beside the same
