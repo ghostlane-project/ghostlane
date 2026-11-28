@@ -322,19 +322,14 @@ class RoomFrontDumpTest {
     // ---- where a session's rules live on ghostlane-engine ----
 
     @Test
-    fun onTheEngineARoomsRulesAreItsFrontsInTheProxyAndTheLinuxAndMacTunnels() {
-        for (mode in listOf(DesktopMode.SystemProxy, DesktopMode.LinuxTun, DesktopMode.MacTun)) {
+    fun onTheEngineARoomsRulesAreItsFrontsInTheProxyAndEveryTunnel() {
+        for (mode in listOf(DesktopMode.SystemProxy, DesktopMode.LinuxTun, DesktopMode.MacTun, DesktopMode.WindowsTun)) {
             assertEquals(
                 DesktopRulesHome.Core,
                 desktopRulesHome(mode, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
                 "a room in $mode on ghostlane-engine",
             )
         }
-        // The engine binds no socket on Windows yet: a direct one would enter the tun.
-        assertEquals(
-            DesktopRulesHome.Nowhere,
-            desktopRulesHome(DesktopMode.WindowsTun, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
-        )
         for (mode in DesktopMode.entries) {
             assertEquals(
                 DesktopRulesHome.Nowhere,
@@ -354,8 +349,9 @@ class RoomFrontDumpTest {
                     "the Go engines, $mode olcrtc=$olcrtc rules=$needsRules",
                 )
             }
-            // The macOS tunnel's core line is the one exception (MacRoutingTest): its rules are the core's.
-            if (mode == DesktopMode.MacTun && needsRules) continue
+            // The macOS and Windows tunnels' core lines are the exceptions (MacRoutingTest, WindowsDefaultTest):
+            // their rules are the core's.
+            if ((mode == DesktopMode.MacTun || mode == DesktopMode.WindowsTun) && needsRules) continue
             assertEquals(
                 desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules),
                 desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules, engine = DesktopLineEngine.Rust),

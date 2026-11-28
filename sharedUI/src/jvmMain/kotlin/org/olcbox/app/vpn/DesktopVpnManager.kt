@@ -2238,7 +2238,11 @@ class DesktopVpnManager private constructor(
                 dtlsProfile = dtlsProfile,
                 deviceId = locationsRepository.getDeviceIdentity(),
                 front = front,
-                bindToWayOut = bindToWayOut
+                bindToWayOut = bindToWayOut,
+                // The Windows tun's way out, read before it came up: the room's sockets leave by it
+                // (IP_UNICAST_IF), so none follows the adapter's default route back into hev. Null
+                // everywhere else, where the watch or bindToWayOut says it.
+                bindInterface = windowsWayOut
             )
         )
         val provider = roomLaunch.provider

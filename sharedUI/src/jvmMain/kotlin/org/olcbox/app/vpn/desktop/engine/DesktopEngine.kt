@@ -32,9 +32,6 @@ internal interface DesktopEngine {
     /** The line of the session: a core line, or the front before a room. */
     val line: LineEngine
 
-    /** The core that owns the Windows tun, apart from the session's line. */
-    val windowsTun: TunCore
-
     /** A room: what is run for it. The manager runs it. */
     val room: RoomEngine
 
@@ -97,13 +94,19 @@ internal object DesktopEngines {
     var factory: (DesktopEngineHost) -> DesktopEngine = { host -> defaultFor(DesktopPaths.os, host) }
 
     /**
-     * What a build runs on [os]: ghostlane-engine, watched for a change of the
-     * way out, on Linux and macOS, whose packages carry no Go core. Windows
-     * keeps the Go engines until its own flip.
+     * What a build runs on [os]: ghostlane-engine, whose packages carry no Go
+     * core. On Linux and macOS it is watched for a change of the way out. On
+     * Windows it is not wrapped in the watch: the watch reads the default
+     * interface by `ip route` or `route get` and reads nothing on Windows
+     * ([PhysicalInterfaceWatch]'s reader answers null there), so it would
+     * report no move, ever. The manager reads the way out itself, before the
+     * tun (`WindowsTunController.physicalRoute`), and hands its alias to every
+     * line and room as the session's `bind` (IP_UNICAST_IF in the engine). A
+     * watch on Windows is the interface-watch task's.
      */
     fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = when (os) {
         DesktopOs.Linux, DesktopOs.MacOS -> PhysicalInterfaceWatch.around(HostEngine(host), host)
-        else -> GoEngines(host)
+        DesktopOs.Windows, DesktopOs.Other -> HostEngine(host)
     }
 
     /** Whether [engine] is ghostlane-engine's, watched or not. */
@@ -191,14 +194,6 @@ internal interface LineEngine {
     fun stopNow()
 }
 
-/** The core of the Windows tun. */
-internal interface TunCore {
-    suspend fun start(config: String)
-    fun isRunning(): Boolean
-    fun runningProcess(): Process?
-    fun stopNow()
-}
-
 /**
  * A room as the session's endpoint: the SOCKS listener it opens, with its
  * login, and what it is told about the machine.
@@ -226,7 +221,12 @@ internal data class RoomRequest(
      * they would otherwise follow.
      */
     val bindToWayOut: Boolean = false,
-    /** The interface they leave by, when the caller has read it already ([PhysicalInterfaceWatch] does); null lets the engine ask. */
+    /**
+     * The interface they leave by, when the caller has read it already
+     * ([PhysicalInterfaceWatch] does on Linux and macOS; the manager does on
+     * Windows, where it is the adapter's alias read before the tun); null lets
+     * the engine ask.
+     */
     val bindInterface: String? = null
 )
 

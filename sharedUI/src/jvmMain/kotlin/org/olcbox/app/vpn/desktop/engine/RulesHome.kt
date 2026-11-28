@@ -31,7 +31,8 @@ internal enum class DesktopRulesHome {
  *   runs there only the olcRTC engine runs as root. A core runs as the user and
  *   reaches its server bound to the physical interface (startDesktopCore); its
  *   rules have not been moved there;
- * - in the Windows tunnel nothing does yet.
+ * - in the Windows tunnel nothing does, for the Go engines: no socket of theirs
+ *   is bound (the engine's overload below is the Rust one).
  *
  * The proxy keeps its front for olcRTC: it also does what the engine cannot,
  * "only blocked sites" and a tunnel rule under a whole-TLD entry.
@@ -69,19 +70,27 @@ internal enum class DesktopLineEngine {
  * needs a socket that leaves outside the tunnel, and the engine makes them:
  *
  * - in proxy mode its sockets are ordinary ones;
- * - in the Linux and macOS tunnels the session names the way out (`bind`),
- *   and every socket of the engine but loopback's leaves by it, as the user;
- * - in the Windows tunnel the engine binds no socket yet, so everything goes
- *   through the tunnel.
+ * - in the Linux, macOS and Windows tunnels the session names the way out
+ *   (`bind`), and every socket of the engine but loopback's leaves by it, as
+ *   the user. On Windows that is IP_UNICAST_IF by the interface's alias, which
+ *   the manager reads before the tun comes up and hands to the line and the
+ *   room alike; the tun's own default route is never consulted for them.
+ *
+ * The same holds for a core line in the macOS and Windows tunnels, where hev
+ * sits in front of the engine and the engine's core sends what its rules do
+ * not claim straight out by the bound sockets. The Windows DNS guard blocks
+ * only the system's resolver service (svchost's Dnscache); the engine asks
+ * the names of its direct rules itself, from sockets bound to the physical
+ * interface. In the Linux tunnel a core line's rules are not moved yet.
  */
 internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean, engine: DesktopLineEngine): DesktopRulesHome =
     when {
-        // A core line in the macOS tunnel: hev has no sing-box behind it, the tun carries everything into
-        // the engine's core, and the core's rules send what they do not claim straight out, by the
-        // session's bound sockets. In the Linux tunnel a core line's rules are not moved there yet.
-        engine == DesktopLineEngine.Rust && !isOlcrtc && needsRules && mode == DesktopMode.MacTun -> DesktopRulesHome.Core
+        // A core line in the macOS or Windows tunnel: hev has no sing-box behind it, the tun carries
+        // everything into the engine's core, and the core's rules send what they do not claim straight
+        // out, by the session's bound sockets. In the Linux tunnel a core line's rules are not moved there yet.
+        engine == DesktopLineEngine.Rust && !isOlcrtc && needsRules &&
+            (mode == DesktopMode.MacTun || mode == DesktopMode.WindowsTun) -> DesktopRulesHome.Core
         engine == DesktopLineEngine.Go || !isOlcrtc -> desktopRulesHome(mode, isOlcrtc, needsRules)
         !needsRules -> DesktopRulesHome.Nowhere
-        mode == DesktopMode.WindowsTun -> DesktopRulesHome.Nowhere
         else -> DesktopRulesHome.Core
     }

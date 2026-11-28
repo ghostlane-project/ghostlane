@@ -78,14 +78,11 @@ class MacRoutingTest {
             DesktopRulesHome.Core,
             rulesHomeWithoutDaemon(DesktopMode.MacTun, isOlcrtc = true, needsRules = true, engine = DesktopLineEngine.Rust),
         )
-        // Not moved by this: a core line's rules in the other tunnels.
-        for (mode in listOf(DesktopMode.LinuxTun, DesktopMode.WindowsTun)) {
-            assertEquals(
-                DesktopRulesHome.Nowhere,
-                desktopRulesHome(mode, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Rust),
-                "$mode",
-            )
-        }
+        // Not moved by this: a core line's rules in the Linux tunnel (LR). The Windows tunnel's are the core's (WD).
+        assertEquals(
+            DesktopRulesHome.Nowhere,
+            desktopRulesHome(DesktopMode.LinuxTun, isOlcrtc = false, needsRules = true, engine = DesktopLineEngine.Rust),
+        )
     }
 
     @Test
