@@ -12,7 +12,7 @@ name: Rust CLI engine
 #   - every line of scripts/rust-core-interop/lines/ (Reality, XHTTP,
 #     Hysteria2 and the rest) against each release, the builder's core.json
 #     started through the engine child (cli/examples/engine_client), judged
-#     as check K5 judges them (scripts/cli-checks/engine-lines.sh).
+#     as check K5 judges them (scripts/cli-engine/lines.sh).
 #
 # The program is the Core build's, as rust-desktop.yml has it: restored from
 # the cache of the pin, built here when no cache holds it. Nothing here
@@ -34,7 +34,7 @@ on:
     paths:
       - cli/**
       - .github/workflows/rust-cli-engine.yml
-      - scripts/cli-checks/engine-lines.sh
+      - scripts/cli-engine/lines.sh
       - scripts/rust-core-interop.py
       - 'scripts/rust-core-interop/**'
       - scripts/ghostlane-core-pin.sh
@@ -44,7 +44,7 @@ on:
     paths:
       - cli/**
       - .github/workflows/rust-cli-engine.yml
-      - scripts/cli-checks/engine-lines.sh
+      - scripts/cli-engine/lines.sh
       - scripts/rust-core-interop.py
       - 'scripts/rust-core-interop/**'
       - scripts/ghostlane-core-pin.sh
@@ -245,4 +245,4 @@ jobs:
         run: |
           set -euo pipefail
           export GHOSTLANE_ENGINE="$GITHUB_WORKSPACE/$OUT/bin/$TARGET/ghostlane-engine"
-          bash scripts/cli-checks/engine-lines.sh
+          bash scripts/cli-engine/lines.sh
