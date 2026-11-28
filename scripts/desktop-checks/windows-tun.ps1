@@ -45,7 +45,8 @@ Remove-Item -Force -ErrorAction SilentlyContinue $xml
 $env:WINDOWS_TUN_CHECK = '1'
 Push-Location $root
 try {
-    & .\gradlew.bat ':sharedUI:jvmTest' --rerun --tests $class --tests 'org.olcbox.app.vpn.desktop.WindowsTunRoutesTest' --stacktrace
+    & .\gradlew.bat ':sharedUI:jvmTest' --rerun --tests $class --tests 'org.olcbox.app.vpn.desktop.WindowsTunRoutesTest' `
+        --tests 'org.olcbox.app.vpn.desktop.WindowsTunPlanTest' --stacktrace
     $rc = $LASTEXITCODE
 } finally {
     Pop-Location
