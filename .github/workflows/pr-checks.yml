@@ -30,6 +30,7 @@ on:
       - main
       - rust/all
   push:
+    branches: [rust/all, main, ghostlane]
 
 permissions:
   contents: read

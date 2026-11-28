@@ -109,8 +109,11 @@ class VlessHttp2Test {
         val plain = spec("$none&type=http&path=%2Fh")
         assertEquals(VlessHttp2.NEEDS_TLS, CoreRefusal.of(plain))
         assertFailsWith<IllegalArgumentException> { CoreConfig.build(plain, CoreFixtures.login) }
-        assertEquals(VlessHttp2.NO_FLOW, CoreRefusal.of(spec("$tls&flow=xtls-rprx-vision&type=http&path=%2Fh")))
-        assertEquals(VlessHttp2.NO_FLOW, CoreRefusal.of(spec("$reality&flow=xtls-rprx-vision&type=http&path=%2Fh")))
+        // The link parser keeps a flow only on raw TCP, so no link reaches this refusal: a spec that carries one does.
+        for (link in listOf("$tls&type=http&path=%2Fh", "$reality&type=http&path=%2Fh")) {
+            assertNull(spec("$link&flow=xtls-rprx-vision").flow, link)
+            assertEquals(VlessHttp2.NO_FLOW, CoreRefusal.of(spec(link).copy(flow = "xtls-rprx-vision")), link)
+        }
         assertEquals(CoreRefusal.WAIVED_CHECKS, CoreRefusal.of(spec("$reality&allowInsecure=1&type=http&path=%2Fh")))
         assertEquals(
             "a Reality line with no server name",

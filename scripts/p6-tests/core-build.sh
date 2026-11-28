@@ -16,8 +16,8 @@
 #     fail the run are first on PATH). The same output under another commit or
 #     another Rust toolchain is not kept, nor for Android under another NDK,
 #     and the Android script with no NDK named keeps nothing;
-#   - .github/workflows/core-build.yml keeps its shape: pushes to rust/all and
-#     pull requests into it, both on its own paths, and a dispatch with `pin`
+#   - .github/workflows/core-build.yml keeps its shape: pushes to rust/all on its own
+#     paths (no pull_request: heavy suites run after a batch merge), and a dispatch with `pin`
 #     wired to the scripts; read-only permissions and no secret; one macOS
 #     job; only the Windows job may fail; every build job restores a cache
 #     keyed by the commit, the Rust toolchain (and for Android the NDK), the
@@ -295,9 +295,9 @@ NDK = "env.ANDROID_NDK_VERSION"
 def check(doc):
     bad = []
     on = doc.get(True, doc.get("on")) or {}
-    if set(on) != {"push", "pull_request", "workflow_dispatch"}:
-        bad.append("triggers must be push, pull_request and workflow_dispatch, found %s" % sorted(map(str, on)))
-    for ev in ("push", "pull_request"):
+    if set(on) != {"push", "workflow_dispatch"}:
+        bad.append("triggers must be push and workflow_dispatch, found %s" % sorted(map(str, on)))
+    for ev in ("push",):
         e = on.get(ev) or {}
         if e.get("branches") != ["rust/all"]:
             bad.append("%s must be limited to the branch rust/all, found %s" % (ev, e.get("branches")))
@@ -407,7 +407,7 @@ def selftest(doc):
 
     out = []
     out += plant("every rust/** push", lambda d: on_of(d)["push"].__setitem__("branches", ["rust/**"]))
-    out += plant("a pull request into main", lambda d: on_of(d)["pull_request"]["branches"].append("main"))
+    out += plant("a pull request into rust/all", lambda d: on_of(d).__setitem__("pull_request", {"branches": ["rust/all"], "paths": list(OWN)}))
     out += plant("a path that is not its own", lambda d: on_of(d)["push"]["paths"].append("androidApp/**"))
     out += plant("a schedule", lambda d: on_of(d).__setitem__("schedule", [{"cron": "0 3 * * *"}]))
     out += plant("no pin input", lambda d: on_of(d)["workflow_dispatch"]["inputs"].pop("pin"))

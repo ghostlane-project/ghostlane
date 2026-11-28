@@ -31,14 +31,6 @@ on:
       - scripts/ghostlane-core-pin.sh
       - scripts/ghostlane-core-resolve.sh
       - scripts/rust-core-checkout.sh
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - .github/workflows/rust-jitsi.yml
-      - scripts/ghostlane-core-pin.sh
-      - scripts/ghostlane-core-resolve.sh
-      - scripts/rust-core-checkout.sh
   workflow_dispatch:
     inputs:
       pin:
