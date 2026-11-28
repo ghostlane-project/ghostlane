@@ -73,6 +73,10 @@ leave() {
   rmdir "$LINES" 2>/dev/null
 }
 trap leave EXIT
+# A check that ran before this one (pf-group.sh starts its forwarder through a
+# function and leaves the python behind) can hold the forwarder's port.
+pkill -f '/forward\.py' 2>/dev/null
+sleep 0.5
 
 say "the machine"
 sw_vers | tr '\n' ' '; echo
