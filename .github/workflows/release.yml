@@ -1041,7 +1041,11 @@ jobs:
           cd cli
           make dist VERSION="${OLCBOX_VERSION}" CRYPT_KEY_V1="${OLCBOX_CRYPT_KEY_V1}" NFPM="$RUNNER_TEMP/nfpm/nfpm"
       # K1 on every package, and on the image of each platform as the release
-      # pushes it (the same files, the same Dockerfile).
+      # pushes it (the same files, the same Dockerfile). The docker driver cannot
+      # export a foreign platform's image as a tar: buildx's container driver and
+      # qemu can.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: No Go in the packages and the image
         run: |
           set -euo pipefail
