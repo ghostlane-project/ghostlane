@@ -76,10 +76,11 @@ internal enum class DesktopLineEngine {
  */
 internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean, engine: DesktopLineEngine): DesktopRulesHome =
     when {
-        // A core line in the macOS tunnel: hev has no sing-box behind it, the tun carries everything into
-        // the engine's core, and the core's rules send what they do not claim straight out, by the
-        // session's bound sockets. In the Linux tunnel a core line's rules are not moved there yet.
-        engine == DesktopLineEngine.Rust && !isOlcrtc && needsRules && mode == DesktopMode.MacTun -> DesktopRulesHome.Core
+        // A core line in the macOS and Linux tunnels: the tun carries everything into the engine's core,
+        // and the core's rules send what they do not claim straight out, by the session's bound sockets
+        // (the physical interface, as the user).
+        engine == DesktopLineEngine.Rust && !isOlcrtc && needsRules &&
+            (mode == DesktopMode.MacTun || mode == DesktopMode.LinuxTun) -> DesktopRulesHome.Core
         engine == DesktopLineEngine.Go || !isOlcrtc -> desktopRulesHome(mode, isOlcrtc, needsRules)
         !needsRules -> DesktopRulesHome.Nowhere
         mode == DesktopMode.WindowsTun -> DesktopRulesHome.Nowhere

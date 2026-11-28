@@ -1,13 +1,16 @@
 package org.olcbox.app.vpn.desktop.engine.host
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.net.core.CoreRoomFront
+import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.engine.RoomEngine
 import org.olcbox.app.vpn.desktop.engine.RoomLaunch
@@ -50,7 +53,9 @@ internal class HostRoom(
             log("$NAME: no default interface was found, so the room's sockets are not bound to one")
         }
         // Refused here, before anything is started or written.
-        val session = HostRoomSession.text(request, bind)
+        // "Only blocked sites" reads Re:filter's list from the session's geodata directory, as a line does.
+        val geodataDir = if (HostRoomSession.blockedOnly(request)) runBlocking { HostGeodata.refilterDir() } else null
+        val session = HostRoomSession.text(request, bind, geodataDir)
         return object : RoomLaunch {
             override val provider: String = OlcRtcCommand.desktopProviderArg(request.location.bypassProvider)
             override fun config(): String = session
@@ -91,19 +96,25 @@ internal object HostRoomSession {
      * The session file's text for [request]: the room half (its carrier, rooms,
      * key, the resolver and the SOCKS port with its login), the front as the
      * core half when the request has one, and the interface to bind to.
+     * [geodataDir] is the session's geodata directory with Re:filter's list in
+     * it ([HostGeodata]); a front under "only blocked sites" is refused without it.
      * Throws IllegalStateException with a sentence for a front the core refuses.
      */
-    fun text(request: RoomRequest, bind: String?): String {
+    fun text(request: RoomRequest, bind: String?, geodataDir: String? = null): String {
         val roomLogin = SocksLogin(request.socksUser, request.socksPass)
         val core = request.front?.let { front ->
             val plan = CoreInbound.Plan(CoreInbound.Proxy(front.port, front.login))
-            CoreRoomFront.refusal(plan, roomLogin, front.routing)?.let {
+            CoreRoomFront.refusal(plan, roomLogin, front.routing, refilterDat = geodataDir != null)?.let {
                 throw IllegalStateException("${HostSession.REFUSED}: $it")
             }
-            CoreRoomFront.build(plan, roomLogin, front.routing, front.geodata, front.verboseLogs)
+            CoreRoomFront.build(plan, roomLogin, front.routing, front.geodata, front.verboseLogs, refilterDat = geodataDir != null)
         }
-        return HostSession.text(core = core, room = half(request, roomLogin, fronted = core != null).toString(), bind = bind)
+        return HostSession.text(core = core, room = half(request, roomLogin, fronted = core != null).toString(), bind = bind, geodataDir = geodataDir)
     }
+
+    /** Whether [request]'s front asks for "only blocked sites", which needs the geodata directory. */
+    fun blockedOnly(request: RoomRequest): Boolean =
+        request.front?.let { (CoreRouting.effective(it.routing) as? Routing.RuleBased)?.policy == Routing.Policy.BlockedOnly } ?: false
 
     /** The room half: what [HostProbe.Room] joins, with the resolver, the SOCKS port and its login. */
     fun half(request: RoomRequest, login: SocksLogin, fronted: Boolean): JsonObject {
