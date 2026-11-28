@@ -31,7 +31,6 @@ import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.LineStarted
 import org.olcbox.app.vpn.desktop.engine.ProbeEngine
 import org.olcbox.app.vpn.desktop.engine.RoomEngine
-import org.olcbox.app.vpn.desktop.engine.TunCore
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -51,10 +50,12 @@ import javax.naming.directory.InitialDirContext
  * A room is the same program with a room half ([HostRoom]), and the front
  * before it, with the session's rules, is the session's core half in that one
  * process; the probes are its one-shots ([HostProbe]). Nothing here starts
- * another program. The Windows tun's core is not on this engine: Windows keeps
- * the Go engines until its own flip, and asking this one for it is an error.
- * This is the desktop's default on Linux and macOS
- * ([org.olcbox.app.vpn.desktop.engine.DesktopEngines.defaultFor]).
+ * another program. The Windows tun has no core of its own: hev with its Wintun
+ * adapter ([org.olcbox.app.vpn.desktop.WindowsTunController]) hands the
+ * machine's traffic to the session's line, which is this engine's, and the line
+ * and the room are bound to the interface the machine leaves by (`bind`, the
+ * adapter's alias, IP_UNICAST_IF in the engine). This is the desktop's default
+ * on every system ([org.olcbox.app.vpn.desktop.engine.DesktopEngines.defaultFor]).
  *
  * [binary] is the program ([HostAssets.resolve]); [serverAddress] the
  * address of a server named by a hostname, asked before the engine starts
@@ -80,20 +81,9 @@ internal class HostEngine(
         host.log, binary, serverAddress, defaultInterface, sessionParent, lanSettings, lanNetworkProblem,
         lanPortHeld,
     )
-    override val windowsTun: TunCore = HostWindowsTun
     override val room: RoomEngine = HostRoom(binary, host.log, defaultInterface)
     override val probes: ProbeEngine =
         HostProbe(binary, sessionParent, serverAddress, host.log).probes()
-}
-
-/** The Windows tun's core is not ghostlane-engine's yet. */
-private object HostWindowsTun : TunCore {
-    override suspend fun start(config: String) =
-        error("ghostlane-engine does not run the Windows tunnel's core yet; Windows keeps the Go engines")
-
-    override fun isRunning(): Boolean = false
-    override fun runningProcess(): Process? = null
-    override fun stopNow() = Unit
 }
 
 private fun linuxDefaultInterface(): String? =

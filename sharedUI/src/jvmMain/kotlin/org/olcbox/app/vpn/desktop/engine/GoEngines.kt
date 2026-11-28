@@ -16,7 +16,6 @@ import java.nio.file.Path
  * process for each config. Moved here from the manager call for call.
  */
 internal class GoEngines(host: DesktopEngineHost) : DesktopEngine {
-    override val windowsTun: TunCore = GoTunCore(DesktopSingBoxController(onOutput = host.windowsTunOutput))
     override val line: LineEngine = GoLine(host.log)
     override val room: RoomEngine = GoRoom()
     override val probes: ProbeEngine = GoProbes()
@@ -116,13 +115,6 @@ private class GoLine(log: (String) -> Unit) : LineEngine {
         val xray = this != CoreShape.SingBox
         return { (!singBox || singBoxCore.isRunning()) && (!xray || xrayCore.isRunning()) }
     }
-}
-
-private class GoTunCore(private val core: DesktopSingBoxController) : TunCore {
-    override suspend fun start(config: String) = core.start(config)
-    override fun isRunning(): Boolean = core.isRunning()
-    override fun runningProcess(): Process? = core.runningProcess()
-    override fun stopNow() = core.stopNow()
 }
 
 /** The olcRTC engine: one program for a room, told everything in a yaml. */

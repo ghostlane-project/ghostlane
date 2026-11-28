@@ -19,7 +19,6 @@ import org.olcbox.app.vpn.desktop.engine.RoomEngine
 import org.olcbox.app.vpn.desktop.engine.RoomLaunch
 import org.olcbox.app.vpn.desktop.engine.RoomRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
-import org.olcbox.app.vpn.desktop.engine.TunCore
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -103,7 +102,6 @@ class PhysicalInterfaceWatchTest {
         val ups = mutableListOf<DesktopMode>()
         var downs = 0
 
-        override val windowsTun: TunCore get() = error("the Windows tun is not the watch's")
         override val probes: ProbeEngine get() = error("a probe is not the watch's")
 
         override fun sessionUp(mode: DesktopMode) {
