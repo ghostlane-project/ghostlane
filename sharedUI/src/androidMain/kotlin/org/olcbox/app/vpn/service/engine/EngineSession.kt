@@ -20,10 +20,8 @@ import org.olcbox.app.vpn.VpnStatus
  * network callbacks and the status; a session owns the engine. The service
  * asks a session and never names an engine's own classes.
  *
- * Two sessions exist while the switch does (RustCore.resolve): [GoEngineSession]
- * (the gomobile olcRTC runtime and the sing-box and Xray processes), the default,
- * and [RustEngineSession] (ghostlane-core). [EngineSwitch] is the one the
- * service holds.
+ * The service holds the one session, [RustEngineSession]: the gomobile olcRTC
+ * runtime and the sing-box and Xray child processes are gone from the app.
  */
 internal interface EngineSession {
     /** Hands the engine the service's socket protector and log sink; safe to repeat. */
@@ -128,52 +126,4 @@ internal interface EngineHost {
     suspend fun deviceHwid(): String?
     suspend fun storedBundle(): LocationBundleV4
     fun requestTransportRecovery(reason: String, fullRestart: Boolean)
-}
-
-/**
- * The session the service holds while there are two engines: each call goes to
- * the Go session, or to the Rust one when [rustCore] is set (RustCore.resolve,
- * read at every start command). Off by default.
- */
-internal class EngineSwitch(host: EngineHost) : EngineSession {
-    private val go by lazy { GoEngineSession(host) }
-    private val rust by lazy { RustEngineSession(host, go) }
-
-    /** The Rust core engine runs the transport instead of the Go cores. */
-    @Volatile
-    var rustCore = false
-
-    private val current: EngineSession get() = if (rustCore) rust else go
-
-    override fun installCallbacks() = current.installCallbacks()
-
-    override suspend fun start(
-        location: LocationConfig,
-        upstream: Network,
-        requestedGeneration: Long,
-        setErrorOnFailure: Boolean
-    ): Boolean = current.start(location, upstream, requestedGeneration, setErrorOnFailure)
-
-    override fun stop() {
-        current.stop()
-        // A START that turned the switch off still ends the keeper and its fetches (Rust fields only).
-        rust.stopRustRoomKeeper()
-    }
-
-    override fun isTransportRunning(): Boolean = current.isTransportRunning()
-
-    override fun diagnostics(): String = current.diagnostics()
-
-    override fun networkChanged(): Boolean = current.networkChanged()
-
-    override fun underlyingNetworkChanged(network: Network) = current.underlyingNetworkChanged(network)
-
-    override fun trimMemory(level: Int) = current.trimMemory(level)
-
-    /** The Rust session's keeper whichever engine the last start chose, as the stop above. */
-    override fun connected() = rust.connected()
-
-    override fun hevUdpLane(): String = current.hevUdpLane()
-
-    override val probeStarter: TransportProbe.Starter get() = current.probeStarter
 }

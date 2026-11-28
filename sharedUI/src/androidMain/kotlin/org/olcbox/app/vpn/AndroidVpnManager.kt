@@ -26,10 +26,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.net.LinkParser
-import org.olcbox.app.net.AndroidCoreProcess
 import org.olcbox.app.net.DirectDns
 import org.olcbox.app.net.TransportProbe
-import java.util.concurrent.atomic.AtomicInteger
 import org.olcbox.app.net.LocationKind
 import org.olcbox.app.net.OlcrtcDtls
 import org.olcbox.app.net.PathLatency
@@ -53,7 +51,6 @@ import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
 import org.olcbox.app.vpn.service.RustCore
 import org.olcbox.app.vpn.service.engine.RustProbe
-import java.io.File
 import java.security.SecureRandom
 
 class AndroidVpnManager(private val context: Context) : VpnManager {
@@ -284,7 +281,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         // Disconnected olcRTC rooms are deliberately not probed.
         //
         // There is no host to probe: a room is a meeting, not an address, so the only
-        // way to time one is `mobile.Ping`, which JOINS the room as a real client,
+        // way to time one joins the room as a real client,
         // waits for the session to become ready and tears it down. That is a genuine
         // peer occupying a node whose whole capacity is single digits, for a number
         // that is time-to-join rather than latency and is not comparable with the ICMP
@@ -329,38 +326,15 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override val canProbeTransports: Boolean get() = true
 
     /**
-     * Smart connect: the location's core, alone, beside whatever runs. On the
-     * engine the next start would run: the Rust core's own handle in this
-     * process (RustProbe) when the switch says Rust, else [goProbeStarter].
+     * Smart connect: the location's core, alone, beside whatever runs, on a
+     * handle of its own in this process (RustProbe).
      */
     override suspend fun probeTransport(locationConfig: LocationConfig): Boolean? =
         TransportProbe.passes(
             locationConfig,
             serverResolver = DirectDns.Servers(activeNetworkResolvers()),
-            starter = RustProbe.appStarter(appContext) ?: goProbeStarter
+            starter = RustProbe.appStarter(appContext)
         )
-
-    private val probeSerial = AtomicInteger()
-
-    // The location's Go core, in a work dir of its own so the service's core is
-    // never touched (AndroidCoreProcess keys its dir by label).
-    private val goProbeStarter = TransportProbe.Starter { spec, config ->
-        val label = "probe-${probeSerial.incrementAndGet()}"
-        val core = AndroidCoreProcess(
-            context = appContext,
-            soName = if (TransportProbe.usesXray(spec)) "libxraycore.so" else "libsingboxcore.so",
-            label = label,
-            argv = { bin, file -> listOf(bin, "run", "-c", file) },
-        )
-        core.start(config)
-        object : TransportProbe.Core {
-            override fun isRunning(): Boolean = core.isRunning()
-            override suspend fun stop() {
-                core.stop()
-                File(appContext.cacheDir, "olcbox-$label").deleteRecursively()
-            }
-        }
-    }
 
     /**
      * The resolvers of the network the phone is on, for a probe whose server is
@@ -393,36 +367,16 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? =
         OlcboxVpnState.channelProxy.takeIf { status.value is VpnStatus.Connected }
 
-    /** The switch as the next start would read it: a Rust core in the build and the setting on. */
-    private fun runsRust(): Boolean = RustCore.backend != null && RustCore.resolve(Intent(), appContext)
+    /** The core is the only engine: the export says its pin when the build carries it. */
+    private fun runsRust(): Boolean = RustCore.backend != null
 
     override suspend fun corePin(): String? =
         withContext(Dispatchers.IO) { if (runsRust()) CorePin.COMMIT else null }
 
     override suspend fun diagnosticsLog(): String = withContext(Dispatchers.IO) { buildString {
-        // A session the Rust core ran leaves no Go core files: its section is the
-        // pin and the core's own lines, which the session wrote through addLog.
-        if (runsRust()) {
-            RustCoreSection.lines(CorePin.COMMIT, OlcboxVpnState.logs.value).forEach(::appendLine)
-            return@buildString
-        }
-        val verbose = locationsDataSource.loadLocationBundle()?.routing?.verboseDebugLogs == true
-        // Android core stdout lives in app-private cache files. Include only a
-        // bounded tail in the ordinary scrubbed Export/Share path so no ADB is required.
-        // Warn-level output remains useful with the switch off; the larger tail
-        // is reserved for an explicitly requested detailed capture.
-        val maxLines = if (verbose) MAX_EXPORTED_CORE_LOG_LINES else MAX_EXPORTED_STANDARD_LOG_LINES
-        listOf("singbox", "xray").forEach { core ->
-            val log = File(File(appContext.cacheDir, "olcbox-$core"), "$core.log")
-            val lines = runCatching {
-                org.olcbox.app.net.AndroidCoreProcess.readLogTail(log, maxLines)
-            }.getOrElse { error -> listOf("could not read ${log.name}: ${error.message}") }
-            if (lines.isNotEmpty()) {
-                if (isNotEmpty()) appendLine()
-                appendLine("--- $core core ---")
-                lines.forEach(::appendLine)
-            }
-        }
+        // The core writes its own lines through addLog; there are no child-process
+        // core logs to read. The section is the pin and those lines.
+        RustCoreSection.lines(CorePin.COMMIT, OlcboxVpnState.logs.value).forEach(::appendLine)
     }.trimEnd() }
 
 
@@ -536,8 +490,6 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
-        const val MAX_EXPORTED_CORE_LOG_LINES = 2_000
-        const val MAX_EXPORTED_STANDARD_LOG_LINES = 200
         val random = SecureRandom()
     }
 }

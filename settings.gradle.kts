@@ -22,7 +22,6 @@ dependencyResolutionManagement {
     }
 }
 include(":sharedUI")
-include(":sharedUI:olcrtc-bin")
 
 // Gradle configures every project, so building the iOS framework on a Mac used
 // to fail on ":androidApp" wanting an Android SDK — for a build that never

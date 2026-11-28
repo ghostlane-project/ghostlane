@@ -49,19 +49,12 @@ import kotlin.coroutines.coroutineContext
 
 /**
  * ghostlane-core behind the seam (RustCore.backend: xray-rust's core through
- * its C ABI, the olcRTC client through UniFFI), as the service ran it behind
- * the developer switch. The code is the service's own, moved; [host] is the
- * service. What is not built on this engine yet is asked of a hook, one file
- * per concern: [RustProxyMode], [RustProbe], [RustLiveness].
- *
- * [go] is the Go session of the same service. While both engines are in the
- * build a Rust start still clears the Go cores, a stop still stops the Go
- * runtime, and what has no Rust form yet (the hooks say which) is the Go
- * session's.
+ * its C ABI, the olcRTC client through UniFFI). The code is the service's own,
+ * moved; [host] is the service. What is not built on this engine yet is asked
+ * of a hook, one file per concern: [RustProxyMode], [RustProbe], [RustLiveness].
  */
 internal class RustEngineSession(
-    private val host: EngineHost,
-    private val go: GoEngineSession
+    private val host: EngineHost
 ) : EngineSession, EngineHost by host {
 
     private var rustRoomsJob: Job? = null
@@ -77,22 +70,18 @@ internal class RustEngineSession(
     /** The running core line's config names the network's resolver (a Bypass line). */
     @Volatile private var rustCoreBypass = false
 
-    /** The Go runtime's: it is the one the service's process still carries callbacks for. */
-    override fun installCallbacks() = go.installCallbacks()
+    /** The Rust core installs its own callbacks when it starts; nothing to do here. */
+    override fun installCallbacks() = Unit
 
-    /** The Go engines first, as the service stopped them whichever engine ran, then this one's. */
-    override fun stop() {
-        go.stop()
-        stopRustEngines()
-    }
+    override fun stop() = stopRustEngines()
 
     override fun isTransportRunning(): Boolean = RustLiveness.isRunning(RustCore.backend)
 
-    override fun diagnostics(): String = RustLiveness.diagnostics(go)
+    override fun diagnostics(): String = RustLiveness.diagnostics()
 
     override fun networkChanged(): Boolean = resetRustCoreForNetwork()
 
-    override fun underlyingNetworkChanged(network: Network) = go.underlyingNetworkChanged(network)
+    override fun underlyingNetworkChanged(network: Network) = Unit
 
     override fun trimMemory(level: Int) = relieveRustCore(level)
 
@@ -110,7 +99,7 @@ internal class RustEngineSession(
      */
     override fun hevUdpLane(): String = if (activeCorePort != null) "tcp" else "udp"
 
-    override val probeStarter: TransportProbe.Starter get() = RustProbe.starter(go)
+    override val probeStarter: TransportProbe.Starter get() = RustProbe.starter(this)
 
     /**
      * An olcRTC room on the core's olc runtime or a core line on the xray core.
@@ -139,7 +128,6 @@ internal class RustEngineSession(
             backend.load()
             RustProxyMode.refusal(tun = tun, isOlc = isOlc, listenHost = socksListenHost)?.let { error(it) }
             stopRustEngines()
-            go.stopCores()
             if (isOlc) startRustOlc(backend, location, upstream, requestedGeneration, port) else startRustLine(backend, location, upstream, port, tun)
             coroutineContext.ensureActive()
             true
@@ -173,7 +161,7 @@ internal class RustEngineSession(
     private suspend fun startRustLine(backend: RustCoreBackend, location: LocationConfig, upstream: Network, port: Int, tun: Boolean) {
         // A core binds no network of its own; see startTransport.
         unbindProcessFromNetwork()
-        // The tun's session demands the app's login; proxy mode runs open, as the Go core line does (activeCoreLogin stays null).
+        // The tun's session demands the app's login; proxy mode runs open, as a core line does (activeCoreLogin stays null).
         val login = if (tun) SocksLogin.of(socksUsername, socksPassword) else null
         // Whether core.json names this network's resolver (the Bypass's direct side): such a
         // line is restarted on a network change rather than reset (resetRustCoreForNetwork).
@@ -216,7 +204,7 @@ internal class RustEngineSession(
                     refilterDat = geodataDir != null
                 )
             } else {
-                // Proxy mode: the phone's other apps use the port, open as on the Go core line (no
+                // Proxy mode: the phone's other apps use the port, left open as a core line is (no
                 // login). Its config (RustProxyMode) is not handed the list's file yet.
                 check(!blockedOnly) { PROXY_BLOCKED_ONLY_REFUSAL }
                 RustProxyMode.config(spec, port, socksListenHost, routing, geodata, verboseDebugLogs)
@@ -537,7 +525,7 @@ internal class RustEngineSession(
         /** Why proxy mode does not run the blocked-only mode on the Rust core yet. */
         const val PROXY_BLOCKED_ONLY_REFUSAL =
             "the Rust core runs the blocked-only mode only in VPN mode for now (proxy mode is not handed Re:filter's list): " +
-                "use VPN mode, another mode or the Go cores"
+                "use VPN mode or another mode"
     }
 }
 
