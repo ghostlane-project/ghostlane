@@ -204,8 +204,11 @@ class DesktopManagerRealTest {
     private fun ours(check: Check): List<String> =
         File("/proc").listFiles().orEmpty()
             .filter { it.name.all(Char::isDigit) }
-            .mapNotNull { runCatching { File(it, "cmdline").readBytes().decodeToString().replace('\u0000', ' ') }.getOrNull() }
-            .filter { it.contains(check.engine) || it.contains(check.hev) }
+            .mapNotNull { runCatching { File(it, "cmdline").readBytes().decodeToString().split('\u0000') }.getOrNull() }
+            // One argument that IS the program: the test's own `sudo env HEV_..._BINARY=<path> gradle`
+            // names the paths only inside `KEY=value` arguments and must not count.
+            .filter { args -> args.any { it == check.engine || it == check.hev } }
+            .map { it.joinToString(" ") }
 
     private fun world(service: String, check: Check): List<List<String>> =
         File(check.logs, "world-$service.log").takeIf { it.exists() }?.readLines().orEmpty()
