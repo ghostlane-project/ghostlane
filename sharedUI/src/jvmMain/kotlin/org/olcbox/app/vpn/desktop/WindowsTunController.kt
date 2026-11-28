@@ -17,6 +17,8 @@ internal data class WindowsTunPlan(
     val password: String = "",
     val dnsGuard: Boolean = true,
     val adapter: String = WindowsTunController.HEV_ADAPTER,
+    /** The adapter's own address; another tunnel's adapter beside it (a check's) needs a different one. */
+    val address: String = WindowsTunController.HEV_ADDRESS,
 )
 
 /** What a move of the way out does to the spared routes: [keep] stays, [remove] goes, [add] is laid. */
@@ -318,7 +320,7 @@ internal class WindowsTunController(
             appendLine("tunnel:")
             appendLine("  name: ${plan.adapter}")
             appendLine("  mtu: $HEV_MTU")
-            appendLine("  ipv4: $HEV_ADDRESS")
+            appendLine("  ipv4: ${plan.address}")
             appendLine()
             appendLine("socks5:")
             appendLine("  address: 127.0.0.1")
@@ -354,10 +356,13 @@ internal class WindowsTunController(
             §ErrorActionPreference = 'SilentlyContinue'
             for (§i = 0; §i -lt 60; §i++) {
               if ((Get-NetAdapter -Name ${plan.adapter.powershellString()}) -and
-                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '$HEV_ADDRESS' })) { 'up'; exit 0 }
+                  (Get-NetIPAddress -InterfaceAlias ${plan.adapter.powershellString()} -AddressFamily IPv4 | Where-Object { §_.IPAddress -eq '${plan.address}' })) { 'up'; exit 0 }
               Start-Sleep -Milliseconds 500
             }
-            throw 'the adapter ${plan.adapter} did not come up in 30 s'
+            §seen = (Get-NetAdapter | ForEach-Object { §_.Name + '=' + §_.Status }) -join ', '
+            §addresses = (Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { §_.InterfaceAlias + ' ' + §_.IPAddress + ' ' + §_.AddressState }) -join '; '
+            [Console]::Error.WriteLine('the adapter ${plan.adapter} did not come up in 30 s. Adapters: ' + §seen + '. Addresses: ' + §addresses)
+            exit 1
             """
         )
 
@@ -415,13 +420,20 @@ internal class WindowsTunController(
         fun moveSparedScript(move: SparedMove, physical: PhysicalRoute): String = psScript(
             buildString {
                 appendLine("§ErrorActionPreference = 'Stop'")
+                appendLine("function Step(§what, [scriptblock]§block) { try { & §block } catch { [Console]::Error.WriteLine(§what + ' failed: ' + §_.Exception.Message); exit 1 } }")
                 for (route in move.remove) {
                     appendLine(
-                        "Remove-NetRoute -DestinationPrefix ${route.prefix.powershellString()} -InterfaceIndex ${route.interfaceIndex} " +
-                            "-Confirm:§false -ErrorAction SilentlyContinue"
+                        "Step ${("Remove-NetRoute " + route.prefix + " if " + route.interfaceIndex).powershellString()} { " +
+                            "Remove-NetRoute -DestinationPrefix ${route.prefix.powershellString()} -InterfaceIndex ${route.interfaceIndex} " +
+                            "-Confirm:§false -ErrorAction SilentlyContinue }"
                     )
                 }
-                for (route in move.add) appendLine(sparedRouteLine(route, physical))
+                for (route in move.add) {
+                    appendLine(
+                        "Step ${("New-NetRoute " + route.prefix + " if " + route.interfaceIndex + " via " + physical.gateway).powershellString()} { " +
+                            sparedRouteLine(route, physical) + " }"
+                    )
+                }
             }
         )
 

@@ -51,7 +51,7 @@ class WindowsWatchRealTest {
 
     /** A second Wintun adapter, [ALT], with no default route yet. */
     private fun makeAlternativeAdapter() {
-        val plan = WindowsTunPlan(socksPort = 9, adapter = ALT, dnsGuard = false)
+        val plan = WindowsTunPlan(socksPort = 9, adapter = ALT, dnsGuard = false, address = "198.19.0.1")
         val config = work.resolve("alt.yml")
         Files.writeString(config, WindowsTunController.hevConfig(plan))
         hev = ProcessBuilder(hevExe().toString(), config.toString())
@@ -137,7 +137,7 @@ class WindowsWatchRealTest {
 
     /** `index|nexthop` for each route to [prefix], whatever interface it is on. */
     private fun routesTo(prefix: String): List<String> = powershell(
-        "Get-NetRoute -DestinationPrefix '$prefix' -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.InterfaceIndex)|\$(\$_.NextHop)\" }"
+        "Get-NetRoute -DestinationPrefix '$prefix' -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.InterfaceIndex)|\$(\$_.NextHop)\" }; exit 0"
     ).lines().map { it.trim() }.filter { it.isNotEmpty() }
 
     @Test fun aSparedRouteOfTheTunFollowsTheMoveAndBackAndNothingIsLeftAtTheStop() = runBlocking {
