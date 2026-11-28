@@ -1,6 +1,8 @@
 name: W4 scratch
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - rust/t/W4-scratch-run
 jobs:
   build-windows:
     runs-on: windows-latest
