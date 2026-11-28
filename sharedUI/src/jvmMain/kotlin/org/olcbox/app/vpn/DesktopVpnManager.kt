@@ -84,6 +84,7 @@ import org.olcbox.app.vpn.desktop.WindowsTunPlan
 import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.DesktopEngines
+import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
 import org.olcbox.app.vpn.desktop.engine.LineRequest
@@ -856,7 +857,7 @@ class DesktopVpnManager private constructor(
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             // Where the rules apply, if anywhere (desktopRulesHome). Global with
             // no rules of the user's keeps every core and tunnel as it was.
-            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules)
+            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
             if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
                 addLog("Routing: $desktopMode carries everything for this server")
             } else if (rulesHome != DesktopRulesHome.Nowhere) {
@@ -868,7 +869,7 @@ class DesktopVpnManager private constructor(
             val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
                 val routing = routingSettings.toRules(
                     DesktopPaths.appDataDir().resolve("rulesets").toString(),
-                    DirectDns.System
+                    coreDirectDns()
                 )
                 installRuleSets(routing)
                 routing
@@ -1812,6 +1813,18 @@ class DesktopVpnManager private constructor(
         }
         true
     }.getOrDefault(false)
+
+    /**
+     * Where the rules' direct names are asked. The Rust core cannot name the system's resolver, so on
+     * ghostlane-engine it is given the machine's own servers, read outside the tunnel
+     * ([DesktopDnsResolver.ownServers]; none left gives the public fallback). The Go cores ask the system.
+     */
+    private fun coreDirectDns(): DirectDns =
+        if (DesktopEngines.runsOnRust(engine)) DirectDns.Servers(DesktopDnsResolver.ownServers()) else DirectDns.System
+
+    /** Which engine runs this session's lines, as [rulesHomeWithoutDaemon] asks it. */
+    private fun lineEngineKind(): DesktopLineEngine =
+        if (DesktopEngines.runsOnRust(engine)) DesktopLineEngine.Rust else DesktopLineEngine.Go
 
     private fun stopDesktopCores() {
         engine.line.stopNow()
@@ -2909,9 +2922,9 @@ class DesktopVpnManager private constructor(
         val mode = current.desktopMode
         val socks = session.built.socks
         val isOlcrtc = location.kind == LocationKind.Olcrtc
-        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules)
+        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
         val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
-            routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), DirectDns.System)
+            routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), coreDirectDns())
         } else {
             Routing.Global
         }
@@ -4140,5 +4153,11 @@ internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
  * sing-box in the helper to hold rules. What that answers for the daemon is
  * nowhere, and a session says so in its log.
  */
-internal fun rulesHomeWithoutDaemon(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
-    desktopRulesHome(mode, isOlcrtc, needsRules).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }
+internal fun rulesHomeWithoutDaemon(
+    mode: DesktopMode,
+    isOlcrtc: Boolean,
+    needsRules: Boolean,
+    engine: DesktopLineEngine = DesktopLineEngine.Go
+): DesktopRulesHome =
+    // A room keeps what it had: its front is a sing-box the Mac helper no longer holds.
+    desktopRulesHome(mode, isOlcrtc, needsRules, if (isOlcrtc) DesktopLineEngine.Go else engine).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }

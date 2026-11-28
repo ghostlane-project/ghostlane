@@ -138,9 +138,10 @@ internal object CoreInbound {
         routing: Routing = Routing.Global,
         geodata: XrayGeodata.Lists? = null,
         verboseLogs: Boolean = false,
+        refilterDat: Boolean = false,
     ): String {
         refusal(plan)?.let { throw IllegalArgumentException("the Rust core cannot listen so: $it") }
-        val written = CoreConfig.build(spec, WRITTEN_OVER, routing, geodata, verboseLogs, socksPort = plan.own.port)
+        val written = CoreConfig.build(spec, WRITTEN_OVER, routing, geodata, verboseLogs, socksPort = plan.own.port, refilterDat = refilterDat)
         val config = Json.parseToJsonElement(written).jsonObject
         return JsonObject(config + ("inbounds" to buildJsonArray { addInbounds(plan) })).toString()
     }

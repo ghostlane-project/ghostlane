@@ -119,6 +119,7 @@ internal object HostSession {
         val bind: String?,
         val pinned: Boolean,
         val lan: CoreInbound.Lan?,
+        val geodataDir: String? = null,
     )
 
     /** The words a refused line is reported in, before what the builder says of it. */
@@ -139,6 +140,7 @@ internal object HostSession {
         request: LineRequest,
         serverAddress: suspend (String, DirectDns?) -> String,
         lanSettings: DesktopSocksProxySettings = DesktopSocksProxySettings(),
+        geodataDir: (suspend () -> String)? = null,
         defaultInterface: () -> String?,
     ): Line {
         val asked = request.spec
@@ -147,7 +149,9 @@ internal object HostSession {
         val spec = if (named) CoreLines.pinHost(asked, serverAddress(asked.host, request.serverResolver)) else asked
         CoreRefusal.of(spec)?.let { refuse(it) }
         val rules = CoreRouting.effective(request.routing) as? Routing.RuleBased
-        if (rules?.policy == Routing.Policy.BlockedOnly) refuse(CoreConfig.BLOCKED_ONLY_REFUSAL)
+        // "Only blocked sites" reads Re:filter's list from the engine's geodata directory.
+        val blockedOnly = rules?.policy == Routing.Policy.BlockedOnly
+        val geodataPath = if (blockedOnly) (geodataDir ?: refuse(CoreConfig.BLOCKED_ONLY_REFUSAL))() else null
         val geodata = (rules?.policy as? Routing.Policy.Bypass)?.let { XrayGeodata.lists(it.region) }
         val lan = if (lanSettings.shareOnLan) {
             CoreInbound.Lan(
@@ -157,17 +161,22 @@ internal object HostSession {
         } else null
         val plan = CoreInbound.Plan(CoreInbound.Proxy(request.port, request.login), lan)
         CoreInbound.refusal(plan)?.let { refuse(it) }
-        val core = CoreInbound.build(spec, plan, request.routing, geodata, request.verboseLogs)
+        val core = try {
+            CoreInbound.build(spec, plan, request.routing, geodata, request.verboseLogs, refilterDat = blockedOnly)
+        } catch (e: IllegalArgumentException) {
+            refuse(e.message ?: "the core refuses this config")
+        }
         val bind = request.bindInterface ?: if (request.autoDetectInterface) defaultInterface() else null
-        return Line(spec, core, bind, named, lan)
+        return Line(spec, core, bind, named, lan, geodataPath)
     }
 
     /** The session file: protocol 1, the halves given, and the interface to bind to. */
-    fun text(core: String?, room: String? = null, bind: String? = null): String = buildJsonObject {
+    fun text(core: String?, room: String? = null, bind: String? = null, geodataDir: String? = null): String = buildJsonObject {
         put("version", HostAssets.PROTOCOL)
         core?.let { put("core", Json.parseToJsonElement(it)) }
         room?.let { put("room", Json.parseToJsonElement(it)) }
         bind?.let { name -> putJsonObject("bind") { put("interface", name) } }
+        geodataDir?.let { put("geodata_dir", it) }
     }.toString()
 
     private fun refuse(why: String): Nothing = throw IllegalStateException("$REFUSED: $why")
@@ -276,7 +285,7 @@ private class HostLine(
     override suspend fun start(request: LineRequest): LineStarted = withContext(Dispatchers.IO) {
         LanCores.lineStopped()
         val (effective, lanProblem) = withoutLan(request, lanSettings())
-        val line = HostSession.line(request, serverAddress, effective, defaultInterface)
+        val line = HostSession.line(request, serverAddress, effective, HostGeodata::refilterDir, defaultInterface)
         stopEngine()
         val program = binary()
         checkProgram(program)
@@ -286,7 +295,7 @@ private class HostLine(
         }
         val run = HostProcess.run(
             program,
-            HostSession.text(line.core, bind = line.bind),
+            HostSession.text(line.core, bind = line.bind, geodataDir = line.geodataDir),
             onEvent = { event -> HostEvents.logLine(event)?.let { log("$NAME: $it") } },
             onStderr = { text -> log("$NAME: $text") },
             parent = sessionParent,
