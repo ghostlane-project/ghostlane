@@ -573,6 +573,9 @@ jobs:
         with:
           path: olcbox
 
+      # Not read by this job's build any more; the release's own test counts
+      # the pinned checkouts (test_gate_scripts.py), and the gate's pin is the
+      # same for every platform job.
       - name: Checkout olcrtc
         uses: actions/checkout@v7
         with:
@@ -581,17 +584,38 @@ jobs:
           path: olcrtc
           submodules: recursive
 
+      - name: The commit of the core
+        id: pin
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+          echo "hev=$(git rev-parse HEAD:androidApp/src/main/jni/hev-socks5-tunnel)" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/core.env" >> "$GITHUB_STEP_SUMMARY"
+
+      # The Core build's programs for the Macs, under its keys: a dry run of
+      # this job builds nothing when the Core build has run at the pin.
+      - name: The Core build's engine for the Macs
+        uses: actions/cache/restore@v6
+        with:
+          path: olcbox/out/apple
+          key: core-build-apple-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('olcbox/scripts/build-ghostlane-core-host.sh') }}
+
+      - name: The Core build's hev for the Macs
+        uses: actions/cache/restore@v6
+        with:
+          path: olcbox/out/hev-macos
+          key: core-build-hev-macos-${{ steps.pin.outputs.hev }}-${{ hashFiles('olcbox/scripts/build-hev-macos.sh') }}
+
       - name: Setup JDK
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: olcrtc/go.sum
 
       - name: Import Developer ID certificate
         if: needs.plan.outputs.signed == 'true'
@@ -626,38 +650,73 @@ jobs:
           echo "== identities available =="
           security find-identity -v -p codesigning "$kc"
 
-      - name: Bundle sing-box + Xray cores into the app
+      # One program at the app's one pin, for this runner's own architecture,
+      # and hev for the helper. The Core build's cache holds both when it has
+      # run at the pin and at this hev; otherwise they are built here, and a
+      # dry run proves the fallback.
+      - name: Build ghostlane-engine and hev at the pin
         working-directory: olcbox
         env:
-          XRAY_VERSION: "26.7.11"
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          if [ "$MATRIX_ARCH" = "arm64" ]; then target=aarch64-apple-darwin; else target=x86_64-apple-darwin; fi
+          engine="out/apple/bin/$target/ghostlane-engine"
+          if [ -s "$engine" ]; then
+            echo "ghostlane-engine for $target at ${GHOSTLANE_CORE_COMMIT:0:12}: restored from the Core build's cache"
+          else
+            GHOSTLANE_CORE_SRC="$RUNNER_TEMP/core-src" bash scripts/build-ghostlane-core-host.sh out/apple "$target"
+          fi
+          [ -s "$engine" ] || { echo "the build wrote no ghostlane-engine for $target" >&2; exit 1; }
+          cat out/apple/report.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+          if [ -s out/hev-macos/hev-socks5-tunnel ]; then
+            echo "hev for macOS: restored from the Core build's cache"
+          else
+            bash scripts/build-hev-macos.sh androidApp/src/main/jni/hev-socks5-tunnel out/hev-macos
+          fi
+          [ -s out/hev-macos/hev-socks5-tunnel ] || { echo "the build wrote no hev" >&2; exit 1; }
+          lipo -archs out/hev-macos/hev-socks5-tunnel
+
+      - name: Bundle the engine at the pin, and no Go core
+        working-directory: olcbox
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          if [ "$MATRIX_ARCH" = "arm64" ]; then target=aarch64-apple-darwin; else target=x86_64-apple-darwin; fi
           dest="desktopApp/src/main/resources/native"
           mkdir -p "$dest"
+          install -m 0755 "out/apple/bin/$target/ghostlane-engine" "$dest/ghostlane-engine"
 
-          # Built on this runner (its arch) from the patched tree, not
-          # downloaded: the release archives carry a Reality hello Xray-core
-          # servers refuse from v26.7 on (scripts/patches/sing-box-reality-hello.patch).
-          echo "== sing-box (darwin-${MATRIX_ARCH}, the patched tree) =="
-          bash scripts/build-singbox.sh "$dest/sing-box"
+          # An old build's Go cores have no place in this package. A name
+          # here would go into the jar and be found by K1 below.
+          for gone in sing-box xray olcrtc; do
+            if [ -e "$dest/$gone" ]; then echo "$dest/$gone is staged" >&2; exit 1; fi
+          done
+          echo "== bundled core =="; ls -la "$dest"
 
-          echo "== Xray (macos-${MATRIX_ARCH}) =="
-          if [ "$MATRIX_ARCH" = "arm64" ]; then xasset="Xray-macos-arm64-v8a.zip"; else xasset="Xray-macos-64.zip"; fi
-          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${xasset}" -o xray.zip
-          unzip -o xray.zip xray -d xray-extract
-          cp xray-extract/xray "$dest/xray"
+          # The version event is the engine's own word about its pin, its
+          # protocol and whether it links BoringSSL. Reading it here keeps
+          # a cached program of another pin out of the DMG.
+          "$dest/ghostlane-engine" version > "$RUNNER_TEMP/engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version":
+              sys.exit("its first line is no version event: %r" % (lines[:1],))
+          if v.get("protocol") != 1:
+              sys.exit("it reads protocol %r; this app writes protocol 1" % v.get("protocol"))
+          if v.get("pin") != sys.argv[2]:
+              sys.exit("it was built from %s, not from the pin %s" % (v.get("pin"), sys.argv[2]))
+          if not v.get("boringssl"):
+              sys.exit("it carries no BoringSSL")
+          print("ghostlane-engine %s at %s (%s; rooms %s, BoringSSL %s)" % (
+              v["engine"], v["pin"][:12], v["target"], v.get("rooms"), v["boringssl"]))
+          PY
 
-          chmod +x "$dest/sing-box" "$dest/xray"
-          echo "== bundled cores =="; ls -la "$dest"
-          # sed, not head: both cores print several lines in separate writes,
-          # and head closing the pipe after the first one hands the core a
-          # SIGPIPE - exit 141 under pipefail, at random, which failed the
-          # 1.0.421 Linux build. sed -n 1p reads everything and prints one.
-          "$dest/sing-box" version | sed -n 1p
-          "$dest/xray" version | sed -n 1p
-
-      - name: Sign the bundled cores
+      - name: Sign the bundled engine
         if: needs.plan.outputs.signed == 'true'
         working-directory: olcbox
         env:
@@ -665,20 +724,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
-            echo "No signing identity; leaving the cores as downloaded."
+            echo "No signing identity; leaving the engine as the Core build signed it."
             exit 0
           fi
 
-          # sing-box and Xray arrive from their own release pages carrying somebody
-          # else's signature or none at all. The app spawns them, so on Apple
-          # Silicon they must be signed too — an unsigned helper is killed on exec
-          # and the app looks broken for reasons nothing in its log explains.
-          for core in desktopApp/src/main/resources/native/sing-box desktopApp/src/main/resources/native/xray; do
-            codesign --force --timestamp --options runtime \
-              --entitlements desktopApp/macos-entitlements.plist \
-              --sign "$MACOS_SIGN_IDENTITY" "$core"
-            codesign --verify --verbose=2 "$core"
-          done
+          # The engine arrives from the Core build carrying an ad hoc
+          # signature. The app spawns it, and notarisation scans the jar it
+          # travels in, so it is signed with the team's identity here. (hev is
+          # signed by the build's embed step, inside the app's Resources.)
+          core=desktopApp/src/main/resources/native/ghostlane-engine
+          codesign --force --timestamp --options runtime \
+            --entitlements desktopApp/macos-entitlements.plist \
+            --sign "$MACOS_SIGN_IDENTITY" "$core"
+          codesign --verify --verbose=2 "$core"
 
       # No identity in a dry run: Gradle then builds the DMG unsigned, as it
       # does for a checkout without the secret.
@@ -687,7 +745,6 @@ jobs:
         env:
           MACOS_SIGN_IDENTITY: ${{ needs.plan.outputs.signed == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
         run: |
-          export OLCRTC_REPO="${{ github.workspace }}/olcrtc"
           ./gradlew -Polcbox.version="${OLCBOX_VERSION}" :desktopApp:packageReleaseDmg --stacktrace
 
       # Compose runs codesign itself and, on failure, prints the command and the
@@ -709,6 +766,92 @@ jobs:
         run: |
           mkdir -p dist
           cp desktopApp/build/compose/binaries/main-release/dmg/*.dmg "dist/Ghostlane-${OLCBOX_VERSION}-macos-${{ matrix.arch }}.dmg"
+
+      # Against the finished DMG, not the staging directory. Compose packs
+      # `resources.srcDir` into the app's jar, so a check that only looked at
+      # loose files would pass or fail for the wrong reason. The app is copied
+      # out of the image: the engine is run from what came out of the jar (the
+      # pin it prints is the one inside the asset), hev and the helper are the
+      # loose files the helper reads, and the signature is read as Gatekeeper
+      # reads it (a dry run's is ad hoc, and has to hold as well).
+      - name: The engine inside the DMG prints the pin, and the bundle's signature holds
+        working-directory: olcbox
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          dmg="dist/Ghostlane-${OLCBOX_VERSION}-macos-${ARCH}.dmg"
+          mnt="$RUNNER_TEMP/dmg-mount"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -readonly -noverify -noautoopen -mountpoint "$mnt" "$dmg" >/dev/null
+          trap 'hdiutil detach -force "$mnt" >/dev/null 2>&1 || true' EXIT
+          app=$(find "$mnt" -maxdepth 1 -name '*.app' -print -quit)
+          [ -n "$app" ] || { echo "no .app in the DMG" >&2; exit 1; }
+          rm -rf "$RUNNER_TEMP/app" && mkdir -p "$RUNNER_TEMP/app"
+          ditto "$app" "$RUNNER_TEMP/app/$(basename "$app")"
+          app="$RUNNER_TEMP/app/$(basename "$app")"
+
+          for need in Contents/MacOS/ProofKitTunnelDaemon Contents/Resources/hev-socks5-tunnel \
+                      Contents/Library/LaunchDaemons/org.olcbox.app.desktopApp.tunneld.plist; do
+            [ -e "$app/$need" ] || { echo "$need is missing from the app" >&2; exit 1; }
+          done
+          if [ -e "$app/Contents/Resources/sing-box" ]; then
+            echo "a sing-box is packaged in the app" >&2; exit 1
+          fi
+          echo "ok      the helper and hev are in the app, and no sing-box"
+
+          entries=$(mktemp)
+          find "$app" -type f -name '*.jar' -print0 | xargs -0 -r -I{} unzip -Z1 {} 2>/dev/null >>"$entries" || true
+          grep -qE "(^|/)native/ghostlane-engine$" "$entries" || {
+            echo "ghostlane-engine is missing from the app's jars" >&2; exit 1;
+          }
+          if grep -qE "(^|/)native/(sing-box|xray|olcrtc[^/]*|libolcrtc[^/]*)$" "$entries"; then
+            echo "A Go core is packaged in the app's jars" >&2; exit 1
+          fi
+          echo "ok      native/ghostlane-engine, and no Go core"
+
+          jar=""
+          while IFS= read -r -d '' candidate; do
+            if unzip -Z1 "$candidate" 2>/dev/null | grep -qx 'native/ghostlane-engine'; then
+              jar="$candidate"; break
+            fi
+          done < <(find "$app" -type f -name '*.jar' -print0)
+          [ -n "$jar" ] || { echo "no jar in the app holds native/ghostlane-engine" >&2; exit 1; }
+          engine=$(mktemp)
+          unzip -p "$jar" native/ghostlane-engine > "$engine"
+          chmod +x "$engine"
+          "$engine" version > "$RUNNER_TEMP/image-engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/image-engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version" or v.get("pin") != sys.argv[2]:
+              sys.exit("the engine in the DMG says %r, not pin %s" % (lines[:1], sys.argv[2]))
+          if v.get("protocol") != 1 or not v.get("boringssl"):
+              sys.exit("the engine in the DMG is not the app's: %r" % v)
+          print("inside the DMG: ghostlane-engine %s at %s" % (v["engine"], v["pin"][:12]))
+          PY
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --verify --strict "$app/Contents/Resources/hev-socks5-tunnel"
+          codesign --verify --strict "$app/Contents/MacOS/ProofKitTunnelDaemon"
+          echo "ok      codesign --verify --deep --strict holds for the app, hev and the helper"
+
+          # The helper's own directories of the app, as a file K1 can open:
+          # what root's daemon runs and copies from.
+          tar -C "$app" -cf "$RUNNER_TEMP/helper-dirs.tar" Contents/MacOS Contents/Resources Contents/Library
+          rm -rf "$RUNNER_TEMP/app" "$entries" "$engine"
+
+      # K1 against the finished DMG and the helper's directories. The macOS
+      # entries are gone from the allow list: Go anywhere in the asset, at any
+      # nesting, fails the job.
+      - name: No Go in the macOS asset
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-macos-${{ matrix.arch }}.dmg" \
+            "$RUNNER_TEMP/helper-dirs.tar"
 
       - name: Submit for notarisation
         id: notarise

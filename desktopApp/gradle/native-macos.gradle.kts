@@ -7,14 +7,7 @@
 import org.gradle.api.file.Directory
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.TaskProvider
 
-@Suppress("UNCHECKED_CAST")
-val registerOlcRtcBuildTask =
-    extra["registerOlcRtcBuildTask"] as (String, String, String, String) -> TaskProvider<Exec>
-@Suppress("UNCHECKED_CAST")
-val registerOlcRtcLibraryBuildTask =
-    extra["registerOlcRtcLibraryBuildTask"] as (String, String, String, String) -> TaskProvider<Exec>
 @Suppress("UNCHECKED_CAST")
 val generatedNativeResources = extra["generatedNativeResources"] as Provider<Directory>
 @Suppress("UNCHECKED_CAST")
@@ -33,51 +26,13 @@ val hostDesktopArch = extra["hostDesktopArch"] as String
 val desktopPackageName = extra["desktopPackageName"] as String
 val desktopPackageVersion = extra["desktopPackageVersion"] as String
 
-val buildOlcRtcDarwinArm64 = registerOlcRtcBuildTask(
-    "buildOlcRtcDarwinArm64",
-    "darwin",
-    "arm64",
-    "olcrtc-darwin-arm64"
-)
-
-val buildOlcRtcDarwinAmd64 = registerOlcRtcBuildTask(
-    "buildOlcRtcDarwinAmd64",
-    "darwin",
-    "amd64",
-    "olcrtc-darwin-amd64"
-)
-
-val buildOlcRtcLibDarwinArm64 = registerOlcRtcLibraryBuildTask(
-    "buildOlcRtcLibDarwinArm64",
-    "darwin",
-    "arm64",
-    "libolcrtc-darwin-arm64.dylib"
-)
-
-val buildOlcRtcLibDarwinAmd64 = registerOlcRtcLibraryBuildTask(
-    "buildOlcRtcLibDarwinAmd64",
-    "darwin",
-    "amd64",
-    "libolcrtc-darwin-amd64.dylib"
-)
-
-desktopNativeAssetTasks.add(buildOlcRtcDarwinArm64)
-desktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
-desktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
-desktopNativeAssetTasks.add(buildOlcRtcLibDarwinAmd64)
+// The Go cores are gone from the macOS package: a line and a room's front run
+// in ghostlane-engine, and the helper runs hev for the tun. Nothing here builds
+// olcrtc-darwin-* or libolcrtc-darwin-* any more, so nor can a packaging rule
+// put one in the DMG. K1 reads the finished asset; this is the half that keeps
+// the Go file from being made at all.
 
 if (hostDesktopOs == "macos") {
-    when (hostDesktopArch) {
-        "amd64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinAmd64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinAmd64)
-        }
-        "arm64" -> {
-            hostDesktopNativeAssetTasks.add(buildOlcRtcDarwinArm64)
-            hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
-        }
-    }
-
     // The JNA bridge the app uses to register the root tunnel daemon.
     //
     // Small on purpose: SMAppService is the only part of this that has to be
@@ -107,8 +62,7 @@ if (hostDesktopOs == "macos") {
             output.absolutePath
         )
 
-        // Same reason the olcRTC libraries are signed where they are made: this
-        // one is produced by the build, travels inside the app's jar, and Apple
+        // Signed where it is made: this one is produced by the build, travels inside the app's jar, and Apple
         // scans in there. An unsigned Mach-O in a jar has failed notarisation
         // before.
         val signTarget = outputFile.map { it.asFile.absolutePath }
@@ -136,8 +90,6 @@ desktopNativeArchs["macos"] = listOf("amd64", "arm64")
 // Made by the tasks above under build/generated/desktopNativeResources.
 generatedNativeResourcePathsByOs["macos"] = { arch: String ->
     buildList {
-        add("native/olcrtc-darwin-$arch")
-        add("native/libolcrtc-darwin-$arch.dylib")
         // Absent, the settings row for the system-wide tunnel quietly does
         // not appear and nothing anywhere says why — the bridge is loaded by
         // resource and a missing resource is indistinguishable from a
@@ -146,11 +98,12 @@ generatedNativeResourcePathsByOs["macos"] = { arch: String ->
     }
 }
 
-// Supplied under src/main/resources by whoever runs the build.
-bundledCorePathsByOs["macos"] = listOf(
-    "native/sing-box",
-    "native/xray"
-)
+// Supplied under src/main/resources by the release job, which builds the
+// program at scripts/ghostlane-core-pin.sh for the runner's own architecture
+// and signs it. Its `version` event carries the pin, and no Go core is
+// delivered beside it. hev, which the helper runs, is not a resource of the
+// jar: the embed step below puts it into the app's own Resources.
+bundledCorePathsByOs["macos"] = listOf("native/ghostlane-engine")
 
 // ---------------------------------------------------------------------------
 // macOS: the root tunnel daemon.
@@ -168,9 +121,16 @@ if (hostDesktopOs == "macos") {
         layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName.app")
     val daemonStageDir = layout.buildDirectory.dir("macos/tunneldaemon")
 
+    // hev for the helper: the universal program scripts/build-hev-macos.sh
+    // writes (the Core build keeps one per tree of hev). A loose file in the
+    // app's own Resources, because the helper is root's and copies it into its
+    // own directory before it runs it; inside the jar it could not be reached.
+    val hevProgram = providers.environmentVariable("GHOSTLANE_HEV_MACOS")
+        .orElse(rootProject.layout.projectDirectory.file("out/hev-macos/hev-socks5-tunnel").asFile.absolutePath)
+
     val embedMacosTunnelDaemon = tasks.register<Exec>("embedMacosTunnelDaemon") {
         group = "distribution"
-        description = "Builds, signs and embeds the root tunnel daemon into the .app."
+        description = "Builds, signs and embeds the root tunnel daemon and hev into the .app."
 
         dependsOn("createReleaseDistributable")
         inputs.dir(daemonSourceDir)
@@ -185,20 +145,28 @@ if (hostDesktopOs == "macos") {
             app_dir="${'$'}1"
             src="${'$'}2"
             stage="${'$'}3"
-            core_src="${'$'}4"
+            hev_src="${'$'}4"
             entitlements="${'$'}5"
 
+            # With no identity the package is signed ad hoc, which is how a dry
+            # release run and a developer's build prove that the bundle is whole
+            # (codesign --verify --deep --strict). An ad hoc daemon cannot pass
+            # its own peer check, so such a package is never one to publish: the
+            # release job signs with the team's identity or does not publish.
             identity="${'$'}{MACOS_SIGN_IDENTITY:-}"
+            stamp=(--timestamp)
             if [ -z "${'$'}identity" ]; then
-                echo "No signing identity — building without the tunnel daemon."
-                echo "An unsigned daemon cannot pass its own peer check and SMAppService will"
-                echo "not register it, so shipping one would only move the failure later."
-                mkdir -p "${'$'}stage"
-                exit 0
+                identity="-"
+                stamp=(--timestamp=none)
+                echo "No signing identity: the package is signed ad hoc."
             fi
 
             if [ ! -d "${'$'}app_dir" ]; then
                 echo "no app image at ${'$'}app_dir — this task ran against the wrong output" >&2
+                exit 1
+            fi
+            if [ ! -f "${'$'}hev_src" ]; then
+                echo "no hev at ${'$'}hev_src — scripts/build-hev-macos.sh writes it (GHOSTLANE_HEV_MACOS names another)" >&2
                 exit 1
             fi
 
@@ -213,12 +181,11 @@ if (hostDesktopOs == "macos") {
                 -o "${'$'}stage/ProofKitTunnelDaemon" \
                 "${'$'}src"/*.swift
 
-            # The core the daemon execs has to be a loose file in the bundle. It is
-            # otherwise only inside the jar, where a root daemon cannot reach it and
-            # could not verify a signature on it if it could.
+            # hev has to be a loose file in the bundle. It is otherwise nowhere a
+            # root daemon could reach it, and could not verify a signature on it.
             mkdir -p "${'$'}app_dir/Contents/Resources"
-            cp "${'$'}core_src" "${'$'}app_dir/Contents/Resources/sing-box"
-            chmod 0755 "${'$'}app_dir/Contents/Resources/sing-box"
+            cp "${'$'}hev_src" "${'$'}app_dir/Contents/Resources/hev-socks5-tunnel"
+            chmod 0755 "${'$'}app_dir/Contents/Resources/hev-socks5-tunnel"
 
             mkdir -p "${'$'}app_dir/Contents/Library/LaunchDaemons"
             cp "${'$'}src/org.olcbox.app.desktopApp.tunneld.plist" \
@@ -227,12 +194,12 @@ if (hostDesktopOs == "macos") {
 
             # Inside out. The outer signature seals what is nested, so anything
             # signed after the app is signed invalidates the app.
-            codesign --force --timestamp --options runtime \
-                --sign "${'$'}identity" "${'$'}app_dir/Contents/Resources/sing-box"
-            codesign --force --timestamp --options runtime \
+            codesign --force "${'$'}{stamp[@]}" --options runtime \
+                --sign "${'$'}identity" "${'$'}app_dir/Contents/Resources/hev-socks5-tunnel"
+            codesign --force "${'$'}{stamp[@]}" --options runtime \
                 --identifier "org.olcbox.app.desktopApp.tunneld" \
                 --sign "${'$'}identity" "${'$'}app_dir/Contents/MacOS/ProofKitTunnelDaemon"
-            codesign --force --timestamp --options runtime \
+            codesign --force "${'$'}{stamp[@]}" --options runtime \
                 --entitlements "${'$'}entitlements" \
                 --sign "${'$'}identity" "${'$'}app_dir"
             codesign --verify --deep --strict --verbose=2 "${'$'}app_dir"
@@ -245,19 +212,23 @@ if (hostDesktopOs == "macos") {
             # The daemon refuses any peer that does not satisfy PeerAuthority's
             # requirement string. A build whose app signature does not satisfy it
             # ships a daemon nothing can talk to, and the only symptom is the word
-            # "unauthorized" with nothing to say which side is wrong.
-            if ! codesign -dr - "${'$'}app_dir" 2>&1 | grep -q "org.olcbox.app.desktopApp"; then
-                echo "the app's designated requirement does not name the identifier the" >&2
-                echo "daemon pins — every command would be refused as unauthorized." >&2
-                exit 1
+            # "unauthorized" with nothing to say which side is wrong. An ad hoc
+            # signature names no identifier in its requirement, so only the
+            # team's own is read.
+            if [ "${'$'}identity" != "-" ]; then
+                if ! codesign -dr - "${'$'}app_dir" 2>&1 | grep -q "org.olcbox.app.desktopApp"; then
+                    echo "the app's designated requirement does not name the identifier the" >&2
+                    echo "daemon pins — every command would be refused as unauthorized." >&2
+                    exit 1
+                fi
             fi
-            echo "embedded: tunnel daemon + core"
+            echo "embedded: tunnel daemon + hev"
             """.trimIndent(),
             "bash",
             daemonAppImageDir.get().asFile.absolutePath,
             daemonSourceDir.asFile.absolutePath,
             daemonStageDir.get().asFile.absolutePath,
-            layout.projectDirectory.file("src/main/resources/native/sing-box").asFile.absolutePath,
+            hevProgram.get(),
             layout.projectDirectory.file("macos-entitlements.plist").asFile.absolutePath
         )
     }

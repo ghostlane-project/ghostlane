@@ -49,7 +49,6 @@ import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SessionFailover
 import org.olcbox.app.net.SmartConnect
 import org.olcbox.app.net.SocksLogin
-import org.olcbox.app.vpn.desktop.TunnelDaemonProtocol
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 import org.olcbox.app.desktop.DesktopOs
@@ -74,6 +73,7 @@ import org.olcbox.app.vpn.desktop.MacOsTunnelDaemon
 import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SessionBuild
 import org.olcbox.app.vpn.desktop.SessionEndpoint
+import org.olcbox.app.vpn.desktop.MacTunTraffic
 import org.olcbox.app.vpn.desktop.SingBoxTunTraffic
 import org.olcbox.app.vpn.desktop.TunnelTraffic
 import org.olcbox.app.vpn.desktop.WindowsTunController
@@ -819,7 +819,7 @@ class DesktopVpnManager private constructor(
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             // Where the rules apply, if anywhere (desktopRulesHome). Global with
             // no rules of the user's keeps every core and tunnel as it was.
-            val rulesHome = desktopRulesHome(desktopMode, isOlcrtc, routingSettings.needsRules)
+            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules)
             if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
                 addLog("Routing: $desktopMode carries everything for this server")
             } else if (rulesHome != DesktopRulesHome.Nowhere) {
@@ -940,6 +940,7 @@ class DesktopVpnManager private constructor(
                     coresAlive = startDesktopCore(
                         location, effectiveSocksPort, coreRouting, verboseLogs,
                         besideTun = desktopMode == DesktopMode.LinuxTun,
+                        bindsToWayOut = desktopMode == DesktopMode.LinuxTun || desktopMode == DesktopMode.MacTun,
                         resolvers = tunResolvers
                     )
                 }
@@ -980,23 +981,12 @@ class DesktopVpnManager private constructor(
                     socksSettings
                 )
                 DesktopMode.MacTun -> {
-                    val daemonRouting = if (rulesHome == DesktopRulesHome.Daemon) {
-                        routingSettings.toRules(TunnelDaemonProtocol.RULES_DIR, DirectDns.System)
-                    } else {
-                        Routing.Global
-                    }
                     letsEveryLineOut = startMacTun(
                         corePort = effectiveSocksPort,
                         isOlcrtc = isOlcrtc,
                         socksSettings = socksSettings,
                         location = location,
-                        routing = daemonRouting,
                         verboseLogs = verboseLogs,
-                        ruleFiles = if (daemonRouting is Routing.Rules) {
-                            daemonRuleFiles(daemonRouting)
-                        } else {
-                            emptyMap()
-                        },
                         lineComesAfter = tunFirst
                     )
                     if (tunFirst) {
@@ -1467,9 +1457,7 @@ class DesktopVpnManager private constructor(
         isOlcrtc: Boolean,
         socksSettings: DesktopSocksProxySettings,
         location: LocationConfig,
-        routing: Routing,
         verboseLogs: Boolean,
-        ruleFiles: Map<String, String>,
         /**
          * The line is started after this tunnel, behind it, because the kill
          * switch's block stands ([startDesktopMode]). Its server is then not
@@ -1479,52 +1467,30 @@ class DesktopVpnManager private constructor(
          */
         lineComesAfter: Boolean = false
     ): Boolean {
-        val verifyPort = allocateVerifyPort(corePort)
-        val trafficApi = newTrafficApi()
-        val lineBinaries = lineBinaryPaths()
+        // The Mac's tunnel is hev behind ghostlane-engine, asked of the helper
+        // in fields. The helper has no sing-box and no `start` verb, so there
+        // is no config, no rule-set file, no verify inbound and no local API:
+        // the line is checked through its own port, and the tunnel's bytes are
+        // read from its interface.
         val letsEveryLineOut = macOsTunController.start(
             corePort = corePort,
-            verifyPort = verifyPort,
-            // Only olcRTC enforces them; the cores' own inbounds have no auth.
+            verifyPort = 0,
+            // The tun's hev signs in to the engine's port with the login the
+            // olcRTC engine demands; the cores' own inbounds have no auth.
             username = if (isOlcrtc) socksSettings.username else "",
             password = if (isOlcrtc) socksSettings.password else "",
             serverHost = if (lineComesAfter) null else serverEndpoint(location)?.first,
-            // olcRTC relays UDP over a lossy video carrier, so DNS takes the
-            // reliable path. The native transports carry UDP themselves. It is
-            // the first line's answer for the whole session (lineBehindTun
-            // says what that costs a line that comes later).
             upstreamUdpIsLossy = isOlcrtc,
-            routing = routing,
+            routing = Routing.Global,
             verboseLogs = verboseLogs,
-            ruleFiles = ruleFiles,
-            bypassProcessPaths = lineBinaries,
-            trafficApi = trafficApi,
             killSwitch = _socksProxySettings.value.killSwitch,
-            namesProgramsFor = ownProgram()
+            namesProgramsFor = ownProgram(),
+            rustEngine = true,
         )
-        macTunVerifyPort = verifyPort
+        macTunVerifyPort = null
         macTunActive = true
-        tunnelTraffic = trafficApi?.let { SingBoxTunTraffic(it.port, it.secret, ownBinaries = lineBinaries) }
-        awaitMacTunServing(verifyPort)
+        tunnelTraffic = macOsTunController.engineTunName?.let { MacTunTraffic(it) }
         return letsEveryLineOut
-    }
-
-    /**
-     * Waits until the tunnel that was just started accepts a connection on its
-     * own listener ([TunnelSettle]): the helper's "running" is about a process,
-     * a second after it was started, and everything that follows here asks the
-     * tunnel something. Whatever it took is said when it was more than a
-     * moment, so that a Mac where it takes long shows it in its log.
-     */
-    private suspend fun awaitMacTunServing(verifyPort: Int) {
-        val waited = TunnelSettle.awaitListening(verifyPort, TunnelSettle.BUDGET_MS)
-        if (waited == null) {
-            logWhatTheTunnelSaid()
-            error("the tunnel was started but did not begin to serve within ${TunnelSettle.BUDGET_MS / 1_000} s")
-        }
-        if (waited >= SLOW_TO_SERVE_MS) {
-            addLog("macOS TUN: the tunnel began to serve $waited ms after the helper called it running")
-        }
     }
 
     /**
@@ -1691,6 +1657,12 @@ class DesktopVpnManager private constructor(
         routing: Routing,
         verboseLogs: Boolean,
         besideTun: Boolean = false,
+        /**
+         * The line binds its sockets to the interface the machine leaves by:
+         * beside the Linux tunnel, and behind the macOS tunnel, whose hev
+         * takes every route the engine's own sockets would otherwise follow.
+         */
+        bindsToWayOut: Boolean = besideTun,
         login: SocksLogin? = null,
         resolvers: List<String>? = null
     ): () -> Boolean {
@@ -1736,7 +1708,7 @@ class DesktopVpnManager private constructor(
                 verboseLogs = verboseLogs,
                 login = login,
                 serverResolver = serverResolver,
-                autoDetectInterface = besideTun,
+                autoDetectInterface = bindsToWayOut,
                 bindInterface = boundInterface,
                 anotherPort = ::allocateVerifyPort
             )
@@ -1813,12 +1785,6 @@ class DesktopVpnManager private constructor(
             Files.write(dir.resolve(file.name), org.olcbox.app.net.RuleSets.bytes(file))
         }
     }
-
-    /** The same files for the macOS daemon, which writes them itself, root-owned. */
-    private suspend fun daemonRuleFiles(routing: Routing.Rules): Map<String, String> =
-        org.olcbox.app.net.RuleSets.selected(routing).associate {
-            it.name to java.util.Base64.getEncoder().encodeToString(org.olcbox.app.net.RuleSets.bytes(it))
-        }
 
     /**
      * Port for the sing-box/Xray SOCKS listener.
@@ -2951,7 +2917,7 @@ class DesktopVpnManager private constructor(
         val mode = current.desktopMode
         val socks = session.built.socks
         val isOlcrtc = location.kind == LocationKind.Olcrtc
-        val rulesHome = desktopRulesHome(mode, isOlcrtc, routingSettings.needsRules)
+        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules)
         val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
             routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), DirectDns.System)
         } else {
@@ -3179,6 +3145,8 @@ class DesktopVpnManager private constructor(
                         startDesktopCore(
                             line.location, line.corePort, line.coreRouting, line.verboseLogs,
                             besideTun = line.desktopMode == DesktopMode.LinuxTun,
+                            bindsToWayOut = line.desktopMode == DesktopMode.LinuxTun ||
+                                line.desktopMode == DesktopMode.MacTun,
                             login = line.login,
                             resolvers = line.resolvers
                         )
@@ -4174,3 +4142,11 @@ internal fun preferredVerifyPort(corePort: Int): Int {
  */
 internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
     if (daemon == MacOsTunnelDaemon.Registration.Enabled) DesktopMode.MacTun else DesktopMode.SystemProxy
+
+/**
+ * [desktopRulesHome] as the macOS tunnel now is: hev behind the engine, with no
+ * sing-box in the helper to hold rules. What that answers for the daemon is
+ * nowhere, and a session says so in its log.
+ */
+internal fun rulesHomeWithoutDaemon(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
+    desktopRulesHome(mode, isOlcrtc, needsRules).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }

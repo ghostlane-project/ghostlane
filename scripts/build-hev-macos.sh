@@ -41,10 +41,13 @@ for arch in arm64 x86_64; do
   cp -R "$SRC/." "$work/$arch/"
   rm -rf "$work/$arch/.git"
   make -C "$work/$arch" clean > /dev/null
+  # -Wno-error: hev's Makefile has -Wall -Werror before CFLAGS, and a newer Xcode's
+  # clang (macos-latest) warns -Wuninitialized-const-pointer in hev-socks5-tunnel.c;
+  # the warnings still print.
   # STRIP=true: the Makefile strips what it links; here the program is kept
   # as linked and stripped as a copy.
   make -C "$work/$arch" -j"$(sysctl -n hw.ncpu)" exec PP="$cc" CC="$cc" STRIP=true REV_ID="$rev" \
-    CFLAGS="-arch $arch -mmacosx-version-min=$MIN" \
+    CFLAGS="-arch $arch -mmacosx-version-min=$MIN -Wno-error" \
     LFLAGS="-arch $arch -mmacosx-version-min=$MIN"
   test "$(lipo -archs "$work/$arch/bin/hev-socks5-tunnel")" = "$arch"
 done

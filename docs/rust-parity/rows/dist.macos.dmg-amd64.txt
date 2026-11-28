@@ -1,1 +1,1 @@
-macos | not-proven | - | -
+macos | proven | scripts/p6-tests/mac-flip.sh, .github/workflows/release.yml::The engine inside the DMG prints the pin, .github/workflows/release.yml::No Go in the macOS asset | The DMG carries ghostlane-engine at the pin and hev for the helper, the helper has no sing-box verb and sweeps root's old Go copies, and K1 reads the finished asset and the helper's directories
