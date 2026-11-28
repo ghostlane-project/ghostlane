@@ -24,8 +24,9 @@ set_app() { # <12-hex> for cores-pins, go.mod, go.sum
   printf 'replace x => github.com/ghostlane-project/olcrtc v0.0.0-20261119213407-%s\nrequire github.com/openlibrecommunity/olcrtc v0.0.0-20261119213407-%s\n' "$1" "$1" > "$tree/cli/go.mod"
   printf 'github.com/ghostlane-project/olcrtc v0.0.0-20261119213407-%s h1:x=\ngithub.com/ghostlane-project/olcrtc v0.0.0-20261119213407-%s/go.mod h1:y=\n' "$1" "$1" > "$tree/cli/go.sum"
 }
+echo "{}" > "$work/none.json"
 lib() { printf 'OLC_PIN=%s\n' "$1" > "$work/lib.sh"; }
-run() { PINS_AGREE_LIB="$work/lib.sh" bash "$script" "$tree" >"$work/out" 2>&1; }
+run() { PINS_AGREE_LIB="$work/lib.sh" PINS_AGREE_COMPARE="${CMP:-$work/none.json}" bash "$script" "$tree" >"$work/out" 2>&1; }
 
 lib "$a"; set_app "${a:0:12}"
 run && pass "all copies at one commit pass" || { fail "agreeing pins were refused"; cat "$work/out"; }
@@ -37,6 +38,22 @@ set_app "${a:0:12}"; sed -i "s/${a:0:12}/$b/" "$tree/cli/go.sum"
 if run; then fail "a go.sum that differs passed"; else pass "a go.sum that differs fails"; fi
 set_app "${a:0:12}"; lib "abc123"
 if run; then fail "a short OLC_PIN passed"; else pass "a short OLC_PIN fails"; fi
+
+# A compare answer: docs only passes, a code file fails, behind fails.
+set_app "$b"; lib "$a"
+printf '{"status":"ahead","ahead_by":3,"behind_by":0,"files":[{"filename":"README.md"},{"filename":"docs/versioning.md"},{"filename":"LICENSE"}]}' > "$work/docs.json"
+CMP="$work/docs.json" run && grep -q 'docs-only difference: 3 commits' "$work/out" && pass "a docs-only difference agrees" || { fail "a docs-only difference was refused"; cat "$work/out"; }
+printf '{"status":"ahead","ahead_by":3,"behind_by":0,"files":[{"filename":"README.md"},{"filename":"internal/engine/x.go"}]}' > "$work/code.json"
+if CMP="$work/code.json" run; then fail "a code change passed"; else pass "a code change fails"; fi
+printf '{"status":"diverged","ahead_by":1,"behind_by":2,"files":[{"filename":"README.md"}]}' > "$work/div.json"
+if CMP="$work/div.json" run; then fail "a diverged pin passed"; else pass "a diverged pin fails"; fi
+printf '{"status":"behind","ahead_by":0,"behind_by":2,"files":[]}' > "$work/behind.json"
+if CMP="$work/behind.json" run; then fail "an app pin ahead of OLC_PIN passed"; else pass "an app pin ahead fails"; fi
+rm "$tree/cli/go.mod" "$tree/cli/go.sum"
+CMP="$work/docs.json" run && pass "no cli/go.mod and go.sum is fine" || { fail "missing cli files refused"; cat "$work/out"; }
+rm "$tree/scripts/cores-pins.sh"
+if CMP="$work/docs.json" run; then fail "missing cores-pins.sh passed"; else pass "missing cores-pins.sh fails"; fi
+
 set_app "${a:0:12}"; lib "$a"; sed -i 's/^GHOSTLANE_CORE_COMMIT=.*/GHOSTLANE_CORE_COMMIT=zz/' "$tree/scripts/ghostlane-core-pin.sh"
 if run; then fail "a broken core pin passed"; else pass "a broken core pin fails"; fi
 

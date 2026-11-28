@@ -10,7 +10,13 @@
 #   - the CLI's copy: the olcrtc version in cli/go.mod (replace and require) and
 #     cli/go.sum.
 #
-# Fails when any of them names another commit than OLC_PIN, and says which.
+# Agree means the same 12-hex, or an app pin that is an ancestor of OLC_PIN with
+# only documentation between them (the olcRTC repo's compare API: every file is
+# *.md, under docs/, LICENSE* or README*). An app pin ahead of OLC_PIN or
+# diverged, or any other file, fails. cli/go.mod and cli/go.sum are read only
+# while they exist; scripts/cores-pins.sh always.
+# PINS_AGREE_COMPARE=<json file> stands in for the compare answer (tests);
+# GITHUB_TOKEN, when set, is sent as a header and never printed.
 #
 #   scripts/pins-agree.sh [root]
 # root defaults to the repository. PINS_AGREE_LIB=<file> reads the core's lib.sh
@@ -37,15 +43,43 @@ olc="$(sed -n 's/^OLC_PIN=//p' "$tmp/lib.sh")"
 [[ "$olc" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: OLC_PIN at core ${core:0:12} is not one 40-hex commit (got '$olc')"; exit 1; }
 echo "exits and core harness: OLC_PIN ${olc:0:12} (core ${core:0:12})"
 
+olc_repo="$(sed -n 's|^OLC_REPO=https://github.com/||p' "$tmp/lib.sh")"
+olc_repo="${olc_repo:-ghostlane-project/olcrtc}"
+
 tail_of() { grep -oE 'v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' | sed 's/.*-//' | sort -u; }
+
+# docs_only <app12>: 0 when the compare app12...OLC_PIN is ahead and touches docs only.
+docs_only() {
+  local cmp="$tmp/compare.json"
+  if [ -n "${PINS_AGREE_COMPARE:-}" ]; then cp "$PINS_AGREE_COMPARE" "$cmp"
+  else
+    local hdr=()
+    [ -n "${GITHUB_TOKEN:-}" ] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    curl -fsSL --retry 3 "${hdr[@]}" -H "Accept: application/vnd.github+json" -o "$cmp" \
+      "https://api.github.com/repos/${olc_repo}/compare/$1...${olc}" 2>/dev/null || return 1
+  fi
+  python3 -I - "$cmp" <<'PY'
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+files = d.get("files") or []
+if d.get("status") != "ahead" or d.get("behind_by", 0) != 0 or len(files) >= 300:
+    sys.exit(1)
+doc = re.compile(r"(^docs/|\.md$|^LICENSE|^README)")
+if not all(doc.search(f["filename"]) and (not f.get("previous_filename") or doc.search(f["previous_filename"])) for f in files):
+    sys.exit(1)
+print(d.get("ahead_by", len(d.get("commits", []))))
+PY
+}
+
 check() { # <label> <tails>
-  local label="$1" tails="$2" n
+  local label="$1" tails="$2" n n_commits
   n="$(printf '%s\n' "$tails" | grep -c . || true)"
   if [ "$n" -ne 1 ]; then bad "$label names $n engine commits ('$(echo $tails)'), one expected"; return; fi
   if [ "$tails" = "${olc:0:12}" ]; then echo "ok: $label $tails"
-  else bad "$label is at $tails, the exits' OLC_PIN is ${olc:0:12}"; fi
+  elif n_commits="$(docs_only "$tails")"; then echo "ok: $label $tails, agree (docs-only difference: $n_commits commits)"
+  else bad "$label is at $tails, the exits' OLC_PIN is ${olc:0:12}, and more than documentation lies between"; fi
 }
 check "scripts/cores-pins.sh OLCRTC_VERSION" "$(grep '^OLCRTC_VERSION=' "$root/scripts/cores-pins.sh" | tail_of)"
-check "cli/go.mod" "$(grep 'olcrtc' "$root/cli/go.mod" | tail_of)"
-check "cli/go.sum" "$(grep 'ghostlane-project/olcrtc' "$root/cli/go.sum" | tail_of)"
+[ ! -f "$root/cli/go.mod" ] || check "cli/go.mod" "$(grep 'olcrtc' "$root/cli/go.mod" | tail_of)"
+[ ! -f "$root/cli/go.sum" ] || check "cli/go.sum" "$(grep 'ghostlane-project/olcrtc' "$root/cli/go.sum" | tail_of)"
 exit "$fail"
