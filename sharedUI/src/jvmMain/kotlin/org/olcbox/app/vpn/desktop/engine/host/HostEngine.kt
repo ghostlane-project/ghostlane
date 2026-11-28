@@ -20,14 +20,12 @@ import org.olcbox.app.net.core.CoreLines
 import org.olcbox.app.net.core.CoreRefusal
 import org.olcbox.app.net.core.CoreRouting
 import org.olcbox.app.vpn.DesktopLanProxy
-import org.olcbox.app.vpn.DesktopMode
 import org.olcbox.app.vpn.DesktopSocksProxySettings
 import org.olcbox.app.vpn.LanCores
 import org.olcbox.app.vpn.desktop.DesktopDnsResolver
 import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
-import org.olcbox.app.vpn.desktop.engine.GoEngines
 import org.olcbox.app.vpn.desktop.engine.LineEngine
 import org.olcbox.app.vpn.desktop.engine.LineRequest
 import org.olcbox.app.vpn.desktop.engine.LineStarted
@@ -50,11 +48,13 @@ import javax.naming.directory.InitialDirContext
  * one builder writes (`net/core`), on the port the session names, demanding
  * the login it names or, in proxy mode, none.
  *
- * What is not on this engine yet is the Go engines' still, call for call:
- * the Windows tun's core, a room, the front before a room and the probes.
+ * A room is the same program with a room half ([HostRoom]), and the front
+ * before it, with the session's rules, is the session's core half in that one
+ * process; the probes are its one-shots ([HostProbe]). Nothing here starts
+ * another program. The Windows tun's core is not on this engine: Windows keeps
+ * the Go engines until its own flip, and asking this one for it is an error.
  * This is the desktop's default on Linux and macOS
- * ([org.olcbox.app.vpn.desktop.engine.DesktopEngines.defaultFor]); the Go
- * engines stay for what it hands to them, and for Windows.
+ * ([org.olcbox.app.vpn.desktop.engine.DesktopEngines.defaultFor]).
  *
  * [binary] is the program ([HostAssets.resolve]); [serverAddress] the
  * address of a server named by a hostname, asked before the engine starts
@@ -76,18 +76,24 @@ internal class HostEngine(
     lanNetworkProblem: () -> String? = { DesktopLanProxy.networkProblem(LanCores.currentSettings()) },
     lanPortHeld: (CoreInbound.Lan) -> Boolean = ::lanPortHeldByAnother,
 ) : DesktopEngine {
-    private val go = GoEngines(host)
-
     override val line: LineEngine = HostLine(
-        host.log, binary, serverAddress, defaultInterface, sessionParent, go.line, lanSettings, lanNetworkProblem,
+        host.log, binary, serverAddress, defaultInterface, sessionParent, lanSettings, lanNetworkProblem,
         lanPortHeld,
     )
-    override val windowsTun: TunCore get() = go.windowsTun
-    override val room: RoomEngine get() = go.room
-    override val probes: ProbeEngine get() = go.probes
+    override val windowsTun: TunCore = HostWindowsTun
+    override val room: RoomEngine = HostRoom(binary, host.log, defaultInterface)
+    override val probes: ProbeEngine =
+        HostProbe(binary, sessionParent, serverAddress, host.log).probes()
+}
 
-    override fun sessionUp(mode: DesktopMode) = go.sessionUp(mode)
-    override fun sessionDown() = go.sessionDown()
+/** The Windows tun's core is not ghostlane-engine's yet. */
+private object HostWindowsTun : TunCore {
+    override suspend fun start(config: String) =
+        error("ghostlane-engine does not run the Windows tunnel's core yet; Windows keeps the Go engines")
+
+    override fun isRunning(): Boolean = false
+    override fun runningProcess(): Process? = null
+    override fun stopNow() = Unit
 }
 
 private fun linuxDefaultInterface(): String? =
@@ -220,8 +226,8 @@ internal object HostServerNames {
 }
 
 /**
- * A core line on ghostlane-engine; the front before a room is the Go
- * engines' ([go]) until a room has its front in the engine itself.
+ * A core line on ghostlane-engine. The front before a room is not a line of
+ * its own: it is in the room's process ([HostRoom]).
  */
 private class HostLine(
     private val log: (String) -> Unit,
@@ -229,7 +235,6 @@ private class HostLine(
     private val serverAddress: suspend (String, DirectDns?) -> String,
     private val defaultInterface: () -> String?,
     private val sessionParent: Path?,
-    private val go: LineEngine,
     private val lanSettings: () -> DesktopSocksProxySettings,
     private val lanNetworkProblem: () -> String?,
     private val lanPortHeld: (CoreInbound.Lan) -> Boolean,
@@ -327,27 +332,24 @@ private class HostLine(
         LanCores.lineStopped()
     }
 
-    override suspend fun startFront(request: FrontRequest) = go.startFront(request)
+    override suspend fun startFront(request: FrontRequest) =
+        error("$NAME runs a room's front inside the room's own process; no front is started on its own")
 
     override fun alive(spec: OutboundSpec, routing: Routing): () -> Boolean = { current?.isAlive() == true }
 
-    override val frontAlive: () -> Boolean get() = go.frontAlive
+    override val frontAlive: () -> Boolean get() = { false }
 
-    override fun frontExitCode(): Int? = go.frontExitCode()
+    override fun frontExitCode(): Int? = null
 
-    override fun anyRunning(): Boolean = current?.isAlive() == true || go.anyRunning()
+    override fun anyRunning(): Boolean = current?.isAlive() == true
 
-    override fun exitCodeOrNull(): Int? = current?.exitCode() ?: go.exitCodeOrNull()
+    override fun exitCodeOrNull(): Int? = current?.exitCode()
 
-    override fun runningProcesses(): List<Process> =
-        listOfNotNull(current?.child?.takeIf { it.isAlive }) + go.runningProcesses()
+    override fun runningProcesses(): List<Process> = listOfNotNull(current?.child?.takeIf { it.isAlive })
 
-    override fun binaries(): List<Path> = listOfNotNull(runCatching { binary() }.getOrNull()) + go.binaries()
+    override fun binaries(): List<Path> = listOfNotNull(runCatching { binary() }.getOrNull())
 
-    override fun stopNow() {
-        stopEngine()
-        go.stopNow()
-    }
+    override fun stopNow() = stopEngine()
 
     private companion object {
         const val NAME = "ghostlane-engine"

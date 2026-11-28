@@ -84,9 +84,11 @@ import org.olcbox.app.vpn.desktop.WindowsTunPlan
 import org.olcbox.app.vpn.desktop.engine.DesktopEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopEngineHost
 import org.olcbox.app.vpn.desktop.engine.DesktopEngines
+import org.olcbox.app.vpn.desktop.engine.DesktopLineEngine
 import org.olcbox.app.vpn.desktop.engine.DesktopRulesHome
 import org.olcbox.app.vpn.desktop.engine.FrontRequest
 import org.olcbox.app.vpn.desktop.engine.LineRequest
+import org.olcbox.app.vpn.desktop.engine.RoomFront
 import org.olcbox.app.vpn.desktop.engine.RoomLaunch
 import org.olcbox.app.vpn.desktop.engine.RoomRequest
 import org.olcbox.app.vpn.desktop.engine.SessionHooks
@@ -856,7 +858,7 @@ class DesktopVpnManager private constructor(
             val isOlcrtc = location.kind == org.olcbox.app.net.LocationKind.Olcrtc
             // Where the rules apply, if anywhere (desktopRulesHome). Global with
             // no rules of the user's keeps every core and tunnel as it was.
-            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules)
+            val rulesHome = rulesHomeWithoutDaemon(desktopMode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
             if (routingSettings.needsRules && rulesHome == DesktopRulesHome.Nowhere) {
                 addLog("Routing: $desktopMode carries everything for this server")
             } else if (rulesHome != DesktopRulesHome.Nowhere) {
@@ -884,6 +886,13 @@ class DesktopVpnManager private constructor(
             }
             val dtlsProfile = OlcrtcDtls.profile(routingSettings.olcrtcChromeDtls)
             var frontPort: Int? = null
+            // An engine whose room runs the front itself is told the front's
+            // port with the room, so the port is taken before the room starts.
+            val frontInRoom = isOlcrtc && coreRouting is Routing.Rules && engine.room.frontInRoom
+            if (frontInRoom) {
+                stopDesktopCores()
+                frontPort = allocateCorePort().let { if (it == socksSettings.port) allocateVerifyPort(it) else it }
+            }
             // Which sing-box and Xray processes the line cannot do without, as
             // whoever starts them says it; none for a room reached directly.
             var coresAlive: (() -> Boolean)? = null
@@ -964,7 +973,11 @@ class DesktopVpnManager private constructor(
                         byHelper = engineByHelper,
                         directRulesFile = engineRules,
                         dtlsProfile = dtlsProfile,
-                        dnsServer = tunResolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current()
+                        dnsServer = tunResolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
+                        front = frontPort?.takeIf { frontInRoom }?.let {
+                            RoomFront(it, null, coreRouting as Routing.Rules, verboseLogs)
+                        },
+                        bindToWayOut = desktopMode == DesktopMode.LinuxTun || desktopMode == DesktopMode.MacTun
                     )
                     val olcRtcProcess = process ?: error("olcRTC process is missing")
                     waitForOlcRtcReady(
@@ -974,7 +987,15 @@ class DesktopVpnManager private constructor(
                         socksPort = socksSettings.port,
                         requestGeneration = requestGeneration
                     )
-                    if (coreRouting is Routing.Rules) {
+                    if (frontInRoom) {
+                        // The room's own process runs the front: it said it was
+                        // ready once every listener was bound, and its life is
+                        // the room's ([process]), so no core is watched beside it.
+                        val port = frontPort ?: error("the front's port is missing")
+                        if (!waitForCoreSocks(port)) error("the front before the room is not serving on 127.0.0.1:$port")
+                        activeCorePort = port
+                        addLog("front before olcRTC ready on 127.0.0.1:$port")
+                    } else if (coreRouting is Routing.Rules) {
                         frontPort = startOlcRtcFront(socksSettings, coreRouting, verboseLogs)
                         coresAlive = engine.line.frontAlive
                     }
@@ -1003,7 +1024,9 @@ class DesktopVpnManager private constructor(
 
             when (desktopMode) {
                 DesktopMode.LinuxTun -> startLinuxTun(
-                    effectiveSocksPort,
+                    // The front's port when a front stands before the room (on
+                    // the Rust engine it does in the tunnel too).
+                    frontPort ?: effectiveSocksPort,
                     requestGeneration,
                     // What hev has to send: the session's endpoint, as the tun's
                     // outbound sends it on the other systems.
@@ -1031,7 +1054,8 @@ class DesktopVpnManager private constructor(
                 )
                 DesktopMode.MacTun -> {
                     letsEveryLineOut = startMacTun(
-                        corePort = effectiveSocksPort,
+                        corePort = frontPort ?: effectiveSocksPort,
+                        frontStands = frontPort != null,
                         isOlcrtc = isOlcrtc,
                         socksSettings = socksSettings,
                         location = location,
@@ -1101,7 +1125,7 @@ class DesktopVpnManager private constructor(
                     startTunExitWatcher(tunProcess ?: error("TUN process is missing"))
                 }
             }
-            if (frontPort != null && !engine.line.frontAlive()) {
+            if (frontPort != null && !frontInRoom && !engine.line.frontAlive()) {
                 error("sing-box front exited before desktop proxy was enabled")
             }
 
@@ -1443,6 +1467,8 @@ class DesktopVpnManager private constructor(
      */
     private suspend fun startMacTun(
         corePort: Int,
+        /** The port is the front's, which demands no login; the engine's own, behind it, does. */
+        frontStands: Boolean,
         isOlcrtc: Boolean,
         socksSettings: DesktopSocksProxySettings,
         location: LocationConfig,
@@ -1466,8 +1492,8 @@ class DesktopVpnManager private constructor(
             verifyPort = 0,
             // The tun's hev signs in to the engine's port with the login the
             // olcRTC engine demands; the cores' own inbounds have no auth.
-            username = if (isOlcrtc) socksSettings.username else "",
-            password = if (isOlcrtc) socksSettings.password else "",
+            username = if (isOlcrtc && !frontStands) socksSettings.username else "",
+            password = if (isOlcrtc && !frontStands) socksSettings.password else "",
             serverHost = if (lineComesAfter) null else serverEndpoint(location)?.first,
             upstreamUdpIsLossy = isOlcrtc,
             routing = Routing.Global,
@@ -1813,6 +1839,10 @@ class DesktopVpnManager private constructor(
         true
     }.getOrDefault(false)
 
+    /** Which engine carries a session's line or room, for [desktopRulesHome]. */
+    private fun lineEngineKind(): DesktopLineEngine =
+        if (DesktopEngines.runsOnRust(engine)) DesktopLineEngine.Rust else DesktopLineEngine.Go
+
     private fun stopDesktopCores() {
         engine.line.stopNow()
         activeCorePort = null
@@ -1971,7 +2001,9 @@ class DesktopVpnManager private constructor(
         byHelper: Boolean = false,
         directRulesFile: Path?,
         dtlsProfile: String,
-        dnsServer: String = DesktopDnsResolver.current()
+        dnsServer: String = DesktopDnsResolver.current(),
+        front: RoomFront? = null,
+        bindToWayOut: Boolean = false
     ): Process {
         val binaries = engine.room.binaries()
         var lastException: Exception? = null
@@ -1991,7 +2023,9 @@ class DesktopVpnManager private constructor(
                     byHelper = byHelper,
                     dnsServer = dnsServer,
                     directRulesFile = directRulesFile,
-                    dtlsProfile = dtlsProfile
+                    dtlsProfile = dtlsProfile,
+                    front = front,
+                    bindToWayOut = bindToWayOut
                 )
             } catch (e: Exception) {
                 lastException = e
@@ -2178,7 +2212,9 @@ class DesktopVpnManager private constructor(
         byHelper: Boolean,
         dnsServer: String,
         directRulesFile: Path?,
-        dtlsProfile: String
+        dtlsProfile: String,
+        front: RoomFront? = null,
+        bindToWayOut: Boolean = false
     ): Process {
         val config = location.normalized()
         val roomLaunch = engine.room.launch(
@@ -2191,7 +2227,10 @@ class DesktopVpnManager private constructor(
                 socksPass = socksSettings.password,
                 dnsServer = dnsServer,
                 directRulesFile = directRulesFile,
-                dtlsProfile = dtlsProfile
+                dtlsProfile = dtlsProfile,
+                deviceId = locationsRepository.getDeviceIdentity(),
+                front = front,
+                bindToWayOut = bindToWayOut
             )
         )
         val provider = roomLaunch.provider
@@ -2242,7 +2281,7 @@ class DesktopVpnManager private constructor(
                         if (!isActive) break
 
                         if (logOutput) {
-                            val message = "rtc: $line"
+                            val message = "rtc: ${roomLaunch.said(line)}"
                             addLog(message)
                             // stdout is a second sink and bypasses addLog. Scrubbing an
                             // already-scrubbed line is a no-op, so this stays simple.
@@ -2254,7 +2293,7 @@ class DesktopVpnManager private constructor(
                         }
 
                         if (roomLaunch.saysFailed(line)) {
-                            startupFailure.complete(line)
+                            startupFailure.complete(roomLaunch.said(line))
                         }
                     }
                 }
@@ -2583,7 +2622,7 @@ class DesktopVpnManager private constructor(
             "The ${line.heldName()} stays as it is while the line is restarted behind it; " +
                 "nothing passes until it is back"
         )
-        if (line.isOlcrtc && line.desktopMode == DesktopMode.LinuxTun) {
+        if (line.isOlcrtc && line.desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun) {
             // pkexec asks at every launch, and no privileged process of ours
             // lives as long as the session. Said once per outage, where the
             // user looks when a password dialog opens by itself.
@@ -2707,7 +2746,7 @@ class DesktopVpnManager private constructor(
                 "Changing to the selected location behind the ${next.heldName()}, which stays as it is; " +
                     "nothing passes until the new line is up"
             )
-            if (next.isOlcrtc && next.desktopMode == DesktopMode.LinuxTun) {
+            if (next.isOlcrtc && next.desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun) {
                 // As for a restart: pkexec asks at every launch.
                 addLog(
                     "Linux TUN: olcRTC runs as root to bypass the TUN route, so starting it for this room needs " +
@@ -2909,7 +2948,7 @@ class DesktopVpnManager private constructor(
         val mode = current.desktopMode
         val socks = session.built.socks
         val isOlcrtc = location.kind == LocationKind.Olcrtc
-        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules)
+        val rulesHome = rulesHomeWithoutDaemon(mode, isOlcrtc, routingSettings.needsRules, lineEngineKind())
         val coreRouting: Routing = if (rulesHome == DesktopRulesHome.Core) {
             routingSettings.toRules(DesktopPaths.appDataDir().resolve("rulesets").toString(), DirectDns.System)
         } else {
@@ -2924,6 +2963,7 @@ class DesktopVpnManager private constructor(
             else -> socks
         }
         val coresAlive: (() -> Boolean)? = when {
+            fronted && engine.room.frontInRoom -> null
             fronted -> engine.line.frontAlive
             isOlcrtc -> null
             else -> {
@@ -3121,6 +3161,9 @@ class DesktopVpnManager private constructor(
     private suspend fun startDeadProcesses(line: SessionLine, requestGeneration: Long): Boolean {
         try {
             if (line.isOlcrtc && process?.isAlive != true) {
+                // The front stands in the room's process on the endpoint's port,
+                // where a core of the line before this one may still be.
+                if (line.frontPort != null && engine.room.frontInRoom) stopDesktopCores()
                 requireNoListener(line.socksSettings.port)
                 startLineEngine(line, requestGeneration)
                 if (requestGeneration != generation) return false
@@ -3563,7 +3606,7 @@ class DesktopVpnManager private constructor(
             if (requestGeneration != generation) return Trial.Over
 
             addLog("Starting $name behind the ${own.heldName()}, in the place of the line that is not answering")
-            if (candidate.isOlcrtc && candidate.desktopMode == DesktopMode.LinuxTun) {
+            if (candidate.isOlcrtc && candidate.desktopMode == DesktopMode.LinuxTun && engine.room.rootBesideLinuxTun) {
                 // Only where the line that failed is a room whose own restart
                 // has been asking ([LineSupervision.linesToTry]).
                 addLog(
@@ -3804,7 +3847,11 @@ class DesktopVpnManager private constructor(
                 macOsTunController.runsLineUnder(_socksProxySettings.value.killSwitch),
             directRulesFile = line.engineRules,
             dtlsProfile = line.dtlsProfile,
-            dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current()
+            dnsServer = line.resolvers?.let(DesktopDnsResolver::engineServers) ?: DesktopDnsResolver.current(),
+            front = (line.coreRouting as? Routing.Rules)?.let { rules ->
+                line.frontPort?.takeIf { engine.room.frontInRoom }?.let { RoomFront(it, line.login, rules, line.verboseLogs) }
+            },
+            bindToWayOut = line.desktopMode == DesktopMode.LinuxTun || line.desktopMode == DesktopMode.MacTun
         )
         process = started
         try {
@@ -4140,5 +4187,10 @@ internal fun macOsModeFor(daemon: MacOsTunnelDaemon.Registration): DesktopMode =
  * sing-box in the helper to hold rules. What that answers for the daemon is
  * nowhere, and a session says so in its log.
  */
-internal fun rulesHomeWithoutDaemon(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean): DesktopRulesHome =
-    desktopRulesHome(mode, isOlcrtc, needsRules).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }
+internal fun rulesHomeWithoutDaemon(
+    mode: DesktopMode,
+    isOlcrtc: Boolean,
+    needsRules: Boolean,
+    engine: DesktopLineEngine = DesktopLineEngine.Go
+): DesktopRulesHome =
+    desktopRulesHome(mode, isOlcrtc, needsRules, engine).let { if (it == DesktopRulesHome.Daemon) DesktopRulesHome.Nowhere else it }
