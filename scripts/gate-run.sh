@@ -282,7 +282,16 @@ cmd_compare() {
   cur="$(cd "$(dirname "${cur}")" && pwd)/$(basename "${cur}")"
   cd "${engine_dir}"
   # Flags before the files: Go's FlagSet stops at the first positional argument.
-  go run ./cmd/gate-report compare -severity "${severity}" "${prev}" "${cur}"
+  # `go run` reports the program's exit 2 (a regression at severity fail) as
+  # its own exit 1 and a last stderr line "exit status 2"; gate.yml tells the
+  # two apart, so the 2 is put back.
+  local err rc=0
+  err="$(mktemp)"
+  go run ./cmd/gate-report compare -severity "${severity}" "${prev}" "${cur}" 2>"${err}" || rc=$?
+  cat "${err}" >&2
+  if [ "${rc}" -eq 1 ] && [ "$(tail -n 1 "${err}")" = "exit status 2" ]; then rc=2; fi
+  rm -f "${err}"
+  return "${rc}"
 }
 
 cmd_merge() {
