@@ -2509,6 +2509,9 @@ class DesktopVpnManager private constructor(
                 if (requestGeneration != generation || sessionLine !== line) return@withLock
                 if (lineRestartJob != null) return@withLock
                 addLog("The machine now leaves by ${interfaceName ?: "no interface"}")
+                // Windows hands the line and the room the alias it read before the tun: the next
+                // start binds to the new one (Linux and macOS read it at each start).
+                if (interfaceName != null && sessionLine?.desktopMode == DesktopMode.WindowsTun) windowsWayOut = interfaceName
                 val running = process
                 process = null
                 stopDesktopCores()

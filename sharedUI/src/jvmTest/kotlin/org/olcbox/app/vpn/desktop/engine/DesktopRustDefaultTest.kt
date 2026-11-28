@@ -39,13 +39,26 @@ class DesktopRustDefaultTest {
         }
     }
 
-    /** The watch reads the way out by `ip route` or `route get`: on Windows it would read nothing, so none wraps it. */
+    /** Every desktop system that carries a tun is watched; the watch reads the way out by its own system's call. */
     @Test
-    fun windowsEngineIsNotWrappedInAWatchThatReadsNothing() {
-        assertTrue(DesktopEngines.defaultFor(DesktopOs.Windows, host) is HostEngine)
-        for (os in listOf(DesktopOs.Linux, DesktopOs.MacOS)) {
-            assertTrue(DesktopEngines.defaultFor(os, host) is WatchedEngine, "$os is watched")
+    fun linuxMacAndWindowsAreWatchedForAChangeOfTheWayOut() {
+        for (os in listOf(DesktopOs.Linux, DesktopOs.MacOS, DesktopOs.Windows)) {
+            val engine = DesktopEngines.defaultFor(os, host)
+            assertTrue(engine is WatchedEngine, "$os is watched")
+            assertTrue((engine as WatchedEngine).inner is HostEngine, "$os is watched on ghostlane-engine")
         }
+    }
+
+    /** A source test: the manager cannot be started in a test. On a move the next start binds to the new alias. */
+    @Test
+    fun aMoveOnWindowsGivesTheNewAliasToTheNextLineAndRoom() {
+        val manager = File("src/jvmMain/kotlin/org/olcbox/app/vpn/DesktopVpnManager.kt").readText()
+        val body = manager.substringAfter("private fun restartBehindTunOnNewWayOut").substringBefore("\n    }\n")
+        assertTrue(
+            Regex("""DesktopMode\.WindowsTun\) windowsWayOut = interfaceName""").containsMatchIn(body),
+            "a move on Windows must replace windowsWayOut before the line restarts: $body"
+        )
+        assertTrue(body.indexOf("windowsWayOut = interfaceName") < body.indexOf("restartLineBehindTun"))
     }
 
     @Test

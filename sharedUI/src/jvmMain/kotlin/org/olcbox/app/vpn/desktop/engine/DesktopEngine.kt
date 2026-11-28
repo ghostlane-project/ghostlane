@@ -95,18 +95,20 @@ internal object DesktopEngines {
 
     /**
      * What a build runs on [os]: ghostlane-engine, whose packages carry no Go
-     * core. On Linux and macOS it is watched for a change of the way out. On
-     * Windows it is not wrapped in the watch: the watch reads the default
-     * interface by `ip route` or `route get` and reads nothing on Windows
-     * ([PhysicalInterfaceWatch]'s reader answers null there), so it would
-     * report no move, ever. The manager reads the way out itself, before the
-     * tun (`WindowsTunController.physicalRoute`), and hands its alias to every
-     * line and room as the session's `bind` (IP_UNICAST_IF in the engine). A
-     * watch on Windows is the interface-watch task's.
+     * core, watched on Linux, macOS and Windows for a change of the way out.
+     * On Windows the manager reads the way out before the tun
+     * (`WindowsTunController.physicalRoute`) and hands its alias to every line
+     * and room as the session's `bind` (IP_UNICAST_IF in the engine); the watch
+     * asks the same question again (`physicalAliasNow`) and, when the answer
+     * is another adapter, the session restarts the line behind the tun, and the
+     * manager takes the new alias for the line and the room.
      */
     fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = when (os) {
         DesktopOs.Linux, DesktopOs.MacOS -> PhysicalInterfaceWatch.around(HostEngine(host), host)
-        DesktopOs.Windows, DesktopOs.Other -> HostEngine(host)
+        DesktopOs.Windows -> PhysicalInterfaceWatch.around(
+            HostEngine(host), host, intervalMs = PhysicalInterfaceWatch.INTERVAL_WINDOWS_MS,
+        )
+        DesktopOs.Other -> HostEngine(host)
     }
 
     /** Whether [engine] is ghostlane-engine's, watched or not. */

@@ -53,6 +53,7 @@ on:
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch.kt
       - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopDnsResolver.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/PhysicalInterfaceWatch*Test.kt
+      - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsWatchRealTest.kt
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/engine/host/**
       - sharedUI/src/jvmTest/resources/ghostlane-engine/**
       - sharedUI/src/jvmTest/kotlin/org/olcbox/app/net/core/RoomFrontDumpTest.kt
