@@ -236,7 +236,7 @@ internal class PhysicalInterfaceWatch(
  * [inner] in everything else, call for call.
  */
 internal class WatchedEngine(
-    private val inner: DesktopEngine,
+    val inner: DesktopEngine,
     val watch: PhysicalInterfaceWatch,
     read: () -> String?,
 ) : DesktopEngine by inner {

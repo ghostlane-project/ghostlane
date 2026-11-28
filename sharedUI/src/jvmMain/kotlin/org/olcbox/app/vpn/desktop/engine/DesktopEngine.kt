@@ -6,7 +6,11 @@ import org.olcbox.app.net.OutboundSpec
 import org.olcbox.app.net.Routing
 import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TransportProbe
+import org.olcbox.app.desktop.DesktopOs
+import org.olcbox.app.desktop.DesktopPaths
 import org.olcbox.app.vpn.DesktopMode
+import org.olcbox.app.vpn.desktop.WatchedEngine
+import org.olcbox.app.vpn.desktop.engine.host.HostEngine
 import java.nio.file.Path
 
 /**
@@ -87,7 +91,14 @@ internal class DesktopEngineHost(
 /** Which engine a manager gets. One place, so that changing it touches no manager. */
 internal object DesktopEngines {
     @Volatile
-    var factory: (DesktopEngineHost) -> DesktopEngine = { host -> GoEngines(host) }
+    var factory: (DesktopEngineHost) -> DesktopEngine = { host -> defaultFor(DesktopPaths.os, host) }
+
+    /** What a build runs on [os]. */
+    fun defaultFor(os: DesktopOs, host: DesktopEngineHost): DesktopEngine = GoEngines(host)
+
+    /** Whether [engine] is ghostlane-engine's, watched or not. */
+    fun runsOnRust(engine: DesktopEngine): Boolean =
+        engine is HostEngine || (engine as? WatchedEngine)?.inner is HostEngine
 
     fun create(host: DesktopEngineHost): DesktopEngine = factory(host)
 }
