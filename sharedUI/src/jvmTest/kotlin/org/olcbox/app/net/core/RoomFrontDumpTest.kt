@@ -349,9 +349,9 @@ class RoomFrontDumpTest {
                     "the Go engines, $mode olcrtc=$olcrtc rules=$needsRules",
                 )
             }
-            // The macOS and Windows tunnels' core lines are the exceptions (MacRoutingTest, WindowsDefaultTest):
-            // their rules are the core's.
-            if ((mode == DesktopMode.MacTun || mode == DesktopMode.WindowsTun) && needsRules) continue
+            // The tunnels' core lines are the exceptions (MacRoutingTest, WindowsDefaultTest): in the macOS,
+            // the Linux and the Windows tunnel their rules are the core's.
+            if ((mode == DesktopMode.MacTun || mode == DesktopMode.LinuxTun || mode == DesktopMode.WindowsTun) && needsRules) continue
             assertEquals(
                 desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules),
                 desktopRulesHome(mode, isOlcrtc = false, needsRules = needsRules, engine = DesktopLineEngine.Rust),

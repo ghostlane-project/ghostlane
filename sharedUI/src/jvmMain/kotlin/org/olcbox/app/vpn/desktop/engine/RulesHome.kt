@@ -76,20 +76,20 @@ internal enum class DesktopLineEngine {
  *   the manager reads before the tun comes up and hands to the line and the
  *   room alike; the tun's own default route is never consulted for them.
  *
- * The same holds for a core line in the macOS and Windows tunnels, where hev
- * sits in front of the engine and the engine's core sends what its rules do
- * not claim straight out by the bound sockets. The Windows DNS guard blocks
- * only the system's resolver service (svchost's Dnscache); the engine asks
- * the names of its direct rules itself, from sockets bound to the physical
- * interface. In the Linux tunnel a core line's rules are not moved yet.
+ * The same holds for a core line in the macOS, Linux and Windows tunnels,
+ * where hev sits in front of the engine and the engine's core sends what its
+ * rules do not claim straight out by the bound sockets. The Windows DNS guard
+ * blocks only the system's resolver service (svchost's Dnscache); the engine
+ * asks the names of its direct rules itself, from sockets bound to the
+ * physical interface.
  */
 internal fun desktopRulesHome(mode: DesktopMode, isOlcrtc: Boolean, needsRules: Boolean, engine: DesktopLineEngine): DesktopRulesHome =
     when {
-        // A core line in the macOS or Windows tunnel: hev has no sing-box behind it, the tun carries
-        // everything into the engine's core, and the core's rules send what they do not claim straight
-        // out, by the session's bound sockets. In the Linux tunnel a core line's rules are not moved there yet.
+        // A core line in any of the tunnels (macOS, Linux, Windows): the tun carries everything into the
+        // engine's core, and the core's rules send what they do not claim straight out, by the session's
+        // bound sockets (the physical interface; on Windows by the adapter's alias).
         engine == DesktopLineEngine.Rust && !isOlcrtc && needsRules &&
-            (mode == DesktopMode.MacTun || mode == DesktopMode.WindowsTun) -> DesktopRulesHome.Core
+            (mode == DesktopMode.MacTun || mode == DesktopMode.LinuxTun || mode == DesktopMode.WindowsTun) -> DesktopRulesHome.Core
         engine == DesktopLineEngine.Go || !isOlcrtc -> desktopRulesHome(mode, isOlcrtc, needsRules)
         !needsRules -> DesktopRulesHome.Nowhere
         else -> DesktopRulesHome.Core
