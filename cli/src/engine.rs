@@ -464,6 +464,29 @@ pub struct EngineChild {
     session: Mutex<Option<SessionFile>>,
 }
 
+/// `spawn`, tried again a few times while the program's file is busy: a
+/// program written a moment ago can still be open for writing in a process
+/// forked by another thread, and exec says so with ETXTBSY until that child
+/// has exec'd.
+trait SpawnRetrying {
+    fn spawn_retrying(&mut self) -> std::io::Result<Child>;
+}
+
+impl SpawnRetrying for Command {
+    fn spawn_retrying(&mut self) -> std::io::Result<Child> {
+        let mut tries = 0;
+        loop {
+            match self.spawn() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 40 => {
+                    tries += 1;
+                    thread::sleep(Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
+    }
+}
+
 fn spawn(options: &Options, command: &str, session: &SessionFile) -> Result<Child, String> {
     Command::new(&options.program)
         .arg(command)
@@ -472,7 +495,7 @@ fn spawn(options: &Options, command: &str, session: &SessionFile) -> Result<Chil
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_retrying()
         .map_err(|e| format!("cannot start {}: {e}", options.program.display()))
 }
 
@@ -678,7 +701,7 @@ fn ask(program: &Path, args: &[String], timeout: Duration) -> Result<Vec<Event>,
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_retrying()
         .map_err(|e| format!("cannot start {}: {e}", program.display()))?;
     let mut stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = keep_stderr(child.stderr.take().ok_or("no stderr")?);
