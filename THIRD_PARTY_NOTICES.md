@@ -10,7 +10,7 @@ these carry obligations the MIT licence does not.
 
 | Component | Licence | How it is used |
 | --- | --- | --- |
-| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 (`ghostlane-hev` on Linux, `hev.exe` on Windows, and on Apple platforms). |
+| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | MIT | Turns the platform's TUN device into SOCKS5 (`libhev-socks5-tunnel.so` on Android, `ghostlane-hev` on Linux, `hev.exe` on Windows, and on Apple platforms). |
 | [Wintun](https://www.wintun.net/) | GPL-2.0 (redistribution permitted per its own terms) | The Windows TUN driver. Shipped as the vendor's signed binary, unmodified. |
 | [xray-rust](https://github.com/ghostlane-project/xray-rust) (the Rust core) | MPL-2.0, with the crates it builds on under their own licences, listed below | The proxy core and the engine (`ghostlane-engine`), which every package ships (the olcRTC rooms are its Rust crates), at the commit pinned in `scripts/ghostlane-core-pin.sh`. Its own crates are MPL-2.0; its olcRTC crates are Apache-2.0; vendored crates (h2, h3, quinn, smoltcp, gotatun and others) keep the licence they came with. Every crate of its `Cargo.lock` at that commit is in the generated list below. |
 | [Re:filter](https://github.com/1andrevich/Re-filter-lists) | MIT, Copyright (c) 2024 Andrevich | The list of sites blocked in Russia behind "only blocked sites through the tunnel": its domains and IPv4 prefixes, bundled as one geodata file (`files/xray/refilter.dat`, made by `tools/xray-geodata/refilter.py` from the pinned release). |
