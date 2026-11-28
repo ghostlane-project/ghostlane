@@ -44,7 +44,11 @@ class WindowsSystemRealTest {
         )
         assertTrue(name.isNotBlank(), "no adapter is up")
         val reader = WindowsAdapterTraffic(name)
-        val first = assertNotNull(reader.read(), "no counters for $name")
+        val first = reader.read() ?: run {
+            val said = runCatching { powershell(WindowsAdapterTraffic.script(name)) }.getOrElse { "failed: ${it.message}" }
+            val up = runCatching { powershell("Get-NetAdapter | Format-Table Name, Status, InterfaceDescription -AutoSize | Out-String") }.getOrNull()
+            kotlin.test.fail("no counters for '$name': $said; adapters: $up")
+        }
         // Some real traffic out and in: the runner reaches the internet.
         val fetched = runCatching {
             URI("https://github.com/").toURL().openStream().use { it.readNBytes(64 * 1024).size }

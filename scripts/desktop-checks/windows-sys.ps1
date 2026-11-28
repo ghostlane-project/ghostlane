@@ -51,6 +51,9 @@ $expected = (Select-String -Path (Join-Path $root 'sharedUI\src\jvmTest\kotlin\o
 Say "tests=$($suite.tests) skipped=$($suite.skipped) failures=$($suite.failures) errors=$($suite.errors) expected=$expected"
 if ([int]$suite.tests -ne $expected) { Die "ran $($suite.tests) tests, the file has $expected" }
 if ([int]$suite.skipped -ne 0) { Die "$($suite.skipped) test(s) were skipped" }
+foreach ($case in $suite.testcase) {
+    if ($case.failure) { Write-Host "windows-sys: $($case.name): $($case.failure.message)" }
+}
 if ([int]$suite.failures -ne 0 -or [int]$suite.errors -ne 0 -or $rc -ne 0) { Die "the tests failed (exit $rc)" }
 
 # Nothing of ours may be left on the machine.
