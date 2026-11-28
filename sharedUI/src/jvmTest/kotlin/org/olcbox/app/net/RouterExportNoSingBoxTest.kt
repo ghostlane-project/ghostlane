@@ -64,4 +64,9 @@ class RouterExportNoSingBoxTest {
         }
         assertTrue(checked >= 10, "only $checked links compared")
     }
+
+    @Test fun theRoutingDefaultsAreSingBoxConfigsValues() {
+        assertEquals(SingBoxConfig.DIRECT_DNS_FALLBACK, RoutingDefaults.DIRECT_DNS_FALLBACK)
+        assertEquals(SingBoxConfig.DIRECT_DNS_PLACEHOLDER, RoutingDefaults.DIRECT_DNS_PLACEHOLDER)
+    }
 }

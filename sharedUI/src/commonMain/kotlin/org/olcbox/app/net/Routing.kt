@@ -118,7 +118,7 @@ sealed interface DirectDns {
             return hosts.map { it.substringBefore('%') }.firstOrNull { isIPv4(it) }
                 ?: hosts.map { it.substringBefore('%') }.firstOrNull { ':' in it && !isLinkLocal(it) }
                 ?: hosts.firstOrNull { isLinkLocal(it.substringBefore('%')) && '%' in it }
-                ?: SingBoxConfig.DIRECT_DNS_FALLBACK
+                ?: RoutingDefaults.DIRECT_DNS_FALLBACK
         }
 
         private fun isIPv4(host: String): Boolean =
@@ -133,7 +133,7 @@ sealed interface DirectDns {
      * iOS. The extension learns the network's resolver only after the config
      * has been written — it reads it just before the tunnel's settings replace
      * the system resolver with our own tun — so the builder emits
-     * [SingBoxConfig.DIRECT_DNS_PLACEHOLDER] and the extension replaces it.
+     * [RoutingDefaults.DIRECT_DNS_PLACEHOLDER] and the extension replaces it.
      */
     data object Placeholder : DirectDns
 }
@@ -153,3 +153,16 @@ fun RoutingSettings.toRules(ruleSetDir: String, directDns: DirectDns): Routing.R
         policy = mode.policy(),
         custom = CustomRules.of(directRules, tunnelRules)
     )
+
+/**
+ * The two resolver addresses a rule-based routing falls back on. Same values as
+ * the sing-box builder's constants (a test holds them equal), kept here so the routing
+ * model does not depend on that builder.
+ */
+object RoutingDefaults {
+    /** What the iOS builder writes for the direct resolver; the extension replaces it. TEST-NET-2, so it can only fail loudly. */
+    const val DIRECT_DNS_PLACEHOLDER = "198.51.100.53"
+
+    /** Yandex DNS: what "direct" resolution uses when the platform offered no resolver. */
+    const val DIRECT_DNS_FALLBACK = "77.88.8.8"
+}
