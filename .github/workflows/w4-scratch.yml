@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: read
     env:
-      OLCBOX_VERSION: 0.0.0-w4
+      OLCBOX_VERSION: 1.0.491
       OLCBOX_VERSION_CODE: 1
       # The PEs this job builds and signs; a PE of ours in the jar that is not here fails the job.
       WINDOWS_PES_WE_BUILD: ghostlane-engine.exe hev.exe
@@ -97,6 +97,13 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x64
+
+      - name: Keep the engine for the next scratch run
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: olcbox/out/windows
+          key: core-build-windows-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('olcbox/scripts/build-ghostlane-core-host.sh') }}
 
       # Upstream's tag with clang for MSVC, and Wintun's release checked by its
       # sha256 (scripts/build-hev-windows.sh). The Gradle task takes the two
