@@ -154,8 +154,11 @@ from the job's summary first; the job log is for what the summary does not say.
   sweep after `taskkill`, on `windows-latest` as administrator. The Windows system pieces
   (adapter counters, the system-proxy registry values, the LAN firewall rule) are
   `rust-windows-sys.yml` running `scripts/desktop-checks/windows-sys.ps1`; the Windows leg of
-  `rust-desktop.yml` runs the same script and the bundle check once the engine builds for
-  Windows. `rust-windows-lab.yml` is the earlier spike (hev under MSYS2 with Wintun); it is
+  `rust-desktop.yml` runs the same script and the bundle check, which fails a bundle with no
+  engine; that leg and the two K9 workflows are required. The Windows job of `release.yml`
+  builds the engine at the pin, hev and Wintun, signs the PEs it builds (`WINDOWS_PES_WE_BUILD`,
+  `scripts/windows-sign.ps1`) before they are packed, holds the finished jar to that list, and
+  runs K1 on the exe, the msi and the zip. `rust-windows-lab.yml` is the earlier spike (hev under MSYS2 with Wintun); it is
   evidence and ships nothing.
 - **K10, notices.** `notices.yml`: `THIRD_PARTY_NOTICES.md` must equal what
   `scripts/notices.py` generates from the app's `Cargo.lock` files and the core's at the pin,

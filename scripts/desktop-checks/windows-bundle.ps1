@@ -9,16 +9,15 @@
 #                    its address;
 #   wintun.dll       the signed release (the script checked its sha256); its
 #                    Authenticode signature is valid and LoadLibrary takes it;
-#   ghostlane-engine the Core build's program, when one exists for Windows at
-#                    the pin: `version` prints a line that names this commit.
-#                    While the core does not build for Windows there is none:
-#                    the check says so, and the other files are still held.
+#   ghostlane-engine the Core build's program for Windows at the pin: `version`
+#                    prints a line that names this commit. A bundle with no
+#                    engine fails.
 #   msys-2.0.dll     is not in the bundle, and nothing in it names one.
 #
 # Run by rust-desktop.yml on its Windows leg:
 #   pwsh -NoProfile -NonInteractive -File scripts/desktop-checks/windows-bundle.ps1
 # with HEV_OUT (the directory scripts/build-hev-windows.sh wrote hev.exe and
-# wintun.dll into), GHOSTLANE_ENGINE (the engine's path, which may not exist),
+# wintun.dll into), GHOSTLANE_ENGINE (the engine's path),
 # GHOSTLANE_CORE_COMMIT and DESKTOP_CHECK_WORK (an empty directory of its own).
 $ErrorActionPreference = 'Stop'
 
@@ -123,8 +122,7 @@ if ($engineHere) {
         if ($commit -and $v.pin -ne $commit) { Fail "ghostlane-engine says pin $($v.pin), wanted $commit" }
     }
 } else {
-    Write-Host 'NOTE ghostlane-engine.exe: no program for Windows at this pin yet (the core half does not build for Windows); only hev.exe and wintun.dll were held'
-    if ($env:WINDOWS_BUNDLE_ENGINE_REQUIRED -eq '1') { Fail 'ghostlane-engine.exe is not in the bundle' }
+    Fail 'ghostlane-engine.exe is not in the bundle'
 }
 
 if ($failed.Count) { Write-Host "$($failed.Count) problem(s)"; exit 1 }

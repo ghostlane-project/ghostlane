@@ -24,6 +24,7 @@ import org.olcbox.app.net.SocksLogin
 import org.olcbox.app.net.TunnelVerifier
 import org.olcbox.app.net.core.CoreInbound
 import org.olcbox.app.vpn.desktop.DesktopNativeAssets
+import org.olcbox.app.vpn.desktop.WindowsLanFirewall
 import org.olcbox.app.vpn.desktop.engine.host.HostAssets
 import java.nio.file.Path
 
@@ -151,7 +152,9 @@ internal class DesktopLanProxy(
     /** Stands for the session's own core when that core holds the LAN inbound. */
     private val lineCore: LanCore = LanCores.rust(onOutput)
     private var active: LanCore = core
-    private var firewallRule: String? = null
+
+    /** The Windows firewall's one inbound rule for the listener: removed at stop, and swept after a kill. */
+    private val windowsFirewall = WindowsLanFirewall()
 
     init {
         // The line's core reads the same settings when it writes its plan.
@@ -185,7 +188,8 @@ internal class DesktopLanProxy(
         active = listener
 
         try {
-            if (DesktopPaths.os == DesktopOs.Windows && listener.ownsListener) cleanupStaleWindowsFirewallRules()
+            // Whoever holds the listener, a rule a killed run left is not there to find it open.
+            if (DesktopPaths.os == DesktopOs.Windows) windowsFirewall.sweep()
             if (listener.ownsListener) {
                 requirePortFree(host, normalized.lanPort)
                 val ownershipPort = allocateLoopbackPort()
@@ -228,7 +232,7 @@ internal class DesktopLanProxy(
                 // design D5 dropped: it would race the session's own core.
                 listener.start("")
             }
-            if (DesktopPaths.os == DesktopOs.Windows) addWindowsFirewallRule(host, normalized.lanPort, listener.program())
+            if (DesktopPaths.os == DesktopOs.Windows) windowsFirewall.add(host, normalized.lanPort, listener.program())
             return "$host:${normalized.lanPort}"
         } catch (e: Exception) {
             stop()
@@ -238,50 +242,13 @@ internal class DesktopLanProxy(
 
     fun stop() {
         active.stopNow()
-        firewallRule?.let { rule ->
-            runCatching { firewall("Remove-NetFirewallRule -Name '$rule' -ErrorAction SilentlyContinue") }
-                .onFailure { onOutput("LAN sharing: could not remove its Windows firewall rule") }
-            firewallRule = null
-        }
+        if (!windowsFirewall.remove()) onOutput("LAN sharing: could not remove its Windows firewall rule")
     }
 
     fun isRunning(): Boolean = active.isRunning()
 
     fun cleanupStaleFirewallRules() {
-        if (DesktopPaths.os == DesktopOs.Windows) cleanupStaleWindowsFirewallRules()
-    }
-
-    private fun addWindowsFirewallRule(host: String, port: Int, program: Path) {
-        val rule = "Ghostlane-LAN-${java.util.UUID.randomUUID()}"
-        val path = program.toAbsolutePath().normalize().toString()
-        val script = "New-NetFirewallRule -Name '$rule' -DisplayName 'Ghostlane LAN SOCKS5' " +
-            "-Direction Inbound -Action Allow -Protocol TCP -LocalAddress '$host' -LocalPort $port " +
-            "-RemoteAddress LocalSubnet -Profile Private -Program '${path.replace("'", "''")}' | Out-Null"
-        // Keep the name before executing: PowerShell may create the rule and time out afterwards.
-        firewallRule = rule
-        firewall(script)
-    }
-
-    private fun cleanupStaleWindowsFirewallRules() {
-        firewall(
-            "Get-NetFirewallRule -Name 'Ghostlane-LAN-*' -ErrorAction SilentlyContinue | " +
-                "Remove-NetFirewallRule -ErrorAction Stop"
-        )
-    }
-
-    private fun firewall(script: String) {
-        val process = ProcessBuilder(
-            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-            "\$ErrorActionPreference = 'Stop'; $script"
-        ).redirectErrorStream(true).start()
-        if (!process.waitFor(8, TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            error("Firewall command timed out")
-        }
-        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-        check(process.exitValue() == 0) {
-            output.ifBlank { "Firewall command needs administrator privileges" }
-        }
+        if (DesktopPaths.os == DesktopOs.Windows) windowsFirewall.sweep()
     }
 
     private fun requirePortFree(host: String, port: Int) {

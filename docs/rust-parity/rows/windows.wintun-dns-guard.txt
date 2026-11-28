@@ -1,1 +1,1 @@
-windows | not-proven | - | -
+windows | proven | sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsTunRealTest.kt::namesAreAnsweredInTheTunnelAndNoResolverOutsideItIsAskedFor, sharedUI/src/jvmTest/kotlin/org/olcbox/app/vpn/desktop/WindowsTunRealTest.kt::afterAKillTheNextStartSweepsWhatWasLeft | hev answers names, the guard refuses port 53 beside the tunnel for a core line, and the next start sweeps what a kill left (K9); the manager starts the tunnel through WindowsTunController
