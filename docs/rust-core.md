@@ -145,7 +145,7 @@ from the job's summary first; the job log is for what the summary does not say.
   plan also puts into K7 the agreement of `OLC_PIN`, the app's engine pin and the exits' pin;
   `scripts/p6-tests/pin.sh` does not read that part: `scripts/pins-agree.sh` does (run by
   `scripts/p6-tests/pins-agree.sh` in the same job), reading `OLC_PIN` of the core at the pin and
-  comparing it with `OLCRTC_VERSION` in `scripts/cores-pins.sh` and the olcrtc version in `cli/go.mod` and `cli/go.sum`.
+  comparing it with `OLCRTC_VERSION` in `scripts/cores-pins.sh` (and with a `cli/go.mod` or `cli/go.sum`, should one exist: none does since C7).
 - **K8, the Mac helper.** The `mac-helper` job of `pr-checks.yml` runs every script of
   `scripts/mac-checks/` as root on `macos-latest` and `macos-15-intel`: utun, routes,
   exclusions, the pf group, and the clean-up after SIGKILL; LAN, the interface watch, probes
@@ -212,9 +212,8 @@ Every file under `.github/workflows/` is named here, with what it is for.
 - `rust-ios.yml` (on `rust/all` and by dispatch): K6.
 - `rust-desktop.yml` (on `rust/all` and by dispatch): the events fixture check (`events`) and the desktop's legs on Linux,
   macOS and Windows (`desktop`), K2 on Linux.
-- `rust-cli.yml`: the Rust CLI's format, build, tests and clippy, and its interop with the Go
-  CLI built from the same commit. A light check: on pull requests into `rust/all`, and on a push
-  to `rust/all`, `main` and `ghostlane`.
+- `rust-cli.yml`: the Rust CLI's format, build, tests and clippy. A light check: on pull requests
+  into `rust/all`, and on a push to `rust/all`, `main` and `ghostlane`.
 - `rust-cli-netns.yml`: K2 for the Rust CLI. On `rust/all`, `main`, `ghostlane` and by dispatch.
 - `rust-cli-engine.yml`: the CLI's engine child against the real `ghostlane-engine` and the
   official Xray releases, and the K5 lines through it. On `rust/all`, `main`, `ghostlane` and by
@@ -244,10 +243,8 @@ Every file under `.github/workflows/` is named here, with what it is for.
   against the SaluteJazz, VK Calls and MTS Link fakes, then the reports go through the gate's
   own fold and decision. No room, no secret; it runs on a push to `rust/all` on its own paths,
   which include the pin, by dispatch, and as the `fakes` job of `gate.yml`.
-- `singbox-verify.yml`: the config builders' output against the pinned Go cores' own schema
-  check (the Go side that still ships).
-- `hev-tunnel.yml`, `ios-frameworks.yml`: the tun2socks and the Go frameworks for iOS, built by
-  hand once per pin (macOS minutes cost ten times Linux's).
+- `hev-tunnel.yml`: the tun2socks for iOS, built by hand once per pin (macOS minutes cost ten
+  times Linux's).
 - `cli-repo.yml`, `play-listing.yml`, `play-signing-key.yml`: by hand, for publication to the
   apt and dnf repositories, the Play listing and the Play signing key export. A task never
   dispatches them.
