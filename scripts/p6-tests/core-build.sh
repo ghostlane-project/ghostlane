@@ -2,7 +2,7 @@
 # The core built once per pin: what can be checked in seconds, with no
 # network, no cargo and no compiler.
 #   - the four build scripts parse;
-#   - the BoringSSL proof reads a symbol table and nothing else: it passes on
+#   - the BoringSSL proof reads symbols (a symbol table, or a Windows program's PDB) and nothing else: it passes on
 #     an ELF and on a Mach-O listing that define BoringSSL's SSL_CTX_new and
 #     DTLS_method, and fails on AWS-LC alone (prefixed names), on a reference
 #     that is not a definition, on one name of the two, on a stripped file and
@@ -97,6 +97,43 @@ expect 1 "the proof fails on AWS-LC alone, on references and on data of the same
 expect 1 "the proof fails when one of the two functions is missing" proof half.txt
 expect 1 "the proof fails on a stripped file" proof stripped.txt
 expect 2 "the proof says so when the file is not there" env NM="$tmp/nm" bash "$host" --boring-proof "$tmp/absent.a"
+# A Windows program has no symbol table in the file: MSVC keeps its symbols in
+# the .pdb beside it, which the build copies next to the program. The proof reads
+# that PDB's public symbols (llvm-pdbutil dump --publics); the stand-in prints
+# the listing the test names.
+# shellcheck disable=SC2016
+printf '#!/bin/sh\ncat "$FAKE_PDB_LISTING"\n' > "$tmp/pdbdump"
+chmod +x "$tmp/pdbdump"
+mkdir -p "$tmp/win"
+: > "$tmp/win/ghostlane-engine.exe"
+: > "$tmp/win/ghostlane_engine.pdb"
+: > "$tmp/win/lonely.exe"
+pdbproof() { FAKE_PDB_LISTING="$tmp/$1" PDB_DUMP="$tmp/pdbdump" NM="$tmp/nm" FAKE_NM_LISTING="$tmp/stripped.txt" bash "$host" --boring-proof "${2:-$tmp/win/ghostlane-engine.exe}"; }
+cat > "$tmp/pdb-with.txt" << 'EOF'
+                        Public Symbols
+============================================================
+  Records
+         0 | S_PUB32 [size = 40] `SSL_CTX_new`
+             flags = function, addr = 0001:4096
+        40 | S_PUB32 [size = 40] `DTLS_method`
+             flags = function, addr = 0001:4200
+        80 | S_PUB32 [size = 36] `xray_core_start`
+             flags = function, addr = 0001:4300
+EOF
+cat > "$tmp/pdb-without.txt" << 'EOF'
+                        Public Symbols
+============================================================
+  Records
+         0 | S_PUB32 [size = 36] `xray_core_start`
+             flags = function, addr = 0001:4300
+        40 | S_PUB32 [size = 40] `aws_lc_0_45_0_SSL_CTX_new`
+             flags = function, addr = 0001:4400
+        80 | S_PUB32 [size = 40] `SSL_CTX_new`
+             flags = none, addr = 0003:0100
+EOF
+expect 0 "the proof reads BoringSSL from the PDB beside a Windows program" pdbproof pdb-with.txt
+expect 1 "the proof fails on a PDB without BoringSSL (a data symbol or a prefixed one is not it)" pdbproof pdb-without.txt
+expect 1 "a Windows program with no PDB beside it is read as a file and fails when stripped" pdbproof pdb-with.txt "$tmp/win/lonely.exe"
 if grep -q -- '--boring-proof' "$android" && grep -q 'boring_proof "[$]OUT/lib' "$host"; then
   ok "both build scripts ask the proof of what they built"
 else
