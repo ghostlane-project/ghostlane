@@ -6,17 +6,10 @@ name: rust-windows-lab
 on:
   workflow_dispatch:
   push:
-    # Branches only: path filters are not evaluated for tag pushes.
-    branches: ['**']
+    branches: [rust/all, main, ghostlane]
     paths:
       - .github/workflows/rust-windows-lab.yml
       - docs/spikes/windows-hev.md
-  pull_request:
-    branches: [rust/all]
-    paths:
-      - .github/workflows/rust-windows-lab.yml
-      - docs/spikes/windows-hev.md
-
 permissions:
   contents: read
 

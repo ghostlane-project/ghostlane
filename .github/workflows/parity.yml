@@ -23,7 +23,7 @@ on:
       - rust/all
   push:
     branches:
-      - 'rust/**'
+      - rust/all
     paths:
       - docs/rust-parity/**
       - scripts/parity-ledger.py

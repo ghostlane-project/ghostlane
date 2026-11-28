@@ -8,7 +8,7 @@
 # Fails when
 #   - a named path or pattern matches no file of the tree (a rename left it);
 #   - a file a script names, or the script itself, is matched by no pattern of
-#     the push or of the pull_request `paths:` list of rust-desktop.yml: a
+#     the push `paths:` list of rust-desktop.yml: a
 #     change to it alone would start no run of the check;
 #   - a `# desktop-check-paths:` line names nothing.
 # A script that names no file is held to its own path alone.
@@ -24,7 +24,7 @@ import yaml
 
 WORKFLOW = ".github/workflows/rust-desktop.yml"
 CHECKS = "scripts/desktop-checks/"
-EVENTS = ("push", "pull_request")
+EVENTS = ("push",)
 LINE = re.compile(r"^#[ \t]*desktop-check-paths:(.*)$", re.M)
 
 
@@ -166,10 +166,8 @@ def selftest(on, scripts, tree):
         "an empty line": (
             on, dict(scripts, **{planted: "# desktop-check-paths:\n"}), tree | {planted}),
         "the push list without the checks": (without(on, "push", checks_glob), scripts, tree),
-        "the pull_request list without the checks": (
-            without(on, "pull_request", checks_glob), scripts, tree),
-        "no pull_request trigger": (
-            {k: v for k, v in on.items() if k != "pull_request"}, scripts, tree),
+        "no push trigger": (
+            {k: v for k, v in on.items() if k != "push"}, scripts, tree),
         "a `*` taken across a slash": (
             dict(copy.deepcopy(on), push={"paths": ["scripts/*"]}), scripts, tree),
     }
@@ -196,6 +194,6 @@ for b in bad:
     print("FAIL " + b)
 if bad:
     sys.exit(1)
-print("ok   every file a desktop check names starts Rust desktop on push and pull_request "
+print("ok   every file a desktop check names starts Rust desktop on push "
       "(%d scripts; the test finds each planted violation)" % len(scripts))
 PY

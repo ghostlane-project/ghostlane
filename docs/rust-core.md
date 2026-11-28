@@ -169,41 +169,65 @@ from the job's summary first; the job log is for what the summary does not say.
   (`scripts/check-rust-core-configs.sh`): the shipped engine must parse and start every
   `core-*.json` under the reference configs, and a registered kind with no reference fails.
 
+### When CI runs
+
+A topic branch (`rust/t/*`) runs the light checks only: `pr-checks.yml`, `parity.yml`,
+`notices.yml`, `rust-cli.yml` and `release-dry.yml`, each once, on the pull request into
+`rust/all` (their push triggers name `rust/all`, `main` and `ghostlane`, so a topic push and its
+pull request do not both run them).
+
+The heavy suites run on a push to `rust/all`, that is after the lead's batch merge, and by
+dispatch, each on its own `paths`: `core-build.yml`, `rust-core.yml`, `rust-core-android.yml`,
+`rust-ios.yml`, `rust-desktop.yml`, `rust-jitsi.yml`, `rust-windows-sys.yml`,
+`rust-windows-tun.yml`, `rust-windows-lab.yml`, `rust-cli-engine.yml`, `rust-cli-netns.yml`,
+`gate-fakes.yml` and `ios-no-go.yml`. None has a `pull_request` trigger or a push
+trigger for `rust/t/**`. `gate.yml` and `release.yml` keep their triggers. `no-go.yml` (the K1
+checker's own tests, cheap) runs on pull requests into `main` and `rust/all` that touch the checker,
+and by dispatch on a release's or a dry run's assets.
+
+When a task needs a heavy suite on its topic branch, dispatch that one workflow once, when the
+rest is green: `/root/gl-rust-handoff/p6/tools/gh.sh dispatch ghostlane-project/ghostlane
+<workflow>.yml rust/t/<ID>-<name> [inputs.json]` (an inputs file such as `{"pin":"<sha>"}` only where the workflow has the input). Never
+`release.yml`, `gate.yml` and the publishing workflows.
+
 ### The workflows
 
 Every file under `.github/workflows/` is named here, with what it is for.
 
-- `pr-checks.yml`: the cheap half of the pipeline on every pull request and push (one ubuntu
-  runner plus jobs on macOS); holds K7, K8 and K12 as above and the `rust_core` scope.
+- `pr-checks.yml`: the cheap half of the pipeline on every pull request and on a push to
+  `rust/all`, `main` and `ghostlane` (one ubuntu runner plus jobs on macOS); holds K7, K8 and K12 as above and the `rust_core` scope.
 - `parity.yml`: `scripts/parity-ledger.py` against `docs/rust-parity/`, its self-test, and the
   check that this runbook names every check (K1 to K12, every workflow file and every step of
   `scripts/pin-move.d/`). A red there names the missing item: add it to this file.
 - `core-build.yml`: the Rust core built once per commit for every target (Android, Apple, Linux
   musl, Windows), BoringSSL proven from the built file's symbols; `pin=<sha>` builds another
-  commit. The Windows job is allowed to fail and says which crates stopped it.
-- `rust-core.yml`: the core at the pin: K5 (`lines`), the fork's upstream CI jobs (`upstream`),
+  commit; on `rust/all` and by dispatch. The Windows job is allowed to fail and says which crates stopped it.
+- `rust-core.yml` (on `rust/all` and by dispatch): the core at the pin: K5 (`lines`), the fork's upstream CI jobs (`upstream`),
   the fork's guards (`fork-guards`) and the offline script tests (`scripts`).
-- `rust-core-android.yml`: the Android library, the smoke test, the app with the core packed in,
+- `rust-core-android.yml` (on `rust/all` and by dispatch): the Android library, the smoke test, the app with the core packed in,
   and K3.
-- `rust-ios.yml`: K6.
-- `rust-desktop.yml`: the events fixture check (`events`) and the desktop's legs on Linux,
+- `rust-ios.yml` (on `rust/all` and by dispatch): K6.
+- `rust-desktop.yml` (on `rust/all` and by dispatch): the events fixture check (`events`) and the desktop's legs on Linux,
   macOS and Windows (`desktop`), K2 on Linux.
 - `rust-cli.yml`: the Rust CLI's format, build, tests and clippy, and its interop with the Go
-  CLI built from the same commit.
-- `rust-cli-netns.yml`: K2 for the Rust CLI.
+  CLI built from the same commit. A light check: on pull requests into `rust/all`, and on a push
+  to `rust/all`, `main` and `ghostlane`.
+- `rust-cli-netns.yml`: K2 for the Rust CLI. On `rust/all`, `main`, `ghostlane` and by dispatch.
 - `rust-cli-engine.yml`: the CLI's engine child against the real `ghostlane-engine` and the
-  official Xray releases, and the K5 lines through it.
-- `rust-jitsi.yml`: K4's Jitsi leg on the fork's fake.
-- `rust-windows-sys.yml`: K9's system pieces.
-- `rust-windows-tun.yml`: K9's tunnel: hev's Wintun adapter and the split routes, the engine's way out, the DNS guard and the sweep after a kill, as an administrator on windows-2025.
-- `rust-windows-lab.yml`: the Windows spike, by hand, evidence only.
-- `no-go.yml`: K1: its self-test on ubuntu and macOS, and by hand the scan of a published
+  official Xray releases, and the K5 lines through it. On `rust/all`, `main`, `ghostlane` and by
+  dispatch.
+- `rust-jitsi.yml` (on `rust/all` and by dispatch): K4's Jitsi leg on the fork's fake.
+- `rust-windows-sys.yml` (on `rust/all` and by dispatch): K9's system pieces.
+- `rust-windows-tun.yml` (on `rust/all` and by dispatch): K9's tunnel: hev's Wintun adapter and the split routes, the engine's way out, the DNS guard and the sweep after a kill, as an administrator on windows-2025.
+- `rust-windows-lab.yml`: the Windows spike, by hand, evidence only (also on a push to `rust/all`,
+  `main` and `ghostlane` that touches its own files).
+- `no-go.yml`: K1 (on `rust/all`, `main`, `ghostlane` and by dispatch): its self-test on ubuntu and macOS, and by hand the scan of a published
   release's assets or a run's artifacts.
 - `ios-no-go.yml`: I2's check that the iPhone build names no Go (the Go frameworks' workflow and
   scripts are gone, Gradle and the Xcode project ask for no Go, `build-ios` reads the app for
-  Go). It is on its task branch `rust/t/I2-ios-no-go` and joins `rust/all` with that branch.
-- `notices.yml`: K10.
-- `release-dry.yml`: `scripts/test-release-dry.sh`, which reads `release.yml` and `gate.yml`,
+  Go). It runs on a push to `rust/all` and by dispatch.
+- `notices.yml`: K10. On pull requests, and on a push to `rust/all`, `main` and `ghostlane`.
+- `release-dry.yml` (pull requests, and a push to `rust/all`, `main` and `ghostlane`): `scripts/test-release-dry.sh`, which reads `release.yml` and `gate.yml`,
   runs `release-guard.sh` and `gate-resolve.sh` against a stand-in for GitHub, and plants each
   violation in a copy. A dry run must be unable to sign, upload or publish.
 - `release.yml`: the release build, by hand only. Never dispatched from a task branch.
@@ -215,8 +239,8 @@ Every file under `.github/workflows/` is named here, with what it is for.
 - `gate-fakes.yml`: K4 on its own and as the `fakes` job of `gate.yml`: the core at the pin
   (or `pin=<sha>`) builds `ghostlane-engine`, which runs the engine's suite as the client `rust`
   against the SaluteJazz, VK Calls and MTS Link fakes, then the reports go through the gate's
-  own fold and decision. No room, no secret; it runs on `rust/all`, on pull requests into it
-  and on its own paths, which include the pin.
+  own fold and decision. No room, no secret; it runs on a push to `rust/all` on its own paths,
+  which include the pin, by dispatch, and as the `fakes` job of `gate.yml`.
 - `singbox-verify.yml`: the config builders' output against the pinned Go cores' own schema
   check (the Go side that still ships).
 - `hev-tunnel.yml`, `ios-frameworks.yml`: the tun2socks and the Go frameworks for iOS, built by

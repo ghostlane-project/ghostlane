@@ -56,26 +56,6 @@ on:
       - iosApp/iosApp.xcodeproj/project.pbxproj
       - sharedUI/src/iosMain/kotlin/org/olcbox/app/ios/IosBridge.kt
       - scripts/build-ghostlane-core-ios.sh
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - .github/workflows/rust-ios.yml
-      - scripts/test-ios-engine-on-mac.sh
-      - 'iosApp/Tests/EngineHost/**'
-      - 'iosApp/PacketTunnel/**'
-      - scripts/ghostlane-core-pin.sh
-      - scripts/ghostlane-core-resolve.sh
-      - scripts/build-ghostlane-core-host.sh
-      - 'sharedUI/src/jvmTest/resources/reference-configs/*core-*.json'
-      - 'scripts/rust-core-interop/lines/**'
-      - scripts/xray-servers.txt
-      - scripts/test-ios-app-room-check.sh
-      - 'iosApp/Tests/AppRoomCheck/**'
-      - 'iosApp/iosApp/**'
-      - iosApp/iosApp.xcodeproj/project.pbxproj
-      - sharedUI/src/iosMain/kotlin/org/olcbox/app/ios/IosBridge.kt
-      - scripts/build-ghostlane-core-ios.sh
   workflow_dispatch:
     inputs:
       pin:

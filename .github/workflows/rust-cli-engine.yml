@@ -28,19 +28,8 @@ on:
         description: Run against this commit of the core (40 hex) instead of the pin in scripts/ghostlane-core-pin.sh
         type: string
         default: ''
-  pull_request:
-    branches:
-      - rust/all
-    paths:
-      - cli/**
-      - .github/workflows/rust-cli-engine.yml
-      - scripts/cli-engine/lines.sh
-      - scripts/rust-core-interop.py
-      - 'scripts/rust-core-interop/**'
-      - scripts/ghostlane-core-pin.sh
   push:
-    branches:
-      - "**"
+    branches: [rust/all, main, ghostlane]
     paths:
       - cli/**
       - .github/workflows/rust-cli-engine.yml

@@ -25,7 +25,7 @@ on:
       - '**/Cargo.lock'
       - .github/workflows/notices.yml
   push:
-    branches: ['**']
+    branches: [rust/all, main, ghostlane]
     paths:
       - THIRD_PARTY_NOTICES.md
       - scripts/notices.py
