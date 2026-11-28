@@ -923,8 +923,13 @@ jobs:
           fi
           echo "ok      native/ghostlane-engine, and no Go core"
 
-          jar=$(find squashfs-root -type f -name '*.jar' | sort | head -1)
-          [ -n "$jar" ] || { echo "the AppImage holds no jar" >&2; exit 1; }
+          jar=""
+          while IFS= read -r -d '' candidate; do
+            if unzip -Z1 "$candidate" 2>/dev/null | grep -qx 'native/ghostlane-engine'; then
+              jar="$candidate"; break
+            fi
+          done < <(find squashfs-root -type f -name '*.jar' -print0 | sort -z)
+          [ -n "$jar" ] || { echo "no jar in the AppImage holds native/ghostlane-engine" >&2; exit 1; }
           engine=$(mktemp)
           unzip -p "$jar" native/ghostlane-engine > "$engine"
           chmod +x "$engine"

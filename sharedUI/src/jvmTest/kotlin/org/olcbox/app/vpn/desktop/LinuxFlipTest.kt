@@ -58,7 +58,7 @@ class LinuxFlipTest {
     fun theLinuxReleaseJobBuildsTheEngineAndChecksTheFinishedAsset() {
         val job = releaseLinuxJob()
         assertTrue("build-ghostlane-core-host.sh" in job, "the Linux job does not build ghostlane-engine")
-        assertTrue("ghostlane-engine version" in job, "the Linux job does not read the engine's version")
+        assertTrue("ghostlane-engine\" version" in job, "the Linux job does not read the engine's version")
         assertTrue("check-no-go.sh" in job, "the Linux job does not check the AppImage for Go")
         assertFalse("build-singbox.sh" in job, "the Linux job still builds sing-box")
         assertFalse("Xray-linux-64" in job, "the Linux job still downloads Xray")
