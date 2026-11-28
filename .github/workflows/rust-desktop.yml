@@ -21,11 +21,10 @@ name: Rust desktop
 # the same keys), else from this workflow's own cache of it, else it is built
 # here with the Core build's script for the one target the leg needs, and
 # kept under this workflow's key; never built where a cache holds it. The
-# Windows leg is allowed to fail. It builds hev for MSVC and fetches Wintun
-# (scripts/build-hev-windows.sh) and holds those files with
-# scripts/desktop-checks/windows-bundle.ps1; the engine joins them when the
-# Core build has a program for Windows at the pin, and says so in the summary
-# while it has none (the fork does not compile for Windows yet).
+# Windows leg is required (W4): it builds hev for MSVC and fetches Wintun
+# (scripts/build-hev-windows.sh) and holds those files and the engine with
+# scripts/desktop-checks/windows-bundle.ps1, which fails a bundle with no
+# engine, and runs K9's scripts (windows-sys.ps1, windows-tun.ps1).
 #
 # Nothing here signs, publishes or joins a carrier room; there is no secret.
 # The servers the checks dial are on loopback and the machine's own address.
@@ -42,6 +41,8 @@ on:
       - scripts/build-hev-linux.sh
       - scripts/build-hev-windows.sh
       - desktopApp/gradle/native-windows.gradle.kts
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopProxyController.kt
       - scripts/pin-move.d/events-hash
       - scripts/xray-servers.txt
       - sharedUI/build.gradle.kts
@@ -72,6 +73,8 @@ on:
       - scripts/build-hev-linux.sh
       - scripts/build-hev-windows.sh
       - desktopApp/gradle/native-windows.gradle.kts
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/Windows*.kt
+      - sharedUI/src/jvmMain/kotlin/org/olcbox/app/vpn/desktop/DesktopProxyController.kt
       - scripts/pin-move.d/events-hash
       - scripts/xray-servers.txt
       - sharedUI/build.gradle.kts
@@ -125,7 +128,6 @@ jobs:
     name: Desktop checks (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.minutes }}
-    continue-on-error: ${{ matrix.os == 'windows' }}
     strategy:
       fail-fast: false
       matrix:
@@ -144,7 +146,7 @@ jobs:
             runner: windows-2025
             target: x86_64-pc-windows-msvc
             out: out/windows
-            minutes: 20
+            minutes: 120
     defaults:
       run:
         shell: bash
@@ -207,12 +209,21 @@ jobs:
             echo "ghostlane-engine for $TARGET at ${GHOSTLANE_CORE_COMMIT:0:12}: no cache holds it" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: No program for Windows
+      # The BoringSSL proof of a Windows program reads the public symbols in
+      # its PDB (an MSVC executable has no symbol table of its own).
+      - name: A reader for the program's PDB
         if: matrix.os == 'windows' && steps.engine.outputs.found != 'true'
         run: |
-          msg="no ghostlane-engine for Windows at ${GHOSTLANE_CORE_COMMIT:0:12}: the fork does not compile for x86_64-pc-windows-msvc yet, so the Core build keeps none; only hev.exe and wintun.dll are checked"
-          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::$msg"
+          set -uo pipefail
+          if ! command -v llvm-pdbutil > /dev/null 2>&1; then
+            for d in "/c/Program Files/LLVM/bin" "/c/Program Files (x86)/LLVM/bin"; do
+              [ -x "$d/llvm-pdbutil.exe" ] && { cygpath -w "$d" >> "$GITHUB_PATH"; break; }
+            done
+          fi
+          if ! command -v llvm-pdbutil > /dev/null 2>&1 && ! [ -x "/c/Program Files/LLVM/bin/llvm-pdbutil.exe" ]; then
+            choco install llvm --no-progress -y || true
+            cygpath -w "/c/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+          fi
 
       - uses: ilammy/msvc-dev-cmd@v1.13.0
         if: matrix.os == 'windows'
@@ -243,7 +254,7 @@ jobs:
       # The Core build's script, for the one target this leg runs.
       - name: Build the program, which no cache held
         id: build
-        if: matrix.os != 'windows' && steps.engine.outputs.found != 'true'
+        if: steps.engine.outputs.found != 'true'
         env:
           GHOSTLANE_CORE_SRC: ${{ runner.temp }}/core-src
           GHOSTLANE_MUSL_TOOLCHAIN_DIR: ${{ runner.temp }}/musl
@@ -251,6 +262,8 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set +e -uo pipefail
+          # cargo and cmake want a path the Windows way round, bash a Unix one.
+          [ "$TARGET" != x86_64-pc-windows-msvc ] || export GHOSTLANE_CORE_SRC="$(cygpath -u "$RUNNER_TEMP")/core-src"
           bash scripts/build-ghostlane-core-host.sh "$OUT" "$TARGET" 2>&1 | tee "$RUNNER_TEMP/build.log"
           rc=${PIPESTATUS[0]}
           {
@@ -300,6 +313,8 @@ jobs:
           set -uo pipefail
           shopt -s nullglob
           export GHOSTLANE_ENGINE="$PWD/$ENGINE"
+          # pwsh reads a path the Windows way; bash made this one its own.
+          [ "$CHECK_OS" != windows ] || GHOSTLANE_ENGINE="$(cygpath -w "$GHOSTLANE_ENGINE")"
           export DESKTOP_CHECK_OS="$CHECK_OS"
           rows=()
           ran=0

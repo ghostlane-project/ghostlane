@@ -82,6 +82,20 @@ internal object DesktopNativeAssets {
     fun resolveSingBoxBinary(): Path =
         resolveExternalCore(singBoxFileName(), "OLCBOX_SINGBOX_BINARY")
 
+    /**
+     * hev.exe, for the Windows tun, staged beside the wintun.dll it loads (the
+     * two are looked up by the process's own directory). Both are copied only
+     * when their bytes differ: Windows locks a program that runs.
+     */
+    fun resolveHevWindowsBinary(): Path {
+        ensureWintunRuntime()
+        return resolveBinary(
+            fileName = "hev.exe",
+            resourceName = "native/hev.exe",
+            candidates = desktopNativeResourceCandidates("hev.exe")
+        )
+    }
+
     /** Stage Wintun only for the mode that loads it, never for System Proxy. */
     fun ensureWintunRuntime() {
         if (DesktopPaths.os == DesktopOs.Windows) copyRuntimeAsset("wintun.dll")

@@ -1,1 +1,1 @@
-windows | not-proven | - | -
+windows | proven | scripts/p6-tests/windows-flip.sh, .github/workflows/release.yml::No Go in the Windows assets, .github/workflows/release.yml::Every PE we build is on the signing list | The msi carries ghostlane-engine, hev.exe and wintun.dll and no Go core; K1 reads the finished msi

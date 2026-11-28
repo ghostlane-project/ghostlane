@@ -384,15 +384,25 @@ jobs:
       GATE_VKCALLS_ROOMS: ${{ secrets.GATE_VKCALLS_ROOMS }}
       GATE_MTSLINK_ROOMS: ${{ secrets.GATE_MTSLINK_ROOMS }}
 
+  # The Windows app: ghostlane-engine at the pin, hev (for MSVC) and Wintun in
+  # the jar, no Go core. Every PE we build (WINDOWS_PES_WE_BUILD) is signed
+  # BEFORE it is packed, since the installer, the msi and the zip carry them
+  # inside a jar where signtool does not reach; the finished jar is held to the
+  # same list and, in a signed run, to valid signatures. Wintun is the
+  # WireGuard project's own signed file and is not rebuilt. K1 reads the exe,
+  # the msi and the zip.
   build-windows:
     needs: [release_version, plan, gate]
     if: needs.plan.outputs.windows == 'true'
     runs-on: windows-latest
+    timeout-minutes: 150
     permissions:
       contents: read
     env:
       OLCBOX_VERSION: ${{ needs.release_version.outputs.version }}
       OLCBOX_VERSION_CODE: ${{ needs.release_version.outputs.version_code }}
+      # The PEs this job builds and signs; a PE of ours in the jar that is not here fails the job.
+      WINDOWS_PES_WE_BUILD: ghostlane-engine.exe hev.exe
       # Empty in a dry run, which does not reach the signing step either.
       WINDOWS_CODESIGN_CERTIFICATE_BASE64: ${{ needs.plan.outputs.signed == 'true' && secrets.WINDOWS_CODESIGN_CERTIFICATE_BASE64 || '' }}
       WINDOWS_CODESIGN_CERTIFICATE_PASSWORD: ${{ needs.plan.outputs.signed == 'true' && secrets.WINDOWS_CODESIGN_CERTIFICATE_PASSWORD || '' }}
@@ -404,13 +414,43 @@ jobs:
         with:
           path: olcbox
 
-      - name: Checkout olcrtc
-        uses: actions/checkout@v7
+      - name: The commit of the core
+        id: pin
+        shell: bash
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/ghostlane-core-resolve.sh > "$RUNNER_TEMP/core.env"
+          . "$RUNNER_TEMP/core.env"
+          echo "commit=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$GHOSTLANE_CORE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+          echo "GHOSTLANE_CORE_COMMIT=$GHOSTLANE_CORE_COMMIT" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/core.env" >> "$GITHUB_STEP_SUMMARY"
+
+      # The Core build's key for Windows, as rust-desktop.yml reads it.
+      - name: The Core build's program for Windows
+        id: core-cache
+        uses: actions/cache/restore@v6
         with:
-          repository: ghostlane-project/olcrtc
-          ref: ${{ needs.release_version.outputs.olcrtc_ref }}
-          path: olcrtc
-          submodules: recursive
+          path: olcbox/out/windows
+          key: core-build-windows-${{ steps.pin.outputs.commit }}-rust-${{ steps.pin.outputs.toolchain }}-${{ hashFiles('olcbox/scripts/build-ghostlane-core-host.sh') }}
+
+      # The BoringSSL proof of a Windows program reads the public symbols in
+      # its PDB (an MSVC executable has no symbol table of its own).
+      - name: A reader for the program's PDB
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! command -v llvm-pdbutil > /dev/null 2>&1; then
+            for d in "/c/Program Files/LLVM/bin" "/c/Program Files (x86)/LLVM/bin"; do
+              [ -x "$d/llvm-pdbutil.exe" ] && { cygpath -w "$d" >> "$GITHUB_PATH"; break; }
+            done
+          fi
+          if ! command -v llvm-pdbutil > /dev/null 2>&1 && ! [ -x "/c/Program Files/LLVM/bin/llvm-pdbutil.exe" ]; then
+            choco install llvm --no-progress -y || true
+            cygpath -w "/c/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Setup JDK
         uses: actions/setup-java@v6
@@ -419,53 +459,122 @@ jobs:
           java-version: '21'
           architecture: x64
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
+      - name: The MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: olcrtc/go.sum
+          arch: x64
 
-      # Same omission the Android and Linux jobs had. Named with `.exe` here, and
-      # only here: makeExecutable() is a no-op on Windows, so the extension is the
-      # only thing that makes the file runnable — DesktopNativeAssets asks for
-      # `native/sing-box.exe` on this platform and `native/sing-box` on the others.
-      # sing-box is built, not downloaded: the release archives carry a Reality
-      # hello Xray-core servers refuse from v26.7 on (scripts/patches/
-      # sing-box-reality-hello.patch says how). Same tree on every platform.
-      - name: Build sing-box (the patched tree)
+      # One program, at the app's one pin. The build script is the Core
+      # build's, and keeps the same key, so a dry run of this job builds once
+      # at most.
+      - name: Build ghostlane-engine at the pin
         shell: bash
         working-directory: olcbox
-        run: bash scripts/build-singbox.sh desktopApp/src/main/resources/native/sing-box.exe
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: |
+          set -euo pipefail
+          engine="out/windows/bin/$TARGET/ghostlane-engine.exe"
+          if [ -s "$engine" ]; then
+            echo "ghostlane-engine for $TARGET at ${GHOSTLANE_CORE_COMMIT:0:12}: restored from the Core build's cache"
+          else
+            GHOSTLANE_CORE_SRC="$(cygpath -u "$RUNNER_TEMP")/core-src" \
+              bash scripts/build-ghostlane-core-host.sh out/windows "$TARGET"
+          fi
+          [ -s "$engine" ] || { echo "the build wrote no ghostlane-engine.exe" >&2; exit 1; }
+          cat out/windows/report.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Bundle sing-box + Xray cores into the app
+      # Upstream's tag with clang for MSVC, and Wintun's release checked by its
+      # sha256 (scripts/build-hev-windows.sh). The Gradle task takes the two
+      # files from this directory, so the hev.exe that is signed below is the
+      # one that is packed. No Cygwin runtime is built, named or staged.
+      - name: Build hev (clang for MSVC) and fetch Wintun
+        shell: bash
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          choco install make --version=4.4.1 --no-progress -y
+          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
+          bash scripts/build-hev-windows.sh "$RUNNER_TEMP/hev-windows"
+          { echo '```'; cat "$RUNNER_TEMP/hev-windows/report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "GHOSTLANE_HEV_DIR=$(cygpath -w "$RUNNER_TEMP/hev-windows")" >> "$GITHUB_ENV"
+
+      - name: Find signtool and the certificate
+        if: needs.plan.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_CERTIFICATE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_CERTIFICATE_PASSWORD)) {
+            Write-Host "Windows code signing secrets are not configured; publishing unsigned assets."
+            exit 0
+          }
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $signtool) {
+            throw "signtool.exe was not found on the Windows runner"
+          }
+          $certPath = Join-Path $env:RUNNER_TEMP "olcbox-windows-codesign.pfx"
+          [IO.File]::WriteAllBytes(
+            $certPath,
+            [Convert]::FromBase64String(($env:WINDOWS_CODESIGN_CERTIFICATE_BASE64 -replace '\s', ''))
+          )
+          "SIGNTOOL=$($signtool.FullName)" | Add-Content $env:GITHUB_ENV
+          "SIGN_PFX=$certPath" | Add-Content $env:GITHUB_ENV
+          "SIGN_READY=1" | Add-Content $env:GITHUB_ENV
+
+      # Before they are packed: inside the jar nothing reaches them.
+      - name: Sign the PEs we build
+        if: needs.plan.outputs.signed == 'true' && env.SIGN_READY == '1'
         shell: pwsh
         working-directory: olcbox
-        env:
-          XRAY_VERSION: "26.7.11"
         run: |
-          $ErrorActionPreference = "Stop"
-          $dest = "desktopApp/src/main/resources/native"
-          New-Item -ItemType Directory -Force $dest | Out-Null
+          $engine = "out/windows/bin/x86_64-pc-windows-msvc/ghostlane-engine.exe"
+          $hev = Join-Path $env:RUNNER_TEMP "hev-windows/hev.exe"
+          ./scripts/windows-sign.ps1 $engine $hev
 
-          $xr = "https://github.com/XTLS/Xray-core/releases/download/v$env:XRAY_VERSION/Xray-windows-64.zip"
-          Invoke-WebRequest -Uri $xr -OutFile xray.zip
-          Remove-Item -Recurse -Force xr-x -ErrorAction SilentlyContinue
-          Expand-Archive xray.zip -DestinationPath xr-x
-          Copy-Item (Get-ChildItem xr-x -Recurse -Filter "xray.exe" | Select-Object -First 1).FullName "$dest/xray.exe"
+      - name: Bundle the engine at the pin, and no Go core
+        shell: bash
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          dest="desktopApp/src/main/resources/native"
+          mkdir -p "$dest"
+          engine="out/windows/bin/x86_64-pc-windows-msvc/ghostlane-engine.exe"
+          cp "$engine" "$dest/ghostlane-engine.exe"
 
-          Write-Host "== bundled cores =="
-          Get-ChildItem $dest
-          # Runs them, because "the file is present" is the half of this that was
-          # never in doubt. If Windows will not execute what we packaged, it says so
-          # here and not on a user's machine.
-          & "$dest/sing-box.exe" version | Select-Object -First 1
-          & "$dest/xray.exe" version | Select-Object -First 1
+          # An old build's Go cores have no place in this package. A name
+          # here would go into the jar and be found by K1 below.
+          for gone in sing-box.exe xray.exe olcrtc-windows-amd64.exe olcrtc-windows-amd64.dll; do
+            if [ -e "$dest/$gone" ]; then echo "$dest/$gone is staged" >&2; exit 1; fi
+          done
+          echo "== bundled core =="; ls -la "$dest"
+
+          # The version event is the engine's own word about its pin, its
+          # protocol and whether it links BoringSSL. Reading it here keeps
+          # a cached program of another pin out of the installer.
+          "$dest/ghostlane-engine.exe" version > "$RUNNER_TEMP/engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version":
+              sys.exit("its first line is no version event: %r" % (lines[:1],))
+          if v.get("protocol") != 1:
+              sys.exit("it reads protocol %r; this app writes protocol 1" % v.get("protocol"))
+          if v.get("pin") != sys.argv[2]:
+              sys.exit("it was built from %s, not from the pin %s" % (v.get("pin"), sys.argv[2]))
+          if not v.get("boringssl"):
+              sys.exit("it carries no BoringSSL")
+          print("ghostlane-engine %s at %s (%s; rooms %s, BoringSSL %s)" % (
+              v["engine"], v["pin"][:12], v["target"], v.get("rooms"), v["boringssl"]))
+          PY
 
       - name: Build Windows installers and portable zip
         shell: pwsh
         working-directory: olcbox
         run: |
-          $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
           .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" :desktopApp:packageReleaseExe :desktopApp:packageReleaseMsi :desktopApp:packageReleasePortableZip --stacktrace
 
       - name: Prepare asset
@@ -492,58 +601,122 @@ jobs:
           Copy-Item $msi.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64.msi"
           Copy-Item $zip.FullName "dist/Ghostlane-${env:OLCBOX_VERSION}-windows-amd64-portable.zip"
 
+      # Against the finished zip, not the staging directory: Compose packs
+      # `resources.srcDir` into the app jar. Every PE under native/ is either
+      # one we build (and sign) or Wintun's own; the engine is run from what
+      # came out of the jar, so the pin it prints is the one inside the asset.
+      - name: Every PE we build is on the signing list
+        shell: bash
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/zip-check" && mkdir -p "$RUNNER_TEMP/zip-check"
+          python3 -I - "dist/Ghostlane-${OLCBOX_VERSION}-windows-amd64-portable.zip" "$RUNNER_TEMP/zip-check" "$WINDOWS_PES_WE_BUILD" <<'PY'
+          import io, re, sys, zipfile
+          zpath, out, listed = sys.argv[1], sys.argv[2], set(sys.argv[3].split())
+          third_party = {"wintun.dll"}
+          found = {}
+          with zipfile.ZipFile(zpath) as z:
+              for name in z.namelist():
+                  if not name.lower().endswith(".jar"):
+                      continue
+                  with zipfile.ZipFile(io.BytesIO(z.read(name))) as jar:
+                      for entry in jar.namelist():
+                          if re.match(r"^native/[^/]+\.(exe|dll|sys)$", entry, re.I):
+                              found[entry.split("/", 1)[1]] = jar.read(entry)
+          print("PEs under native/ in the finished zip:", sorted(found))
+          bad = []
+          for name in sorted(found):
+              if re.match(r"^(sing-box|xray|olcrtc)", name, re.I) or name.lower() == "msys-2.0.dll":
+                  bad.append("%s is a Go core or a Cygwin runtime" % name)
+              elif name not in listed and name not in third_party:
+                  bad.append("%s is a PE in the jar that is neither on the signing list nor Wintun's" % name)
+          for name in sorted(listed | third_party):
+              if name not in found:
+                  bad.append("%s is missing from the jar" % name)
+          if bad:
+              sys.exit("\n".join(bad))
+          for name in sorted(listed):
+              open(out + "/" + name, "wb").write(found[name])
+          open(out + "/wintun.dll", "wb").write(found["wintun.dll"])
+          print("every PE we build is on the list:", " ".join(sorted(listed)))
+          PY
+          "$RUNNER_TEMP/zip-check/ghostlane-engine.exe" version > "$RUNNER_TEMP/image-engine-version.jsonl"
+          python3 -I - "$RUNNER_TEMP/image-engine-version.jsonl" "$GHOSTLANE_CORE_COMMIT" <<'PY'
+          import json, sys
+          lines = [line for line in open(sys.argv[1], encoding="utf-8").read().splitlines() if line.strip()]
+          v = json.loads(lines[0]) if lines else {}
+          if v.get("event") != "version" or v.get("pin") != sys.argv[2]:
+              sys.exit("the engine in the zip says %r, not pin %s" % (lines[:1], sys.argv[2]))
+          if v.get("protocol") != 1 or not v.get("boringssl"):
+              sys.exit("the engine in the zip is not the app's: %r" % v)
+          print("inside the portable zip: ghostlane-engine %s at %s" % (v["engine"], v["pin"][:12]))
+          PY
+
       - name: Sign Windows release assets
-        if: needs.plan.outputs.signed == 'true'
+        if: needs.plan.outputs.signed == 'true' && env.SIGN_READY == '1'
         shell: pwsh
         working-directory: olcbox
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_CERTIFICATE_BASE64) -or
-              [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_CERTIFICATE_PASSWORD)) {
-            Write-Host "Windows code signing secrets are not configured; publishing unsigned assets."
-            exit 0
-          }
-
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if ($null -eq $signtool) {
-            throw "signtool.exe was not found on the Windows runner"
-          }
-
-          $certPath = Join-Path $env:RUNNER_TEMP "olcbox-windows-codesign.pfx"
-          [IO.File]::WriteAllBytes(
-            $certPath,
-            [Convert]::FromBase64String(($env:WINDOWS_CODESIGN_CERTIFICATE_BASE64 -replace '\s', ''))
-          )
-
-          function Sign-File([string]$Path) {
-            & $signtool.FullName sign `
-              /fd SHA256 `
-              /tr $env:WINDOWS_CODESIGN_TIMESTAMP_URL `
-              /td SHA256 `
-              /f $certPath `
-              /p $env:WINDOWS_CODESIGN_CERTIFICATE_PASSWORD `
-              $Path
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to sign $Path"
-            }
-          }
-
           $exeAsset = Get-ChildItem "dist/Ghostlane-*-windows-amd64.exe" | Select-Object -First 1
           $msiAsset = Get-ChildItem "dist/Ghostlane-*-windows-amd64.msi" | Select-Object -First 1
-          Sign-File $exeAsset.FullName
-          Sign-File $msiAsset.FullName
+          ./scripts/windows-sign.ps1 $exeAsset.FullName $msiAsset.FullName
 
           $portableZip = (Get-ChildItem "dist/Ghostlane-*-windows-amd64-portable.zip" | Select-Object -First 1).FullName
           $portableDir = Join-Path $env:RUNNER_TEMP "olcbox-portable-sign"
           Remove-Item $portableDir -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path $portableZip -DestinationPath $portableDir
-          Get-ChildItem $portableDir -Recurse -Filter *.exe | ForEach-Object {
-            Sign-File $_.FullName
-          }
+          $inside = Get-ChildItem $portableDir -Recurse -Filter *.exe | ForEach-Object { $_.FullName }
+          ./scripts/windows-sign.ps1 @inside
           Remove-Item $portableZip -Force
           Compress-Archive -Path (Join-Path $portableDir '*') -DestinationPath $portableZip
+
+      # What was signed is what is in the asset: the two PEs we build come out
+      # of the finished jar and are read by Windows, as are the installers.
+      - name: The signatures are valid
+        if: needs.plan.outputs.signed == 'true' && env.SIGN_READY == '1'
+        shell: pwsh
+        working-directory: olcbox
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = (Get-ChildItem "dist/Ghostlane-*-windows-amd64-portable.zip" | Select-Object -First 1).FullName
+          $work = Join-Path $env:RUNNER_TEMP "sig-check"
+          Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path $zip -DestinationPath $work
+          $files = @(Get-ChildItem "dist/Ghostlane-*-windows-amd64.exe", "dist/Ghostlane-*-windows-amd64.msi" | ForEach-Object { $_.FullName })
+          foreach ($jar in Get-ChildItem $work -Recurse -Filter *.jar) {
+            $archive = [IO.Compression.ZipFile]::OpenRead($jar.FullName)
+            try {
+              foreach ($pe in $env:WINDOWS_PES_WE_BUILD -split '\s+') {
+                $entry = $archive.GetEntry("native/$pe")
+                if ($null -ne $entry) {
+                  $target = Join-Path $work "from-jar-$pe"
+                  [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+                  $files += $target
+                }
+              }
+            } finally { $archive.Dispose() }
+          }
+          foreach ($pe in $env:WINDOWS_PES_WE_BUILD -split '\s+') {
+            if (-not (Test-Path (Join-Path $work "from-jar-$pe"))) { throw "$pe is not in the signed zip's jar" }
+          }
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature $file
+            Write-Host "$($sig.Status) $file"
+            if ($sig.Status -ne 'Valid') { throw "the signature of $file is $($sig.Status)" }
+          }
+
+      # K1 against the three finished assets. The Windows entries are gone from
+      # the allow list: Go anywhere in them, at any nesting, fails the job.
+      - name: No Go in the Windows assets
+        shell: bash
+        working-directory: olcbox
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-go.sh --summary "$GITHUB_STEP_SUMMARY" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-windows-amd64.exe" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-windows-amd64.msi" \
+            "dist/Ghostlane-${OLCBOX_VERSION}-windows-amd64-portable.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

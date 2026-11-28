@@ -2,6 +2,14 @@ package org.olcbox.app.vpn.desktop
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** One value of the Internet Settings key as `reg query` prints it: its type and its data, as text. */
 internal data class RegistryValue(val type: String, val data: String)
@@ -15,17 +23,33 @@ internal data class RegistryValue(val type: String, val data: String)
  * Only the two values this changes are touched. The fixed proxy's server and
  * its override list are left as the user keeps them.
  *
+ * [journal] is a file that holds the values as they were, written before the
+ * first value is changed and deleted once they are put back. An app that is
+ * killed in between leaves the system pointing at a PAC nobody serves:
+ * [recover] reads the file at the next start and puts the user's values back,
+ * and [enable] does the same first, so it never takes our own values for the
+ * user's. No file, no journal (the tests that do not ask for one).
+ *
  * [run] runs one command (`reg`, `powershell`) and returns what it printed or
  * throws; the tests give it a registry of their own.
  */
 internal class WindowsSystemProxy(
     private val run: suspend (List<String>) -> String = ::runWindowsCommand,
 ) {
+    /** The file of the values as they were; set by whoever keeps one. Null for no journal. */
+    var journal: Path? = null
+
     private var backup: Map<String, RegistryValue?>? = null
 
     suspend fun enable(pacUrl: String) {
         // A second enable must not take our own values for the user's.
-        if (backup == null) backup = snapshot(CHANGED)
+        if (backup == null) {
+            recover()
+            val before = snapshot(CHANGED)
+            // On disk before the first value is touched.
+            writeJournal(before)
+            backup = before
+        }
         try {
             enableCommands(pacUrl).forEach { run(it) }
         } catch (e: Throwable) {
@@ -40,6 +64,61 @@ internal class WindowsSystemProxy(
         restoreCommands(before).forEach { command -> runCatching { run(command) } }
         refresh()
         backup = null
+        deleteJournal()
+    }
+
+    /**
+     * Puts back what a run that was killed left changed: the values its journal
+     * holds, as they were. Returns whether there was a journal. Does nothing
+     * for a run that holds its values in memory: that one restores them itself.
+     */
+    suspend fun recover(): Boolean {
+        if (backup != null) return false
+        val before = readJournal() ?: return false
+        restoreCommands(before).forEach { command -> runCatching { run(command) } }
+        refresh()
+        deleteJournal()
+        return true
+    }
+
+    private suspend fun writeJournal(values: Map<String, RegistryValue?>) {
+        val file = journal ?: return
+        val text = buildJsonObject {
+            for ((name, value) in values) {
+                if (value == null) {
+                    put(name, JsonNull)
+                } else {
+                    put(name, buildJsonObject { put("type", value.type); put("data", value.data) })
+                }
+            }
+        }.toString()
+        withContext(Dispatchers.IO) {
+            file.toAbsolutePath().parent?.let { Files.createDirectories(it) }
+            Files.writeString(file, text)
+        }
+    }
+
+    private suspend fun readJournal(): Map<String, RegistryValue?>? {
+        val file = journal ?: return null
+        return withContext(Dispatchers.IO) {
+            if (!Files.isRegularFile(file)) return@withContext null
+            runCatching {
+                val root = Json.parseToJsonElement(Files.readString(file)).jsonObject
+                root.mapValues { (_, element) ->
+                    if (element is JsonNull) {
+                        null
+                    } else {
+                        val row = element.jsonObject
+                        RegistryValue(row.getValue("type").jsonPrimitive.content, row.getValue("data").jsonPrimitive.content)
+                    }
+                }
+            }.getOrNull().also { if (it == null) runCatching { Files.deleteIfExists(file) } }
+        }
+    }
+
+    private suspend fun deleteJournal() {
+        val file = journal ?: return
+        withContext(Dispatchers.IO) { runCatching { Files.deleteIfExists(file) } }
     }
 
     /** The values as they stand: null for one that is not set. */

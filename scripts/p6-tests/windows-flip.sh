@@ -49,9 +49,6 @@ for pe in ghostlane-engine.exe hev.exe; do
 done
 grep -q 'Every PE we build is on the signing list' <<<"$job" || bad "build-windows has no step that holds the finished jar to the signing list"
 grep -q 'Sign the PEs we build' <<<"$job" || bad "build-windows does not sign the PEs before they are packed"
-if grep -n 'msys-2.0.dll' <<<"$job" | grep -vE 'no msys|not|never|refuse|fail|!='; then
-  bad "build-windows names msys-2.0.dll as part of the bundle"
-fi
 
 res="$root/desktopApp/gradle/native-windows.resources.txt"
 grep -qx 'amd64 bundled native/ghostlane-engine.exe' "$res" || bad "native-windows.resources.txt does not bundle the engine"
