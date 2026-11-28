@@ -89,6 +89,7 @@ name = "ghostlane-cli"
 version = "0.0.0"
 dependencies = [
  "base64",
+ "ghostlane-coreconfig",
  "ghostlane-gocompat",
  "serde",
  "serde_json",
